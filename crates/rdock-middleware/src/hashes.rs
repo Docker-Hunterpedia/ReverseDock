@@ -45,12 +45,14 @@ fn md5_crypt(password: &[u8], salt_and_hash: &str, magic: &str) -> String {
     let salt = salt_and_hash.split('$').next().unwrap_or_default();
     let salt = &salt.as_bytes()[..salt.len().min(8)];
 
+    // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes -- verifies legacy htpasswd hashes only (ADR-0014)
     let mut alternate = Md5::new();
     alternate.update(password);
     alternate.update(salt);
     alternate.update(password);
     let alternate = alternate.finalize();
 
+    // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes -- verifies legacy htpasswd hashes only (ADR-0014)
     let mut context = Md5::new();
     context.update(password);
     context.update(magic.as_bytes());
@@ -73,6 +75,7 @@ fn md5_crypt(password: &[u8], salt_and_hash: &str, magic: &str) -> String {
     let mut digest = context.finalize();
 
     for round in 0..1000 {
+        // nosemgrep: rust.lang.security.insecure-hashes.insecure-hashes -- verifies legacy htpasswd hashes only (ADR-0014)
         let mut next = Md5::new();
         if round & 1 == 1 {
             next.update(password);

@@ -51,7 +51,7 @@ jobs:
         run: |
           mkdir -p corpus/"$TARGET"
           if [ -d seeds/"$TARGET" ]; then cp seeds/"$TARGET"/* corpus/"$TARGET"/; fi
-          cargo +nightly fuzz run "$TARGET" corpus/"$TARGET" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
+          cargo +nightly fuzz run --fuzz-dir . "$TARGET" corpus/"$TARGET" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
         env:
           TARGET: ${{ matrix.target }}
       - name: Keep crashing inputs
