@@ -42,11 +42,12 @@ pub enum Matcher {
         /// Regular expression for the header value.
         regexp: String,
     },
-    /// `Query(key)` (parameter present) or `Query(key, value)`.
+    /// `Query(key, value)`, or `Query(key)`, which matches the parameter with an empty value
+    /// (`?key` or `?key=`) like Traefik.
     Query {
         /// Query parameter name.
         key: String,
-        /// Exact value, or `None` to match presence only.
+        /// Exact value; `None` means the empty value.
         value: Option<String>,
     },
     /// `QueryRegexp(key, regexp)`.

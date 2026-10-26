@@ -164,7 +164,19 @@ jobs:
       - name: Smoke test
         run: |
           docker run --rm rdock:ci version
-          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml
+          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.quickstart.yaml
+          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml
+      - name: Run the image (read-only, no capabilities) and stop it gracefully
+        run: |
+          docker run -d --name rdock-smoke --read-only --cap-drop ALL \
+            -v "$PWD/deploy/docker/rdock.yaml:/etc/rdock/rdock.yaml:ro" -v rdock-smoke-data:/var/lib/rdock rdock:ci
+          for _ in $(seq 1 30); do
+            if docker exec rdock-smoke /usr/local/bin/rdock healthcheck; then break; fi
+            sleep 1
+          done
+          docker exec rdock-smoke /usr/local/bin/rdock healthcheck
+          docker stop rdock-smoke
+          test "$(docker inspect rdock-smoke --format '{{.State.ExitCode}}')" = 0 || { docker logs rdock-smoke; exit 1; }
 
   semgrep:
     name: semgrep

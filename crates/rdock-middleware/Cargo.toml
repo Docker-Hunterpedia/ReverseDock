@@ -1,6 +1,6 @@
 [package]
 name = "rdock-middleware"
-description = "Built-in HTTP middlewares for ReverseDock"
+description = "Built-in middlewares for ReverseDock"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,30 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
+
+[dependencies]
+argon2.workspace = true
+async-trait.workspace = true
+base64.workspace = true
+bcrypt.workspace = true
+bytes.workspace = true
+flate2.workspace = true
+http.workspace = true
+md-5.workspace = true
+pingora.workspace = true
+rdock-limits.workspace = true
+rdock-model.workspace = true
+rdock-rules.workspace = true
+regex.workspace = true
+sha1.workspace = true
+subtle.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+url.workspace = true
+
+[dev-dependencies]
+tempfile.workspace = true
 
 [lints]
 workspace = true

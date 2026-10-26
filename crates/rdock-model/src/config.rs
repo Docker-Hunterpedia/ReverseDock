@@ -12,8 +12,8 @@ use crate::middleware::Middleware;
 use crate::providers::Providers;
 use crate::route::{Route, TcpRoute, TlsMode};
 use crate::service::{Service, TcpService};
-use crate::settings::{Admin, Observability, Security};
-use crate::values::{IpNetwork, ListenAddress};
+use crate::settings::{Admin, Lifecycle, Observability, Security};
+use crate::values::{Duration, IpNetwork, ListenAddress};
 
 /// A complete ReverseDock configuration, as written in `rdock.yaml`.
 ///
@@ -55,6 +55,8 @@ pub struct Config {
     pub admin: Admin,
     /// Logs, metrics and traces.
     pub observability: Observability,
+    /// Start-up and shutdown behaviour.
+    pub lifecycle: Lifecycle,
 }
 
 impl Config {
@@ -84,6 +86,9 @@ pub struct Defaults {
     pub redirect_http_to_https: bool,
     /// TLS for routes that do not set `tls`: `auto` (automatic certificates) or `off`.
     pub tls: TlsMode,
+    /// Certificate (a key of `certificates`) served when no other certificate matches the
+    /// requested name, or when the client sends no name (SNI).
+    pub certificate: Option<String>,
 }
 
 impl Default for Defaults {
@@ -92,6 +97,7 @@ impl Default for Defaults {
             listeners: vec!["websecure".to_owned()],
             redirect_http_to_https: true,
             tls: TlsMode::Auto,
+            certificate: None,
         }
     }
 }
@@ -110,6 +116,9 @@ pub struct Listener {
     /// Accept the PROXY protocol (v1 or v2) from these sources only.
     #[serde(default)]
     pub proxy_protocol: Option<ProxyProtocolIn>,
+    /// Client-side timeouts.
+    #[serde(default)]
+    pub timeouts: ListenerTimeouts,
 }
 
 impl Listener {
@@ -121,6 +130,7 @@ impl Listener {
             protocol: None,
             tls: None,
             proxy_protocol: None,
+            timeouts: ListenerTimeouts::default(),
         }
     }
 
@@ -149,6 +159,32 @@ pub enum ListenerProtocol {
     Udp,
 }
 
+/// Timeouts for the client side of a listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ListenerTimeouts {
+    /// Time allowed to receive the complete request headers, counted from their first byte
+    /// (protects against slow-header attacks).
+    pub request_header: Duration,
+    /// Longest wait for data from the client while a request or upgraded connection is open.
+    pub read: Duration,
+    /// Longest wait for the client to accept data.
+    pub write: Duration,
+    /// How long an idle keep-alive connection is kept open.
+    pub idle: Duration,
+}
+
+impl Default for ListenerTimeouts {
+    fn default() -> Self {
+        Self {
+            request_header: Duration::from_secs(10),
+            read: Duration::from_secs(60),
+            write: Duration::from_secs(60),
+            idle: Duration::from_secs(60),
+        }
+    }
+}
+
 /// TLS termination settings of a listener.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -175,11 +211,16 @@ pub struct ProxyProtocolIn {
     pub trusted: Vec<IpNetwork>,
 }
 
-/// A certificate and private key provided as files.
+/// A certificate and private key provided as files. Changes to the files are picked up
+/// automatically.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Certificate {
-    /// PEM certificate chain.
+    /// PEM certificate chain, leaf first.
     pub cert_file: PathBuf,
-    /// PEM private key.
+    /// PEM private key (PKCS#8, PKCS#1 or SEC1; PKCS#8 may be encrypted).
     pub key_file: PathBuf,
+    /// Password of an encrypted key. Reference a secret instead of writing it here:
+    /// `"${file:/run/secrets/key_password}"`.
+    #[serde(default)]
+    pub key_password: Option<String>,
 }

@@ -53,6 +53,22 @@ pub struct HeadersConfig {
     pub request: HeaderRules,
     /// Changes to the response sent to the client.
     pub response: HeaderRules,
+    /// HTTP Strict Transport Security, sent on HTTPS responses only.
+    pub hsts: Option<Hsts>,
+}
+
+/// `Strict-Transport-Security` settings. Browsers then refuse plain HTTP for the host, so
+/// enable it only when HTTPS works for every name involved.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Hsts {
+    /// How long browsers remember the policy. `0s` removes it.
+    pub max_age: Duration,
+    /// Apply the policy to all subdomains too.
+    #[serde(default)]
+    pub include_subdomains: bool,
+    /// Ask for inclusion in browser preload lists. This is hard to undo.
+    #[serde(default)]
+    pub preload: bool,
 }
 
 /// Header operations, applied in the order remove, set, add.
@@ -80,8 +96,9 @@ pub struct RedirectConfig {
     /// Target URL; may use `$1`, `${name}` groups from `regex`.
     #[serde(default)]
     pub replacement: Option<String>,
-    /// `301`/`308` when true, `302`/`307` when false.
-    #[serde(default = "crate::defaults::yes")]
+    /// `301`/`308` when true, `302`/`307` when false (the second code of each pair is used for
+    /// methods other than GET, so the method and body are kept), as in Traefik.
+    #[serde(default)]
     pub permanent: bool,
     /// Port for scheme redirects when it is not the scheme's default.
     #[serde(default)]
@@ -132,7 +149,8 @@ pub struct ReplacePathConfig {
     pub path: String,
 }
 
-/// Basic authentication. Passwords must be argon2id or bcrypt hashes.
+/// Basic authentication. Passwords are argon2id or bcrypt hashes; the weaker Apache MD5
+/// (`$apr1$`) and SHA-1 (`{SHA}`) hashes are accepted for compatibility with a warning.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 #[schemars(inline)]

@@ -6,9 +6,7 @@
 
 use std::path::{Path, PathBuf};
 
-use rdock_config::{Format, LoadOptions, load_file, load_str};
-
-const STRICT: LoadOptions = LoadOptions { strict: true };
+use rdock_config::{Format, load_file, load_str};
 
 fn repo() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
@@ -37,6 +35,12 @@ fn architecture_yaml() -> String {
     section[start..start + end].to_owned()
 }
 
+/// YAML 1.2, as editors with the schema read it (`off` stays a string).
+fn yaml_value(text: &str) -> serde_json::Value {
+    serde_saphyr::from_str_with_options(text, serde_saphyr::options! { strict_booleans: true })
+        .unwrap()
+}
+
 fn schema_errors(instance: &serde_json::Value) -> Vec<String> {
     let schema = serde_json::to_value(rdock_model::json_schema()).unwrap();
     let validator = jsonschema::validator_for(&schema).unwrap();
@@ -49,7 +53,7 @@ fn schema_errors(instance: &serde_json::Value) -> Vec<String> {
 #[test]
 fn examples_load_without_diagnostics() {
     for file in example_files() {
-        let loaded = load_file(&file, STRICT).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        let loaded = load_file(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
         assert!(
             loaded.diagnostics.is_empty(),
             "{}: {:#?}",
@@ -71,7 +75,7 @@ fn architecture_example_is_the_full_example() {
 
 #[test]
 fn architecture_example_loads_without_diagnostics() {
-    let loaded = load_str(&architecture_yaml(), Format::Yaml, STRICT).unwrap();
+    let loaded = load_str(&architecture_yaml(), Format::Yaml).unwrap();
     assert!(loaded.diagnostics.is_empty(), "{:#?}", loaded.diagnostics);
 }
 
@@ -79,7 +83,7 @@ fn architecture_example_loads_without_diagnostics() {
 fn examples_match_the_json_schema() {
     for file in example_files() {
         let text = std::fs::read_to_string(&file).unwrap();
-        let value: serde_json::Value = serde_saphyr::from_str(&text).unwrap();
+        let value = yaml_value(&text);
         assert_eq!(
             schema_errors(&value),
             Vec::<String>::new(),
@@ -87,7 +91,7 @@ fn examples_match_the_json_schema() {
             file.display()
         );
     }
-    let value: serde_json::Value = serde_saphyr::from_str(&architecture_yaml()).unwrap();
+    let value = yaml_value(&architecture_yaml());
     assert_eq!(
         schema_errors(&value),
         Vec::<String>::new(),
@@ -96,7 +100,7 @@ fn examples_match_the_json_schema() {
 }
 
 #[test]
-fn schema_rejects_typos_that_runtime_only_warns_about() {
+fn schema_rejects_typos() {
     let value = serde_json::json!({ "servics": {} });
     assert_ne!(schema_errors(&value), Vec::<String>::new());
 }

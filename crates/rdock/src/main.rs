@@ -1,19 +1,29 @@
 //! The `rdock` command-line interface.
 
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
-use rdock_config::{LoadError, LoadOptions, Loaded, load_file};
-use rdock_model::Diagnostic;
-use serde::Serialize;
+
+mod ctl;
+mod engine;
+mod hash;
+mod run;
+mod validate;
+mod watch;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const COMMIT: &str = env!("RDOCK_BUILD_COMMIT");
 const RUSTC: &str = env!("RDOCK_BUILD_RUSTC");
 const TARGET: &str = env!("RDOCK_BUILD_TARGET");
+
+/// Default configuration file.
+const DEFAULT_CONFIG: &str = "/etc/rdock/rdock.yaml";
+/// Default data directory.
+const DEFAULT_DATA_DIR: &str = "/var/lib/rdock";
 
 /// ReverseDock: one reverse proxy for every dock.
 #[derive(Parser)]
@@ -25,8 +35,18 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Run the proxy.
+    Run(RunArgs),
     /// Validate configuration files without starting the proxy.
     Validate(ValidateArgs),
+    /// Ask the running proxy to reload its configuration.
+    Reload(CtlArgs),
+    /// Show the state of the running proxy.
+    Status(StatusArgs),
+    /// Exit 0 when the running proxy is ready (for container health checks).
+    Healthcheck(CtlArgs),
+    /// Create an argon2id password hash for `basic_auth` (reads the password from stdin).
+    Hash(HashArgs),
     /// Print the JSON Schema of rdock.yaml.
     Schema,
     /// Print version and build information.
@@ -38,11 +58,47 @@ enum Command {
 }
 
 #[derive(Args)]
+struct HashArgs {
+    /// Print a complete `user:hash` entry for `basic_auth.users`.
+    #[arg(long)]
+    user: Option<String>,
+}
+
+#[derive(Args)]
+struct RunArgs {
+    /// Configuration file.
+    #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
+    config: PathBuf,
+    /// Directory for state (configuration history, last-known-good copy, admin token).
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
+    /// Do not reload when the configuration or referenced files change.
+    #[arg(long)]
+    no_watch: bool,
+    /// Log filter, e.g. `info` or `info,rdock_proxy=debug`.
+    #[arg(long, env = "RDOCK_LOG", default_value = "info")]
+    log: String,
+    /// Format of the application log.
+    #[arg(long, env = "RDOCK_LOG_FORMAT", value_enum, default_value_t = LogFormatArg::Auto)]
+    log_format: LogFormatArg,
+}
+
+#[derive(Clone, Copy, ValueEnum)]
+enum LogFormatArg {
+    /// JSON unless standard error is a terminal.
+    Auto,
+    /// JSON lines.
+    Json,
+    /// Text.
+    Text,
+}
+
+#[derive(Args)]
 struct ValidateArgs {
     /// Configuration files (YAML, or JSON with a .json extension).
     #[arg(required = true)]
     files: Vec<PathBuf>,
-    /// Treat unknown keys as errors.
+    /// Treat warnings as errors.
     #[arg(long)]
     strict: bool,
     /// Output format.
@@ -56,10 +112,37 @@ enum OutputFormat {
     Json,
 }
 
+#[derive(Args)]
+struct CtlArgs {
+    /// Admin listener of the running proxy. Read from the configuration file when omitted.
+    #[arg(long, env = "RDOCK_ADMIN")]
+    admin: Option<SocketAddr>,
+    /// Configuration file, to find the admin listener.
+    #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
+    config: PathBuf,
+    /// Data directory, to find the admin token.
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
+}
+
+#[derive(Args)]
+struct StatusArgs {
+    #[command(flatten)]
+    ctl: CtlArgs,
+    /// Print the raw JSON document.
+    #[arg(long)]
+    json: bool,
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
     let result = match cli.command {
-        Command::Validate(args) => validate(&args),
+        Command::Run(args) => run::run(&args),
+        Command::Validate(args) => validate::validate(&args),
+        Command::Reload(args) => ctl::reload(&args),
+        Command::Status(args) => ctl::status(&args),
+        Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
+        Command::Hash(args) => hash::hash(&args),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };
@@ -90,82 +173,4 @@ fn version(json: bool) -> anyhow::Result<()> {
             "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\n"
         ))
     }
-}
-
-/// Result of validating one file, as printed by `--format json`.
-#[derive(Serialize)]
-struct FileReport {
-    file: String,
-    valid: bool,
-    errors: usize,
-    warnings: usize,
-    diagnostics: Vec<Diagnostic>,
-}
-
-fn validate(args: &ValidateArgs) -> anyhow::Result<ExitCode> {
-    let options = LoadOptions {
-        strict: args.strict,
-    };
-    let reports: Vec<FileReport> = args
-        .files
-        .iter()
-        .map(|file| report(file, options))
-        .collect();
-    match args.format {
-        OutputFormat::Json => print(&format!("{}\n", serde_json::to_string_pretty(&reports)?))?,
-        OutputFormat::Text => print(&render_text(&reports))?,
-    }
-    Ok(if reports.iter().all(|r| r.valid) {
-        ExitCode::SUCCESS
-    } else {
-        ExitCode::FAILURE
-    })
-}
-
-fn report(file: &Path, options: LoadOptions) -> FileReport {
-    let diagnostics = match load_file(file, options) {
-        Ok(Loaded { diagnostics, .. }) => diagnostics,
-        Err(err) => vec![load_error(&err)],
-    };
-    let errors = diagnostics.iter().filter(|d| d.is_error()).count();
-    FileReport {
-        file: file.display().to_string(),
-        valid: errors == 0,
-        errors,
-        warnings: diagnostics.len() - errors,
-        diagnostics,
-    }
-}
-
-fn load_error(err: &LoadError) -> Diagnostic {
-    match err {
-        LoadError::Invalid { path, message } => Diagnostic::error(path, message),
-        LoadError::Io { .. } | LoadError::Syntax { .. } => {
-            Diagnostic::error("(file)", err.to_string())
-        }
-    }
-}
-
-fn render_text(reports: &[FileReport]) -> String {
-    let mut lines = Vec::new();
-    for report in reports {
-        for d in &report.diagnostics {
-            lines.push(format!("{}: {}: {}", d.severity, d.path, d.message));
-            if let Some(hint) = &d.hint {
-                lines.extend(hint.lines().map(|line| format!("    {line}")));
-            }
-        }
-        let summary = match (report.errors, report.warnings) {
-            (0, 0) => "valid".to_owned(),
-            (0, w) => format!("valid, {w} warning{}", plural(w)),
-            (e, w) => format!("{e} error{}, {w} warning{}", plural(e), plural(w)),
-        };
-        lines.push(format!("{}: {summary}", report.file));
-    }
-    lines.push(String::new());
-    lines.join("\n")
-}
-
-fn plural(count: usize) -> &'static str {
-    if count == 1 { "" } else { "s" }
 }

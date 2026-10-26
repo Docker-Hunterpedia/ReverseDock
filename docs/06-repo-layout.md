@@ -15,7 +15,8 @@ reversedock/
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
-│   │   ├── fuzz.yml                # (v0.1+) cargo-fuzz, weekly + on parser changes
+│   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
+│   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary past the cap
 │   │   ├── bench.yml               # (v0.4+) nightly on a dedicated runner, publishes to benchmarks/results
 │   │   └── release.yml             # build → package (checksums, SBOM; also on PRs) → publish (tags: provenance, cosign, release)
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
@@ -56,19 +57,20 @@ reversedock/
 │       └── dist/                   # build output (gitignored), embedded by rdock-admin
 ├── schema/
 │   └── rdock.v1.json               # generated JSON Schema, committed; CI fails if stale
-├── Dockerfile                      # static musl build → distroless, non-root (images published from v0.1)
+├── Dockerfile                      # build from source: static musl → distroless, non-root
+├── Dockerfile.release              # release image from the signed release binaries (GHCR, multi-arch)
 ├── deploy/
-│   ├── docker/                     # compose examples
+│   ├── docker/                     # compose.yaml + rdock.yaml example
 │   ├── helm/reversedock/           # chart (P2)
 │   ├── kubernetes/                 # raw manifests, kustomize (P2)
-│   └── systemd/                    # rdock.service (CAP_NET_BIND_SERVICE; no socket activation)
+│   └── systemd/                    # rdock.service (Type=notify, DynamicUser, CAP_NET_BIND_SERVICE; no socket activation)
 ├── examples/                       # runnable scenarios: 01-single-app, 02-compose-labels, 03-traefik-migration, 04-cloudflare-tunnel, 05-swarm, 06-kubernetes …
 ├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/
 ├── tests/
-│   ├── e2e/                        # Rust integration tests using rdock-testkit + docker
+│   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
 │   ├── conformance/gateway-api/    # upstream suite wiring
-│   └── fuzz/                       # cargo-fuzz targets: rules parser, label parser, config loader, http differential
+│   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader; label parser later
 ├── docs/                           # these documents; docs/site later (Astro Starlight → reversedock.dev)
 ├── scripts/                        # xlsx2md.py, schema-export, release helpers
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
@@ -85,7 +87,8 @@ reversedock/
 | Clippy | `clippy::all` + selected `pedantic`; `unwrap_used`/`expect_used`/`panic` denied in library crates (allowed in tests and the binary's startup path with a message) |
 | Errors | `thiserror` enums in libraries; `miette` diagnostics with source spans for config/label errors; `anyhow` only in the binary |
 | Logging | `tracing` only; structured fields, no `println!`; secrets never logged (newtype `Secret<T>` with redacted `Debug`) |
-| Async | Tokio; blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
+| Async | Tokio, capped at `<1.54` until Pingora handles tokio 1.54's `BufStream` change (Dependabot ignores it too; the weekly `tokio-canary` job reports when the cap can be lifted); blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
+| Build tools | A C compiler and **CMake** (Pingora builds zlib-ng; ring and zstd need C) |
 | Public API | `#![warn(missing_docs)]` on lib crates; `pub` surface minimised; `#[non_exhaustive]` on config enums |
 | Features | One table (below) is the source of truth; 05 and the ADRs point here |
 | Naming | config keys `snake_case`; labels `rdock.dot.case`; CLI flags `--kebab-case`; env `RDOCK_UPPER_SNAKE`; metrics `rdock_snake_case` |
@@ -130,9 +133,9 @@ reversedock/
 |---|---|---|---|
 | Unit | `cargo nextest` | per crate | every PR |
 | Property / grammar | `proptest` | rules, labels, path normalisation | every PR |
-| Integration | `rdock-testkit` (spawns upstreams, Pebble, toxiproxy) | `tests/e2e` | every PR (fast subset), full nightly |
+| Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; Pebble and toxiproxy later) | `crates/rdock/tests/e2e_*.rs` | every PR |
 | Conformance | Traefik-label suite; Gateway API suite (kind) | `tests/conformance` | PRs touching providers; nightly |
-| Fuzz | `cargo-fuzz` (differential HTTP parsing vs hyper/h2, parsers) | `tests/fuzz` | weekly + parser PRs |
+| Fuzz | `cargo-fuzz` (differential HTTP/1 framing vs httparse, rules parser, config loader) | `tests/fuzz` | weekly + parser PRs |
 | Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly on dedicated runner; results committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
 | UI | Vitest, Playwright (light/dark, LTR/RTL, 400 px–1440 px) | `apps/dashboard` | every PR |

@@ -17,11 +17,38 @@ path = "src/main.rs"
 
 [dependencies]
 anyhow.workspace = true
-clap.workspace = true
+argon2.workspace = true
+async-trait.workspace = true
+clap = { workspace = true, features = ["env"] }
+notify.workspace = true
+notify-debouncer-full.workspace = true
+rdock-admin.workspace = true
 rdock-config.workspace = true
+rdock-middleware.workspace = true
 rdock-model.workspace = true
+rdock-observability.workspace = true
+rdock-proxy.workspace = true
+sd-notify.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+uuid = { workspace = true, features = ["v4"] }
+
+[dev-dependencies]
+bytes.workspace = true
+flate2.workspace = true
+futures-util = "0.3.34"
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rdock-testkit.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
 
 [lints]
 workspace = true

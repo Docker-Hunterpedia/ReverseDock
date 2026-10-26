@@ -1,0 +1,11 @@
+POST /up HTTP/1.1
+Host: x
+Transfer-Encoding: chunked
+
+3
+abc
+2;ext=1
+de
+0
+X-Trailer: t
+

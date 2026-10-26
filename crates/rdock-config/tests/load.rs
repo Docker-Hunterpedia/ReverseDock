@@ -1,12 +1,10 @@
-//! Loading behaviour: unknown keys, type errors, syntax errors.
+//! Loading behaviour: unknown keys, references, type errors, syntax errors.
 
-use rdock_config::{Format, LoadError, LoadOptions, load_str};
+use rdock_config::{Format, LoadError, load_str};
 use rdock_model::Severity;
 
-const STRICT: LoadOptions = LoadOptions { strict: true };
-
 fn yaml(text: &str) -> Result<rdock_config::Loaded, LoadError> {
-    load_str(text, Format::Yaml, LoadOptions::default())
+    load_str(text, Format::Yaml)
 }
 
 #[test]
@@ -17,7 +15,7 @@ fn empty_documents_are_empty_configs() {
 }
 
 #[test]
-fn unknown_keys_warn_with_suggestions_and_fail_in_strict_mode() {
+fn unknown_keys_are_errors_with_suggestions() {
     let text = r#"
 routes:
   app:
@@ -37,34 +35,90 @@ servics: {}
         .iter()
         .map(|d| (d.severity, d.path.as_str(), d.hint.as_deref()))
         .collect();
-    assert!(found.contains(&(
-        Severity::Warning,
-        "routes.app.midlewares",
-        Some("did you mean `middlewares`?")
-    )));
-    assert!(found.contains(&(
-        Severity::Warning,
-        "services.app.backends[0].wieght",
-        Some("did you mean `weight`?")
-    )));
-    assert!(found.contains(&(
-        Severity::Warning,
-        "middlewares.auth.realmm",
-        Some("did you mean `realm`?")
-    )));
-    assert!(found.contains(&(
-        Severity::Warning,
-        "servics",
-        Some("did you mean `services`?")
-    )));
-    assert!(!loaded.has_errors());
-
-    let strict = load_str(text, Format::Yaml, STRICT).unwrap();
-    assert!(strict.has_errors());
+    for (path, near) in [
+        ("routes.app.midlewares", "middlewares"),
+        ("services.app.backends[0].wieght", "weight"),
+        ("middlewares.auth.realmm", "realm"),
+        ("servics", "services"),
+    ] {
+        let hint = format!("did you mean `{near}`?");
+        assert!(
+            found.contains(&(Severity::Error, path, Some(hint.as_str()))),
+            "{path}: {found:?}"
+        );
+    }
     assert_eq!(
-        strict.diagnostics.iter().filter(|d| d.is_error()).count(),
+        loaded.diagnostics.iter().filter(|d| d.is_error()).count(),
         4
     );
+}
+
+#[test]
+fn references_are_resolved_except_in_secrets_and_replacements() {
+    let dir = tempfile::tempdir().unwrap();
+    let token = dir.path().join("token");
+    std::fs::write(&token, "abc\n").unwrap();
+    let text = format!(
+        r#"
+services:
+  app:
+    backends: [{{ address: "${{file:{token}}}:8080" }}]
+middlewares:
+  www: {{ type: redirect, regex: "^https://(.*)$", replacement: "https://www.${{1}}" }}
+acme:
+  email: ops@example.com
+  dns_providers:
+    cf: {{ type: cloudflare, api_token: "${{file:/run/secrets/cf_token}}" }}
+"#,
+        token = token.display()
+    );
+    let loaded = yaml(&text).unwrap();
+    assert_eq!(
+        loaded.config.services["app"].backends[0]
+            .address
+            .to_string(),
+        "abc:8080"
+    );
+    let rdock_model::middleware::Middleware::Redirect(redirect) = &loaded.config.middlewares["www"]
+    else {
+        panic!("redirect")
+    };
+    assert_eq!(redirect.replacement.as_deref(), Some("https://www.${1}"));
+    let acme = loaded.config.acme.as_ref().unwrap();
+    let rdock_model::acme::DnsProvider::Cloudflare { api_token } = &acme.dns_providers["cf"];
+    assert_eq!(api_token, "${file:/run/secrets/cf_token}");
+    // The stored source keeps the reference, not the resolved value.
+    assert!(loaded.source.to_string().contains("${file:"));
+    assert!(!loaded.source.to_string().contains("abc:8080"));
+}
+
+#[test]
+fn reference_errors_are_reported_and_values_stay_hidden() {
+    let loaded = yaml("acme: { email: \"${RDOCK_TEST_SURELY_UNSET}\" }\n").unwrap();
+    assert!(loaded.has_errors());
+    assert!(
+        loaded.diagnostics[0]
+            .message
+            .contains("`RDOCK_TEST_SURELY_UNSET` is not set"),
+        "{:?}",
+        loaded.diagnostics
+    );
+    let dir = tempfile::tempdir().unwrap();
+    let secret = dir.path().join("weight");
+    std::fs::write(&secret, "very-secret-value").unwrap();
+    let err = yaml(&format!(
+        "services:\n  app:\n    backends: [{{ address: \"${{file:{}}}\" }}]\n",
+        secret.display()
+    ))
+    .unwrap_err();
+    assert!(!err.to_string().contains("very-secret-value"), "{err}");
+    assert!(err.to_string().contains("value not shown"), "{err}");
+}
+
+#[test]
+fn extension_keys_are_ignored() {
+    let loaded = yaml("x-common: &backend { address: \"app:3000\" }\nservices:\n  app:\n    backends: [*backend]\n    x-note: kept for humans\n").unwrap();
+    assert_eq!(loaded.diagnostics, Vec::new());
 }
 
 #[test]
@@ -105,7 +159,7 @@ fn syntax_errors_and_duplicate_keys_are_reported() {
         err.to_string().to_lowercase().contains("duplicate"),
         "{err}"
     );
-    let err = load_str("{ \"routes\": ", Format::Json, LoadOptions::default()).unwrap_err();
+    let err = load_str("{ \"routes\": ", Format::Json).unwrap_err();
     assert!(err.to_string().starts_with("invalid JSON"), "{err}");
 }
 
@@ -120,12 +174,11 @@ services:
     let loaded = yaml(text).unwrap();
     assert_eq!(loaded.config.services["app"].backends.len(), 1);
     assert_eq!(
-        loaded.diagnostics.len(),
-        1,
-        "x-backend is reported as unknown: {:?}",
-        loaded.diagnostics
+        loaded.diagnostics,
+        Vec::new(),
+        "x- keys are extension fields"
     );
-    let merged = "defaults_tls: &tls { dns_provider: cf }\nroutes:\n  app:\n    match: \"Host(`a.example.com`)\"\n    service: app\n    tls: { <<: *tls, domains: [a.example.com] }\n";
+    let merged = "x-tls: &tls { dns_provider: cf }\nroutes:\n  app:\n    match: \"Host(`a.example.com`)\"\n    service: app\n    tls: { <<: *tls, domains: [a.example.com] }\n";
     let loaded = yaml(merged).unwrap();
     let route = &loaded.config.routes["app"];
     assert!(

@@ -1,0 +1,30 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# Runs with v0.1: plain HTTP on :80 in front of one application. For HTTPS, add a certificate
+# under `certificates`, a listener with `tls: {}` and remove `tls: off` (automatic certificates
+# arrive in v0.3).
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "PathPrefix(`/`)"
+    service: app
+    middlewares: [security-headers, gzip]
+
+services:
+  app:
+    backends: [{ address: "app:3000" }]
+
+middlewares:
+  security-headers:
+    type: headers
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+        Referrer-Policy: strict-origin-when-cross-origin
+  gzip: { type: compress }

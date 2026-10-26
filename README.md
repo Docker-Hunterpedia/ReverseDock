@@ -6,20 +6,27 @@
 
 [![ci](https://github.com/Docker-Hunterpedia/ReverseDock/actions/workflows/ci.yml/badge.svg)](https://github.com/Docker-Hunterpedia/ReverseDock/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-F58F0A.svg)](LICENSE)
-[![Status: M0 done](https://img.shields.io/badge/status-M0%20done%20·%20pre--alpha-78716C.svg)](docs/07-roadmap.md)
+[![Status: v0.1 alpha](https://img.shields.io/badge/status-v0.1%20hello%20proxy%20·%20alpha-78716C.svg)](docs/07-roadmap.md)
 [![DCO](https://img.shields.io/badge/DCO-required-1C1917.svg)](CONTRIBUTING.md#branches-and-commits)
 
 > One reverse proxy for a laptop, a VPS, a Docker Swarm, or a Kubernetes cluster.
 > Rust, built on [Cloudflare Pingora](https://github.com/cloudflare/pingora). 100 % free and open source (Apache-2.0). No account, no telemetry, no paid tier.
 
-**Status: M0 (foundations) is done.** The configuration model, rule parser and `rdock validate` work; proxying arrives with v0.1. The plan lives in [`docs/`](docs/README.md).
+**Status: v0.1 "hello proxy" (alpha).** ReverseDock replaces NGINX for host and path routing with your own certificates: HTTP/1.1, HTTP/2, h2c, WebSocket, server-sent events and gRPC; TLS with SNI and named policies; the Traefik rule grammar; headers, redirects, path rewrites, basic and forward authentication, IP filters, rate limits, CORS, gzip, error pages and maintenance mode; reloads on file change, `SIGHUP` or `rdock reload` without dropping requests (listener changes included); JSON access logs and Prometheus metrics. Docker labels arrive in v0.2 and automatic HTTPS in v0.3 ([roadmap](docs/07-roadmap.md)).
 
 ```bash
-# Rust 1.89+ (the pinned toolchain installs itself through rustup)
-cargo run -p rdock -- validate examples/config/rdock.full.yaml   # check a configuration
-cargo run -p rdock -- schema > rdock.schema.json                  # JSON Schema for your editor
+# With Docker: the example serves traefik/whoami on http://localhost
+cd deploy/docker && docker compose up -d
+curl -H 'Host: whoami.localhost' http://localhost/
+docker compose exec rdock rdock status
+
+# From source (Rust 1.89+, a C compiler and CMake)
+cargo run -p rdock -- run -c examples/config/rdock.quickstart.yaml --data-dir ./data
+cargo run -p rdock -- validate examples/config/rdock.full.yaml   # also lists what is not supported yet
 just ci                                                           # everything CI checks
 ```
+
+On a server, [`deploy/systemd/rdock.service`](deploy/systemd/rdock.service) runs it unprivileged with `CAP_NET_BIND_SERVICE`; `systemctl reload rdock` re-reads the configuration.
 
 Editors with the YAML language server get completion and validation from the first line of any `rdock.yaml`:
 
@@ -27,7 +34,7 @@ Editors with the YAML language server get completion and validation from the fir
 # yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
 ```
 
-## What it will do
+## Where it is going
 
 - **Traefik's discovery:** Docker, Compose, Swarm, Kubernetes Gateway API — with `rdock.*` labels *and* your existing `traefik.*` labels.
 - **Caddy's HTTPS:** automatic certificates by default (HTTP-01, TLS-ALPN-01, DNS-01 with Cloudflare first), ARI-aware renewals ready for 45-day certificates.
@@ -65,7 +72,7 @@ services:
 
 ## Contributing
 
-M0 is done and v0.1 (the first proxy) is next: reviews of the plan, rule and validation edge cases, and real-world Traefik label sets are the most valuable contributions right now.
+v0.1 is the first proxy: bug reports from real setups, Traefik rules that route differently than expected, and real-world label sets for v0.2 are the most valuable contributions right now.
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): issues, PR rules, Conventional Commits, DCO sign-off (`git commit -s`)
 - [Code of Conduct](CODE_OF_CONDUCT.md) · [Governance](GOVERNANCE.md) · [Support](SUPPORT.md)

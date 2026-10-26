@@ -47,15 +47,15 @@ Rules that the diagram encodes:
 ```
 rdock-model          desired-state types (serde + schemars) · validation rules · JSON Schema export
 rdock-rules          Traefik-v3-compatible rule grammar: parser → AST → matcher
-rdock-config         loaders (yaml/json/env/secret files) · provider registry · merge/ownership · compile · snapshots · history · LKG
-rdock-proxy          Pingora ProxyHttp impl · listener setup · router · middleware runtime · forwarded headers · error pages · L4 proxies
+rdock-config         loaders (yaml/json, `${…}` references) · provider registry · merge/ownership · history · LKG
+rdock-proxy          compile → Runtime · own listeners/accept loops (ADR-0012) · Pingora ProxyHttp impl · router · forwarded headers · error pages · L4 proxies
 rdock-tls            rustls SNI resolver · cert store/index · TLS policies · mTLS · PROXY protocol glue · local CA
 rdock-acme           instant-acme client · challenge solvers (HTTP-01, TLS-ALPN-01, DNS-01) · `DnsProvider` trait · ARI scheduler · storage
 rdock-balancer       BackendSelection impls (wrr, least-conn, p2c, hash) · active/passive health · retry policy · circuit breaker · outlier detection
 rdock-middleware     built-ins: headers, redirect, rewrite, strip/add prefix, basic/forward auth, jwt, cors, compress, ip filter, rate limit, errors, static, maintenance, mirror
 rdock-limits         token bucket · concurrency gate with queue · body/header limits · bounded-cardinality maps
 rdock-observability  tracing setup · access log formatter + redaction · metrics registry · OTLP exporter · 15-min ring buffer for the dashboard
-rdock-admin          axum API (/api/v1) · OpenAPI (utoipa) · auth (tokens, sessions, RBAC) · SSE streams · embedded dashboard (rust-embed)
+rdock-admin          v0.1: health, readiness, metrics, status, reload on its own listener · v0.5: axum API (/api/v1), OpenAPI (utoipa), auth (tokens, sessions, RBAC), SSE, embedded dashboard (rust-embed)
 rdock-cloudflare     IP-range sync · Cloudflare `DnsProvider` impl (depends on rdock-acme) · Access JWT validator · Origin CA helpers
 rdock-cache          (P2) HTTP cache on pingora-cache: memory + disk storage, purge, SWR/SIE
 rdock-plugins        (P2/P3) native plugin trait, WASM host (wasmtime), out-of-process agent client
@@ -208,10 +208,10 @@ stateDiagram-v2
   Active --> [*]
 ```
 
-- **Immutable snapshots:** `RuntimeConfig` is an `Arc` stored in an `ArcSwap`. Each request clones the `Arc` once in `new_ctx`; the request sees one consistent config for its lifetime even if a reload happens mid-flight.
-- **Compile step** pre-computes: host trie (exact + wildcard), per-host path radix trees, regex set, middleware chains as `Vec<Arc<dyn Middleware>>`, backend pools with health state carried over (health state is keyed by `address`, so a reload never resets a backend to "unknown").
+- **Immutable snapshots:** the compiled `Runtime` is an `Arc` stored in an `ArcSwap`. Each request clones the `Arc` once in `new_ctx`; the request sees one consistent config for its lifetime even if a reload happens mid-flight.
+- **Compile step** (`rdock-proxy`, also run by `rdock validate`): compiled rules (regexes, IP networks) per listener in priority order, middleware chains as `Arc<[Arc<dyn Middleware>]>`, backend pools whose DNS names are resolved in the background and shared across generations, the certificate index, and the settings v0.1 cannot honour yet as diagnostics (ADR-0014). An index for hosts and paths can replace the ordered scan when route counts call for it.
 - **History:** `$RDOCK_DATA_DIR/state/history/<unix-ms>-<hash>.json` (last 50 by default, plus the diff summary). **LKG** `state/lkg.json` is loaded at boot when providers are slow/unavailable, so a reboot with Docker not yet up still serves yesterday's routes.
-- **Listener changes** (new port, protocol change) cannot be applied in place: Pingora binds listeners at service start, and a self-upgrade is unsafe when `rdock` is PID 1 in a container (the admin socket is not transferred either). The engine applies everything else, marks the generation `restart required`, surfaces it (CLI, API, dashboard, `rdock_restart_required` metric) and restarts only when `--restart-on-listener-change` is set (the official image sets it; the container supervisor brings the process back). Zero-downtime listener changes (supervisor + fd transfer) are the v0.9 track H-PERF-04. ([ADR-0008](decisions/0008-listener-changes-via-self-upgrade.md))
+- **Listener changes** apply in place ([ADR-0012](decisions/0012-own-listeners-pingora-http-engine.md)): rdock binds its own sockets, so on reload new sockets are bound and TLS settings built first; only when every bind succeeds is the new configuration published. Unchanged addresses keep their socket and get new settings; removed listeners stop accepting and drain. A port that is already in use rejects the reload and nothing changes. Zero-downtime *binary* upgrades remain the v0.9 track H-PERF-04.
 - **Triggers:** file watch (notify, debounced), `SIGHUP`, `rdock reload`, `POST /api/v1/config/apply`, provider events. `rdock validate` runs the same pipeline up to *Compile* and exits non-zero on error with the diagnostics list.
 
 ## 6. Request lifecycle (Pingora hooks)
@@ -242,16 +242,16 @@ sequenceDiagram
 
 | Pingora hook | ReverseDock responsibility |
 |---|---|
-| `new_ctx` | Allocate `RequestCtx { snapshot: Arc<RuntimeConfig>, request_id, timings, route: None, attempts: 0 }` |
-| `early_request_filter` | Compute `client_ip` from peer + trusted proxies; apply global header/URI limits; set `X-Request-ID` |
-| `request_filter` | Route match (host trie → path tree → rule evaluation), listener check, store route in ctx; run middleware phase `request`; may return a response and `true` |
+| `new_ctx` | Called after the request header was parsed (parser rejections never reach any hook, including `logging`). Allocate `RequestCtx { runtime: Arc<Runtime>, request_id, timings, route, middleware context }` |
+| `early_request_filter` | Listener timeouts; client IP from peer + trusted proxies; header count/size, target length, `Content-Length` limits; `Host` required for HTTP/1.1; only `Expect: 100-continue`; request ID (kept only from trusted proxies) |
+| `request_filter` | Path normalisation; route match in priority order (or HTTP→HTTPS redirect / 404); forwarding headers rewritten; middleware phase `request`; may answer and return `true` (earlier middlewares still run their response phase on the answer) |
 | `upstream_peer` | Service lookup, split/canary pick, sticky lookup, balancer selection → `HttpPeer` with scheme, SNI, timeouts, mTLS, h2c |
-| `upstream_request_filter` | Forwarded headers (`X-Forwarded-*`, `Forwarded`), host header policy (`pass_host_header`), route header mutations, strip hop-by-hop |
-| `upstream_response_filter` / `response_filter` | Middleware phase `response`; `Alt-Svc` (http3 later); `Server` header policy |
-| `response_body_filter` | Streaming transforms (compression via Pingora modules; body rewrites later) |
-| `request_body_filter` | Body size accounting (chunked bodies), upload rate limit |
-| `fail_to_connect` | Mark connect errors retryable (`e.set_retry(true)`) when the policy allows: idempotent method or `retry_non_idempotent`, attempts left, budget available; passive-health signal for that backend |
-| `error_while_proxy` | Same decision for errors **before upstream response headers** (reset, timeout) when the request body is replayable; after headers nothing is retried (ADR-0010) |
+| `upstream_request_filter` | Host policy (`pass_host_header`; a Host-less HTTP/1.0 request gets the backend's). Pingora has already stripped request hop-by-hop headers |
+| `upstream_response_filter` / `response_filter` | Strip response hop-by-hop headers (Pingora only cleans requests); HTTP/1.1 towards HTTP/1 clients; middleware phase `response` in reverse order; `X-Request-ID`; status-code retries (v0.4) |
+| `response_body_filter` | Streaming gzip of the `compress` middleware (Pingora's compression module is not used: it buffers event streams and ignores q-values); custom error page bodies |
+| `request_body_filter` | Body size accounting, also for chunked bodies (`max_body_bytes`) |
+| `fail_to_connect` | v0.4: mark connect errors retryable (`e.set_retry(true)`) when the policy allows (idempotent method or `retry_non_idempotent`, attempts left, budget available) and record the failure for passive health; v0.1 counts the error and does not retry |
+| `error_while_proxy` | Resolve Pingora's "reused connection" retry state; never retry once the client saw a response; v0.4 adds the policy of ADR-0015 |
 | `fail_to_proxy` | Terminal: custom error page, `Retry-After`, error metrics; no retry here |
 | `logging` | Access log line, metrics, OTel span end, dashboard ring buffer, audit of blocked requests |
 | `response_cache_filter` / cache hooks | Cache track (P2) |
@@ -262,8 +262,8 @@ sequenceDiagram
 
 - Grammar (Traefik v3 compatible): `Host`, `HostRegexp`, `Path`, `PathPrefix`, `PathRegexp`, `Method`, `Header`, `HeaderRegexp`, `Query`, `QueryRegexp`, `ClientIP`, combined with `&&`, `||`, `!`, parentheses. Parsed once at compile time into an AST; `Host`/`PathPrefix` conjunctions are lifted into the host trie / path tree index so the common case is O(log n), and only the residual AST is evaluated per request.
 - Regexes use the `regex` crate (guaranteed linear time); size-limited at compile; `(?i)` allowed; backreferences impossible by construction.
-- Path normalisation before matching: percent-decoding of unreserved chars, dot-segment removal, duplicate slash collapse (configurable), never decode `%2F`. The *original* path is forwarded unless a rewrite applies.
-- Priority: explicit `priority` > rule length (Traefik semantics) > provider order > name. Shadowed routes reported.
+- Path normalisation before matching (ADR-0014, Traefik semantics): unreserved escapes decoded and others upper-cased, dot segments and `//` removed, a truncated escape is 400. The **normalised path is forwarded**. Matching uses a decoded form in which reserved characters and `%25` stay encoded, so `%2F` is never a separator.
+- Priority is one number: explicit `priority`, else the rule length (Traefik semantics); ties go to provider order, then name. Shadowed routes reported.
 - Structured `match` (`hosts`, `path`, `path_prefix`, `path_regex`, `methods`, `headers`, `query`, `client_ips`) compiles to the same AST, so Kubernetes `HTTPRoute` matches and Traefik rules share one engine.
 
 ## 8. Middleware model (`rdock-middleware`)
@@ -286,10 +286,10 @@ Chains are per route, evaluated in declared order for `request`, **reverse** ord
 
 ## 9. Load balancing, health, retries (`rdock-balancer`)
 
-- Reuses Pingora's `Weighted<RoundRobin>`, `Weighted<Random>`, `Consistent` (ketama) and FNV selectors; implements `BackendSelection` ourselves for `least_conn`, `least_requests`, `p2c`, `ip_hash`, `header_hash`, `cookie_hash`.
+- v0.1: smooth weighted round-robin (the NGINX algorithm) and weighted random in `rdock-balancer`, over every resolved address of every backend. v0.4 adds `least_conn`, `least_requests`, `p2c` and the hash policies; Pingora's selectors are not used because candidates come from our own name resolution.
 - **Active health**: Pingora `HealthCheck` trait impls for HTTP(S) (status + optional body substring), TCP, gRPC health v1. Runs as a background service; state keyed by backend address survives reloads.
 - **Passive health**: `fail_to_proxy`/5xx/timeouts feed a sliding window per backend → ejection for `ejection` seconds → slow-start weight ramp on return.
-- **Retries**: decided in Pingora's `fail_to_connect` and `error_while_proxy` hooks, i.e. for connect failures and errors **before upstream response headers**; only when (method is idempotent **or** route opts in) **and** the request body is replayable (empty or buffered) **and** `attempts < max` **and** the retry budget (ratio of retries to requests over 10 s) is not exceeded. Each retry picks a *different* backend if one is available. Retrying on upstream **status codes** (502/503/504) is impossible without patching `pingora-proxy` (Zentinel carries a `should_retry_response` patch); it is a P2 item gated on an upstream PR ([ADR-0010](decisions/0010-retry-semantics.md)).
+- **Retries** (v0.4): decided in `fail_to_connect` and `error_while_proxy` for connect failures and errors **before upstream response headers**, and in `upstream_response_filter` for 502/503/504 ([ADR-0015](decisions/0015-status-code-retries.md), no fork needed); only when (method is idempotent **or** route opts in) **and** the request body is replayable **and** `attempts < max` **and** the retry budget is not exceeded. Each retry picks a *different* backend if one is available. `error_while_proxy` never retries once the client has seen a response.
 - **Circuit breaker**: per backend; closed → open after `failures` in `window` → half-open after `cooldown` with 1 probe; metrics expose state.
 - **Traffic split**: `service.split: [{service: v1, weight: 90}, {service: v2, weight: 10}]` evaluated before selection; sticky cookies pin the split choice.
 
@@ -310,7 +310,7 @@ flowchart LR
   MGR -->|ARI poll hourly| CA
 ```
 
-- **Resolver:** `rdock-tls` implements `rustls::server::ResolvesServerCert`. Lookup order: ALPN `acme-tls/1` → challenge map; exact SNI; wildcard (one label); `defaults.certificate`; else TLS alert `unrecognized_name`. The index is rebuilt (cheap) on every config apply and every issuance. Pingora 0.9's `Acceptor::from_server_config` lets us own the full `ServerConfig` (versions, ciphers, ALPN, client auth).
+- **Resolver:** `rdock-tls` implements `rustls::server::ResolvesServerCert`. Lookup order: ALPN `acme-tls/1` → challenge map; exact SNI; wildcard (one label); `defaults.certificate`; else the handshake fails (rustls sends `access_denied`). The index is rebuilt (cheap) on every config apply and every issuance. Our own accept loop ([ADR-0012](decisions/0012-own-listeners-pingora-http-engine.md)) gives every listener its own rustls `ServerConfig` (versions, ciphers, ALPN, client auth, tickets); Pingora's `TlsSettings` cannot set those per listener.
 - **Desired-cert computation:** every `Host(...)` in a route with `tls: auto` on a TLS listener, deduplicated, grouped per route's `tls.domains` if given. `HostRegexp` hosts are *not* eligible (on-demand TLS, P2, with mandatory `ask` authorization endpoint).
 - **ACME manager state machine per cert name:** `Missing → Ordering → Challenging → Issued → RenewDue(ARI window) → Ordering…`; `Failed(backoff)` with exponential backoff capped at 24 h and an alert after 3 failures. Concurrency limit per CA; duplicate suppression; staging toggle; `shortlived` (≈160 h) certificates renew roughly every 4 days (⅔ of lifetime) unless ARI says otherwise.
 - **Storage:** `$RDOCK_DATA_DIR/acme/accounts/<ca>/account.json`, `acme/certs/<name>/{cert.pem,chain.pem,key.pem,meta.json}` with atomic rename; `meta.json` holds issuer, SANs, not_before/after, profile, ARI window, last error. Shared storage (S3/K8s Secret) is a P3 `CertStorage` impl.
@@ -384,7 +384,7 @@ labels:
 | Threat | Control |
 |---|---|
 | Client-IP spoofing | Forwarded headers trusted only from `trusted_proxies`; Cloudflare ranges auto-synced and verified; untrusted headers stripped |
-| Request smuggling / desync | Pingora 0.9 strict parsing; we reject `Transfer-Encoding` + `Content-Length` conflicts, obs-fold, invalid `:authority`; differential fuzz in CI |
+| Request smuggling / desync | Pingora 0.9 rejects conflicting `Content-Length`, bad `Transfer-Encoding`, obs-fold and bad authorities and re-frames every forwarded body; rdock adds `Host` for HTTP/1.1, bare-LF and `Expect` refusal and a header deadline; the e2e suite replays the smuggling catalogue and a differential fuzz target (`tests/fuzz`) checks forwarded framing |
 | Admin takeover | Localhost bind, tokens with scopes, rate-limited login, audit log, no default credentials, CSRF on sessions |
 | Docker socket abuse | Read-only API usage, socket-proxy docs, no `exec`/`create` calls, labels cannot inject secrets |
 | Certificate abuse (on-demand TLS) | Disabled by default; requires `ask` endpoint; per-IP issuance rate limits |
@@ -396,10 +396,10 @@ labels:
 
 ## 16. Performance design
 
-- Tokio multi-thread runtime per Pingora service; `threads` default = cores; `SO_REUSEPORT` listeners; configurable socket buffers (Pingora 0.9).
+- One Tokio multi-thread runtime (a worker per core) with our own accept loops, one per listener (ADR-0012); TCP_NODELAY on accepted sockets.
 - Hot path allocations: route match without allocation (borrowed `&str` on trie), header mutations in place, `Bytes` body passthrough, middlewares declare body needs.
 - Lock-free config reads (`ArcSwap`), sharded rate-limit maps, atomics for counters, DDSketch for latency.
-- TLS: handshake offload pool, session resumption, ECDSA certs by default (smaller handshakes), `aws-lc-rs` provider.
+- TLS: session resumption with rotating ticket keys, ECDSA certs by default (smaller handshakes), the ring provider ([ADR-0013](decisions/0013-tls-crypto-provider-ring.md)).
 - Connection pooling per `HttpPeer` with limits and idle eviction; HTTP/2 upstream multiplexing where the backend supports it.
 - Benchmarks (`benchmarks/`) run `oha`/`wrk2`/`k6` scenarios against identical NGINX/Traefik/Caddy/HAProxy configs in Docker with pinned CPUs; results published per release.
 
@@ -433,5 +433,5 @@ labels:
 | All backends down | `503` error page (configurable), `Retry-After`, circuit open |
 | Admin API / dashboard crash | Separate task; data plane unaffected; supervisor restarts the admin service |
 | Disk full (logs/history) | Logs to stdout unaffected; history write failure logged, not fatal; cert writes use pre-checked free space |
-| Reload adds or changes a listener | Everything else applies; `restart required` flag + diagnostic; supervised restart only when enabled; a port already in use fails validation before anything is applied |
-| Process receives SIGTERM | Stop accepting, drain for `graceful_shutdown_timeout`, close idle, exit |
+| Reload adds or changes a listener | Applied in place: new sockets first, then the configuration; a port already in use rejects the reload and nothing changes (ADR-0012) |
+| Process receives SIGTERM | Stop accepting, finish open requests (`Connection: close`, HTTP/2 GOAWAY), close idle connections, exit as soon as nothing is open or `lifecycle.drain_timeout` passes |

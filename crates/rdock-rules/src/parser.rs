@@ -264,7 +264,8 @@ impl Parser {
     }
 
     fn matcher(&mut self, name: &str, start: usize) -> Result<Expr, ParseError> {
-        let Some(spec) = SPECS.iter().find(|s| s.name == name) else {
+        // Traefik matches matcher names case-insensitively (`host`, `HOST`, `PathPrefix`).
+        let Some(spec) = SPECS.iter().find(|s| s.name.eq_ignore_ascii_case(name)) else {
             let suggestion = closest_match(name, SPECS.iter().map(|s| s.name));
             return Err(ParseError::new(
                 start,
@@ -439,14 +440,16 @@ mod tests {
     }
 
     #[test]
-    fn suggests_known_matchers() {
+    fn matcher_names_ignore_case_like_traefik() {
+        assert_eq!(parse("host(`a`)").unwrap(), host("a"));
         assert_eq!(
-            kind("host(`a`)"),
-            ParseErrorKind::UnknownMatcher {
-                name: "host".into(),
-                suggestion: Some("Host")
-            }
+            parse("PATHPREFIX(`/a`)").unwrap().to_string(),
+            "PathPrefix(`/a`)"
         );
+    }
+
+    #[test]
+    fn suggests_known_matchers() {
         assert_eq!(
             kind("PathPrefx(`/a`)"),
             ParseErrorKind::UnknownMatcher {

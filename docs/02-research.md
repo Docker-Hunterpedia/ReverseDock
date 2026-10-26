@@ -4,22 +4,33 @@ This document replaces the original research notes (kept verbatim in [`research/
 
 ## 1. Pingora reality check
 
-**Current release: Pingora 0.9.0 (2026-09-04).** Release cadence in 2026: 0.7.0 (Jan 30), 0.8.0 (Mar 2), 0.8.1 (Jun 4), 0.9.0 (Sep 4). License Apache-2.0. MSRV 1.85 (some crates 1.88). Linux is the only tier-1 platform; x86-64 and aarch64 both supported.
+**Current release: Pingora 0.9.0 (2026-09-04)** — still the latest on 2026-10-26. Release cadence in 2026: 0.7.0 (Jan 30), 0.8.0 (Mar 2), 0.8.1 (Jun 4), 0.9.0 (Sep 4). License Apache-2.0. Declared MSRV 1.85; the real floor is 1.88 through `time` (rustls feature), and an unconstrained lockfile needs 1.95 (`parking_lot` 0.13), so our lockfile is resolved MSRV-aware. Linux is the only tier-1 platform; x86-64 and aarch64 both supported.
 
 | Area | What Pingora 0.9 gives us | What we must build |
 |---|---|---|
 | HTTP/1.1, HTTP/2, h2c, WebSocket, gRPC, SSE | End-to-end proxying, connection pooling (sharded + global LRU), keep-alive, HTTP/1.1 pipelining, bounded HTTP/2 defaults | Routing, middleware, config, everything product-level |
-| HTTP hardening | 0.9 centralised request-target parsing, rejects ambiguous authorities and CR/LF in `:path`, strips hop-by-hop headers to upstream by default, never reuses HTTP/1 connections after incomplete responses | Differential fuzzing against hyper/h2, strict-mode policy, limits |
-| TLS | Backends: **OpenSSL (default), BoringSSL (FIPS), rustls (experimental), s2n-tls**. 0.9 adds `Acceptor::from_server_config` (runtime-built rustls `ServerConfig` + in-memory keys), TLS handshake offload thread pool, per-peer CA, pre-TLS callback for PROXY protocol, mTLS client-cert verification (0.8) | Our SNI certificate resolver, cert store, policies, ACME |
+| HTTP hardening | Rejects conflicting `Content-Length`, non-chunked final `Transfer-Encoding`, HTTP/1.0 + TE, obs-fold, duplicate Host and ambiguous authorities; re-frames every forwarded body; strips hop-by-hop headers **on requests only**; 256 headers / 1 MiB header cap; no body or URI limit; **accepts** HTTP/1.1 without Host, bare LF and unknown `Expect`; parser rejections bypass every hook | Limits, Host/bare-LF/`Expect` refusal, header deadline, response hop-by-hop stripping, differential fuzzing ([v0.1 security notes](research/v0.1-security.md)) |
+| TLS | **No default backend** (`default = []`); features for OpenSSL, BoringSSL, rustls and s2n. The rustls feature is **ring-only**. Pingora listeners take `TlsSettings`, which always enable TLS 1.2+1.3, use process-wide ciphers, issue no tickets and offer one ALPN set; `Acceptor::from_server_config` exists but needs your own accept loop; per-peer CA (not part of the pool key), mTLS client-cert verification | Our own listeners with a rustls `ServerConfig` per listener (ADR-0012/0013), SNI resolver, cert store, policies, ACME |
 | Load balancing | `pingora-load-balancing`: round-robin, random, consistent hashing (ketama), FNV hashing, `Weighted<_>` selection honouring backend weights; TCP/HTTP active health checks; backends shared across selectors (0.9) | Verify weighted semantics; least-connections, P2C, passive health, retries with budget, circuit breaking, outlier detection |
-| Graceful upgrade | Zero-downtime binary upgrade via fd transfer; 0.9 adds old↔new process signalling and close-on-exec fixes | Listener-change orchestration (see architecture) |
-| Modules | 0.9 **upstream module system** (modules can act after upstream response headers, before upstream compression); built-in compression modules | Our middleware pipeline on top |
+| Graceful upgrade / shutdown | Zero-downtime binary upgrade via fd transfer (Linux, ≤ 32 fds); SIGTERM sleeps the full `grace_period_seconds` (default 300 s) and then drops open requests; listener bind errors panic only that service; listeners cannot change while running | Own accept loops with a real drain and listener changes in place (ADR-0012) |
+| Modules | 0.9 **upstream module system**; built-in compression module (gzip/brotli/zstd always compiled; first Accept-Encoding token wins, q-values ignored, buffers event streams, Brotli stream bug cloudflare/pingora#1013) | Our own streaming gzip middleware |
 | Caching | `pingora-cache` is **alpha, "APIs highly volatile"** (0.9: deferred admission, dictionary compression, purge-but-keep-body, LRU ops). `pingora-memory-cache` with stampede lock is stable | A production HTTP cache is its own track (P2) |
 | HTTP/3 / QUIC | **Not available (changed).** PR #514 (quiche h3 server) was **closed unmerged on 2026-09-12**; the client PR #524 was closed too. Maintainers pointed at `tokio-quiche` (open-sourced 2025-11-06) as the future direction | A separate HTTP/3 track on `tokio-quiche`, behind a feature flag, requiring a BoringSSL build |
 | L4 | 0.7 `ConnectionFilter` (early TCP filtering) and a "virtual L4 stream" abstraction; `CONNECT` disabled by default since 0.8 | TCP/UDP proxy listeners, SNI passthrough, PROXY protocol in/out |
 | Observability | Prometheus moved to optional `pingora-prometheus` crate (0.9); Tokio poll-time histograms; TCP/TLS timing fields on sessions | Access logs, OTel, per-route metrics with bounded cardinality |
 
 **Conclusion unchanged:** Pingora is a framework, not a product. ~80 % of the matrix is "build needed".
+
+### 1.1 Verified while building v0.1 (2026-10-26)
+
+From the Pingora 0.9.0 sources, compile and runtime probes ([API notes](research/v0.1-pingora-0.9-api.md), [crates](research/v0.1-crates.md), [security](research/v0.1-security.md), [Traefik semantics](research/v0.1-traefik-semantics.md)):
+
+- **tokio ≥ 1.54 breaks Pingora 0.9.0**: every accepted connection panics (zero-capacity `BufStream`, tokio#8494). The workspace caps tokio at `<1.54` (1.53.3 has no open advisory) and Dependabot ignores newer versions.
+- **CMake and a C compiler are required** (zlib-ng via `flate2`, ring, zstd).
+- `HttpPeer::new` resolves names synchronously and panics on failure; the upstream pool key ignores the CA, so different trust settings need different `group_key`s; upstream defaults are HTTP/1.1, one h2 stream per connection and no timeouts.
+- Returning a retryable error from `upstream_response_filter` retries on status codes without a fork (ADR-0015).
+- With h2c on, Pingora waits for 24 bytes of preface without a timeout; a short HTTP/1.0 request hangs.
+- Advisories RUSTSEC-2025-0037 and RUSTSEC-2026-0033/0034/0388/0389/0390 are fixed in 0.9.0; the `zstd` advisories (RUSTSEC-2026-0391/0398/0403) come through `pingora-cache` and are not reachable (fix: cloudflare/pingora#1073).
 
 ## 2. Competitor landscape (OSS editions only)
 
@@ -68,7 +79,7 @@ This document replaces the original research notes (kept verbatim in [`research/
 | Need | Crate | Why |
 |---|---|---|
 | Proxy core | `pingora` 0.9 (`pingora-core`, `pingora-proxy`, `pingora-http`, `pingora-load-balancing`, `pingora-timeout`, `pingora-prometheus`) | The foundation |
-| TLS | `rustls` 0.23 + `aws-lc-rs` (FIPS-capable) via Pingora's `rustls` feature; `rcgen` for local CA / self-signed | No OpenSSL/Perl; `aws-lc-rs` still needs a C compiler + CMake (Go for FIPS), `ring` provider for pure-Rust builds; dynamic `ServerConfig` |
+| TLS | `rustls` 0.23 with the **ring** provider (what Pingora's `rustls` feature uses), `rustls-pki-types` PEM parsing, `pkcs8` for encrypted keys, `x509-parser`; `rcgen` for tests and the local CA | No OpenSSL/Perl; ring needs a C compiler; dynamic `ServerConfig` per listener ([ADR-0013](decisions/0013-tls-crypto-provider-ring.md)) |
 | ACME | `instant-acme` 0.8 | ARI, profiles, EAB |
 | Docker | `bollard` | Async Docker Engine API, events stream |
 | Kubernetes | `kube` 4.x, `gateway-api` 0.22, `k8s-openapi` | Controller-runtime style watches |
@@ -77,8 +88,8 @@ This document replaces the original research notes (kept verbatim in [`research/
 | Rule grammar | hand-written `nom`/`winnow` parser for the Traefik v3 rule language | Deterministic, no regex backtracking for the grammar itself |
 | Regex | `regex` (linear-time; no catastrophic backtracking) | Safe `PathRegexp`/`HostRegexp` |
 | Runtime state swap | `arc-swap` | Lock-free config snapshots |
-| Rate limiting | own token-bucket on `dashmap` with bounded cardinality (+ `governor` reference) | Memory-bounded |
-| Compression | Pingora modules (`gzip`, `brotli`, `zstd` features) | Already integrated |
+| Rate limiting | own sharded token bucket with a hard key cap (`rdock-limits`) | Memory-bounded without extra crates |
+| Compression | `flate2` streaming gzip in the `compress` middleware (Pingora's module buffers event streams and ignores q-values) | br/zstd in v0.4 |
 | Logging/metrics/tracing | `tracing`, `tracing-subscriber` (JSON), `prometheus`/`pingora-prometheus`, `opentelemetry-otlp` | Standard stack |
 | WASM plugins (later) | `wasmtime` component model | Sandbox + fuel |
 | Dashboard | Vite, React 19, TypeScript, Tailwind v4, shadcn/ui, TanStack Query/Table, CodeMirror 6, uPlot; embedded via `rust-embed` | One binary |

@@ -1,0 +1,4 @@
+GET /ok?x=1 HTTP/1.1
+Host: x
+User-Agent: fuzz
+

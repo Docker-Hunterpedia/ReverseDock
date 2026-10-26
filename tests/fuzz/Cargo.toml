@@ -1,0 +1,46 @@
+# Fuzz targets (cargo-fuzz). A separate workspace: libfuzzer-sys carries the NCSA licence, which
+# the main workspace's cargo-deny policy does not allow, and fuzzing needs a nightly toolchain.
+#   cargo +nightly fuzz run h1_framing      (from this directory)
+#   cargo test                              (replays the seed corpus on stable)
+[package]
+name = "rdock-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+bytes = "1.12.1"
+httparse = "1.10.1"
+libfuzzer-sys = "0.4.13"
+pingora-core = { version = "0.9.0", default-features = false }
+pingora-http = "0.9.0"
+rdock-config = { path = "../../crates/rdock-config" }
+rdock-rules = { path = "../../crates/rdock-rules" }
+tokio = { version = ">=1.53.3, <1.54", features = ["io-util", "rt", "time"] }
+
+[[bin]]
+name = "h1_framing"
+path = "fuzz_targets/h1_framing.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rules_parser"
+path = "fuzz_targets/rules_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "config_loader"
+path = "fuzz_targets/config_loader.rs"
+test = false
+doc = false
+bench = false
+
+[workspace]

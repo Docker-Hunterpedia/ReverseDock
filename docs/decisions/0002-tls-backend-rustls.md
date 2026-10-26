@@ -1,6 +1,6 @@
 # ADR-0002: rustls is the default TLS backend
 
-- Status: accepted · Date: 2026-10-26
+- Status: superseded by [ADR-0013](0013-tls-crypto-provider-ring.md) · Date: 2026-10-26
 
 ## Context
 Pingora supports OpenSSL (default), BoringSSL (FIPS, required by quiche/HTTP/3), rustls (marked experimental) and s2n-tls. We need per-SNI dynamic certificates, mTLS, policy control and simple static builds. Pingora 0.9 added `Acceptor::from_server_config` (runtime-built rustls `ServerConfig`, in-memory keys), which is exactly the hook a cert manager needs. Pingap and Zentinel ship rustls builds.

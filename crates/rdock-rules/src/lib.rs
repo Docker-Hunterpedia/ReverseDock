@@ -3,6 +3,7 @@
 mod ast;
 mod lexer;
 mod parser;
+pub mod path;
 mod suggest;
 mod validate;
 

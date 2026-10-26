@@ -46,11 +46,19 @@
       "description": "Defaults applied to routes that do not set a value.",
       "$ref": "#/$defs/Defaults",
       "default": {
+        "certificate": null,
         "listeners": [
           "websecure"
         ],
         "redirect_http_to_https": true,
         "tls": "auto"
+      }
+    },
+    "lifecycle": {
+      "description": "Start-up and shutdown behaviour.",
+      "$ref": "#/$defs/Lifecycle",
+      "default": {
+        "drain_timeout": "8s"
       }
     },
     "listeners": {
@@ -112,8 +120,9 @@
       "default": {
         "client_ip_header": "auto",
         "limits": {
-          "max_body_bytes": "100MiB",
-          "max_header_bytes": "32KiB",
+          "max_body_bytes": null,
+          "max_header_bytes": "64KiB",
+          "max_headers": 100,
           "max_uri_bytes": "8KiB"
         },
         "trusted_proxies": []
@@ -155,6 +164,9 @@
     }
   },
   "additionalProperties": false,
+  "patternProperties": {
+    "^x-": {}
+  },
   "$defs": {
     "AccessLog": {
       "description": "Access log settings.",
@@ -179,7 +191,10 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Acme": {
       "description": "ACME (automatic certificates) settings.",
@@ -255,7 +270,10 @@
           "default": null
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "AcmeProfile": {
       "description": "Let's Encrypt certificate profiles.",
@@ -327,7 +345,10 @@
           "minimum": 0
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Admin": {
       "description": "Admin API and dashboard.",
@@ -349,7 +370,10 @@
           "default": "127.0.0.1:2080"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Backend": {
       "description": "One backend server.",
@@ -368,6 +392,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "address"
       ]
@@ -413,19 +440,30 @@
       ]
     },
     "Certificate": {
-      "description": "A certificate and private key provided as files.",
+      "description": "A certificate and private key provided as files. Changes to the files are picked up\nautomatically.",
       "type": "object",
       "properties": {
         "cert_file": {
-          "description": "PEM certificate chain.",
+          "description": "PEM certificate chain, leaf first.",
           "type": "string"
         },
         "key_file": {
-          "description": "PEM private key.",
+          "description": "PEM private key (PKCS#8, PKCS#1 or SEC1; PKCS#8 may be encrypted).",
           "type": "string"
+        },
+        "key_password": {
+          "description": "Password of an encrypted key. Reference a secret instead of writing it here:\n`\"${file:/run/secrets/key_password}\"`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "cert_file",
         "key_file"
@@ -500,6 +538,14 @@
       "description": "Defaults applied to routes.",
       "type": "object",
       "properties": {
+        "certificate": {
+          "description": "Certificate (a key of `certificates`) served when no other certificate matches the\nrequested name, or when the client sends no name (SNI).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "listeners": {
           "description": "Listeners used by routes that do not name any.",
           "type": "array",
@@ -521,7 +567,10 @@
           "default": "auto"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "DnsProvider": {
       "description": "A DNS provider for DNS-01 challenges.",
@@ -540,6 +589,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "api_token"
@@ -589,7 +641,10 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Duration": {
       "description": "Duration made of numbers with units: ms, s, m, h, d.",
@@ -622,6 +677,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "key_id",
         "hmac_key"
@@ -645,6 +703,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "paths"
       ]
@@ -678,7 +739,10 @@
           "default": {}
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Health": {
       "description": "Health checks.",
@@ -709,7 +773,37 @@
           "default": null
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Hsts": {
+      "description": "`Strict-Transport-Security` settings. Browsers then refuse plain HTTP for the host, so\nenable it only when HTTPS works for every name involved.",
+      "type": "object",
+      "properties": {
+        "include_subdomains": {
+          "description": "Apply the policy to all subdomains too.",
+          "type": "boolean",
+          "default": false
+        },
+        "max_age": {
+          "description": "How long browsers remember the policy. `0s` removes it.",
+          "$ref": "#/$defs/Duration"
+        },
+        "preload": {
+          "description": "Ask for inclusion in browser preload lists. This is hard to undo.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "max_age"
+      ]
     },
     "HttpUrl": {
       "type": "string",
@@ -776,7 +870,10 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "LbPolicy": {
       "description": "Backend selection policies.",
@@ -823,19 +920,48 @@
         }
       ]
     },
+    "Lifecycle": {
+      "description": "Start-up and shutdown behaviour.",
+      "type": "object",
+      "properties": {
+        "drain_timeout": {
+          "description": "On shutdown, how long open requests may finish before connections are closed. Keep it\nbelow the supervisor's stop timeout (Docker waits 10 s before it kills the process).",
+          "$ref": "#/$defs/Duration",
+          "default": "8s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "Limits": {
-      "description": "Request size limits.",
+      "description": "Request size limits. Requests over a limit are answered with 431, 414 or 413.",
       "type": "object",
       "properties": {
         "max_body_bytes": {
-          "description": "Request body size, also enforced for chunked bodies.",
-          "$ref": "#/$defs/ByteSize",
-          "default": "100MiB"
+          "description": "Request body size, also enforced for chunked bodies. Unlimited when omitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "max_header_bytes": {
-          "description": "Total size of request headers.",
+          "description": "Total size of the request line and headers.",
           "$ref": "#/$defs/ByteSize",
-          "default": "32KiB"
+          "default": "64KiB"
+        },
+        "max_headers": {
+          "description": "Number of request headers.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
         },
         "max_uri_bytes": {
           "description": "Request target (path and query) length.",
@@ -843,7 +969,10 @@
           "default": "8KiB"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "ListenAddress": {
       "description": "Listen address: `:port` for all interfaces, or `ip:port`.",
@@ -887,6 +1016,16 @@
           ],
           "default": null
         },
+        "timeouts": {
+          "description": "Client-side timeouts.",
+          "$ref": "#/$defs/ListenerTimeouts",
+          "default": {
+            "idle": "1m",
+            "read": "1m",
+            "request_header": "10s",
+            "write": "1m"
+          }
+        },
         "tls": {
           "description": "TLS termination settings.",
           "anyOf": [
@@ -901,6 +1040,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "address"
       ]
@@ -930,6 +1072,36 @@
         }
       ]
     },
+    "ListenerTimeouts": {
+      "description": "Timeouts for the client side of a listener.",
+      "type": "object",
+      "properties": {
+        "idle": {
+          "description": "How long an idle keep-alive connection is kept open.",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        },
+        "read": {
+          "description": "Longest wait for data from the client while a request or upgraded connection is open.",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        },
+        "request_header": {
+          "description": "Time allowed to receive the complete request headers, counted from their first byte\n(protects against slow-header attacks).",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "write": {
+          "description": "Longest wait for the client to accept data.",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "ListenerTls": {
       "description": "TLS termination settings of a listener.",
       "type": "object",
@@ -940,7 +1112,10 @@
           "default": "intermediate"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "LoadBalancer": {
       "description": "Backend selection.",
@@ -960,7 +1135,10 @@
           "default": "round_robin"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "LogFormat": {
       "description": "Access log formats.",
@@ -1005,7 +1183,10 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Middleware": {
       "description": "A reusable request/response policy, selected by `type`.",
@@ -1014,6 +1195,18 @@
           "description": "Set, add or remove request and response headers.",
           "type": "object",
           "properties": {
+            "hsts": {
+              "description": "HTTP Strict Transport Security, sent on HTTPS responses only.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Hsts"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "request": {
               "description": "Changes to the request sent to the backend.",
               "$ref": "#/$defs/HeaderRules",
@@ -1038,6 +1231,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type"
           ]
@@ -1047,9 +1243,9 @@
           "type": "object",
           "properties": {
             "permanent": {
-              "description": "`301`/`308` when true, `302`/`307` when false.",
+              "description": "`301`/`308` when true, `302`/`307` when false (the second code of each pair is used for\nmethods other than GET, so the method and body are kept), as in Traefik.",
               "type": "boolean",
-              "default": true
+              "default": false
             },
             "port": {
               "description": "Port for scheme redirects when it is not the scheme's default.",
@@ -1096,6 +1292,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type"
           ]
@@ -1118,6 +1317,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "regex",
@@ -1141,6 +1343,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "prefixes"
@@ -1160,6 +1365,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "prefix"
@@ -1179,6 +1387,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "path"
@@ -1223,6 +1434,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type"
           ]
@@ -1267,6 +1481,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "address"
@@ -1289,6 +1506,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "cidrs"
@@ -1311,6 +1531,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "cidrs"
@@ -1352,6 +1575,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "average"
@@ -1419,6 +1645,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "allowed_origins"
@@ -1457,6 +1686,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type"
           ]
@@ -1502,6 +1734,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type",
             "status"
@@ -1558,6 +1793,9 @@
             }
           },
           "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
           "required": [
             "type"
           ]
@@ -1601,7 +1839,10 @@
           "default": null
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "PassiveHealth": {
       "description": "Ejection of backends that keep failing.",
@@ -1625,7 +1866,10 @@
           "default": "30s"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Providers": {
       "description": "Configuration sources besides this file.",
@@ -1680,7 +1924,10 @@
           "default": null
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "ProxyProtocolIn": {
       "description": "Inbound PROXY protocol settings.",
@@ -1695,6 +1942,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "trusted"
       ]
@@ -1771,7 +2021,10 @@
           "default": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "RetryOn": {
       "description": "Retryable failures (before upstream response headers).",
@@ -1835,6 +2088,15 @@
           "description": "Service that handles matching requests (`name` or `name@provider`).",
           "type": "string"
         },
+        "timeouts": {
+          "description": "Upstream timeouts for this route, overriding the service's.",
+          "$ref": "#/$defs/RouteTimeouts",
+          "default": {
+            "connect": null,
+            "read": null,
+            "write": null
+          }
+        },
         "tls": {
           "description": "TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.",
           "anyOf": [
@@ -1849,10 +2111,59 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "match",
         "service"
       ]
+    },
+    "RouteTimeouts": {
+      "description": "Upstream timeouts of a route. Unset values come from the service.",
+      "type": "object",
+      "properties": {
+        "connect": {
+          "description": "Establishing a connection.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "read": {
+          "description": "Waiting for response data.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "write": {
+          "description": "Sending request data.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "RouteTls": {
       "description": "TLS of a route.",
@@ -1901,7 +2212,10 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "SameSite": {
       "description": "`SameSite` cookie attribute.",
@@ -1956,8 +2270,9 @@
           "description": "Request size limits.",
           "$ref": "#/$defs/Limits",
           "default": {
-            "max_body_bytes": "100MiB",
-            "max_header_bytes": "32KiB",
+            "max_body_bytes": null,
+            "max_header_bytes": "64KiB",
+            "max_headers": 100,
             "max_uri_bytes": "8KiB"
           }
         },
@@ -1970,7 +2285,10 @@
           }
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Service": {
       "description": "An HTTP service: either a pool of backends or a weighted split over other services.",
@@ -2069,7 +2387,10 @@
           "default": null
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "SplitTarget": {
       "description": "One target of a weighted split.",
@@ -2087,6 +2408,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "service",
         "weight"
@@ -2102,6 +2426,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "cookie"
       ]
@@ -2143,6 +2470,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "name"
       ]
@@ -2216,7 +2546,10 @@
           "default": {}
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "SwarmEndpointMode": {
       "description": "How Swarm services are reached.",
@@ -2266,7 +2599,10 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "TcpRoute": {
       "description": "A TCP route.",
@@ -2311,6 +2647,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "match",
         "service"
@@ -2326,7 +2665,10 @@
           "default": false
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "TcpService": {
       "description": "A TCP service.",
@@ -2353,6 +2695,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "backends"
       ]
@@ -2382,7 +2727,10 @@
           "default": "1m"
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "TlsMode": {
       "description": "`auto` issues certificates automatically; `off` serves the route without TLS.",
@@ -2430,6 +2778,9 @@
         }
       },
       "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
       "required": [
         "otlp"
       ]
@@ -2484,7 +2835,10 @@
           "default": true
         }
       },
-      "additionalProperties": false
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     }
   }
 }

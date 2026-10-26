@@ -2,6 +2,8 @@
 
 Checklists grouped the way the idea was framed: **Basics → Medium traffic → High traffic → Features → Works with**. Each item has an ID (used by the [roadmap](07-roadmap.md)) and a phase that matches the [feature matrix](03-feature-matrix.md): **P0** = v0.1–v0.3, **P1** = v0.4–v0.6, **P2** = v0.7–v0.8, **P3** = v0.9+.
 
+A ticked box means the requirement is delivered in full on `main` (or in the release being prepared); partly delivered items stay open.
+
 Corrections versus the original notes are marked **(fixed)**. Where this file and the generated matrix disagree on a phase, **this file wins**; the deltas are listed in [03 § Phase overrides](03-feature-matrix.md#phase-overrides).
 
 ---
@@ -9,18 +11,18 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 ## B — Basics (P0): a proxy that replaces NGINX/Traefik for a self-hosted stack
 
 ### B-NET · Networking and proxying
-- [ ] B-NET-01 HTTP/1.1 and HTTP/2 listeners (TLS and cleartext), h2c upstreams
-- [ ] B-NET-02 Reverse proxy to HTTP and HTTPS upstreams, with certificate + hostname verification on by default
-- [ ] B-NET-03 Unix-domain-socket upstreams; IPv4/IPv6 dual stack
-- [ ] B-NET-04 Routing by host (exact, wildcard), path (exact, prefix, regex), method, headers, query, client IP; Traefik v3 rule grammar
-- [ ] B-NET-05 Request/response header set/add/remove; hop-by-hop headers stripped
-- [ ] B-NET-06 Rewrites and redirects (301/302/307/308, scheme, regex), query preservation
-- [ ] B-NET-07 WebSocket, SSE/chunked streaming, gRPC (incl. streaming) without buffering
-- [ ] B-NET-08 Forwarded headers: `Forwarded`, `X-Forwarded-For/Proto/Host/Port`, `X-Real-IP`; **trusted-proxy list required before any are honoured**
-- [ ] B-NET-09 Timeouts: connect, read, write, idle, request-header; per route and per service
-- [ ] B-NET-10 Graceful reload (SIGHUP/CLI/API/file-watch) without dropping requests; graceful shutdown with drain timeout
-- [ ] B-NET-11 Custom error pages (403/404/429/502/503/504) and maintenance mode
-- [ ] B-NET-12 HTTP→HTTPS redirect on by default for TLS hosts
+- [x] B-NET-01 HTTP/1.1 and HTTP/2 listeners (TLS and cleartext), h2c upstreams
+- [x] B-NET-02 Reverse proxy to HTTP and HTTPS upstreams, with certificate + hostname verification on by default
+- [x] B-NET-03 Unix-domain-socket upstreams; IPv4/IPv6 dual stack
+- [x] B-NET-04 Routing by host (exact, wildcard), path (exact, prefix, regex), method, headers, query, client IP; Traefik v3 rule grammar
+- [x] B-NET-05 Request/response header set/add/remove; hop-by-hop headers stripped
+- [x] B-NET-06 Rewrites and redirects (301/302/307/308, scheme, regex), query preservation
+- [x] B-NET-07 WebSocket, SSE/chunked streaming, gRPC (incl. streaming) without buffering
+- [x] B-NET-08 Forwarded headers: `Forwarded`, `X-Forwarded-For/Proto/Host/Port`, `X-Real-IP`; **trusted-proxy list required before any are honoured**
+- [x] B-NET-09 Timeouts: connect, read, write, idle, request-header; per route and per service
+- [x] B-NET-10 Graceful reload (SIGHUP/CLI/API/file-watch) without dropping requests; graceful shutdown with drain timeout
+- [x] B-NET-11 Custom error pages (403/404/429/502/503/504) and maintenance mode
+- [x] B-NET-12 HTTP→HTTPS redirect on by default for TLS hosts
 - [ ] B-NET-13 Streaming uploads/downloads with bounded memory (backpressure tests)
 
 ### B-TLS · HTTPS and certificates
@@ -32,43 +34,43 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [ ] B-TLS-06 **(fixed)** Certificate profiles (`classic`, `tlsserver`, `shortlived`), IP-address certificates via `shortlived`
 - [ ] B-TLS-07 **(fixed)** No OCSP Must-Staple; OCSP stapling only when the CA publishes an OCSP URL
 - [ ] B-TLS-08 CA rate-limit awareness, exponential backoff, staging mode, persistent account/order state
-- [ ] B-TLS-09 Manual certificates (PEM, encrypted keys, atomic replacement, file-watch reload)
-- [ ] B-TLS-10 Multiple certificates per listener (SNI); default certificate; wildcard match rules
-- [ ] B-TLS-11 HSTS opt-in (never forced preload)
+- [x] B-TLS-09 Manual certificates (PEM, encrypted keys, atomic replacement, file-watch reload)
+- [x] B-TLS-10 Multiple certificates per listener (SNI); default certificate; wildcard match rules
+- [x] B-TLS-11 HSTS opt-in (never forced preload)
 - [ ] B-TLS-12 Expiry / renewal-failure alerts (log, metric, dashboard, webhook)
 - [ ] B-TLS-13 Local development CA (`rdock trust`) and self-signed fallback for `.localhost`/private hosts
 
 ### B-CFG · Configuration and developer experience
-- [ ] B-CFG-01 One static binary (musl), Linux x86-64 + ARM64; macOS for development
-- [ ] B-CFG-02 YAML config with JSON equivalence; published JSON Schema (IDE autocomplete, `$schema` line)
-- [ ] B-CFG-03 Environment interpolation `${VAR}` and file secrets `${file:/run/secrets/x}`; never interpolate in labels
+- [x] B-CFG-01 One static binary (musl), Linux x86-64 + ARM64; macOS for development
+- [x] B-CFG-02 YAML config with JSON equivalence; published JSON Schema (IDE autocomplete, `$schema` line)
+- [x] B-CFG-03 Environment interpolation `${VAR}` and file secrets `${file:/run/secrets/x}`; never interpolate in labels
 - [ ] B-CFG-04 CLI: `run`, `validate`, `reload`, `status`, `config show|diff`, `cert list|renew`, `migrate traefik|nginx`, `version`, `trust`
-- [ ] B-CFG-05 Actionable errors (path, line, hint); `--strict` to reject unknown keys
+- [x] B-CFG-05 Actionable errors (path, line, hint); `--strict` to reject unknown keys
 - [ ] B-CFG-06 Atomic apply with validation; automatic rollback to last-known-good on bind/cert/backend failure
-- [ ] B-CFG-07 Config auto-reload on file change (debounced), with diff in logs
-- [ ] B-CFG-08 Logs to stdout/stderr, JSON by default in containers
-- [ ] B-CFG-09 `/healthz` (liveness), `/readyz` (readiness: config applied, listeners bound)
-- [ ] B-CFG-10 Official multi-arch Docker image (non-root, read-only FS), Compose examples, systemd unit (`AmbientCapabilities=CAP_NET_BIND_SERVICE`; socket activation is not supported — Pingora adopts fds only through its own upgrade protocol)
+- [x] B-CFG-07 Config auto-reload on file change (debounced), with diff in logs
+- [x] B-CFG-08 Logs to stdout/stderr, JSON by default in containers
+- [x] B-CFG-09 `/healthz` (liveness), `/readyz` (readiness: config applied, listeners bound)
+- [x] B-CFG-10 Official multi-arch Docker image (non-root, read-only FS), Compose examples, systemd unit (`AmbientCapabilities=CAP_NET_BIND_SERVICE`; socket activation is not supported — Pingora adopts fds only through its own upgrade protocol)
 - [ ] B-CFG-11 Zero-config mode: with no file, `rdock run` uses Docker provider + defaults
 
 ### B-SEC · Baseline security
-- [ ] B-SEC-01 Basic auth (argon2id/bcrypt hashes; never plaintext)
-- [ ] B-SEC-02 IP allow/deny lists (CIDR, IPv6), per route
-- [ ] B-SEC-03 Per-IP rate limiting (token bucket, bounded memory)
-- [ ] B-SEC-04 Header, URI and body size limits enforced early, also for chunked bodies
-- [ ] B-SEC-05 Security response headers middleware (CSP, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
-- [ ] B-SEC-06 Request-ID generation/propagation
-- [ ] B-SEC-07 Admin API bound to localhost by default, token-authenticated, never auto-exposed on proxy listeners
-- [ ] B-SEC-08 Request-smuggling hardening (strict CL/TE, HTTP/2 pseudo-header validation) + differential fuzz tests
-- [ ] B-SEC-09 Runs as non-root with `CAP_NET_BIND_SERVICE` (image and systemd unit set it); a privileged user is never required
+- [x] B-SEC-01 Basic auth (argon2id/bcrypt hashes; never plaintext)
+- [x] B-SEC-02 IP allow/deny lists (CIDR, IPv6), per route
+- [x] B-SEC-03 Per-IP rate limiting (token bucket, bounded memory)
+- [x] B-SEC-04 Header, URI and body size limits enforced early, also for chunked bodies
+- [x] B-SEC-05 Security response headers middleware (CSP, HSTS, X-Content-Type-Options, Referrer-Policy, Permissions-Policy)
+- [x] B-SEC-06 Request-ID generation/propagation
+- [x] B-SEC-07 Admin API bound to localhost by default, token-authenticated, never auto-exposed on proxy listeners
+- [x] B-SEC-08 Request-smuggling hardening (strict CL/TE, HTTP/2 pseudo-header validation) + differential fuzz tests
+- [x] B-SEC-09 Runs as non-root with `CAP_NET_BIND_SERVICE` (image and systemd unit set it); a privileged user is never required
 - [ ] B-SEC-10 Containers opt-in by default (`rdock.enable=true` or `expose_by_default`)
-- [ ] B-SEC-11 CORS middleware (origins, methods, headers, credentials, preflight short-circuit)
-- [ ] B-SEC-12 Forward-auth middleware (Authelia/Authentik style: subrequest with timeout, copied headers, fail-closed)
+- [x] B-SEC-11 CORS middleware (origins, methods, headers, credentials, preflight short-circuit)
+- [x] B-SEC-12 Forward-auth middleware (Authelia/Authentik style: subrequest with timeout, copied headers, fail-closed)
 
 ### B-OBS · Baseline observability
-- [ ] B-OBS-01 JSON access logs (request id, client ip, route, service, upstream, status, bytes, timings, tls, cf-ray)
-- [ ] B-OBS-02 Prometheus `/metrics` (requests, status classes, latency histograms, upstream health, TLS, certs)
-- [ ] B-OBS-03 Redaction of secrets/headers in logs by default
+- [x] B-OBS-01 JSON access logs (request id, client ip, route, service, upstream, status, bytes, timings, tls, cf-ray)
+- [x] B-OBS-02 Prometheus `/metrics` (requests, status classes, latency histograms, upstream health, TLS, certs)
+- [x] B-OBS-03 Redaction of secrets/headers in logs by default
 
 ### B-DKR · Docker (P0, see W-DKR for the full list)
 - [ ] B-DKR-01 Docker provider with `rdock.*` labels and Traefik-label subset (details in W-DKR)
@@ -218,10 +220,10 @@ Tracked as W-SWM-01…03 below.
 - [ ] F-MGMT-05 Docs site with interactive config playground (schema-driven)
 
 ### F-OSS · Open-source quality
-- [ ] F-OSS-01 Apache-2.0, DCO, public roadmap, issue/PR templates, CODE_OF_CONDUCT, SECURITY.md with private reporting
-- [ ] F-OSS-02 `cargo-deny`/`cargo-audit`, SAST (Semgrep), dependency review in CI
-- [ ] F-OSS-03 Signed releases (cosign), SBOM (SPDX), checksums, reproducible builds where possible
-- [ ] F-OSS-04 Non-root, distroless/static images; read-only root FS; no mandatory account, telemetry or activation
+- [x] F-OSS-01 Apache-2.0, DCO, public roadmap, issue/PR templates, CODE_OF_CONDUCT, SECURITY.md with private reporting
+- [x] F-OSS-02 `cargo-deny`/`cargo-audit`, SAST (Semgrep), dependency review in CI
+- [x] F-OSS-03 Signed releases (cosign), SBOM (SPDX), checksums, reproducible builds where possible
+- [x] F-OSS-04 Non-root, distroless/static images; read-only root FS; no mandatory account, telemetry or activation
 - [ ] F-OSS-05 Support policy: last two minor versions receive security fixes
 
 ---
@@ -281,4 +283,4 @@ Tracked as W-SWM-01…03 below.
 ### W-OBS · Monitoring, config and secrets
 - [ ] W-OBS-01 Prometheus, Grafana, OTLP (Tempo/Jaeger), Loki/OpenSearch via stdout or OTLP, syslog (P0–P1)
 - [ ] W-OBS-02 Secrets: env, files, Docker/Swarm/K8s secrets (P0); Vault/External Secrets (P2)
-- [ ] W-OBS-03 GitOps: file provider + `rdock validate` in CI (P0); Terraform (P2)
+- [x] W-OBS-03 GitOps: file provider + `rdock validate` in CI (P0); Terraform (P2)

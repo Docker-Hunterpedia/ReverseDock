@@ -3,6 +3,7 @@
 pub mod acme;
 pub mod config;
 pub mod diagnostics;
+pub mod interpolation;
 pub mod middleware;
 pub mod providers;
 pub mod route;

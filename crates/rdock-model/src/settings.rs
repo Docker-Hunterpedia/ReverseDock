@@ -1,9 +1,9 @@
-//! Security, admin and observability settings.
+//! Security, admin, observability and lifecycle settings.
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::values::{ByteSize, HttpUrl, ListenAddress, TrustedProxy};
+use crate::values::{ByteSize, Duration, HttpUrl, ListenAddress, TrustedProxy};
 
 /// Client IP trust and request limits.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -33,14 +33,16 @@ pub enum ClientIpHeader {
     CfConnectingIp,
 }
 
-/// Request size limits.
+/// Request size limits. Requests over a limit are answered with 431, 414 or 413.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Limits {
-    /// Total size of request headers.
+    /// Total size of the request line and headers.
     pub max_header_bytes: ByteSize,
-    /// Request body size, also enforced for chunked bodies.
-    pub max_body_bytes: ByteSize,
+    /// Number of request headers.
+    pub max_headers: u32,
+    /// Request body size, also enforced for chunked bodies. Unlimited when omitted.
+    pub max_body_bytes: Option<ByteSize>,
     /// Request target (path and query) length.
     pub max_uri_bytes: ByteSize,
 }
@@ -48,8 +50,9 @@ pub struct Limits {
 impl Default for Limits {
     fn default() -> Self {
         Self {
-            max_header_bytes: ByteSize::kib(32),
-            max_body_bytes: ByteSize::mib(100),
+            max_header_bytes: ByteSize::kib(64),
+            max_headers: 100,
+            max_body_bytes: None,
             max_uri_bytes: ByteSize::kib(8),
         }
     }
@@ -154,4 +157,21 @@ pub struct Tracing {
 
 const fn one() -> f64 {
     1.0
+}
+
+/// Start-up and shutdown behaviour.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Lifecycle {
+    /// On shutdown, how long open requests may finish before connections are closed. Keep it
+    /// below the supervisor's stop timeout (Docker waits 10 s before it kills the process).
+    pub drain_timeout: Duration,
+}
+
+impl Default for Lifecycle {
+    fn default() -> Self {
+        Self {
+            drain_timeout: Duration::from_secs(8),
+        }
+    }
 }
