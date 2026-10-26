@@ -35,7 +35,9 @@ From M0 on, the workspace needs:
 - **just** for the dev recipes (`just ci`, `just e2e`, `just dashboard`).
 - **Node 24 + pnpm** for the dashboard in `apps/dashboard`.
 - **Docker** for end-to-end tests (Pebble ACME, toxiproxy, Docker provider).
-- Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph.
+- Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.
+
+Using an AI coding assistant? It should follow [CLAUDE.md](CLAUDE.md) (also available as `AGENTS.md`). You remain responsible for every line you submit, and your DCO sign-off covers AI-assisted changes too.
 
 Conventions for crates, errors, logging, features and tests are in [docs/06-repo-layout.md](docs/06-repo-layout.md).
 
