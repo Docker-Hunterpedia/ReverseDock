@@ -1,0 +1,50 @@
+name: Design proposal (RFC)
+description: Propose a change to the architecture, config model, label grammar, public API or security model.
+title: "rfc: "
+labels: ["type/proposal", "status/needs-discussion"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Proposals stay open for comment for at least 7 days. An accepted proposal is merged as an ADR in [`docs/decisions/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/docs/decisions). See [GOVERNANCE.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/GOVERNANCE.md).
+  - type: textarea
+    id: summary
+    attributes:
+      label: Summary
+      description: One paragraph describing the change.
+    validations:
+      required: true
+  - type: textarea
+    id: motivation
+    attributes:
+      label: Motivation
+      description: Which users or requirements need this, and why the current design is not enough.
+    validations:
+      required: true
+  - type: textarea
+    id: design
+    attributes:
+      label: Detailed design
+      description: Config/label/API examples, data flow, Pingora hooks or crates involved, failure behaviour.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+    validations:
+      required: true
+  - type: textarea
+    id: compatibility
+    attributes:
+      label: Compatibility and migration
+      description: Breaking changes, Traefik-label impact, upgrade path.
+  - type: input
+    id: affected
+    attributes:
+      label: Affected documents and ADRs
+      placeholder: docs/05-architecture.md §4, ADR-0009
+  - type: textarea
+    id: questions
+    attributes:
+      label: Open questions

@@ -1,0 +1,22 @@
+changelog:
+  exclude:
+    labels: [skip-changelog, status/duplicate, status/invalid, status/wontfix]
+  categories:
+    - title: Breaking changes
+      labels: [breaking-change]
+    - title: Security
+      labels: [type/security]
+    - title: Features
+      labels: [type/feature]
+    - title: Bug fixes
+      labels: [type/bug]
+    - title: Compatibility
+      labels: [type/compat]
+    - title: Performance
+      labels: [type/performance]
+    - title: Documentation
+      labels: [type/docs]
+    - title: Dependencies
+      labels: [dependencies]
+    - title: Other changes
+      labels: ["*"]

@@ -1,0 +1,8 @@
+ReverseDock
+Copyright 2026 The ReverseDock Authors
+
+This product is licensed under the Apache License, Version 2.0 (see LICENSE).
+
+ReverseDock is built on Cloudflare Pingora (https://github.com/cloudflare/pingora),
+licensed under the Apache License, Version 2.0. Notices for all third-party
+dependencies are generated for each release and shipped with the release artifacts.

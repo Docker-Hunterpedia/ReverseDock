@@ -11,14 +11,15 @@ reversedock/
 ├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                  # fmt, clippy -D warnings, nextest, doc, schema up-to-date, deny/audit
-│   │   ├── dashboard.yml           # pnpm lint/test/build, bundle-size budget
-│   │   ├── e2e.yml                 # docker compose scenarios, Pebble ACME, toxiproxy
-│   │   ├── conformance.yml         # traefik-label suite; gateway-api suite on kind (P2)
-│   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes
-│   │   ├── bench.yml               # nightly on a dedicated runner, publishes to benchmarks/results
-│   │   └── release.yml             # cargo-dist: binaries, checksums, SBOM, cosign; multi-arch images → ghcr.io
-│   ├── ISSUE_TEMPLATE/ · PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · FUNDING.yml
+│   │   ├── ci.yml                  # today: docs, dco, pr-title (required); M0 adds fmt, clippy -D warnings, nextest, schema, deny/audit
+│   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
+│   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
+│   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
+│   │   ├── fuzz.yml                # (v0.1+) cargo-fuzz, weekly + on parser changes
+│   │   ├── bench.yml               # (v0.4+) nightly on a dedicated runner, publishes to benchmarks/results
+│   │   └── release.yml             # (M0) cargo-dist: binaries, checksums, SBOM, cosign; multi-arch images → ghcr.io
+│   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
+│   ├── PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · release.yml (release-note categories)
 ├── crates/
 │   ├── rdock/                      # the binary (clap)
 │   ├── rdock-model/                # desired-state types, validation, JSON Schema
@@ -69,7 +70,8 @@ reversedock/
 │   └── fuzz/                       # cargo-fuzz targets: rules parser, label parser, config loader, http differential
 ├── docs/                           # these documents; docs/site later (Astro Starlight → reversedock.dev)
 ├── scripts/                        # xlsx2md.py, schema-export, release helpers
-├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · LICENSE (Apache-2.0) · NOTICE · CHANGELOG.md · README.md
+├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
+├── LICENSE (Apache-2.0) · NOTICE · CHANGELOG.md · README.md · .editorconfig · .gitignore
 ```
 
 ## 2. Crate conventions
@@ -113,8 +115,9 @@ reversedock/
 
 ## 4. Git and release workflow
 
-- `main` is protected; PRs only, squash-merged; required checks: CI, dashboard, e2e (label-gated for heavy suites).
-- Conventional Commits (`feat(docker): …`, `fix(acme): …`) + DCO sign-off (`git commit -s`). No CLA.
+- `main` is protected by the **Protect main** ruleset: no direct pushes, force pushes or deletion; linear history; squash merges only; PR required with one code-owner approval of the latest push, resolved conversations and an up-to-date branch; required checks `docs`, `dco`, `pr-title` (bound to GitHub Actions). Repository admins may bypass the review requirement only through a PR. Heavier checks (Rust, dashboard, e2e) become required as they land.
+- Release tags `v*` are protected by the **Protect release tags** ruleset: only admins create them; nobody can move or delete them.
+- Conventional Commits (`feat(docker): …`, `fix(acme): …`); the PR title becomes the squash commit and is checked by `pr-title`. DCO sign-off (`git commit -s`) checked by `dco`; web commits get sign-off automatically. No CLA.
 - Versioning: SemVer. `0.x` may break config between minors with a migration note and `rdock config migrate`. Config schema is versioned (`apiVersion`-style `version: 1` optional key).
 - Releases via `cargo-dist`: Linux x86-64/aarch64 (musl static), macOS (dev only); checksums, SPDX SBOM (syft), cosign signatures, `CHANGELOG.md` from git-cliff; images `ghcr.io/reversedock/rdock:{version,major.minor,latest}` multi-arch, non-root, read-only-FS friendly.
 - Support policy: last two minor releases get security fixes; `SECURITY.md` with private reporting (GitHub advisories) and a 90-day disclosure target.

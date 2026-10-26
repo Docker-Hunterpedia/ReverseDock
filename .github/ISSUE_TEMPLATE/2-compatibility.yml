@@ -1,0 +1,51 @@
+name: Migration / compatibility gap
+description: A Traefik label, Traefik/NGINX/Caddy config or behaviour that ReverseDock does not handle like the original.
+title: "compat: "
+labels: ["type/compat", "area/migration", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Compatibility is tested, not claimed. Real-world label sets and configs become fixtures in the conformance suite, so the more complete your snippet, the better.
+  - type: dropdown
+    id: source
+    attributes:
+      label: Migrating from
+      options:
+        - Traefik Docker / Swarm labels
+        - Traefik file / dynamic configuration
+        - Traefik Kubernetes CRDs or Ingress
+        - NGINX configuration
+        - Caddyfile / Caddy JSON
+        - HAProxy configuration
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: snippet
+    attributes:
+      label: Original configuration
+      description: The labels or config exactly as they work in the original tool (secrets removed).
+      render: yaml
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What ReverseDock did
+      description: Warning or diagnostic text, wrong routing, error response, or missing feature.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What the original tool does
+      description: Expected behaviour, ideally with a link to the original tool's documentation.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Versions
+      description: ReverseDock version and the original tool's version.
+      placeholder: rdock 0.2.0 · traefik 3.7.11
