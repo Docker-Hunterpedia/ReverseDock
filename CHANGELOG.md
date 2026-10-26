@@ -4,6 +4,29 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.1.0-alpha.3] — v0.1 "hello proxy"
+
+### Added
+- **The proxy** (`rdock run`): Pingora 0.9 HTTP engine behind our own listeners (ADR-0012). HTTP/1.1, HTTP/2 over TLS (ALPN), h2c on plain listeners and to backends, WebSocket, server-sent events and gRPC with trailers; backends by IP, DNS name (re-resolved every 10 s) or Unix socket, over HTTP, HTTPS (verified, custom CA, or `verify: false`) or h2c; smooth weighted round-robin and weighted random.
+- Routing with the Traefik v3 grammar: priorities, normalised paths (forwarded as normalised), host/path/method/header/query/client-IP matchers; automatic HTTP→HTTPS redirect for HTTPS hosts; branded 404/5xx pages with the request ID (HTML or JSON).
+- TLS: manual certificates with SNI (exact, one-label wildcard, `defaults.certificate`), encrypted PKCS#8 keys (`key_password`), `modern` (TLS 1.3) and `intermediate` policies, session tickets, reload when the files change.
+- Middlewares: `headers` (with HSTS on HTTPS only), `redirect`, `rewrite`, `strip_prefix`, `add_prefix`, `replace_path`, `basic_auth` (argon2id, bcrypt; Apache MD5 and SHA-1 with a warning), `forward_auth`, `ip_allow`, `ip_deny`, `rate_limit`, `cors`, `compress` (streaming gzip), `errors`, `maintenance`.
+- Security: forwarding headers trusted only from `security.trusted_proxies`; header, header-count, target and body limits (431/414/413, chunked bodies counted); HTTP/1.1 without `Host`, bare-LF line endings and unknown `Expect` refused; 10 s request-header deadline; request IDs.
+- Operations: reload on file change, `SIGHUP`, `rdock reload` or the admin API, without dropping requests; listener changes without a restart; configuration history and last-known-good copy in `$RDOCK_DATA_DIR/state`, used at start when the file is broken; drain on shutdown (`lifecycle.drain_timeout`); systemd readiness (`Type=notify`).
+- Admin listener (`127.0.0.1:2080`): `/healthz`, `/readyz`, `/metrics` (Prometheus), and with a token `/api/v1/status` and `/api/v1/config/reload`; `rdock status`, `rdock reload`, `rdock healthcheck`.
+- `${NAME}`, `${env:NAME}` and `${file:/path}` references in the configuration; secret fields stay references (ADR-0016).
+- JSON (or text) access log and JSON application logs; Prometheus metrics for requests, latency, upstream errors, connections, TLS handshakes, reloads and certificate expiry.
+- Packaging: `Dockerfile` (CMake added), `Dockerfile.release` and multi-arch GHCR images on tags (signed, attested), `deploy/docker` Compose example, `deploy/systemd/rdock.service`.
+- Tests: end-to-end suites against the real binary (protocols, middlewares, smuggling vectors, limits, slow clients, reload under load, listener changes, drain, last-known-good, certificate swap); fuzz targets in `tests/fuzz` (differential HTTP/1 framing, rule parser, configuration loader) and a weekly `fuzz` workflow.
+- ADRs 0012–0016; the v0.1 research notes in `docs/research/`.
+
+### Changed
+- Unknown configuration keys are errors; keys starting with `x-` are ignored (YAML anchors). `rdock validate --strict` now turns warnings into errors.
+- `rdock validate` also compiles the configuration and lists settings this version cannot honour yet ("planned for vX.Y"); `rdock run` refuses them.
+- Rules: matcher names are case-insensitive, one-argument `Query(k)` matches an empty value, `Host` accepts a trailing dot and unbracketed IPv6, `Method` compares in upper case (Traefik parity).
+- Model: `redirect.permanent` defaults to `false`; `security.limits` default to 64 KiB of headers, 100 headers and no body limit; new `listeners.*.timeouts`, `routes.*.timeouts`, `defaults.certificate`, `certificates.*.key_password`, `headers.hsts`, `lifecycle.drain_timeout`.
+- TLS uses rustls with the ring provider (ADR-0013); tokio is capped below 1.54 until Pingora supports it.
+
 ## [0.1.0-alpha.2] — first published pre-release
 
 ### Fixed

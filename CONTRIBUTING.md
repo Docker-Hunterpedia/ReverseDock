@@ -32,9 +32,11 @@ Comment on an issue before starting larger work so nobody duplicates effort. Iss
 The workspace needs:
 
 - **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml` and installs itself. The minimum supported version is 1.89.
+- A **C compiler** and **CMake** for Pingora's native dependencies (`xcode-select --install && brew install cmake`, or `apt install build-essential cmake`).
 - **just**, **cargo-nextest**, **cargo-deny**, **actionlint** and **shellcheck** for the dev recipes (`brew install just cargo-nextest cargo-deny actionlint shellcheck`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just msrv` and `just docker` run the other two jobs.
 - **Node 24 + pnpm** for the dashboard in `apps/dashboard`.
-- **Docker** for end-to-end tests (Pebble ACME, toxiproxy, Docker provider).
+- **Docker** for the image smoke test (`just docker`) and, later, the Pebble/toxiproxy/Docker-provider suites. The v0.1 end-to-end tests run with plain `cargo nextest`.
+- Optional: `cargo install cargo-fuzz` and a nightly toolchain to run the fuzz targets in `tests/fuzz`.
 - Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.
 
 Using an AI coding assistant? It should follow [CLAUDE.md](CLAUDE.md) (also available as `AGENTS.md`). You remain responsible for every line you submit, and your DCO sign-off covers AI-assisted changes too.

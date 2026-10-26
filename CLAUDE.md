@@ -1,6 +1,6 @@
 # ReverseDock — rules for AI assistants
 
-ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestone M0 is done (workspace, rule grammar, config model and schema, `rdock validate`); v0.1 adds the proxy. Read [docs/README.md](docs/README.md) before proposing changes.
+ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) are implemented; v0.2 adds the Docker provider. Read [docs/README.md](docs/README.md) before proposing changes.
 
 ## Working rules
 
@@ -24,7 +24,8 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - Toolchain pinned in `rust-toolchain.toml`; MSRV in `Cargo.toml` `rust-version`. Details in [docs/06-repo-layout.md](docs/06-repo-layout.md) §2.
 - `unsafe_code = "forbid"`; no `unwrap`/`expect`/`panic` in library crates; `thiserror` in libraries, `miette` for config diagnostics, `anyhow` only in the binary; `tracing` for all logging.
 - Names: binary `rdock`, crates `rdock-*`, Docker labels `rdock.*`, config `rdock.yaml`, env `RDOCK_*`, metrics `rdock_*`.
-- The data plane never depends on the admin API, dashboard or providers at request time (ADR-0008, ADR-0009). Retries follow ADR-0010.
+- The data plane never depends on the admin API, dashboard or providers at request time (ADR-0009, ADR-0012). Retries follow ADR-0015; HTTP semantics and the "planned for vX.Y" gate follow ADR-0014.
+- Build needs a C compiler and CMake. tokio stays `<1.54` until Pingora fixes its `BufStream` panic.
 
 ## Map of the repository
 
@@ -38,7 +39,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/06-repo-layout.md](docs/06-repo-layout.md) | Repo tree, crate rules, Cargo features, CI, releases, testing, Graphify |
 | [docs/07-roadmap.md](docs/07-roadmap.md) | Milestones M0 → v1.0 with acceptance criteria |
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
-| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0010 |
+| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0016 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) | How changes are proposed, reviewed and merged |

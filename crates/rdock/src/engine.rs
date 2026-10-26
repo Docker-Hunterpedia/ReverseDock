@@ -28,6 +28,16 @@ pub(crate) enum Origin {
     LastKnownGood,
 }
 
+impl Origin {
+    /// The name used in logs, matching the serialised form.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::File => "file",
+            Self::LastKnownGood => "last-known-good",
+        }
+    }
+}
+
 /// The outcome of one load-and-apply attempt.
 #[derive(Debug, Clone, Serialize)]
 pub(crate) struct Report {

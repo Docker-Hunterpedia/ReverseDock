@@ -468,7 +468,7 @@ impl ProxyHttp for RdockProxy {
             self.shared
                 .metrics
                 .upstream_errors
-                .with_label_values(&[&route.service.name, kind])
+                .with_label_values(&[&*route.service.name, kind])
                 .inc();
         }
         e

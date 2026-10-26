@@ -16,7 +16,7 @@ const REGEX_SIZE_LIMIT: usize = 1 << 20;
 pub struct Facts<'a> {
     /// Host without port or trailing dot, lower case, IPv6 without brackets.
     pub host: &'a str,
-    /// Decoded routing path (see [`crate::path`]).
+    /// Decoded routing path (see [`rdock_rules::path`]).
     pub path: &'a str,
     /// Request method.
     pub method: &'a str,

@@ -24,6 +24,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 **Done when:** `just ci` is green; `schema/rdock.v1.json` is generated and validated against the YAML examples in `docs/05-architecture.md`; a tagged pre-release produces signed artifacts.
 
 ## v0.1 — Hello proxy (P0 core)
+**Status:** implemented on `feat/v0.1-hello-proxy`, to be released as `0.1.0-alpha.3`. Listener changes apply in-process without a restart ([ADR-0012](decisions/0012-own-listeners-pingora-http-engine.md), superseding ADR-0008); settings planned for later versions are reported by `rdock validate` and refused by `rdock run` ([ADR-0014](decisions/0014-http-semantics-v0-1.md)).
 **Scope:** B-NET-01…13, B-TLS-01/09/10/11, B-CFG-01…10, B-SEC-01…09, B-SEC-11, B-SEC-12, B-OBS-01…03, F-OSS-04, W-PLAT-01/03/05, W-OBS-01…03 (P0 parts). File provider with watch, SIGHUP/CLI reload, LKG, history, `restart required` path for listener changes (ADR-0008). Middlewares: headers, redirect, rewrite/strip/add prefix, basic_auth, forward_auth, ip_allow/deny, rate_limit, cors, compress (gzip), errors, maintenance. Error pages. `rdock validate|run|reload|status|version`. Official image + Compose example + systemd unit.
 **Done when:** e2e suite proves h1/h2/h2c/WebSocket/SSE/gRPC proxying, forwarded-header rules, reload under load (no failed requests in a 60 s `oha` run during 20 reloads), listener-change restart path under Docker and systemd, smuggling test vectors rejected, differential fuzz target exists.
 

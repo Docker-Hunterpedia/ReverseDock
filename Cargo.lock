@@ -2647,7 +2647,7 @@ dependencies = [
 
 [[package]]
 name = "rdock"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2681,11 +2681,11 @@ dependencies = [
 
 [[package]]
 name = "rdock-acme"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-admin"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "async-trait",
  "http",
@@ -2698,18 +2698,18 @@ dependencies = [
 
 [[package]]
 name = "rdock-balancer"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "fastrand",
 ]
 
 [[package]]
 name = "rdock-cloudflare"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-config"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "jsonschema",
  "rdock-model",
@@ -2723,11 +2723,11 @@ dependencies = [
 
 [[package]]
 name = "rdock-limits"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-middleware"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "argon2",
  "async-trait",
@@ -2753,11 +2753,11 @@ dependencies = [
 
 [[package]]
 name = "rdock-migrate"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-model"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "ipnet",
  "rdock-rules",
@@ -2771,7 +2771,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-observability"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "prometheus",
  "rdock-model",
@@ -2784,27 +2784,27 @@ dependencies = [
 
 [[package]]
 name = "rdock-provider-api"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-provider-docker"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-provider-file"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-provider-kubernetes"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-provider-swarm"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 
 [[package]]
 name = "rdock-proxy"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -2835,7 +2835,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-rules"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "ipnet",
  "proptest",
@@ -2845,7 +2845,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-testkit"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "bytes",
  "futures-util",
@@ -2866,7 +2866,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-tls"
-version = "0.1.0-alpha.2"
+version = "0.1.0-alpha.3"
 dependencies = [
  "arc-swap",
  "pkcs8",

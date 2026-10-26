@@ -127,7 +127,11 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
 
     engine.set_ready(true);
     let _ = sd_notify::notify(&[sd_notify::NotifyState::Ready]);
-    tracing::info!(generation = report.generation, origin = ?report.origin, "rdock is ready");
+    tracing::info!(
+        generation = report.generation,
+        origin = report.origin.as_str(),
+        "rdock is ready"
+    );
     loop {
         tokio::select! {
             _ = signals.hangup.recv() => {
