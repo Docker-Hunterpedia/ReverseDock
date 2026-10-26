@@ -17,7 +17,7 @@ on:
       - Cargo.toml
       - Cargo.lock
       - rust-toolchain.toml
-      - crates/rdock/**
+      - crates/**
 
 permissions:
   contents: read
@@ -86,12 +86,14 @@ jobs:
         with:
           persist-credentials: false
       - name: Tag matches the workspace version
+        id: version
         run: |
           version=$(grep -m1 '^version = "' Cargo.toml | cut -d'"' -f2)
           if [ "v$version" != "$TAG" ]; then
             echo "::error::Tag $TAG does not match Cargo.toml version $version"
             exit 1
           fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
       - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: rdock-*
@@ -105,7 +107,7 @@ jobs:
         with:
           path: .
           format: spdx-json
-          output-file: dist/rdock-${{ github.ref_name }}.spdx.json
+          output-file: dist/rdock-${{ steps.version.outputs.version }}.spdx.json
           upload-artifact: false
           upload-release-assets: false
       - name: Build provenance attestations

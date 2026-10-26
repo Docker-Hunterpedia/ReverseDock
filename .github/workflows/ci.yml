@@ -76,10 +76,12 @@ jobs:
           TITLE: ${{ github.event.pull_request.title }}
         run: |
           re='^(feat|fix|docs|perf|refactor|test|build|ci|chore|revert|security)(\([a-z0-9._/-]+\))?!?: .+'
+          # The title is untrusted: it is only read from the environment and never echoed, so it
+          # cannot be interpreted as a workflow command.
           if [[ "$TITLE" =~ $re ]]; then
-            echo "ok: $TITLE"
+            echo "The PR title is a Conventional Commit."
           else
-            echo "::error::PR title must look like 'type(scope): summary', e.g. 'feat(docker): select network by label'. Got: $TITLE"
+            echo "::error::The PR title must look like 'type(scope): summary', e.g. 'feat(docker): select network by label'."
             exit 1
           fi
 
