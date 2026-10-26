@@ -1,0 +1,150 @@
+# ReverseDock — Repository layout and engineering conventions
+
+## 1. Tree
+
+```
+reversedock/
+├── Cargo.toml                      # workspace: members = crates/*, crates/providers/*
+├── Cargo.lock
+├── rust-toolchain.toml             # channel = "stable" (pinned minor), components: clippy, rustfmt
+├── deny.toml                       # cargo-deny: licenses, advisories, bans, sources
+├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
+├── .github/
+│   ├── workflows/
+│   │   ├── ci.yml                  # fmt, clippy -D warnings, nextest, doc, schema up-to-date, deny/audit
+│   │   ├── dashboard.yml           # pnpm lint/test/build, bundle-size budget
+│   │   ├── e2e.yml                 # docker compose scenarios, Pebble ACME, toxiproxy
+│   │   ├── conformance.yml         # traefik-label suite; gateway-api suite on kind (P2)
+│   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes
+│   │   ├── bench.yml               # nightly on a dedicated runner, publishes to benchmarks/results
+│   │   └── release.yml             # cargo-dist: binaries, checksums, SBOM, cosign; multi-arch images → ghcr.io
+│   ├── ISSUE_TEMPLATE/ · PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · FUNDING.yml
+├── crates/
+│   ├── rdock/                      # the binary (clap)
+│   ├── rdock-model/                # desired-state types, validation, JSON Schema
+│   ├── rdock-rules/                # Traefik-compatible rule grammar
+│   ├── rdock-config/               # loaders, merge engine, compile, snapshots, history
+│   ├── rdock-proxy/                # Pingora ProxyHttp, router, middleware runtime, L4
+│   ├── rdock-tls/                  # resolver, cert store, policies, local CA
+│   ├── rdock-acme/                 # ACME client, solvers, DNS providers, scheduler
+│   ├── rdock-balancer/             # LB policies, health, retries, breakers
+│   ├── rdock-middleware/           # built-in middlewares
+│   ├── rdock-limits/               # rate/concurrency/size limits
+│   ├── rdock-observability/        # logs, metrics, traces, ring buffer
+│   ├── rdock-admin/                # axum API + OpenAPI + embedded dashboard
+│   ├── rdock-cloudflare/           # IP sync, DNS-01, Access JWT, Origin CA
+│   ├── rdock-migrate/              # traefik/nginx → rdock.yaml
+│   ├── rdock-testkit/              # test harness (upstreams, Pebble, toxiproxy, containers)
+│   └── providers/
+│       ├── rdock-provider-file/
+│       ├── rdock-provider-docker/
+│       ├── rdock-provider-swarm/
+│       ├── rdock-provider-kubernetes/
+│       └── rdock-provider-api/
+├── apps/
+│   └── dashboard/                  # Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui (pnpm)
+│       ├── src/
+│       │   ├── app/                # router, layout shell, providers
+│       │   ├── features/           # overview, routes, services, middlewares, certificates, listeners, providers, security, logs, metrics, config, settings
+│       │   ├── components/         # design-system components (Harbor UI)
+│       │   ├── api/                # generated from /api/openapi.json (openapi-typescript + openapi-fetch)
+│       │   ├── lib/                # utils, i18n (en, ar), formatters
+│       │   └── styles/             # tokens.css, globals.css
+│       ├── e2e/                    # Playwright
+│       ├── package.json · vite.config.ts · tsconfig.json · components.json
+│       └── dist/                   # build output (gitignored), embedded by rdock-admin
+├── schema/
+│   └── rdock.v1.json               # generated JSON Schema, committed; CI fails if stale
+├── deploy/
+│   ├── docker/                     # Dockerfile (static musl, distroless, non-root), compose examples
+│   ├── helm/reversedock/           # chart (P2)
+│   ├── kubernetes/                 # raw manifests, kustomize (P2)
+│   └── systemd/                    # rdock.service (CAP_NET_BIND_SERVICE; no socket activation)
+├── examples/                       # runnable scenarios: 01-single-app, 02-compose-labels, 03-traefik-migration, 04-cloudflare-tunnel, 05-swarm, 06-kubernetes …
+├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/
+├── tests/
+│   ├── e2e/                        # Rust integration tests using rdock-testkit + docker
+│   ├── conformance/traefik-labels/ # compose files + expected routing tables
+│   ├── conformance/gateway-api/    # upstream suite wiring
+│   └── fuzz/                       # cargo-fuzz targets: rules parser, label parser, config loader, http differential
+├── docs/                           # these documents; docs/site later (Astro Starlight → reversedock.dev)
+├── scripts/                        # xlsx2md.py, schema-export, release helpers
+├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · LICENSE (Apache-2.0) · NOTICE · CHANGELOG.md · README.md
+```
+
+## 2. Crate conventions
+
+| Topic | Rule |
+|---|---|
+| Edition / MSRV | Rust 2024 edition; MSRV = the highest MSRV among the Pingora crates we use (1.88 as of 0.9.0), declared once in `[workspace.package] rust-version`, checked in CI |
+| Safety | `[lints.rust] unsafe_code = "forbid"` in the workspace; exceptions need an ADR |
+| Clippy | `clippy::all` + selected `pedantic`; `unwrap_used`/`expect_used`/`panic` denied in library crates (allowed in tests and the binary's startup path with a message) |
+| Errors | `thiserror` enums in libraries; `miette` diagnostics with source spans for config/label errors; `anyhow` only in the binary |
+| Logging | `tracing` only; structured fields, no `println!`; secrets never logged (newtype `Secret<T>` with redacted `Debug`) |
+| Async | Tokio; blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
+| Public API | `#![warn(missing_docs)]` on lib crates; `pub` surface minimised; `#[non_exhaustive]` on config enums |
+| Features | One table (below) is the source of truth; 05 and the ADRs point here |
+| Naming | config keys `snake_case`; labels `rdock.dot.case`; CLI flags `--kebab-case`; env `RDOCK_UPPER_SNAKE`; metrics `rdock_snake_case` |
+| Dependencies | Every new dependency reviewed against `deny.toml` (allowed licenses: Apache-2.0, MIT, BSD-*, ISC, Zlib, Unicode, MPL-2.0 case-by-case) |
+| Docs | Each crate has a `README.md` and a module-level doc comment describing its place in the pipeline |
+
+### Cargo features (source of truth)
+
+| Feature | Default | What it adds |
+|---|---|---|
+| `docker` | on | Docker provider (`bollard`) |
+| `swarm` | on | Swarm provider |
+| `kubernetes` | on | Gateway API / Ingress controller (`kube`, `gateway-api`) |
+| `dashboard` | on | embedded SPA in `rdock-admin` |
+| `cache` | off until v0.8 | HTTP cache on `pingora-cache` |
+| `http3` | off, experimental | QUIC ingress; requires the `boringssl` backend |
+| `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
+
+`cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard).
+
+## 3. Dashboard conventions
+
+- TypeScript `strict`; ESLint (typescript-eslint, react-hooks, jsx-a11y) + Prettier; Vitest + Testing Library; Playwright e2e against a real `rdock` with fixtures.
+- Data layer: `openapi-typescript` generated types + `openapi-fetch` client, TanStack Query for caching, SSE hooks for live data.
+- No network calls except the admin API; fonts/icons bundled; CSP `default-src 'self'` served by `rdock-admin`.
+- i18n via ICU messages (`en` source, `ar` first translation); RTL verified in CI with Playwright screenshots.
+- Bundle budget enforced (initial JS < 350 kB gzip); route-level code splitting.
+- Build: `pnpm build` → `apps/dashboard/dist` → `rdock-admin/build.rs` embeds via `rust-embed` (`RDOCK_SKIP_DASHBOARD=1` builds without it for fast Rust-only iteration).
+
+## 4. Git and release workflow
+
+- `main` is protected; PRs only, squash-merged; required checks: CI, dashboard, e2e (label-gated for heavy suites).
+- Conventional Commits (`feat(docker): …`, `fix(acme): …`) + DCO sign-off (`git commit -s`). No CLA.
+- Versioning: SemVer. `0.x` may break config between minors with a migration note and `rdock config migrate`. Config schema is versioned (`apiVersion`-style `version: 1` optional key).
+- Releases via `cargo-dist`: Linux x86-64/aarch64 (musl static), macOS (dev only); checksums, SPDX SBOM (syft), cosign signatures, `CHANGELOG.md` from git-cliff; images `ghcr.io/reversedock/rdock:{version,major.minor,latest}` multi-arch, non-root, read-only-FS friendly.
+- Support policy: last two minor releases get security fixes; `SECURITY.md` with private reporting (GitHub advisories) and a 90-day disclosure target.
+
+## 5. Testing strategy
+
+| Level | Tool | Where | Gate |
+|---|---|---|---|
+| Unit | `cargo nextest` | per crate | every PR |
+| Property / grammar | `proptest` | rules, labels, path normalisation | every PR |
+| Integration | `rdock-testkit` (spawns upstreams, Pebble, toxiproxy) | `tests/e2e` | every PR (fast subset), full nightly |
+| Conformance | Traefik-label suite; Gateway API suite (kind) | `tests/conformance` | PRs touching providers; nightly |
+| Fuzz | `cargo-fuzz` (differential HTTP parsing vs hyper/h2, parsers) | `tests/fuzz` | weekly + parser PRs |
+| Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly on dedicated runner; results committed per release |
+| Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
+| UI | Vitest, Playwright (light/dark, LTR/RTL, 400 px–1440 px) | `apps/dashboard` | every PR |
+
+## 6. Code graph tooling (Graphify)
+
+Once there is code, contributors (and AI assistants) can build a knowledge graph of the workspace. Verified with `graphify 0.9.95`:
+
+```bash
+uv tool install graphifyy                     # package name has two y's; installs `graphify` and `graphify-mcp`
+graphify install --platform claude --project  # registers the /graphify skill for this repo (.claude/skills/graphify/)
+# inside Claude Code:  /graphify .            # builds graphify-out/{graph.html, GRAPH_REPORT.md, graph.json}
+graphify update .                             # re-extract after code changes, no LLM needed
+graphify watch .                              # rebuild on change
+graphify explain "rdock-config"               # plain-language view of a node and its neighbours
+graphify path "rdock-proxy" "rdock-acme"      # shortest dependency path between two nodes
+graphify-mcp                                  # stdio MCP server exposing query_graph to any MCP client
+```
+
+The hosted endpoint `https://api.graphify.com/mcp` needs an account key (it answers 401 anonymously); the local CLI and its MCP server need nothing. `graphify-out/` is gitignored; a `just graph` recipe will wrap `graphify update .`.

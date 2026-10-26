@@ -1,0 +1,54 @@
+# ---- Rust ----
+/target/
+**/target/
+**/*.rs.bk
+*.pdb
+# Cargo.lock is committed (binary crate / workspace)
+
+# ---- Dashboard (Node / pnpm) ----
+node_modules/
+apps/dashboard/dist/
+apps/dashboard/.vite/
+apps/dashboard/playwright-report/
+apps/dashboard/test-results/
+.pnpm-store/
+*.tsbuildinfo
+
+# ---- Graphify (code knowledge graph, per-developer) ----
+graphify-out/
+
+# ---- Local data / runtime ----
+/data/
+*.sock
+*.pid
+
+# ---- Secrets & env ----
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+!examples/**/*.pem
+!tests/**/fixtures/**/*.pem
+!tests/**/fixtures/**/*.key
+
+# ---- OS / editors ----
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+*.swp
+*~
+
+# ---- AI assistant tooling (per-developer, third-party skill copies) ----
+.agents/
+.claude/*
+!.claude/settings.json
+skills-lock.json
+
+# ---- Scratch ----
+*.log
+/tmp/

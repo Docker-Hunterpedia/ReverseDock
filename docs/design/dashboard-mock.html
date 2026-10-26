@@ -1,0 +1,492 @@
+<title>ReverseDock Dashboard</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap">
+<style>
+/* Layout: 56px top bar · 240px start-side nav · content max 1280. Cloudflare dashboard structure, ReverseDock "Harbor" tokens: amber accent on warm stone. */
+:root {
+  --rd-bg:#FAFAF9; --rd-surface:#FFFFFF; --rd-surface-2:#F5F5F4; --rd-border:#E7E5E4;
+  --rd-text:#1C1917; --rd-text-2:#57534E; --rd-text-3:#78716C;
+  --rd-accent:#F58F0A; --rd-accent-hover:#D47400; --rd-accent-soft:#FFF4E0; --rd-accent-ink:#1C1917; --rd-accent-text:#A85A00; --rd-focus:#A85A00;
+  --rd-link:#1D4ED8;
+  --rd-ok:#15803D; --rd-ok-soft:#DCFCE7; --rd-warn:#B45309; --rd-warn-soft:#FEF3C7; --rd-danger:#B91C1C; --rd-danger-soft:#FEE2E2; --rd-info:#1D4ED8; --rd-info-soft:#DBEAFE;
+  --rd-shadow:0 8px 24px rgba(0,0,0,.12);
+  --rd-chart-grid:#EDEBE9; --rd-chart-2xx:#F58F0A; --rd-chart-4xx:#2563EB; --rd-chart-5xx:#B91C1C;
+  --rd-font-sans:"Inter",system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  --rd-font-mono:"JetBrains Mono",ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) {
+  --rd-bg:#0C0A09; --rd-surface:#1C1917; --rd-surface-2:#292524; --rd-border:#2E2A27;
+  --rd-text:#FAFAF9; --rd-text-2:#A8A29E; --rd-text-3:#8A847E;
+  --rd-accent:#FFA826; --rd-accent-hover:#FFB84D; --rd-accent-soft:#3A2A10; --rd-accent-ink:#1C1917; --rd-accent-text:#FFC14D; --rd-focus:#FFA826;
+  --rd-link:#7DB0FF;
+  --rd-ok:#4ADE80; --rd-ok-soft:#14301F; --rd-warn:#FBBF24; --rd-warn-soft:#3A2A10; --rd-danger:#F87171; --rd-danger-soft:#3B1414; --rd-info:#60A5FA; --rd-info-soft:#172554;
+  --rd-shadow:0 8px 24px rgba(0,0,0,.5);
+  --rd-chart-grid:#2E2A27; --rd-chart-2xx:#FFA826; --rd-chart-4xx:#60A5FA; --rd-chart-5xx:#F87171;
+  color-scheme:dark;
+} }
+:root[data-theme="dark"] {
+  --rd-bg:#0C0A09; --rd-surface:#1C1917; --rd-surface-2:#292524; --rd-border:#2E2A27;
+  --rd-text:#FAFAF9; --rd-text-2:#A8A29E; --rd-text-3:#8A847E;
+  --rd-accent:#FFA826; --rd-accent-hover:#FFB84D; --rd-accent-soft:#3A2A10; --rd-accent-ink:#1C1917; --rd-accent-text:#FFC14D; --rd-focus:#FFA826;
+  --rd-link:#7DB0FF;
+  --rd-ok:#4ADE80; --rd-ok-soft:#14301F; --rd-warn:#FBBF24; --rd-warn-soft:#3A2A10; --rd-danger:#F87171; --rd-danger-soft:#3B1414; --rd-info:#60A5FA; --rd-info-soft:#172554;
+  --rd-shadow:0 8px 24px rgba(0,0,0,.5);
+  --rd-chart-grid:#2E2A27; --rd-chart-2xx:#FFA826; --rd-chart-4xx:#60A5FA; --rd-chart-5xx:#F87171;
+  color-scheme:dark;
+}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--rd-bg);color:var(--rd-text);font:14px/20px var(--rd-font-sans);-webkit-font-smoothing:antialiased}
+a{color:var(--rd-link)}
+button,input,select{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--rd-focus,var(--rd-accent));outline-offset:2px}
+.mono{font-family:var(--rd-font-mono);font-size:13px}
+.num{font-variant-numeric:tabular-nums}
+.app{display:grid;grid-template-columns:240px minmax(0,1fr);grid-template-rows:56px minmax(0,1fr);height:100%;min-height:100%}
+/* top bar */
+.topbar{grid-column:1/-1;display:flex;align-items:center;gap:12px;padding:0 16px;background:var(--rd-surface);border-bottom:1px solid var(--rd-border);position:sticky;top:0;z-index:20}
+.logo{display:flex;align-items:center;gap:8px;font-weight:600;letter-spacing:-.01em}
+.logo .mark{width:24px;height:24px;border-radius:6px;background:var(--rd-accent);display:grid;place-items:center;color:var(--rd-accent-ink);font-size:12px;font-weight:600}
+.inst{display:inline-flex;align-items:center;gap:6px;height:32px;padding:0 10px;border:1px solid var(--rd-border);border-radius:6px;background:var(--rd-surface);cursor:pointer}
+.search{flex:1;max-width:420px;display:flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--rd-border);border-radius:6px;background:var(--rd-surface-2);color:var(--rd-text-3)}
+.search kbd{margin-inline-start:auto;font-family:var(--rd-font-mono);font-size:11px;border:1px solid var(--rd-border);border-radius:4px;padding:0 5px;background:var(--rd-surface)}
+.spacer{flex:1}
+.apply{display:inline-flex;align-items:center;gap:8px;height:32px;padding:0 10px;border:1px solid var(--rd-border);border-radius:6px;background:var(--rd-surface);cursor:pointer}
+.apply .dot{width:8px;height:8px;border-radius:50%;background:var(--rd-ok)}
+.apply.warn .dot{background:var(--rd-warn)}
+.iconbtn{width:32px;height:32px;display:grid;place-items:center;border:1px solid var(--rd-border);border-radius:6px;background:var(--rd-surface);cursor:pointer}
+.iconbtn:hover,.inst:hover,.apply:hover{background:var(--rd-surface-2)}
+.avatar{width:28px;height:28px;border-radius:50%;background:var(--rd-accent-soft);color:var(--rd-accent-text);display:grid;place-items:center;font-size:12px;font-weight:600}
+.menubtn{display:none}
+/* sidebar */
+.sidebar{background:var(--rd-surface);border-inline-end:1px solid var(--rd-border);padding:12px 8px;overflow:auto}
+.nav{display:flex;flex-direction:column;gap:2px;margin:0;padding:0;list-style:none}
+.nav li a,.nav li button{display:flex;align-items:center;gap:10px;width:100%;height:34px;padding:0 10px;border:0;border-radius:6px;background:transparent;color:var(--rd-text-2);text-decoration:none;text-align:start;cursor:pointer;font-weight:500}
+.nav li a:hover,.nav li button:hover{background:var(--rd-surface-2);color:var(--rd-text)}
+.nav li button[aria-current="page"]{background:var(--rd-accent-soft);color:var(--rd-accent-text)}
+.nav .sep{height:1px;background:var(--rd-border);margin:8px 4px}
+.nav .ico{width:18px;height:18px;flex:none;display:grid;place-items:center;opacity:.9}
+.nav .badge{margin-inline-start:auto;font-size:11px;font-weight:600;padding:1px 6px;border-radius:999px;background:var(--rd-warn-soft);color:var(--rd-warn)}
+.navfoot{margin-top:16px;padding:10px;border:1px solid var(--rd-border);border-radius:8px;font-size:12px;color:var(--rd-text-2)}
+.navfoot b{color:var(--rd-text)}
+/* content */
+.content{min-width:0;overflow:auto}
+.wrap{max-width:1280px;margin:0 auto;padding-block:20px 32px;padding-inline:24px}
+.crumbs{font-size:13px;color:var(--rd-text-3);margin-bottom:6px}
+.crumbs span{color:var(--rd-text-2)}
+.pagehead{display:flex;flex-wrap:wrap;align-items:center;gap:12px;margin-bottom:8px}
+.pagehead h1{font-size:22px;line-height:28px;font-weight:600;margin:0;letter-spacing:-.01em;text-wrap:balance}
+.actions{display:flex;gap:8px;margin-inline-start:auto;flex-wrap:wrap}
+.btn{display:inline-flex;align-items:center;gap:6px;height:36px;padding:0 14px;border-radius:6px;border:1px solid var(--rd-border);background:var(--rd-surface);font-weight:500;cursor:pointer;white-space:nowrap}
+.btn:hover{background:var(--rd-surface-2)}
+.btn.primary{background:var(--rd-accent);border-color:var(--rd-accent);color:var(--rd-accent-ink)}
+.btn.primary:hover{background:var(--rd-accent-hover);border-color:var(--rd-accent-hover)}
+.btn.danger{color:var(--rd-danger)}
+.btn.sm{height:30px;padding:0 10px;font-size:13px}
+.tabs{display:flex;gap:4px;border-bottom:1px solid var(--rd-border);margin:12px 0 20px}
+.tabs button{height:36px;padding:0 12px;border:0;background:transparent;color:var(--rd-text-2);font-weight:500;cursor:pointer;border-bottom:2px solid transparent;margin-bottom:-1px}
+.tabs button[aria-selected="true"]{color:var(--rd-text);border-bottom-color:var(--rd-accent)}
+.subtle{color:var(--rd-text-3);font-size:13px}
+.note{display:inline-flex;align-items:center;gap:6px;font-size:12px;color:var(--rd-text-3);border:1px dashed var(--rd-border);border-radius:6px;padding:4px 8px}
+/* tiles */
+.tiles{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:12px;margin-bottom:16px}
+.tile{position:relative;background:var(--rd-surface);border:1px solid var(--rd-border);border-radius:8px;padding:14px 16px;min-width:0;display:flex;flex-direction:column;gap:6px}
+.tile::before{content:"";position:absolute;inset-block:10px;inset-inline-start:0;width:3px;border-radius:0 3px 3px 0;background:transparent}
+.tile.ok::before{background:var(--rd-ok)} .tile.warn::before{background:var(--rd-warn)} .tile.danger::before{background:var(--rd-danger)}
+.tile .lbl{font-size:12px;line-height:16px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--rd-text-3)}
+.tile .val{font-size:28px;line-height:34px;font-weight:600;letter-spacing:-.02em;display:flex;align-items:baseline;gap:8px;flex-wrap:wrap}
+.tile .val small{font-size:13px;font-weight:500;color:var(--rd-text-2)}
+.tile .delta{display:inline-flex;align-items:center;font-size:12px;font-weight:500;padding:1px 6px;border-radius:999px}
+.delta.up{background:var(--rd-ok-soft);color:var(--rd-ok)} .delta.down{background:var(--rd-danger-soft);color:var(--rd-danger)} .delta.flat{background:var(--rd-surface-2);color:var(--rd-text-2)}
+.tile svg{width:100%;height:36px;display:block}
+/* cards & grid */
+.grid2{display:grid;grid-template-columns:minmax(0,2fr) minmax(0,1fr);gap:12px;margin-bottom:12px}
+.card{background:var(--rd-surface);border:1px solid var(--rd-border);border-radius:8px;min-width:0}
+.card .hd{display:flex;align-items:center;gap:10px;padding:12px 16px;border-bottom:1px solid var(--rd-border)}
+.card .hd h2{font-size:15px;line-height:22px;font-weight:600;margin:0}
+.card .hd .subtle{margin-inline-start:auto}
+.card .bd{padding:16px}
+.legend{display:flex;gap:14px;flex-wrap:wrap;font-size:12px;color:var(--rd-text-2);margin-top:8px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:2px;margin-inline-end:6px;vertical-align:-1px}
+.chart svg{width:100%;height:220px;display:block}
+.events{list-style:none;margin:0;padding:0}
+.events li{display:grid;grid-template-columns:auto minmax(0,1fr) auto;gap:10px;padding:10px 16px;border-bottom:1px solid var(--rd-border);align-items:start}
+.events li:last-child{border-bottom:0}
+.events .t{font-size:12px;color:var(--rd-text-3);white-space:nowrap}
+.events .m{min-width:0}
+.events .m b{font-weight:500}
+.events .m .mono{display:block;color:var(--rd-text-2);overflow-wrap:anywhere}
+/* tables */
+.tablewrap{overflow-x:auto}
+table{width:100%;border-collapse:collapse;min-width:720px}
+th{font-size:12px;line-height:16px;font-weight:500;letter-spacing:.04em;text-transform:uppercase;color:var(--rd-text-3);text-align:start;padding:10px 12px;background:var(--rd-surface-2);border-bottom:1px solid var(--rd-border);white-space:nowrap}
+td{padding:10px 12px;border-bottom:1px solid var(--rd-border);vertical-align:middle}
+tbody tr:hover{background:var(--rd-surface-2)}
+tbody tr.sel{background:var(--rd-accent-soft)}
+td.end,th.end{text-align:end}
+.cellmono{font-family:var(--rd-font-mono);font-size:13px;overflow-wrap:anywhere}
+.name{font-weight:500}
+.pill{display:inline-flex;align-items:center;gap:6px;height:22px;padding:0 8px;border-radius:999px;font-size:12px;font-weight:500;white-space:nowrap}
+.pill::before{content:"";width:6px;height:6px;border-radius:50%;background:currentColor}
+.pill.ok{background:var(--rd-ok-soft);color:var(--rd-ok)} .pill.warn{background:var(--rd-warn-soft);color:var(--rd-warn)} .pill.danger{background:var(--rd-danger-soft);color:var(--rd-danger)} .pill.info{background:var(--rd-info-soft);color:var(--rd-info)} .pill.muted{background:var(--rd-surface-2);color:var(--rd-text-2)}
+.owner{display:inline-flex;align-items:center;height:20px;padding:0 6px;border:1px solid var(--rd-border);border-radius:4px;font-family:var(--rd-font-mono);font-size:11px;color:var(--rd-text-2);background:var(--rd-surface)}
+.dots{display:inline-flex;gap:3px;vertical-align:middle;margin-inline-end:6px}
+.dots i{width:8px;height:8px;border-radius:50%;background:var(--rd-ok)} .dots i.w{background:var(--rd-warn)} .dots i.d{background:var(--rd-danger)} .dots i.g{background:var(--rd-border)}
+.filters{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:12px}
+.chip{display:inline-flex;align-items:center;gap:6px;height:30px;padding:0 10px;border:1px solid var(--rd-border);border-radius:999px;background:var(--rd-surface);font-size:13px;cursor:pointer}
+.chip[aria-pressed="true"]{background:var(--rd-accent-soft);border-color:var(--rd-accent);color:var(--rd-accent-text)}
+.input{height:36px;padding:0 10px;border:1px solid var(--rd-border);border-radius:6px;background:var(--rd-surface);min-width:0;width:100%}
+.input:focus{border-color:var(--rd-accent);outline:2px solid var(--rd-accent);outline-offset:0}
+.tester{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:center}
+.result{margin-top:10px;padding:10px 12px;border-radius:6px;background:var(--rd-surface-2);font-size:13px}
+.result b{font-weight:600}
+/* drawer */
+.scrim{position:fixed;inset:0;background:rgba(0,0,0,.35);z-index:30}
+.drawer{position:fixed;top:0;inset-inline-end:0;height:100%;width:min(560px,100%);background:var(--rd-surface);border-inline-start:1px solid var(--rd-border);box-shadow:var(--rd-shadow);z-index:31;display:flex;flex-direction:column;padding-top:env(safe-area-inset-top,0px)}
+.drawer .dh{display:flex;align-items:center;gap:10px;padding:14px 20px;border-bottom:1px solid var(--rd-border)}
+.drawer .dh h2{font-size:18px;line-height:24px;font-weight:600;margin:0}
+.drawer .dh .iconbtn{margin-inline-start:auto}
+.drawer .db{padding:20px;overflow:auto;flex:1;display:flex;flex-direction:column;gap:16px}
+.drawer .df{display:flex;gap:8px;justify-content:flex-end;padding:12px 20px;border-top:1px solid var(--rd-border);padding-bottom:calc(12px + env(safe-area-inset-bottom,0px))}
+.field{display:flex;flex-direction:column;gap:6px}
+.field label{font-size:13px;font-weight:500;color:var(--rd-text-2)}
+.field .help{font-size:12px;color:var(--rd-text-3)}
+.row2{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.seg{display:inline-flex;border:1px solid var(--rd-border);border-radius:6px;overflow:hidden}
+.seg button{height:34px;padding:0 12px;border:0;background:var(--rd-surface);cursor:pointer;color:var(--rd-text-2)}
+.seg button[aria-pressed="true"]{background:var(--rd-accent-soft);color:var(--rd-accent-text);font-weight:500}
+.callout{border:1px solid var(--rd-border);border-inline-start:3px solid var(--rd-warn);border-radius:6px;padding:10px 12px;font-size:13px;background:var(--rd-surface-2)}
+/* diagnostics panel */
+.diag{position:fixed;top:64px;inset-inline-end:16px;width:min(440px,calc(100% - 32px));background:var(--rd-surface);border:1px solid var(--rd-border);border-radius:8px;box-shadow:var(--rd-shadow);z-index:25}
+.diag .hd{padding:10px 14px;border-bottom:1px solid var(--rd-border);display:flex;align-items:center;gap:8px;font-weight:600}
+.diag ul{list-style:none;margin:0;padding:6px 0}
+.diag li{display:grid;grid-template-columns:auto minmax(0,1fr);gap:10px;padding:8px 14px}
+.diag li+li{border-top:1px solid var(--rd-border)}
+.diag .src{font-family:var(--rd-font-mono);font-size:12px;color:var(--rd-text-3);overflow-wrap:anywhere}
+.diag .hint{font-size:12px;color:var(--rd-text-2)}
+.toast{position:fixed;bottom:calc(16px + env(safe-area-inset-bottom,0px));inset-inline-end:16px;background:var(--rd-text);color:var(--rd-bg);padding:10px 14px;border-radius:8px;box-shadow:var(--rd-shadow);z-index:40;font-size:13px;display:flex;gap:10px;align-items:center}
+.toast .dot{width:8px;height:8px;border-radius:50%;background:var(--rd-accent)}
+/* responsive */
+@media (max-width:1023px){
+  .app{grid-template-columns:minmax(0,1fr)}
+  .sidebar{position:fixed;top:56px;inset-inline-start:0;bottom:0;width:260px;z-index:22;transform:translateX(-100%);transition:transform .2s ease-out}
+  [dir="rtl"] .sidebar{transform:translateX(100%)}
+  .sidebar.open{transform:none}
+  .menubtn{display:grid}
+  .search{display:none}
+  .tiles{grid-template-columns:repeat(2,minmax(0,1fr))}
+  .grid2{grid-template-columns:minmax(0,1fr)}
+}
+@media (max-width:640px){
+  .wrap{padding-inline:16px}
+  .tiles{grid-template-columns:minmax(0,1fr)}
+  .row2{grid-template-columns:1fr}
+  .inst span.lbl{display:none}
+  .apply span.txt{display:none}
+}
+@media (prefers-reduced-motion:reduce){.sidebar{transition:none}}
+</style>
+
+<div class="app" id="app">
+  <header class="topbar">
+    <button class="iconbtn menubtn" id="menubtn" aria-label="Open navigation" aria-controls="sidebar">☰</button>
+    <div class="logo"><span class="mark">rd</span><span>ReverseDock</span></div>
+    <button class="inst" aria-haspopup="listbox"><span class="lbl">Instance:</span> <span class="mono">vps-1</span> ▾</button>
+    <div class="search" role="search">⌕ Search routes, services, certificates… <kbd>⌘K</kbd></div>
+    <div class="spacer"></div>
+    <button class="apply" id="applybtn" aria-haspopup="dialog" title="Configuration state"><span class="dot"></span><span class="txt">Applied · gen <span class="num" id="gen">142</span> · 12 s ago</span><span class="num" aria-hidden="true">·</span><span>2 warnings</span></button>
+    <button class="iconbtn" id="dirbtn" title="Toggle text direction (RTL demo)" aria-label="Toggle text direction">⇄</button>
+    <button class="iconbtn" id="themebtn" title="Toggle theme" aria-label="Toggle theme">☾</button>
+    <div class="avatar" title="oday">O</div>
+  </header>
+
+  <nav class="sidebar" id="sidebar" aria-label="Primary">
+    <ul class="nav">
+      <li><button data-page="overview" aria-current="page"><span class="ico">▦</span>Overview</button></li>
+      <li><button data-page="routes"><span class="ico">⇶</span>Routes<span class="badge" title="1 shadowed route">1</span></button></li>
+      <li><button data-page="services"><span class="ico">◫</span>Services</button></li>
+      <li><button data-page="middlewares"><span class="ico">⚙</span>Middlewares</button></li>
+      <li><button data-page="certs"><span class="ico">⛨</span>Certificates<span class="badge" title="1 renewal failing">1</span></button></li>
+      <li><button data-page="listeners"><span class="ico">⎆</span>Listeners</button></li>
+      <li><button data-page="providers"><span class="ico">⟳</span>Providers</button></li>
+      <li><button data-page="security"><span class="ico">⛉</span>Security</button></li>
+      <li class="sep" role="separator"></li>
+      <li><button data-page="logs"><span class="ico">≡</span>Logs</button></li>
+      <li><button data-page="metrics"><span class="ico">∿</span>Metrics</button></li>
+      <li><button data-page="config"><span class="ico">{}</span>Config</button></li>
+      <li class="sep" role="separator"></li>
+      <li><button data-page="settings"><span class="ico">⋯</span>Settings</button></li>
+    </ul>
+    <div class="navfoot"><b>rdock 0.5.0</b> · Pingora 0.9<br>uptime 14 d 3 h · 2 listeners<br><span class="mono">127.0.0.1:2080</span></div>
+  </nav>
+
+  <main class="content">
+    <!-- ===== Overview ===== -->
+    <section class="page wrap" id="page-overview">
+      <div class="crumbs">vps-1 › <span>Overview</span></div>
+      <div class="pagehead">
+        <h1>Overview</h1>
+        <span class="note">Sample data · design mock</span>
+        <div class="actions"><button class="btn" id="btn-diag">Diagnostics</button><button class="btn primary" data-open-drawer="new">+ Add route</button></div>
+      </div>
+      <div class="tabs" role="tablist"><button role="tab" aria-selected="true">Last 15 minutes</button><button role="tab" aria-selected="false">1 hour</button><button role="tab" aria-selected="false">24 hours</button></div>
+
+      <div class="tiles">
+        <div class="tile"><div class="lbl">Requests / s</div><div class="val num">1,284 <span class="delta up">▲ 6.1%</span></div><svg id="sp1" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="tile ok"><div class="lbl">Error rate (5xx)</div><div class="val num">0.42<small>%</small> <span class="delta flat">— 0.0</span></div><svg id="sp2" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="tile ok"><div class="lbl">p95 latency</div><div class="val num">48<small>ms</small> <span class="delta up">▼ 3 ms</span></div><svg id="sp3" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="tile"><div class="lbl">Active connections</div><div class="val num">3,912 <small>· 611 idle</small></div><svg id="sp4" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+        <div class="tile warn"><div class="lbl">Backends healthy</div><div class="val num">11<small>/ 12</small></div><div class="subtle"><span class="dots"><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i></i><i class="d"></i></span>api-2 · 10.0.0.6:4000 ejected 2 min ago</div></div>
+        <div class="tile warn"><div class="lbl">Certificates</div><div class="val num">7 <small>valid</small></div><div class="subtle"><span class="pill warn">1 renewal failing</span> <span class="mono">legacy.example.com</span></div></div>
+        <div class="tile ok"><div class="lbl">Providers</div><div class="val">3 <small>connected</small></div><div class="subtle"><span class="owner">file</span> <span class="owner">docker</span> <span class="owner">api</span> · last sync 4 s ago</div></div>
+        <div class="tile ok"><div class="lbl">TLS handshakes / s</div><div class="val num">212 <small>· 81% resumed</small></div><svg id="sp5" viewBox="0 0 200 36" preserveAspectRatio="none" aria-hidden="true"></svg></div>
+      </div>
+
+      <div class="grid2">
+        <div class="card chart">
+          <div class="hd"><h2>Traffic by status class</h2><span class="subtle">req/s · 10 s buckets</span></div>
+          <div class="bd">
+            <svg id="traffic" viewBox="0 0 900 220" preserveAspectRatio="none" role="img" aria-label="Area chart of requests per second over the last fifteen minutes, mostly 2xx with small 4xx and 5xx shares"></svg>
+            <div class="legend"><span><i style="background:var(--rd-chart-2xx)"></i>2xx / 3xx</span><span><i style="background:var(--rd-chart-4xx)"></i>4xx</span><span><i style="background:var(--rd-chart-5xx)"></i>5xx</span></div>
+          </div>
+        </div>
+        <div class="card">
+          <div class="hd"><h2>Recent events</h2><span class="subtle">live</span></div>
+          <ul class="events">
+            <li><span class="t num">12 s</span><div class="m"><b>Config applied</b> · gen 142<span class="mono">docker: app@docker updated (port 3000→3001)</span></div><span class="pill ok">ok</span></li>
+            <li><span class="t num">2 m</span><div class="m"><b>Backend ejected</b> (passive)<span class="mono">api · 10.0.0.6:4000 · 5 failures / 30 s</span></div><span class="pill danger">down</span></li>
+            <li><span class="t num">9 m</span><div class="m"><b>Renewal failed</b> · attempt 3<span class="mono">legacy.example.com · DNS-01 propagation timeout</span></div><span class="pill warn">warn</span></li>
+            <li><span class="t num">41 m</span><div class="m"><b>Certificate issued</b> (ARI)<span class="mono">app.example.com · tlsserver · 45 d</span></div><span class="pill ok">ok</span></li>
+            <li><span class="t num">1 h</span><div class="m"><b>Unsupported label</b><span class="mono">traefik.http.middlewares.x.digestauth.* on container "wiki"</span></div><span class="pill warn">warn</span></li>
+          </ul>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="hd"><h2>Top routes</h2><span class="subtle">by requests, last 15 min</span></div>
+        <div class="tablewrap"><table>
+          <thead><tr><th>Route</th><th>Owner</th><th>Match</th><th class="end">req/s</th><th class="end">p95</th><th class="end">5xx</th><th>Status</th></tr></thead>
+          <tbody>
+            <tr><td class="name">app</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`app.example.com`)</td><td class="end num">612</td><td class="end num">41 ms</td><td class="end num">0.1%</td><td><span class="pill ok">active</span></td></tr>
+            <tr><td class="name">api-v1</td><td><span class="owner">file</span></td><td class="cellmono">Host(`api.example.com`) &amp;&amp; PathPrefix(`/v1`)</td><td class="end num">398</td><td class="end num">63 ms</td><td class="end num">1.2%</td><td><span class="pill warn">degraded</span></td></tr>
+            <tr><td class="name">tenants</td><td><span class="owner">file</span></td><td class="cellmono">HostRegexp(`^[a-z0-9-]+\.tenants\.example\.com$`)</td><td class="end num">201</td><td class="end num">55 ms</td><td class="end num">0.0%</td><td><span class="pill ok">active</span></td></tr>
+            <tr><td class="name">wiki</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`wiki.example.com`)</td><td class="end num">44</td><td class="end num">120 ms</td><td class="end num">0.0%</td><td><span class="pill ok">active</span></td></tr>
+            <tr><td class="name">legacy</td><td><span class="owner">api</span></td><td class="cellmono">Host(`legacy.example.com`)</td><td class="end num">12</td><td class="end num">210 ms</td><td class="end num">0.0%</td><td><span class="pill warn">cert expiring</span></td></tr>
+          </tbody>
+        </table></div>
+      </div>
+    </section>
+
+    <!-- ===== Routes ===== -->
+    <section class="page wrap" id="page-routes" hidden>
+      <div class="crumbs">vps-1 › <span>Routes</span></div>
+      <div class="pagehead">
+        <h1>Routes</h1><span class="subtle num">9 routes · 1 shadowed</span>
+        <div class="actions"><button class="btn">Import YAML</button><button class="btn primary" data-open-drawer="new">+ New route</button></div>
+      </div>
+      <div class="tabs" role="tablist"><button role="tab" aria-selected="true">HTTP</button><button role="tab" aria-selected="false">TCP / UDP</button><button role="tab" aria-selected="false">Test a request</button></div>
+
+      <div class="card" style="margin-bottom:12px">
+        <div class="hd"><h2>Which route wins?</h2><span class="subtle">evaluates priority → rule length → provider order</span></div>
+        <div class="bd">
+          <div class="tester"><input class="input mono" id="testurl" value="https://api.example.com/v1/users" aria-label="Request URL"><button class="btn" id="testbtn">Test match</button></div>
+          <div class="result" id="testres"><b>api-v1@file</b> wins (rule length 48, priority 0) → service <span class="mono">api@file</span>, middlewares <span class="mono">secure-headers, api-limit</span>. <span class="subtle">Also matched: <span class="mono">api-catchall@docker</span> (shadowed).</span></div>
+        </div>
+      </div>
+
+      <div class="filters">
+        <button class="chip" aria-pressed="true">All</button><button class="chip" aria-pressed="false"><span class="owner">file</span></button><button class="chip" aria-pressed="false"><span class="owner">docker</span></button><button class="chip" aria-pressed="false"><span class="owner">api</span></button><button class="chip" aria-pressed="false">Shadowed</button><button class="chip" aria-pressed="false">TLS issues</button>
+        <input class="input" style="max-width:260px;height:30px;margin-inline-start:auto" placeholder="Filter by name, host, path…" aria-label="Filter routes">
+      </div>
+      <div class="card"><div class="tablewrap"><table id="routes-table">
+        <thead><tr><th>Name</th><th>Owner</th><th>Match</th><th>Listeners</th><th>Service</th><th>Middlewares</th><th>TLS</th><th>Status</th><th class="end"></th></tr></thead>
+        <tbody>
+          <tr><td class="name">app</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`app.example.com`)</td><td class="cellmono">websecure</td><td class="cellmono">app@docker</td><td class="subtle">—</td><td><span class="pill ok">auto · 44 d</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="view">View</button></td></tr>
+          <tr><td class="name">api-v1</td><td><span class="owner">file</span></td><td class="cellmono">Host(`api.example.com`) &amp;&amp; PathPrefix(`/v1`)</td><td class="cellmono">websecure</td><td class="cellmono">api@file</td><td class="cellmono">secure-headers, api-limit</td><td><span class="pill ok">auto · 44 d</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="view">View</button></td></tr>
+          <tr><td class="name">api-catchall</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`api.example.com`)</td><td class="cellmono">websecure</td><td class="cellmono">api-old@docker</td><td class="subtle">—</td><td><span class="pill ok">auto</span></td><td><span class="pill warn">shadowed</span></td><td class="end"><button class="btn sm" data-open-drawer="view">View</button></td></tr>
+          <tr><td class="name">tenants</td><td><span class="owner">file</span></td><td class="cellmono">HostRegexp(`^[a-z0-9-]+\.tenants\.example\.com$`)</td><td class="cellmono">websecure</td><td class="cellmono">tenants@file</td><td class="cellmono">sso</td><td><span class="pill ok">wildcard · dns:cf</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="view">View</button></td></tr>
+          <tr><td class="name">wiki</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`wiki.example.com`)</td><td class="cellmono">websecure</td><td class="cellmono">wiki@docker</td><td class="cellmono">office-only@file</td><td><span class="pill ok">auto · 12 d</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="view">View</button></td></tr>
+          <tr class="sel"><td class="name">legacy</td><td><span class="owner">api</span></td><td class="cellmono">Host(`legacy.example.com`)</td><td class="cellmono">websecure</td><td class="cellmono">legacy@api</td><td class="cellmono">secure-headers</td><td><span class="pill warn">renewal failing</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="edit">Edit</button></td></tr>
+          <tr><td class="name">grafana</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`grafana.example.com`)</td><td class="cellmono">websecure</td><td class="cellmono">grafana@docker</td><td class="cellmono">sso</td><td><span class="pill ok">auto · 31 d</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="view">View</button></td></tr>
+          <tr><td class="name">status</td><td><span class="owner">api</span></td><td class="cellmono">Host(`status.example.com`)</td><td class="cellmono">web, websecure</td><td class="cellmono">status@api</td><td class="subtle">—</td><td><span class="pill muted">off</span></td><td><span class="pill ok">active</span></td><td class="end"><button class="btn sm" data-open-drawer="edit">Edit</button></td></tr>
+          <tr><td class="name">broken</td><td><span class="owner">docker</span></td><td class="cellmono">Host(`shop.example.com`)</td><td class="cellmono">websecure</td><td class="cellmono">shop@docker</td><td class="subtle">—</td><td><span class="pill muted">—</span></td><td><span class="pill danger">rejected</span></td><td class="end"><button class="btn sm" data-open-drawer="view">Why?</button></td></tr>
+        </tbody>
+      </table></div></div>
+      <p class="subtle" style="margin-top:10px">Objects owned by <span class="owner">file</span>, <span class="owner">docker</span> or <span class="owner">k8s</span> are read-only here — edit the source. Only <span class="owner">api</span> objects are editable in the dashboard.</p>
+    </section>
+
+    <!-- ===== Certificates ===== -->
+    <section class="page wrap" id="page-certs" hidden>
+      <div class="crumbs">vps-1 › <span>Certificates</span></div>
+      <div class="pagehead"><h1>Certificates</h1><span class="subtle num">7 valid · 1 failing · ACME account: Let's Encrypt (prod)</span><div class="actions"><button class="btn">Upload certificate</button><button class="btn primary">Renew all due</button></div></div>
+      <div class="tabs" role="tablist"><button role="tab" aria-selected="true">Managed (ACME)</button><button role="tab" aria-selected="false">Manual</button><button role="tab" aria-selected="false">ACME settings</button></div>
+      <div class="card"><div class="tablewrap"><table>
+        <thead><tr><th>Name / SANs</th><th>Issuer</th><th>Profile</th><th>Not after</th><th>ARI window</th><th>State</th><th>Used by</th><th class="end"></th></tr></thead>
+        <tbody>
+          <tr><td class="cellmono">app.example.com</td><td>Let's Encrypt E7</td><td class="cellmono">tlsserver</td><td class="num">in 44 d · 2026-12-09</td><td class="num">Dec 1 – Dec 5</td><td><span class="pill ok">valid</span></td><td class="cellmono">app</td><td class="end"><button class="btn sm">Renew now</button></td></tr>
+          <tr><td class="cellmono">api.example.com</td><td>Let's Encrypt E7</td><td class="cellmono">tlsserver</td><td class="num">in 44 d · 2026-12-09</td><td class="num">Dec 1 – Dec 5</td><td><span class="pill ok">valid</span></td><td class="cellmono">api-v1, api-catchall</td><td class="end"><button class="btn sm">Renew now</button></td></tr>
+          <tr><td class="cellmono">*.tenants.example.com</td><td>Let's Encrypt E7</td><td class="cellmono">classic</td><td class="num">in 61 d · 2026-12-26</td><td class="num">Dec 10 – Dec 14</td><td><span class="pill ok">valid · DNS-01 cf</span></td><td class="cellmono">tenants</td><td class="end"><button class="btn sm">Renew now</button></td></tr>
+          <tr><td class="cellmono">wiki.example.com</td><td>Let's Encrypt E7</td><td class="cellmono">tlsserver</td><td class="num">in 12 d · 2026-11-07</td><td class="num">Oct 30 – Nov 3</td><td><span class="pill info">renew due</span></td><td class="cellmono">wiki</td><td class="end"><button class="btn sm">Renew now</button></td></tr>
+          <tr><td class="cellmono">legacy.example.com</td><td>Let's Encrypt E7</td><td class="cellmono">tlsserver</td><td class="num">in 6 d · 2026-11-01</td><td class="num">overdue</td><td><span class="pill danger">renewal failing ×3</span></td><td class="cellmono">legacy</td><td class="end"><button class="btn sm">View error</button></td></tr>
+          <tr><td class="cellmono">203.0.113.10</td><td>Let's Encrypt E7</td><td class="cellmono">shortlived</td><td class="num">in 4 d · 2026-10-30</td><td class="num">Oct 28 – Oct 29</td><td><span class="pill ok">valid · 6-day</span></td><td class="cellmono">status</td><td class="end"><button class="btn sm">Renew now</button></td></tr>
+        </tbody></table></div></div>
+      <div class="callout" style="margin-top:12px"><b>Heads-up:</b> Let's Encrypt's default lifetime drops to 64 days on 2027-02-10 and to 45 days on 2028-02-16. Renewals here are ARI-driven, so no change is needed on your side.</div>
+    </section>
+
+    <section class="page wrap" id="page-generic" hidden>
+      <div class="crumbs">vps-1 › <span id="generic-title-crumb">Page</span></div>
+      <div class="pagehead"><h1 id="generic-title">Page</h1></div>
+      <div class="card"><div class="bd subtle">This page is not part of the mock. See <span class="mono">docs/08-design-system.md §3</span> for its specification.</div></div>
+    </section>
+  </main>
+</div>
+
+<!-- Drawer -->
+<div id="scrim" class="scrim" hidden></div>
+<aside id="drawer" class="drawer" role="dialog" aria-modal="true" aria-labelledby="drawer-title" hidden>
+  <div class="dh"><h2 id="drawer-title">Edit route</h2><span class="owner" id="drawer-owner">api</span><button class="iconbtn" id="drawer-close" aria-label="Close">✕</button></div>
+  <div class="db">
+    <div class="callout" id="drawer-ro" hidden>This route is owned by <b>docker</b> (container <span class="mono">wiki</span>). Change its labels to edit it; the dashboard shows it read-only.</div>
+    <div class="field"><label for="f-name">Name</label><input class="input mono" id="f-name" value="legacy"></div>
+    <div class="field"><label for="f-match">Match rule</label><input class="input mono" id="f-match" value="Host(`legacy.example.com`)"><span class="help">Traefik v3 grammar: Host, HostRegexp, Path, PathPrefix, PathRegexp, Method, Header, Query, ClientIP with &amp;&amp; || ! ( )</span></div>
+    <div class="row2">
+      <div class="field"><label for="f-listeners">Listeners</label><select class="input" id="f-listeners"><option>websecure (:443)</option><option>web (:80)</option></select></div>
+      <div class="field"><label for="f-priority">Priority</label><input class="input num" id="f-priority" value="0"><span class="help">0 = automatic (rule length)</span></div>
+    </div>
+    <div class="field"><label for="f-service">Service</label><select class="input" id="f-service"><option>legacy@api · 1/1 healthy</option><option>app@docker · 2/2 healthy</option><option>api@file · 1/2 healthy</option></select></div>
+    <div class="field"><label for="f-mw">Middlewares (ordered)</label><input class="input mono" id="f-mw" value="secure-headers@file"></div>
+    <div class="field"><label>TLS</label><div class="seg" role="group" aria-label="TLS mode"><button aria-pressed="true">Automatic</button><button aria-pressed="false">Wildcard (DNS-01)</button><button aria-pressed="false">Manual cert</button><button aria-pressed="false">Off</button></div><span class="help">Certificate <span class="mono">legacy.example.com</span> · renewal failing ×3 · last error: DNS-01 propagation timeout</span></div>
+    <div class="callout">Saving writes to the <b>api</b> snapshot, validates the full merged config and applies atomically. You will see the diff before it goes live.</div>
+  </div>
+  <div class="df"><button class="btn danger" id="drawer-disable">Disable</button><span class="spacer"></span><button class="btn" id="drawer-cancel">Cancel</button><button class="btn primary" id="drawer-save">Validate &amp; apply</button></div>
+</aside>
+
+<!-- Diagnostics panel -->
+<div id="diag" class="diag" role="dialog" aria-label="Diagnostics" hidden>
+  <div class="hd">Diagnostics · gen 142<span class="spacer"></span><button class="iconbtn" id="diag-close" aria-label="Close">✕</button></div>
+  <ul>
+    <li><span class="pill warn">warn</span><div><div>Route <b>api-catchall@docker</b> is shadowed by <b>api-v1@file</b> for all requests.</div><div class="src">docker: container "api-old" · rdock.host=api.example.com</div><div class="hint">Add a path to one of them or raise its priority.</div></div></li>
+    <li><span class="pill warn">warn</span><div><div>Unsupported Traefik label ignored on container <b>wiki</b>.</div><div class="src">traefik.http.middlewares.x.digestauth.users</div><div class="hint">digestauth is not in the compatibility subset; use basic_auth or forward_auth.</div></div></li>
+    <li><span class="pill danger">error</span><div><div>Route <b>broken@docker</b> rejected: container exposes 3 ports (80, 443, 9000).</div><div class="src">docker: container "shop"</div><div class="hint">Set <span class="mono">rdock.port</span> on the container.</div></div></li>
+  </ul>
+</div>
+
+<div id="toast" class="toast" hidden><span class="dot"></span><span id="toast-text"></span></div>
+
+<script>
+(function(){
+  var root=document.documentElement;
+  // theme toggle
+  var themebtn=document.getElementById('themebtn');
+  function isDark(){var t=root.getAttribute('data-theme');if(t)return t==='dark';return window.matchMedia&&window.matchMedia('(prefers-color-scheme: dark)').matches;}
+  function paintTheme(){themebtn.textContent=isDark()?'☀':'☾';}
+  themebtn.addEventListener('click',function(){root.setAttribute('data-theme',isDark()?'light':'dark');paintTheme();try{localStorage.setItem('rd-theme',root.getAttribute('data-theme'));}catch(e){}});
+  try{var saved=localStorage.getItem('rd-theme');if(saved)root.setAttribute('data-theme',saved);}catch(e){}
+  paintTheme();
+  // direction toggle (RTL demo)
+  document.getElementById('dirbtn').addEventListener('click',function(){root.dir=root.dir==='rtl'?'ltr':'rtl';});
+  // sidebar (mobile)
+  var sidebar=document.getElementById('sidebar'),menubtn=document.getElementById('menubtn');
+  menubtn.addEventListener('click',function(){sidebar.classList.toggle('open');});
+  // pages
+  var pages={overview:'page-overview',routes:'page-routes',certs:'page-certs'};
+  var titles={services:'Services',middlewares:'Middlewares',listeners:'Listeners',providers:'Providers',security:'Security',logs:'Logs',metrics:'Metrics',config:'Config',settings:'Settings'};
+  function show(page){
+    document.querySelectorAll('.page').forEach(function(p){p.hidden=true;});
+    var id=pages[page]||'page-generic';
+    document.getElementById(id).hidden=false;
+    if(!pages[page]){document.getElementById('generic-title').textContent=titles[page]||page;document.getElementById('generic-title-crumb').textContent=titles[page]||page;}
+    document.querySelectorAll('.nav button[data-page]').forEach(function(b){if(b.dataset.page===page)b.setAttribute('aria-current','page');else b.removeAttribute('aria-current');});
+    sidebar.classList.remove('open');
+    document.querySelector('.content').scrollTop=0;
+  }
+  document.querySelectorAll('.nav button[data-page]').forEach(function(b){b.addEventListener('click',function(){show(b.dataset.page);});});
+  var hash=(location.hash||'').replace('#','');if(hash&&(pages[hash]||titles[hash]))show(hash);
+  // tabs (visual only)
+  document.querySelectorAll('.tabs').forEach(function(t){t.querySelectorAll('[role=tab]').forEach(function(b){b.addEventListener('click',function(){t.querySelectorAll('[role=tab]').forEach(function(x){x.setAttribute('aria-selected','false');});b.setAttribute('aria-selected','true');});});});
+  document.querySelectorAll('.chip').forEach(function(c){c.addEventListener('click',function(){c.setAttribute('aria-pressed',c.getAttribute('aria-pressed')==='true'?'false':'true');});});
+  // drawer
+  var drawer=document.getElementById('drawer'),scrim=document.getElementById('scrim'),ro=document.getElementById('drawer-ro'),lastFocus=null;
+  function openDrawer(mode){
+    lastFocus=document.activeElement;
+    var title=document.getElementById('drawer-title'),owner=document.getElementById('drawer-owner');
+    var inputs=drawer.querySelectorAll('input,select');
+    if(mode==='new'){title.textContent='New route';owner.textContent='api';ro.hidden=true;inputs.forEach(function(i){i.disabled=false;});document.getElementById('f-name').value='';document.getElementById('f-match').value='Host(`new.example.com`)';}
+    else if(mode==='view'){title.textContent='Route (read-only)';owner.textContent='docker';ro.hidden=false;inputs.forEach(function(i){i.disabled=true;});document.getElementById('f-name').value='wiki';document.getElementById('f-match').value='Host(`wiki.example.com`)';}
+    else{title.textContent='Edit route';owner.textContent='api';ro.hidden=true;inputs.forEach(function(i){i.disabled=false;});document.getElementById('f-name').value='legacy';document.getElementById('f-match').value='Host(`legacy.example.com`)';}
+    document.getElementById('drawer-save').hidden=(mode==='view');document.getElementById('drawer-disable').hidden=(mode==='view');
+    drawer.hidden=false;scrim.hidden=false;document.getElementById('drawer-close').focus();
+  }
+  function closeDrawer(){drawer.hidden=true;scrim.hidden=true;if(lastFocus&&lastFocus.focus)lastFocus.focus();}
+  document.querySelectorAll('[data-open-drawer]').forEach(function(b){b.addEventListener('click',function(){openDrawer(b.dataset.openDrawer);});});
+  document.getElementById('drawer-close').addEventListener('click',closeDrawer);
+  document.getElementById('drawer-cancel').addEventListener('click',closeDrawer);
+  scrim.addEventListener('click',closeDrawer);
+  document.addEventListener('keydown',function(e){if(e.key==='Escape'){closeDrawer();diag.hidden=true;}});
+  // toast + apply simulation
+  var toast=document.getElementById('toast'),toastText=document.getElementById('toast-text'),toastTimer=null;
+  function say(msg,ms){toastText.textContent=msg;toast.hidden=false;clearTimeout(toastTimer);toastTimer=setTimeout(function(){toast.hidden=true;},ms||3500);}
+  var gen=142;
+  document.getElementById('drawer-save').addEventListener('click',function(){closeDrawer();say('Validating merged configuration…');setTimeout(function(){gen++;document.getElementById('gen').textContent=gen;say('Applied · gen '+gen+' · 0 requests dropped');},900);});
+  document.getElementById('drawer-disable').addEventListener('click',function(){closeDrawer();say('Route disabled · Undo');});
+  // diagnostics
+  var diag=document.getElementById('diag');
+  function toggleDiag(){diag.hidden=!diag.hidden;}
+  document.getElementById('applybtn').addEventListener('click',toggleDiag);
+  document.getElementById('btn-diag').addEventListener('click',toggleDiag);
+  document.getElementById('diag-close').addEventListener('click',function(){diag.hidden=true;});
+  // route tester (demo matcher over the sample routes)
+  var routes=[
+    {name:'api-v1@file',host:'api.example.com',prefix:'/v1',len:48,svc:'api@file',mw:'secure-headers, api-limit'},
+    {name:'api-catchall@docker',host:'api.example.com',prefix:'/',len:24,svc:'api-old@docker',mw:'—'},
+    {name:'app@docker',host:'app.example.com',prefix:'/',len:24,svc:'app@docker',mw:'—'},
+    {name:'wiki@docker',host:'wiki.example.com',prefix:'/',len:25,svc:'wiki@docker',mw:'office-only@file'},
+    {name:'legacy@api',host:'legacy.example.com',prefix:'/',len:27,svc:'legacy@api',mw:'secure-headers'},
+    {name:'grafana@docker',host:'grafana.example.com',prefix:'/',len:28,svc:'grafana@docker',mw:'sso'},
+    {name:'status@api',host:'status.example.com',prefix:'/',len:27,svc:'status@api',mw:'—'},
+    {name:'tenants@file',re:/^[a-z0-9-]+\.tenants\.example\.com$/,prefix:'/',len:52,svc:'tenants@file',mw:'sso'}
+  ];
+  function test(){
+    var v=document.getElementById('testurl').value.trim(),res=document.getElementById('testres'),u;
+    try{u=new URL(v);}catch(e){res.innerHTML='<b>Not a valid URL.</b> Enter something like https://app.example.com/path';return;}
+    var hits=routes.filter(function(r){var hostOk=r.re?r.re.test(u.hostname):r.host===u.hostname;return hostOk&&u.pathname.indexOf(r.prefix)===0;}).sort(function(a,b){return b.len-a.len;});
+    if(!hits.length){res.innerHTML='<b>No route matches</b> → 404 page from the default error handler.';return;}
+    var w=hits[0],others=hits.slice(1).map(function(r){return r.name;});
+    res.innerHTML='<b>'+w.name+'</b> wins (rule length '+w.len+', priority 0) → service <span class="mono">'+w.svc+'</span>, middlewares <span class="mono">'+w.mw+'</span>.'+(others.length?' <span class="subtle">Also matched: <span class="mono">'+others.join(', ')+'</span> (shadowed).</span>':'');
+  }
+  document.getElementById('testbtn').addEventListener('click',test);
+  document.getElementById('testurl').addEventListener('keydown',function(e){if(e.key==='Enter')test();});
+  // charts: deterministic sample series
+  function series(n,seed,base,amp){var out=[],x=seed;for(var i=0;i<n;i++){x=(x*9301+49297)%233280;var r=x/233280;out.push(base+amp*(Math.sin(i/7)+0.5*Math.sin(i/3.1)+(r-0.5)*0.8));}return out;}
+  function spark(id,data,color,fill){
+    var el=document.getElementById(id);if(!el)return;var w=200,h=36,min=Math.min.apply(null,data),max=Math.max.apply(null,data),span=(max-min)||1;
+    var pts=data.map(function(v,i){return [(i/(data.length-1))*w,h-3-((v-min)/span)*(h-8)];});
+    var d=pts.map(function(p,i){return (i?'L':'M')+p[0].toFixed(1)+' '+p[1].toFixed(1);}).join(' ');
+    var last=pts[pts.length-1];
+    el.innerHTML='<path d="'+d+' L'+w+' '+h+' L0 '+h+' Z" fill="'+color+'" opacity="0.12"/><path d="'+d+'" fill="none" stroke="'+color+'" stroke-width="1.5"/><circle cx="'+last[0].toFixed(1)+'" cy="'+last[1].toFixed(1)+'" r="2.5" fill="'+color+'"/>';
+  }
+  var cs=getComputedStyle(root);
+  function paintCharts(){
+    cs=getComputedStyle(root);
+    var acc=cs.getPropertyValue('--rd-chart-2xx').trim(),blue=cs.getPropertyValue('--rd-chart-4xx').trim(),red=cs.getPropertyValue('--rd-chart-5xx').trim(),grid=cs.getPropertyValue('--rd-chart-grid').trim(),txt=cs.getPropertyValue('--rd-text-3').trim();
+    spark('sp1',series(40,7,1200,120),acc);spark('sp2',series(40,11,0.4,0.15),acc);spark('sp3',series(40,3,50,8),acc);spark('sp4',series(40,5,3800,300),acc);spark('sp5',series(40,9,210,30),acc);
+    // traffic area chart: 90 buckets of 10 s = 15 min
+    var n=90,ok=series(n,21,1150,180),e4=series(n,22,70,25),e5=series(n,23,6,4);
+    var W=900,H=220,padL=44,padR=12,padT=10,padB=24,iw=W-padL-padR,ih=H-padT-padB;
+    var tot=ok.map(function(v,i){return v+e4[i]+e5[i];}),max=1600;
+    function y(v){return padT+ih-(v/max)*ih;} function x(i){return padL+(i/(n-1))*iw;}
+    function area(top,bottom){var d='';for(var i=0;i<n;i++){d+=(i?'L':'M')+x(i).toFixed(1)+' '+y(top[i]).toFixed(1)+' ';}for(var j=n-1;j>=0;j--){d+='L'+x(j).toFixed(1)+' '+y(bottom[j]).toFixed(1)+' ';}return d+'Z';}
+    var zero=ok.map(function(){return 0;});
+    var l1=e5.slice(),l2=e5.map(function(v,i){return v+e4[i];}),l3=tot;
+    var svg='';
+    [0,400,800,1200,1600].forEach(function(v){svg+='<line x1="'+padL+'" x2="'+(W-padR)+'" y1="'+y(v).toFixed(1)+'" y2="'+y(v).toFixed(1)+'" stroke="'+grid+'" stroke-width="1"/><text x="'+(padL-6)+'" y="'+(y(v)+4).toFixed(1)+'" text-anchor="end" font-size="11" fill="'+txt+'" font-family="JetBrains Mono, monospace">'+v+'</text>';});
+    svg+='<path d="'+area(l3,l2)+'" fill="'+acc+'" opacity="0.18"/><path d="'+area(l2,l1)+'" fill="'+blue+'" opacity="0.35"/><path d="'+area(l1,zero)+'" fill="'+red+'" opacity="0.6"/>';
+    var line='';for(var i=0;i<n;i++){line+=(i?'L':'M')+x(i).toFixed(1)+' '+y(tot[i]).toFixed(1)+' ';}
+    svg+='<path d="'+line+'" fill="none" stroke="'+acc+'" stroke-width="1.5"/><circle cx="'+x(n-1).toFixed(1)+'" cy="'+y(tot[n-1]).toFixed(1)+'" r="3" fill="'+acc+'"/>';
+    ['-15m','-10m','-5m','now'].forEach(function(t,k){var xi=padL+(k/3)*iw;svg+='<text x="'+xi.toFixed(1)+'" y="'+(H-6)+'" text-anchor="'+(k===0?'start':k===3?'end':'middle')+'" font-size="11" fill="'+txt+'" font-family="JetBrains Mono, monospace">'+t+'</text>';});
+    document.getElementById('traffic').innerHTML=svg;
+  }
+  paintCharts();
+  themebtn.addEventListener('click',paintCharts);
+  if(window.matchMedia){window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change',paintCharts);}
+})();
+</script>
