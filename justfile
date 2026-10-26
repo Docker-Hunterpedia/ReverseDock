@@ -8,7 +8,7 @@ default:
     @just --list
 
 # Everything the Rust and docs CI jobs check
-ci: fmt-check clippy test doc deny docs-check
+ci: fmt-check clippy test doc deny docs-check lint-workflows
 
 # Format all crates
 fmt:
@@ -38,6 +38,10 @@ deny:
 # Links, generated feature matrix, GitHub YAML
 docs-check:
     python3 -I scripts/check-docs.py
+
+# Lint GitHub workflows, including their shell scripts (needs actionlint and shellcheck)
+lint-workflows:
+    actionlint
 
 # Regenerate schema/rdock.v1.json after changing rdock-model
 schema:

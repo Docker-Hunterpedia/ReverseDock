@@ -4,7 +4,15 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
-## [0.1.0-alpha.1] — M0 foundations
+## [0.1.0-alpha.2] — first published pre-release
+
+### Fixed
+- Release workflow: in the checksum step, ` #` inside a plain YAML scalar started a comment and cut the shell command short, so `v0.1.0-alpha.1` was tagged but never published. Checksums and the SBOM are now produced on every pull request that touches the build, and only the publish job (tags) holds write permissions.
+
+### Added
+- `actionlint` with shellcheck in the required `docs` check and in `just ci`.
+
+## [0.1.0-alpha.1] — M0 foundations (tagged, not published)
 
 ### Added
 - Cargo workspace with all crates of the architecture; skeleton crates document their milestone.

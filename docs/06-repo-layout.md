@@ -11,13 +11,13 @@ reversedock/
 ├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                  # docs, dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; semgrep (report only)
+│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; semgrep (report only)
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
 │   │   ├── fuzz.yml                # (v0.1+) cargo-fuzz, weekly + on parser changes
 │   │   ├── bench.yml               # (v0.4+) nightly on a dedicated runner, publishes to benchmarks/results
-│   │   └── release.yml             # static binaries (linux x86-64/arm64 musl, macOS arm64), SHA256SUMS, SPDX SBOM, provenance, cosign
+│   │   └── release.yml             # build → package (checksums, SBOM; also on PRs) → publish (tags: provenance, cosign, release)
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
 │   ├── PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · release.yml (release-note categories)
 ├── crates/
