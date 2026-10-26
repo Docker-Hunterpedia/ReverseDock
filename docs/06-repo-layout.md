@@ -6,7 +6,7 @@
 reversedock/
 ├── Cargo.toml                      # workspace: members = crates/*, crates/providers/*
 ├── Cargo.lock
-├── rust-toolchain.toml             # channel = "stable" (pinned minor), components: clippy, rustfmt
+├── rust-toolchain.toml             # pinned toolchain (1.99.1) + clippy, rustfmt; bumped by PR
 ├── deny.toml                       # cargo-deny: licenses, advisories, bans, sources
 ├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
 ├── .github/
@@ -71,6 +71,7 @@ reversedock/
 ├── docs/                           # these documents; docs/site later (Astro Starlight → reversedock.dev)
 ├── scripts/                        # xlsx2md.py, schema-export, release helpers
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
+├── CLAUDE.md                       # rules for AI assistants (AGENTS.md is a symlink to it); .claude/ stays local
 ├── LICENSE (Apache-2.0) · NOTICE · CHANGELOG.md · README.md · .editorconfig · .gitignore
 ```
 
