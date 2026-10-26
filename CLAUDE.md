@@ -39,7 +39,8 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/06-repo-layout.md](docs/06-repo-layout.md) | Repo tree, crate rules, Cargo features, CI, releases, testing, Graphify |
 | [docs/07-roadmap.md](docs/07-roadmap.md) | Milestones M0 → v1.0 with acceptance criteria |
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
-| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0016 |
+| [docs/09-website.md](docs/09-website.md) | Public website and docs plan (Astro + Starlight, `apps/website`) |
+| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0017 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) | How changes are proposed, reviewed and merged |

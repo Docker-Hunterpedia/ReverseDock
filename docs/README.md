@@ -12,6 +12,7 @@ Reading order:
 | 06 | [Repo layout & conventions](06-repo-layout.md) | Tree, crate rules, dashboard rules, git/release, testing, Graphify |
 | 07 | [Roadmap](07-roadmap.md) | Milestones M0 → v1.0 with acceptance criteria |
 | 08 | [Design system](08-design-system.md) | Harbor UI: tokens, layout, pages, components, a11y/RTL |
+| 09 | [Website and docs](09-website.md) | reversedock.dev: landing page, docs map, migration guides, quality gates, phases W0–W3 |
 | — | [Decisions (ADRs)](decisions/README.md) | Why we chose what we chose |
 | — | [research/](research/) | Original idea, notes, matrix summary and the source workbook |
 | — | [design/](design/) | Dashboard mock (HTML) |
