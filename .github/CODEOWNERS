@@ -1,0 +1,8 @@
+# Code owners review every pull request (required by the main-branch ruleset).
+*                    @Docker-Hunterpedia
+
+# Governance, CI and architecture decisions always need a maintainer.
+/.github/            @Docker-Hunterpedia
+/docs/decisions/     @Docker-Hunterpedia
+/GOVERNANCE.md       @Docker-Hunterpedia
+/SECURITY.md         @Docker-Hunterpedia

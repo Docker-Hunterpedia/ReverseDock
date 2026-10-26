@@ -1,0 +1,36 @@
+name: Documentation
+description: Something in the docs is wrong, outdated, missing or unclear.
+title: "docs: "
+labels: ["type/docs"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: Path or URL of the document.
+      placeholder: docs/05-architecture.md §11
+    validations:
+      required: true
+  - type: dropdown
+    id: kind
+    attributes:
+      label: Kind of problem
+      options:
+        - Wrong or outdated information
+        - Missing information
+        - Unclear explanation
+        - Broken link or diagram
+        - Typo or formatting
+    validations:
+      required: true
+  - type: textarea
+    id: details
+    attributes:
+      label: Details
+      description: What is wrong, with a source link if it is a factual error.
+    validations:
+      required: true
+  - type: textarea
+    id: suggestion
+    attributes:
+      label: Suggested fix

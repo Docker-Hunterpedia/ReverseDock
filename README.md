@@ -4,6 +4,11 @@
 
 # ReverseDock
 
+[![ci](https://github.com/Docker-Hunterpedia/ReverseDock/actions/workflows/ci.yml/badge.svg)](https://github.com/Docker-Hunterpedia/ReverseDock/actions/workflows/ci.yml)
+[![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-F58F0A.svg)](LICENSE)
+[![Status: design phase](https://img.shields.io/badge/status-design%20phase-78716C.svg)](docs/07-roadmap.md)
+[![DCO](https://img.shields.io/badge/DCO-required-1C1917.svg)](CONTRIBUTING.md#branches-and-commits)
+
 > One reverse proxy for a laptop, a VPS, a Docker Swarm, or a Kubernetes cluster.
 > Rust, built on [Cloudflare Pingora](https://github.com/cloudflare/pingora). 100 % free and open source (Apache-2.0). No account, no telemetry, no paid tier.
 
@@ -47,8 +52,15 @@ services:
 
 ## Contributing
 
-Not open for code yet. Feedback on the design documents is welcome via issues. The project will use Apache-2.0 with DCO sign-off; see [ADR-0005](docs/decisions/0005-license-apache2-dco.md).
+The project is in the design phase: reviews of the plan, research corrections and real-world Traefik label sets are the most valuable contributions right now.
+
+- [CONTRIBUTING.md](CONTRIBUTING.md): issues, PR rules, Conventional Commits, DCO sign-off (`git commit -s`)
+- [Code of Conduct](CODE_OF_CONDUCT.md) · [Governance](GOVERNANCE.md) · [Support](SUPPORT.md)
+- Security problems: [SECURITY.md](SECURITY.md), never a public issue
+- Questions: [Discussions](https://github.com/Docker-Hunterpedia/ReverseDock/discussions)
+
+`main` is protected: every change goes through a reviewed pull request with green checks.
 
 ## License
 
-Apache-2.0.
+[Apache-2.0](LICENSE). Free forever: no CLA, no open-core, no telemetry ([ADR-0005](docs/decisions/0005-license-apache2-dco.md)).

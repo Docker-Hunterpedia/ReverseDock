@@ -1,0 +1,75 @@
+name: Feature request
+description: Suggest a capability that ReverseDock should have.
+title: "feat: "
+labels: ["type/feature", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Please check the [requirements](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/04-requirements.md) and [roadmap](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/07-roadmap.md) first: many features are already planned for a milestone. Changes to architecture, the config model or the label grammar should use the **Design proposal** form instead.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What are you trying to do, and what stops you today?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: How should ReverseDock behave? Config or label examples are very welcome.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives and workarounds
+  - type: dropdown
+    id: prior-art
+    attributes:
+      label: Which tools already do this?
+      multiple: true
+      options:
+        - NGINX
+        - Traefik
+        - Caddy
+        - HAProxy
+        - Envoy
+        - Pingap
+        - None / new idea
+  - type: input
+    id: requirement
+    attributes:
+      label: Related requirement ID
+      description: If it maps to an existing requirement in docs/04-requirements.md.
+      placeholder: e.g. M-LB-03
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Proxy core and routing
+        - TLS and ACME
+        - Config and CLI
+        - Docker provider
+        - Swarm provider
+        - Kubernetes / Gateway API
+        - Cloudflare integration
+        - Middlewares
+        - Load balancing and health checks
+        - Layer 4 (TCP / UDP)
+        - Cache
+        - Observability (logs, metrics, traces)
+        - Admin API
+        - Dashboard
+        - Migration (Traefik / NGINX / Caddy)
+        - Documentation
+        - CI, release and packaging
+  - type: checkboxes
+    id: help
+    attributes:
+      label: Contribution
+      options:
+        - label: I would like to help implement this.

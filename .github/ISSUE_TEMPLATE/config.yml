@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Report a security vulnerability
+    url: https://github.com/Docker-Hunterpedia/ReverseDock/security/advisories/new
+    about: Please report security problems privately. Never open a public issue for them.
+  - name: Ask a question
+    url: https://github.com/Docker-Hunterpedia/ReverseDock/discussions/new?category=q-a
+    about: Usage questions, ideas and show-and-tell go to GitHub Discussions.
+  - name: Read the design docs
+    url: https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/docs
+    about: Vision, architecture, requirements, roadmap and decisions.

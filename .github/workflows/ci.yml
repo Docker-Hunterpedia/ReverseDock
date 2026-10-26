@@ -1,0 +1,80 @@
+# Required checks for main: docs, dco, pr-title. Rust and dashboard jobs join in M0.
+name: ci
+
+on:
+  pull_request:
+    types: [opened, edited, synchronize, reopened]
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  docs:
+    name: docs
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml==6.0.2
+      - name: Check links, generated matrix and GitHub YAML
+        run: python scripts/check-docs.py
+
+  dco:
+    name: dco
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Every commit is signed off by its author
+        if: github.event_name == 'pull_request'
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          status=0
+          for sha in $(git rev-list --no-merges "$BASE..$HEAD"); do
+            name=$(git show -s --format='%an' "$sha")
+            email=$(git show -s --format='%ae' "$sha")
+            case "$name$email" in *"[bot]"*) echo "skip bot commit $sha ($name)"; continue;; esac
+            if git show -s --format='%B' "$sha" | grep -qiF "Signed-off-by: $name <$email>" \
+               || git show -s --format='%B' "$sha" | grep -qi "^Signed-off-by: .*<$email>"; then
+              echo "ok   $sha"
+            else
+              echo "::error::Commit $sha by $name <$email> has no matching Signed-off-by line. Fix with: git rebase --signoff $BASE && git push --force-with-lease"
+              status=1
+            fi
+          done
+          exit $status
+
+  pr-title:
+    name: pr-title
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: PR title is a Conventional Commit
+        if: github.event_name == 'pull_request'
+        env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          re='^(feat|fix|docs|perf|refactor|test|build|ci|chore|revert|security)(\([a-z0-9._/-]+\))?!?: .+'
+          if [[ "$TITLE" =~ $re ]]; then
+            echo "ok: $TITLE"
+          else
+            echo "::error::PR title must look like 'type(scope): summary', e.g. 'feat(docker): select network by label'. Got: $TITLE"
+            exit 1
+          fi

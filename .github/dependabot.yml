@@ -1,0 +1,13 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "type/chore"]
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ["*"]
+  # cargo (/) and npm (/apps/dashboard) are added in M0 when the manifests exist.

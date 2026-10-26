@@ -1,0 +1,89 @@
+name: Bug report
+description: Something in ReverseDock does not work as documented.
+title: "bug: "
+labels: ["type/bug", "status/needs-triage"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. **Security problems must not be reported here**: use [private vulnerability reporting](https://github.com/Docker-Hunterpedia/ReverseDock/security/advisories/new) instead.
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened?
+      description: A clear description of the problem.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect to happen?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Minimal reproduction
+      description: The smallest rdock.yaml, Compose file or container labels that show the problem, plus the request you sent (for example a curl command). Remove secrets.
+      render: yaml
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: ReverseDock version
+      description: Output of `rdock version`, or the image tag.
+      placeholder: rdock 0.1.0 (pingora 0.9.0)
+    validations:
+      required: true
+  - type: dropdown
+    id: deployment
+    attributes:
+      label: How do you run it?
+      options:
+        - Binary / systemd
+        - Docker / Docker Compose
+        - Docker Swarm
+        - Kubernetes
+        - Dokploy / Coolify / Portainer
+        - Other
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      multiple: true
+      options:
+        - Proxy core and routing
+        - TLS and ACME
+        - Config and CLI
+        - Docker provider
+        - Swarm provider
+        - Kubernetes / Gateway API
+        - Cloudflare integration
+        - Middlewares
+        - Load balancing and health checks
+        - Layer 4 (TCP / UDP)
+        - Cache
+        - Observability (logs, metrics, traces)
+        - Admin API
+        - Dashboard
+        - Migration (Traefik / NGINX / Caddy)
+        - Documentation
+        - CI, release and packaging
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs or status output
+      description: Access or error log lines, `rdock status`, or diagnostics from the dashboard. Remove tokens, cookies and private hostnames.
+      render: shell
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Before submitting
+      options:
+        - label: I searched existing issues and this is not a duplicate.
+          required: true
+        - label: I removed secrets, tokens and private hostnames from everything above.
+          required: true
