@@ -8,6 +8,8 @@ use schemars::JsonSchema;
 use serde::de::{self, MapAccess, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
+use crate::values::Duration;
+
 /// An HTTP route: which requests it matches, which middlewares run, which service answers.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Route {
@@ -28,9 +30,24 @@ pub struct Route {
     /// TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
     #[serde(default)]
     pub tls: Option<RouteTls>,
+    /// Upstream timeouts for this route, overriding the service's.
+    #[serde(default)]
+    pub timeouts: RouteTimeouts,
     /// Set to `false` to keep the route defined but inactive.
     #[serde(default = "crate::defaults::yes")]
     pub enabled: bool,
+}
+
+/// Upstream timeouts of a route. Unset values come from the service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RouteTimeouts {
+    /// Establishing a connection.
+    pub connect: Option<Duration>,
+    /// Waiting for response data.
+    pub read: Option<Duration>,
+    /// Sending request data.
+    pub write: Option<Duration>,
 }
 
 /// How a route selects requests.

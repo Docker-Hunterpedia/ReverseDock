@@ -1,6 +1,6 @@
 [package]
 name = "rdock-admin"
-description = "Admin API and embedded dashboard for ReverseDock"
+description = "Admin API and dashboard for ReverseDock"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -9,6 +9,15 @@ authors.workspace = true
 repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
+
+[dependencies]
+async-trait.workspace = true
+http.workspace = true
+pingora.workspace = true
+serde_json.workspace = true
+subtle.workspace = true
+tokio.workspace = true
+tracing.workspace = true
 
 [lints]
 workspace = true

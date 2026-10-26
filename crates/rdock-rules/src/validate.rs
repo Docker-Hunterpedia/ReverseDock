@@ -91,8 +91,9 @@ fn check_not_empty(value: &str, what: &str) -> Result<(), String> {
 }
 
 /// Checks a host as used by `Host` and `HostSNI`: `*`, `*.example.com` (one wildcard label),
-/// DNS names, IPv4 literals and bracketed IPv6 literals. Underscores are allowed because
-/// container names use them. Returns a message explaining the problem.
+/// DNS names (a trailing dot is allowed), IPv4 literals and IPv6 literals with or without
+/// brackets. Underscores are allowed because container names use them. Returns a message
+/// explaining the problem.
 pub fn check_host(host: &str) -> Result<(), String> {
     if host == "*" {
         return Ok(());
@@ -103,12 +104,16 @@ pub fn check_host(host: &str) -> Result<(), String> {
             .map(|_| ())
             .map_err(|_| format!("`{host}` is not a valid IPv6 literal"));
     }
+    if host.parse::<Ipv6Addr>().is_ok() {
+        return Ok(());
+    }
     if !host.is_ascii() {
         return Err("non-ASCII hosts must be written in punycode (`xn--…`)".to_owned());
     }
     if host.contains(':') {
         return Err("a host must not include a port; routing ignores the port".to_owned());
     }
+    let host = host.strip_suffix('.').unwrap_or(host);
     let name = host.strip_prefix("*.").unwrap_or(host);
     if name.is_empty() || name.len() > 253 {
         return Err(format!("`{host}` is not a valid host name"));
@@ -168,15 +173,9 @@ fn check_token(value: &str, what: &str) -> Result<(), String> {
     }
 }
 
+/// Methods are compared in upper case, like Traefik, so `Method(`get`)` matches `GET`.
 fn check_method(method: &str) -> Result<(), String> {
-    check_token(method, "HTTP method")?;
-    if method.chars().any(|c| c.is_ascii_lowercase()) {
-        return Err(format!(
-            "HTTP methods are case-sensitive; write `{}`",
-            method.to_ascii_uppercase()
-        ));
-    }
-    Ok(())
+    check_token(method, "HTTP method")
 }
 
 fn check_ip(value: &str) -> Result<(), String> {
@@ -216,8 +215,9 @@ mod tests {
     fn accepts_valid_rules() {
         for rule in [
             "Host(`example.com`) && PathPrefix(`/api`)",
-            "Host(`*.example.com`) || Host(`*`) || Host(`10.0.0.1`) || Host(`[::1]`)",
-            "Host(`my_app`) && Method(`PATCH`) && Header(`X-Api-Key`, `abc`)",
+            "Host(`*.example.com`) || Host(`*`) || Host(`10.0.0.1`) || Host(`[::1]`) || Host(`::1`)",
+            "Host(`example.com.`) || Host(`my_app`) && Method(`PATCH`) && Header(`X-Api-Key`, `abc`)",
+            "Method(`get`)",
             "HostRegexp(`^[a-z0-9-]+\\.tenants\\.example\\.com$`) && ClientIP(`2001:db8::/32`)",
             "Query(`debug`) && QueryRegexp(`id`, `^[0-9]+$`)",
         ] {
@@ -245,7 +245,7 @@ mod tests {
         assert!(messages("Host(`a.com:443`)", Http)[0].contains("port"));
         assert!(messages("Host(`bücher.de`)", Http)[0].contains("punycode"));
         assert!(messages("Host(`-bad.com`)", Http)[0].contains("not a valid host"));
-        assert!(messages("Method(`get`)", Http)[0].contains("write `GET`"));
+        assert!(messages("Method(`GET /`)", Http)[0].contains("not a valid HTTP method"));
         assert!(messages("ClientIP(`10.0.0.0/33`)", Http)[0].contains("CIDR"));
         assert!(
             messages("PathRegexp(`(unclosed`)", Http)[0].contains("invalid regular expression")
@@ -256,7 +256,7 @@ mod tests {
 
     #[test]
     fn reports_every_bad_matcher() {
-        let errors = parse("Path(`a`) && Method(`get`)").unwrap().validate(Http);
+        let errors = parse("Path(`a`) && Method(`G T`)").unwrap().validate(Http);
         assert_eq!(errors.len(), 2);
         assert_eq!(errors[0].matcher, "Path(`a`)");
     }

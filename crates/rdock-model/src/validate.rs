@@ -63,10 +63,29 @@ fn local_name(reference: &str) -> Option<&str> {
 }
 
 /// Password hash formats accepted by basic authentication.
-fn is_supported_hash(hash: &str) -> bool {
-    ["$argon2id$", "$2a$", "$2b$", "$2y$"]
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum HashStrength {
+    /// argon2id or bcrypt.
+    Strong,
+    /// Apache MD5 (`$apr1$`), MD5-crypt (`$1$`) or SHA-1 (`{SHA}`): fast to brute-force,
+    /// accepted because Traefik and `htpasswd` produce them.
+    Weak,
+}
+
+fn hash_strength(hash: &str) -> Option<HashStrength> {
+    if ["$argon2id$", "$2a$", "$2b$", "$2x$", "$2y$"]
         .iter()
         .any(|prefix| hash.starts_with(prefix))
+    {
+        Some(HashStrength::Strong)
+    } else if ["$apr1$", "$1$", "{SHA}"]
+        .iter()
+        .any(|prefix| hash.starts_with(prefix))
+    {
+        Some(HashStrength::Weak)
+    } else {
+        None
+    }
 }
 
 /// Parses `404` or `500-599`.
@@ -213,6 +232,15 @@ impl Validator<'_> {
         for (i, (name, listener)) in entries.iter().enumerate() {
             let path = path_key("listeners", name);
             self.check_name("listeners", name);
+            let timeouts = &listener.timeouts;
+            for (field, value) in [
+                ("request_header", timeouts.request_header),
+                ("read", timeouts.read),
+                ("write", timeouts.write),
+                ("idle", timeouts.idle),
+            ] {
+                self.check_not_zero(&format!("{path}.timeouts.{field}"), value.is_zero());
+            }
             let protocol = listener.effective_protocol();
             if listener.tls.is_some()
                 && matches!(protocol, ListenerProtocol::Http | ListenerProtocol::Udp)
@@ -295,6 +323,16 @@ impl Validator<'_> {
         for (name, route) in &self.config.routes {
             let path = path_key("routes", name);
             self.check_name("routes", name);
+            for (field, value) in [
+                ("connect", route.timeouts.connect),
+                ("read", route.timeouts.read),
+                ("write", route.timeouts.write),
+            ] {
+                self.check_not_zero(
+                    &format!("{path}.timeouts.{field}"),
+                    value.is_some_and(crate::values::Duration::is_zero),
+                );
+            }
             let expr = self.parse_http_match(&format!("{path}.match"), &route.matcher);
             if let Some(listeners) = &route.listeners {
                 if listeners.is_empty() {
@@ -774,12 +812,18 @@ impl Validator<'_> {
         for (i, entry) in auth.users.iter().enumerate() {
             let entry_path = path_index(&format!("{path}.users"), i);
             match entry.split_once(':') {
-                Some((user, hash)) if !user.is_empty() && is_supported_hash(hash) => {}
-                Some((user, _)) => self.push(
-                    Diagnostic::error(entry_path, format!("the password of `{user}` is not an argon2id or bcrypt hash"))
-                        .with_hint("plain-text passwords are never accepted; create a hash with `htpasswd -nbB user password`"),
-                ),
-                None => self.error(entry_path, "expected `user:hash`"),
+                Some((user, hash)) if !user.is_empty() => match hash_strength(hash) {
+                    Some(HashStrength::Strong) => {}
+                    Some(HashStrength::Weak) => self.push(
+                        Diagnostic::warning(&entry_path, format!("the password of `{user}` uses a weak hash"))
+                            .with_hint("MD5 and SHA-1 hashes are fast to brute-force; create a bcrypt hash with `htpasswd -nbB user password`"),
+                    ),
+                    None => self.push(
+                        Diagnostic::error(&entry_path, format!("the password of `{user}` is not an argon2id, bcrypt, MD5 or SHA-1 hash"))
+                            .with_hint("plain-text passwords are never accepted; create a hash with `htpasswd -nbB user password`"),
+                    ),
+                },
+                _ => self.error(entry_path, "expected `user:hash`"),
             }
         }
     }
@@ -948,6 +992,17 @@ impl Validator<'_> {
             if certificate.key_file.as_os_str().is_empty() {
                 self.error(format!("{path}.key_file"), "path is empty");
             }
+            if let Some(password) = &certificate.key_password {
+                self.check_secret(&format!("{path}.key_password"), password, "key_password");
+            }
+        }
+        if let Some(default) = &self.config.defaults.certificate {
+            self.check_reference(
+                "defaults.certificate",
+                "certificate",
+                default,
+                &self.config.certificates,
+            );
         }
     }
 
@@ -1042,12 +1097,16 @@ impl Validator<'_> {
         }
         let limits = &security.limits;
         for (field, size) in [
-            ("max_header_bytes", limits.max_header_bytes),
+            ("max_header_bytes", Some(limits.max_header_bytes)),
             ("max_body_bytes", limits.max_body_bytes),
-            ("max_uri_bytes", limits.max_uri_bytes),
+            ("max_uri_bytes", Some(limits.max_uri_bytes)),
         ] {
-            self.check_not_zero(&format!("security.limits.{field}"), size.as_u64() == 0);
+            self.check_not_zero(
+                &format!("security.limits.{field}"),
+                size.is_some_and(|s| s.as_u64() == 0),
+            );
         }
+        self.check_not_zero("security.limits.max_headers", limits.max_headers == 0);
     }
 
     fn check_admin(&mut self) {

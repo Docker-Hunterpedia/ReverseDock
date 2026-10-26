@@ -9,8 +9,9 @@ use crate::Config;
 pub const SCHEMA_ID: &str =
     "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json";
 
-/// The JSON Schema (draft 2020-12) of `rdock.yaml`. Objects reject unknown keys so editors flag
-/// typos; at runtime unknown keys are warnings unless `--strict` is used.
+/// The JSON Schema (draft 2020-12) of `rdock.yaml`. Objects reject unknown keys, as ReverseDock
+/// does, so editors flag typos; keys starting with `x-` are allowed everywhere (extension fields
+/// for YAML anchors).
 #[must_use]
 pub fn json_schema() -> Schema {
     let mut schema = schemars::schema_for!(Config);
@@ -36,6 +37,10 @@ fn deny_unknown_properties(schema: &mut Schema) {
         && object.contains_key("properties")
         && !object.contains_key("additionalProperties")
     {
+        object.insert(
+            "patternProperties".to_owned(),
+            serde_json::json!({ "^x-": {} }),
+        );
         object.insert("additionalProperties".to_owned(), false.into());
     }
 }
@@ -61,6 +66,11 @@ mod tests {
         assert_eq!(
             schema.get("additionalProperties"),
             Some(&serde_json::Value::Bool(false))
+        );
+        assert!(
+            schema
+                .get("patternProperties")
+                .is_some_and(|p| p.get("^x-").is_some())
         );
     }
 }
