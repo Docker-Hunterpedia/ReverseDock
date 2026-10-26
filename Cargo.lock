@@ -2831,7 +2831,7 @@ dependencies = [
  "tracing",
  "url",
  "uuid",
- "x509-parser 0.16.0",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]
@@ -2877,7 +2877,7 @@ dependencies = [
  "rustls-pki-types",
  "tempfile",
  "thiserror 2.0.21",
- "x509-parser 0.16.0",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

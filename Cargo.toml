@@ -77,7 +77,7 @@ percent-encoding = "2.3.2"
 rustls = { version = "0.23.46", default-features = false, features = ["logging", "ring", "std", "tls12"] }
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
 pkcs8 = { version = "0.11.0", features = ["encryption", "pem", "std"] }
-x509-parser = "0.16.0"
+x509-parser = "0.18.1"
 
 # Middlewares
 argon2 = "0.6.0"
