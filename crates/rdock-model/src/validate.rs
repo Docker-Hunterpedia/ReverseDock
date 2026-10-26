@@ -816,11 +816,11 @@ impl Validator<'_> {
                     Some(HashStrength::Strong) => {}
                     Some(HashStrength::Weak) => self.push(
                         Diagnostic::warning(&entry_path, format!("the password of `{user}` uses a weak hash"))
-                            .with_hint("MD5 and SHA-1 hashes are fast to brute-force; create a bcrypt hash with `htpasswd -nbB user password`"),
+                            .with_hint("MD5 and SHA-1 hashes are fast to brute-force; create an argon2id entry with `rdock hash --user <name>`"),
                     ),
                     None => self.push(
                         Diagnostic::error(&entry_path, format!("the password of `{user}` is not an argon2id, bcrypt, MD5 or SHA-1 hash"))
-                            .with_hint("plain-text passwords are never accepted; create a hash with `htpasswd -nbB user password`"),
+                            .with_hint("plain-text passwords are never accepted; create one with `rdock hash --user <name>`"),
                     ),
                 },
                 _ => self.error(entry_path, "expected `user:hash`"),

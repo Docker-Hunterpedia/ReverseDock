@@ -107,3 +107,41 @@ fn prints_version_information() {
     let text = stdout(&rdock(&["--version"]));
     assert_eq!(text, format!("rdock {}\n", env!("CARGO_PKG_VERSION")));
 }
+
+#[test]
+fn hash_prints_a_verifiable_argon2id_entry() {
+    use argon2::{Argon2, PasswordHash, PasswordVerifier};
+    use std::io::Write;
+    use std::process::Stdio;
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rdock"))
+        .args(["hash", "--user", "alice"])
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child.stdin.take().unwrap().write_all(b"s3cret\n").unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(output.status.success());
+    let text = stdout(&output);
+    let hash = text.trim_end().strip_prefix("alice:").unwrap();
+    assert!(hash.starts_with("$argon2id$"), "{hash}");
+    let parsed = PasswordHash::new(hash).unwrap();
+    assert!(
+        Argon2::default()
+            .verify_password(b"s3cret", &parsed)
+            .is_ok()
+    );
+    assert!(
+        Argon2::default()
+            .verify_password(b"s3cret\n", &parsed)
+            .is_err()
+    );
+
+    let empty = Command::new(env!("CARGO_BIN_EXE_rdock"))
+        .arg("hash")
+        .stdin(Stdio::null())
+        .output()
+        .unwrap();
+    assert_eq!(empty.status.code(), Some(2));
+}

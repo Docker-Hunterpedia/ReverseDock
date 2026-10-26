@@ -16,6 +16,7 @@ reversedock/
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
+│   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary past the cap
 │   │   ├── bench.yml               # (v0.4+) nightly on a dedicated runner, publishes to benchmarks/results
 │   │   └── release.yml             # build → package (checksums, SBOM; also on PRs) → publish (tags: provenance, cosign, release)
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
@@ -86,7 +87,7 @@ reversedock/
 | Clippy | `clippy::all` + selected `pedantic`; `unwrap_used`/`expect_used`/`panic` denied in library crates (allowed in tests and the binary's startup path with a message) |
 | Errors | `thiserror` enums in libraries; `miette` diagnostics with source spans for config/label errors; `anyhow` only in the binary |
 | Logging | `tracing` only; structured fields, no `println!`; secrets never logged (newtype `Secret<T>` with redacted `Debug`) |
-| Async | Tokio, capped at `<1.54` until Pingora handles tokio 1.54's `BufStream` change (Dependabot ignores it too); blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
+| Async | Tokio, capped at `<1.54` until Pingora handles tokio 1.54's `BufStream` change (Dependabot ignores it too; the weekly `tokio-canary` job reports when the cap can be lifted); blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
 | Build tools | A C compiler and **CMake** (Pingora builds zlib-ng; ring and zstd need C) |
 | Public API | `#![warn(missing_docs)]` on lib crates; `pub` surface minimised; `#[non_exhaustive]` on config enums |
 | Features | One table (below) is the source of truth; 05 and the ADRs point here |

@@ -1,0 +1,78 @@
+# Weekly checks that do not depend on a pull request. Not required checks.
+#   advisories    fails when a new RustSec advisory affects the lockfile (pull requests only
+#                 see advisories published before they ran).
+#   tokio-canary  builds and tests against the newest tokio, past the `<1.54` cap in Cargo.toml.
+#                 It stays green either way and reports in the job summary whether the cap can
+#                 be lifted (docs/06-repo-layout.md §2).
+name: weekly
+
+on:
+  schedule:
+    - cron: "41 4 * * 1"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/weekly.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: weekly-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
+jobs:
+  advisories:
+    name: advisories
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-deny
+      - name: Advisories for the workspace and the fuzz workspace
+        run: |
+          cargo deny check advisories
+          cargo deny --manifest-path tests/fuzz/Cargo.toml check advisories
+
+  tokio-canary:
+    name: tokio-canary
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-nextest
+      - name: Lift the tokio cap
+        run: |
+          sed -i 's/^tokio = { version = ">=1.53.3, <1.54",/tokio = { version = "1",/' Cargo.toml
+          grep -q '^tokio = { version = "1",' Cargo.toml
+          cargo update -p tokio
+          cargo tree -i tokio --depth 0
+      - name: Tests with the newest tokio
+        id: tests
+        continue-on-error: true
+        run: cargo nextest run --workspace --no-fail-fast
+      - name: Report
+        env:
+          OUTCOME: ${{ steps.tests.outcome }}
+        run: |
+          version=$(cargo tree -i tokio --depth 0 | head -1)
+          if [ "$OUTCOME" = success ]; then
+            echo "::notice::All tests pass with $version: the tokio cap can be lifted."
+            echo "All tests pass with **$version**. The \`<1.54\` cap in Cargo.toml and the Dependabot ignore can be lifted." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "Tests still fail with **$version**; keep the tokio cap." >> "$GITHUB_STEP_SUMMARY"
+          fi

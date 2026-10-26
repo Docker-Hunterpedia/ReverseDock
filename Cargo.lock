@@ -2650,6 +2650,7 @@ name = "rdock"
 version = "0.1.0-alpha.3"
 dependencies = [
  "anyhow",
+ "argon2",
  "async-trait",
  "bytes",
  "clap",

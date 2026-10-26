@@ -10,6 +10,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 
 mod ctl;
 mod engine;
+mod hash;
 mod run;
 mod validate;
 mod watch;
@@ -44,6 +45,8 @@ enum Command {
     Status(StatusArgs),
     /// Exit 0 when the running proxy is ready (for container health checks).
     Healthcheck(CtlArgs),
+    /// Create an argon2id password hash for `basic_auth` (reads the password from stdin).
+    Hash(HashArgs),
     /// Print the JSON Schema of rdock.yaml.
     Schema,
     /// Print version and build information.
@@ -52,6 +55,13 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Args)]
+struct HashArgs {
+    /// Print a complete `user:hash` entry for `basic_auth.users`.
+    #[arg(long)]
+    user: Option<String>,
 }
 
 #[derive(Args)]
@@ -132,6 +142,7 @@ fn main() -> ExitCode {
         Command::Reload(args) => ctl::reload(&args),
         Command::Status(args) => ctl::status(&args),
         Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
+        Command::Hash(args) => hash::hash(&args),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };
