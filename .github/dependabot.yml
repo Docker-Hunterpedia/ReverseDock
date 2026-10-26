@@ -48,4 +48,16 @@ updates:
     commit-message:
       prefix: build
       include: scope
-  # npm (/apps/dashboard) is added with the dashboard in v0.5.
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "type/chore"]
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      astro:
+        patterns: ["astro", "@astrojs/*", "starlight-*"]
+      npm-minor-and-patch:
+        update-types: [minor, patch]

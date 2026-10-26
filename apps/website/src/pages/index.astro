@@ -1,0 +1,317 @@
+---
+import '@reversedock/harbor-tokens/tokens.css';
+import '../styles/landing.css';
+import Logo from '../assets/logo.svg';
+import release from '../data/release.json';
+import { compare, features, guides, installs, pillars, trust } from '../data/landing';
+
+const runCommand = `docker run -p 80:80 ${release.image}:${release.version}`;
+const docs = '/docs/start/what-is-reversedock/';
+const title = 'ReverseDock: one reverse proxy for every dock';
+const description = "Route, secure and observe your services on a laptop, a VPS or a cluster. One static Rust binary on Cloudflare's Pingora, with Traefik's rule language.";
+---
+<!doctype html>
+<html lang="en" dir="ltr" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{title}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={new URL('/', Astro.site)} />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <meta property="og:title" content={title} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type" content="website" />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" />
+  <script is:inline>
+    // Same storage key and values as Starlight's theme picker, so the choice carries into the docs.
+    (() => {
+      let stored = '';
+      try { stored = localStorage.getItem('starlight-theme') ?? ''; } catch {}
+      const system = matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      document.documentElement.dataset.theme = stored === 'light' || stored === 'dark' ? stored : system;
+    })();
+  </script>
+</head>
+<body>
+  <a class="skip" href="#main">Skip to content</a>
+  <header class="topbar">
+    <nav class="wrap nav" aria-label="Main">
+      <a class="brand" href="/" aria-label="ReverseDock home">
+        <img src={Logo.src} width="28" height="28" alt="" />
+        <span>ReverseDock</span>
+      </a>
+      <div class="navlinks">
+        <a href={docs}>Docs</a>
+        <a href="/docs/install/docker/">Install</a>
+        <a href="/docs/migrate/from-traefik/">Migrate</a>
+        <a href="/docs/project/roadmap/">Roadmap</a>
+      </div>
+      <div class="navactions">
+        <a class="navlink-gh" href={release.repo}>
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true"><path d="M12 .5a11.5 11.5 0 0 0-3.64 22.41c.58.1.79-.25.79-.56v-2c-3.2.7-3.88-1.37-3.88-1.37-.53-1.33-1.28-1.69-1.28-1.69-1.05-.71.08-.7.08-.7 1.16.08 1.77 1.19 1.77 1.19 1.03 1.77 2.7 1.26 3.36.96.1-.75.4-1.26.73-1.55-2.55-.29-5.24-1.28-5.24-5.68 0-1.25.45-2.28 1.19-3.08-.12-.29-.52-1.46.11-3.04 0 0 .97-.31 3.17 1.18a11 11 0 0 1 5.77 0c2.2-1.49 3.17-1.18 3.17-1.18.63 1.58.23 2.75.11 3.04.74.8 1.19 1.83 1.19 3.08 0 4.41-2.69 5.38-5.25 5.67.41.36.78 1.06.78 2.14v3.17c0 .31.21.67.8.56A11.5 11.5 0 0 0 12 .5Z"></path></svg>
+          <span>GitHub</span>
+        </a>
+        <button class="iconbtn" type="button" id="theme-toggle" aria-label="Switch theme">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="4"></circle><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"></path></svg>
+        </button>
+        <a class="btn btn-primary btn-sm" href="/docs/start/quickstart/">Get started</a>
+      </div>
+    </nav>
+  </header>
+
+  <main id="main">
+    <section class="wrap hero">
+      <div class="hero-text">
+        <a class="announce" href="/docs/project/changelog/">
+          <span class="announce-tag">v{release.version}</span>
+          <span>The proxy is out. Docker labels are next.</span>
+        </a>
+        <h1>One reverse proxy for every dock.</h1>
+        <p class="lead">Route, secure and observe your services on a laptop, a VPS or a cluster. One static Rust binary on Cloudflare's Pingora, with Traefik's rule language and reloads that never drop a request.</p>
+        <div class="actions">
+          <a class="btn btn-primary" href="/docs/start/quickstart/">Get started</a>
+          <a class="btn btn-secondary" href="/docs/migrate/from-traefik/">Coming from Traefik or NGINX?</a>
+        </div>
+        <div class="command">
+          <span class="prompt" aria-hidden="true">$</span>
+          <code tabindex="0">{runCommand}</code>
+          <button type="button" class="copy" data-copy={runCommand}>Copy</button>
+        </div>
+        <p class="fineprint">Apache-2.0 · free forever · no account, no telemetry</p>
+      </div>
+      <div class="hero-visual">
+        <figure class="codewin">
+          <figcaption><span class="dots" aria-hidden="true"><i></i><i></i><i></i></span><span class="mono">/etc/rdock/rdock.yaml</span></figcaption>
+          <pre class="mono" tabindex="0"><span class="k">listeners</span>:
+  <span class="k">web</span>:       {'{'} <span class="k">address</span>: <span class="s">":80"</span> {'}'}
+  <span class="k">websecure</span>: {'{'} <span class="k">address</span>: <span class="s">":443"</span>, <span class="k">tls</span>: {'{}'} {'}'}
+
+<span class="k">routes</span>:
+  <span class="k">app</span>:
+    <span class="k">match</span>: <span class="s">"Host(`app.example.com`)"</span>
+    <span class="k">service</span>: app
+    <span class="k">middlewares</span>: [gzip]
+  <span class="k">api</span>:
+    <span class="k">match</span>: <span class="s">"Host(`app.example.com`) &amp;&amp; PathPrefix(`/api`)"</span>
+    <span class="k">service</span>: api
+
+<span class="k">services</span>:
+  <span class="k">app</span>: {'{'} <span class="k">backends</span>: [{'{'} <span class="k">address</span>: <span class="s">"app:3000"</span> {'}'}] {'}'}
+  <span class="k">api</span>: {'{'} <span class="k">backends</span>: [{'{'} <span class="k">address</span>: <span class="s">"api:8080"</span> {'}'}] {'}'}
+
+<span class="c"># HTTP → HTTPS redirect and HTTP/2 are on by default.</span></pre>
+        </figure>
+        <div class="reload">
+          <div class="mono muted"><span class="accent">$</span> rdock reload</div>
+          <div class="mono reload-line">
+            <span class="ok"><i class="dot"></i>applied generation 42</span>
+            <span class="muted">2 routes · 2 services · 0 requests dropped</span>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="wrap pillars">
+        {pillars.map((p) => (
+          <div class="pillar">
+            <div class="pillar-head"><span class="eyebrow mono">{p.eyebrow}</span><span class={`badge badge-${p.kind}`}>{p.badge}</span></div>
+            <h2 class="h3">{p.title}</h2>
+            <p>{p.body}</p>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section class="wrap section" id="migrate">
+      <div class="intro">
+        <span class="kicker">Migrate</span>
+        <h2>Keep your Traefik rules. Lose the boilerplate.</h2>
+        <p>ReverseDock reads the same <code>Host</code>, <code>PathPrefix</code> and <code>Headers</code> matchers as Traefik v3, with the same priorities. Each migration guide maps every concept, shows both configs side by side and walks you through a switch-over you can roll back.</p>
+      </div>
+      <div class="pair">
+        <figure class="codewin">
+          <figcaption><span class="mono">traefik/dynamic.yml</span><span>Traefik v3</span></figcaption>
+          <pre class="mono" tabindex="0"><span class="k">http</span>:
+  <span class="k">routers</span>:
+    <span class="k">app</span>:
+      <span class="k">rule</span>: <span class="s">"Host(`app.example.com`)"</span>
+      <span class="k">service</span>: app
+  <span class="k">services</span>:
+    <span class="k">app</span>:
+      <span class="k">loadBalancer</span>:
+        <span class="k">servers</span>:
+          - <span class="k">url</span>: <span class="s">"http://app:3000"</span></pre>
+        </figure>
+        <figure class="codewin codewin-accent">
+          <figcaption><span class="mono">rdock.yaml</span><span class="accent">ReverseDock</span></figcaption>
+          <pre class="mono" tabindex="0"><span class="k">routes</span>:
+  <span class="k">app</span>:
+    <span class="k">match</span>: <span class="s">"Host(`app.example.com`)"</span>
+    <span class="k">service</span>: app
+
+<span class="k">services</span>:
+  <span class="k">app</span>:
+    <span class="k">backends</span>: [{'{'} <span class="k">address</span>: <span class="s">"app:3000"</span> {'}'}]</pre>
+        </figure>
+      </div>
+      <div class="cards">
+        {guides.map((g) => (
+          <a class="card" href={g.href}>
+            <span class="card-title">{g.title}<span class={`badge badge-${g.kind}`}>{g.badge}</span></span>
+            <span class="card-body">{g.body}</span>
+          </a>
+        ))}
+      </div>
+    </section>
+
+    <section class="wrap section" id="roadmap">
+      <div class="split-head">
+        <div class="intro">
+          <span class="kicker">What works today</span>
+          <h2>Every feature says when it ships.</h2>
+          <p>No page promises what the binary can't do. A setting that isn't implemented yet is refused at start with the version it's planned for.</p>
+        </div>
+        <div class="legend">
+          <span><i class="dot dot-ok"></i>Shipped</span>
+          <span><i class="dot dot-next"></i>Next</span>
+          <span><i class="dot dot-planned"></i>Planned</span>
+        </div>
+      </div>
+      <div class="grid">
+        {features.map((f) => (
+          <div class="cell">
+            <div class="cell-head"><span class="cell-title">{f.title}</span><span class={`badge badge-${f.kind}`}>{f.status}</span></div>
+            <span class="cell-body">{f.body}</span>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section class="band band-2">
+      <div class="wrap section">
+        <div class="intro">
+          <span class="kicker">Compare</span>
+          <h2>Where ReverseDock fits.</h2>
+        </div>
+        <div class="tablebox">
+          <table>
+            <thead>
+              <tr><th scope="col"><span class="sr-only">Capability</span></th><th scope="col" class="us">ReverseDock</th><th scope="col">Traefik</th><th scope="col">Caddy</th><th scope="col">NGINX</th></tr>
+            </thead>
+            <tbody>
+              {compare.map((r) => (
+                <tr><th scope="row">{r.row}</th><td class="us">{r.rd}</td><td>{r.traefik}</td><td>{r.caddy}</td><td>{r.nginx}</td></tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p class="muted small">The full matrix compares 171 capabilities across seven proxies, each with its source. <a href={`${release.repo}/blob/main/docs/03-feature-matrix.md`}>Read the feature matrix</a></p>
+      </div>
+    </section>
+
+    <section class="wrap section install" id="install">
+      <div class="intro">
+        <span class="kicker">Install</span>
+        <h2>Running in five minutes.</h2>
+        <p>A 26 MB image or a single static binary for Linux on x86-64 and ARM64. Every release is signed and ships with an SBOM, so you can check what you run.</p>
+        <div class="links">
+          <a href="/docs/start/quickstart/">Quickstart with Docker Compose →</a>
+          <a href="/docs/install/verify/">Verify a download →</a>
+        </div>
+      </div>
+      <div class="tabs">
+        <div role="tablist" aria-label="Install method" class="tablist">
+          {installs.map((t, i) => (
+            <button type="button" role="tab" id={`tab-${t.id}`} aria-controls={`panel-${t.id}`} aria-selected={i === 0 ? 'true' : 'false'} tabindex={i === 0 ? 0 : -1} class="tab">{t.label}</button>
+          ))}
+        </div>
+        {installs.map((t, i) => (
+          <div role="tabpanel" id={`panel-${t.id}`} aria-labelledby={`tab-${t.id}`} hidden={i !== 0} class="panel">
+            <pre class="mono" tabindex="0">{t.code}</pre>
+            <div class="panel-foot"><span class="muted">{t.note}</span><button type="button" class="copy" data-copy={t.code}>Copy</button></div>
+          </div>
+        ))}
+      </div>
+    </section>
+
+    <section class="wrap trustwrap">
+      <div class="trust">
+        {trust.map((t) => (
+          <div class="trust-item"><span class="trust-title">{t.title}</span><span class="muted">{t.body}</span></div>
+        ))}
+      </div>
+    </section>
+
+    <section class="band">
+      <div class="wrap closing">
+        <div>
+          <h2>Read the docs, then put it in front of something real.</h2>
+          <p class="muted">Guides for every middleware, a configuration reference generated from the schema, and troubleshooting by symptom.</p>
+        </div>
+        <div class="actions">
+          <a class="btn btn-primary" href="/docs/start/quickstart/">Get started</a>
+          <a class="btn btn-secondary" href={release.repo}>Star on GitHub</a>
+        </div>
+      </div>
+    </section>
+  </main>
+
+  <footer class="footer">
+    <div class="wrap footer-in">
+      <div class="footer-brand">
+        <span class="brand"><img src={Logo.src} width="24" height="24" alt="" /><span>ReverseDock</span></span>
+        <span class="muted small">Apache-2.0. Built on Cloudflare Pingora. Not affiliated with Cloudflare or Traefik Labs.</span>
+        <span class="muted small">Developed by <a href="https://oday-bakkour.com/">Oday Bakkour</a></span>
+      </div>
+      <nav class="footer-cols" aria-label="Footer">
+        <div><span class="eyebrow">Docs</span><a href="/docs/start/quickstart/">Quickstart</a><a href="/docs/install/docker/">Install</a><a href="/docs/guides/route-a-domain/">Guides</a><a href="/docs/reference/configuration/">Configuration reference</a></div>
+        <div><span class="eyebrow">Migrate</span><a href="/docs/migrate/from-traefik/">From Traefik</a><a href="/docs/migrate/from-nginx/">From NGINX</a></div>
+        <div><span class="eyebrow">Project</span><a href="/docs/project/roadmap/">Roadmap</a><a href="/docs/project/changelog/">Changelog</a><a href={`${release.repo}/security/policy`}>Security</a><a href={`${release.repo}/blob/main/CONTRIBUTING.md`}>Contributing</a></div>
+      </nav>
+    </div>
+  </footer>
+
+  <script>
+    const root = document.documentElement;
+    document.getElementById('theme-toggle')?.addEventListener('click', () => {
+      const next = root.dataset.theme === 'dark' ? 'light' : 'dark';
+      root.dataset.theme = next;
+      try { localStorage.setItem('starlight-theme', next); } catch {}
+    });
+
+    for (const button of document.querySelectorAll<HTMLButtonElement>('button[data-copy]')) {
+      button.addEventListener('click', async () => {
+        try {
+          await navigator.clipboard.writeText(button.dataset.copy ?? '');
+          button.textContent = 'Copied';
+        } catch {
+          button.textContent = 'Select and copy';
+        }
+        setTimeout(() => (button.textContent = 'Copy'), 1600);
+      });
+    }
+
+    const tabs = [...document.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
+    const select = (tab: HTMLButtonElement) => {
+      for (const other of tabs) {
+        const selected = other === tab;
+        other.setAttribute('aria-selected', String(selected));
+        other.tabIndex = selected ? 0 : -1;
+        document.getElementById(other.getAttribute('aria-controls')!)!.hidden = !selected;
+      }
+      tab.focus();
+    };
+    tabs.forEach((tab, i) => {
+      tab.addEventListener('click', () => select(tab));
+      tab.addEventListener('keydown', (event) => {
+        const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
+        if (step) select(tabs[(i + step + tabs.length) % tabs.length]);
+      });
+    });
+  </script>
+</body>
+</html>

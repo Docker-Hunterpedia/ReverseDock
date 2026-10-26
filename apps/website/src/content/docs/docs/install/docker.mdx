@@ -1,0 +1,133 @@
+---
+title: Docker
+description: Run the official ReverseDock image with docker run, with the configuration and data directory mounted.
+sidebar:
+  order: 1
+---
+
+The official image is `ghcr.io/docker-hunterpedia/rdock`. It contains the static `rdock` binary on a distroless base, runs as a non-root user, and has no shell. Images are published for `linux/amd64` and `linux/arm64`, signed with cosign and attested; see [Verify a download](/docs/install/verify/).
+
+## What you need
+
+- Docker Engine, or Docker Desktop.
+- A configuration file. The examples use `config/rdock.yaml` in the current directory.
+
+## Image tags
+
+| Tag | Meaning |
+|---|---|
+| `0.1.0-alpha.3` | The current release. Tags are never overwritten. |
+| `latest` | The newest stable release. Pre-releases such as `0.1.0-alpha.3` do not move `latest`, so pin the version. |
+
+## What the image expects
+
+| Path or port | Purpose |
+|---|---|
+| `/etc/rdock/rdock.yaml` | The configuration file (`--config`, `RDOCK_CONFIG`) |
+| `/var/lib/rdock` | Data directory: configuration history, last-known-good copy, admin token (`--data-dir`, `RDOCK_DATA_DIR`) |
+| `80`, `443` | Exposed ports; your listeners decide what is actually bound |
+| `127.0.0.1:2080` | Admin API inside the container, used by the health check |
+
+The entrypoint is `rdock` and the default command is `run`. The image has a `HEALTHCHECK` that runs `rdock healthcheck` every 10 seconds, so `docker ps` shows `healthy` once the proxy is ready.
+
+## Run it
+
+Put the proxy and your applications on one user-defined network, so ReverseDock can reach them by container name:
+
+```sh
+docker network create rdock-net
+docker run -d --name app --network rdock-net --restart unless-stopped traefik/whoami:v1.11
+```
+
+Save the configuration as `config/rdock.yaml`:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "Host(`app.localhost`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:80"
+```
+
+Validate it with the same image, then start the proxy:
+
+```sh
+docker run --rm -v "$PWD/config:/etc/rdock:ro" \
+  ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3 validate --strict /etc/rdock/rdock.yaml
+
+docker run -d --name rdock --network rdock-net --restart unless-stopped \
+  -p 80:80 \
+  -v "$PWD/config:/etc/rdock:ro" \
+  -v rdock-data:/var/lib/rdock \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3
+```
+
+- Mount the directory, not the single file: editors that save by replacing the file would leave the container with the old copy.
+- `--read-only`, `--cap-drop ALL` and `no-new-privileges` work because rdock writes only to `/var/lib/rdock`. Docker lets unprivileged processes in a container bind ports below 1024, so no capability is needed for ports 80 and 443.
+- Keep `/var/lib/rdock` in a named volume. Without it, the history and last-known-good copy are lost when the container is recreated.
+
+## Check it
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' -H 'Host: app.localhost' http://localhost/
+```
+
+```text
+200
+```
+
+```sh
+docker ps --filter name=rdock --format '{{.Names}} {{.Status}}'
+docker exec rdock rdock status
+```
+
+The status shows `ready true` and the listeners in use.
+
+## Reload and logs
+
+ReverseDock reloads when `rdock.yaml`, or a certificate or file it references, changes. To reload by hand:
+
+```sh
+docker exec rdock rdock reload
+docker kill -s HUP rdock
+```
+
+Both the access log and the application log go to the container output in JSON:
+
+```sh
+docker logs -f rdock
+```
+
+## HTTPS with your own certificate
+
+Put the certificate and key in `config/certs/`, so they are mounted with the configuration at `/etc/rdock/certs/`, and publish port 443:
+
+```sh
+docker run -d --name rdock --network rdock-net --restart unless-stopped \
+  -p 80:80 -p 443:443 \
+  -v "$PWD/config:/etc/rdock:ro" \
+  -v rdock-data:/var/lib/rdock \
+  --read-only --cap-drop ALL --security-opt no-new-privileges:true \
+  ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3
+```
+
+A separate mount below `/etc/rdock` fails when the configuration directory is mounted read-only, because Docker cannot create the mount point. The container runs as user `65532`, so the key files must be readable by that user. See [Your own TLS certificate](/docs/guides/tls-certificates/) for the configuration.
+
+## Related
+
+- [Docker Compose](/docs/install/compose/)
+- [Verify a download](/docs/install/verify/)
+- [Upgrade](/docs/install/upgrade/)
+- [Environment variables](/docs/reference/environment/) and [Files and directories](/docs/reference/files/)

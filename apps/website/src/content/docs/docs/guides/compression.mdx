@@ -1,0 +1,103 @@
+---
+title: Compress responses
+description: Gzip text responses on the fly with the compress middleware, which streams, honours Accept-Encoding q-values and leaves event streams, gRPC and partial responses alone.
+sidebar:
+  order: 19
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `compress` middleware <Status since="v0.1" /> compresses responses with gzip when the client
+accepts it. HTML, CSS, JavaScript and JSON usually shrink to a fraction of their size.
+Brotli and zstd are <Status planned="v0.4" />.
+
+## Before you start
+
+If your backend already compresses its responses, you do not need this middleware: responses
+that already have a `Content-Encoding` are passed on unchanged.
+
+## Configure the middleware
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [gzip]
+
+services:
+  app:
+    backends: [{ address: "app:3000" }]
+
+middlewares:
+  gzip:
+    type: compress
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `algorithms` | `[gzip]` | Algorithms offered. Only `gzip` works in this version. |
+| `min_size` | `1KiB` | Responses whose `Content-Length` is smaller are not compressed. |
+| `content_types` | built-in list | Media types to compress. Setting it replaces the built-in list. |
+
+`br` and `zstd` are accepted by the configuration model, but in this version `rdock validate`
+reports them as "brotli and zstd compression: not supported in this version (planned for
+v0.4)", and `rdock run` refuses the configuration until you remove them.
+
+## Which responses are compressed
+
+Compression uses an **allow-list** of media types. When `content_types` is empty, these are
+compressed:
+
+`text/*`, `application/json`, `application/javascript`, `application/x-javascript`,
+`application/xml`, `application/xhtml+xml`, `application/rss+xml`, `application/atom+xml`,
+`application/ld+json`, `application/manifest+json`, `application/vnd.api+json`,
+`application/wasm`, `image/svg+xml`, `font/ttf`, `font/otf`.
+
+In your own list, `type/*` covers a whole type, for example `text/*`. Parameters such as
+`; charset=utf-8` are ignored when comparing.
+
+A response is left as it is when any of these holds:
+
+- It is a server-sent event stream (`text/event-stream`) or gRPC (`application/grpc…`). These
+  are never compressed, even if your list includes them, because buffering would break them.
+- It answers a `HEAD` request.
+- Its status is 1xx, 204, 206 (partial content) or 304, or it has a `Content-Range`.
+- It already has a `Content-Encoding` other than `identity`.
+- Its `Content-Length` is below `min_size`. A response without a length, for example a chunked
+  stream, is compressed when its type allows it.
+- The client's `Accept-Encoding` does not accept gzip. `gzip`, `x-gzip` and `*` count, and a
+  `q=0` value means "not accepted".
+
+## What changes on a compressed response
+
+- `Content-Encoding: gzip` is set; `Content-Length` and `Accept-Ranges` are removed.
+- A strong `ETag` becomes weak (`W/"…"`), because the bytes differ from the uncompressed ones.
+- `Vary: Accept-Encoding` is added to every response that could have been compressed, also when
+  this client did not ask for gzip, so caches keep the two versions apart.
+- The body is compressed chunk by chunk as it arrives, so long responses keep flowing.
+
+## Check that it worked
+
+```sh
+curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip' https://app.example.com/
+```
+
+For an HTML page of 1 KiB or more the response headers include `Content-Encoding: gzip` and
+`vary: Accept-Encoding`. Without the `Accept-Encoding` header, the same request returns the
+uncompressed page with `vary: Accept-Encoding` only.
+
+## Related
+
+- [WebSockets, SSE and gRPC](/docs/guides/websockets-sse-grpc/)
+- [Security headers](/docs/guides/security-headers/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

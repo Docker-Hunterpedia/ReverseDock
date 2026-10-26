@@ -20,7 +20,7 @@ pub struct Metrics {
     pub requests: IntCounterVec,
     /// Request duration by listener and route.
     pub duration: HistogramVec,
-    /// Upstream errors by service and kind (`connect`, `timeout`, `other`).
+    /// Upstream errors by service and kind (`connect`, `timeout`).
     pub upstream_errors: IntCounterVec,
     /// Open client connections by listener.
     pub connections: IntGaugeVec,
@@ -30,7 +30,7 @@ pub struct Metrics {
     pub tls_handshake_errors: IntCounterVec,
     /// Generation of the configuration in use.
     pub config_generation: IntGauge,
-    /// Configuration reloads by result (`applied`, `rejected`, `unchanged`).
+    /// Configuration reloads by result (`applied`, `rejected`).
     pub config_reloads: IntCounterVec,
     /// Expiry of each certificate, in seconds since the Unix epoch.
     pub cert_expiry: IntGaugeVec,

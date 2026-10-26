@@ -1,0 +1,109 @@
+---
+title: Serve several sites
+description: Route several host names to different applications from one ReverseDock, with one or several certificates.
+sidebar:
+  order: 2
+---
+
+One ReverseDock can serve any number of host names. Each site is a route that matches its host and a service that answers it. This guide serves three sites from two applications.
+
+## What you need
+
+- The setup from [Route a domain to an app](/docs/guides/route-a-domain/).
+- Certificates that cover every host name. One wildcard certificate for `*.example.com` covers `www.example.com`, `blog.example.com` and `shop.example.com`, but not `example.com` itself or `a.b.example.com`. See [TLS certificates](/docs/guides/tls-certificates/).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  wildcard:
+    cert_file: /etc/rdock/certs/wildcard.example.com.pem
+    key_file: /etc/rdock/certs/wildcard.example.com.key
+
+routes:
+  website:
+    match: "Host(`example.com`) || Host(`www.example.com`)"
+    service: website
+  blog:
+    match: "Host(`blog.example.com`)"
+    service: blog
+  shop:
+    match: { hosts: [shop.example.com] }
+    service: website
+
+services:
+  website:
+    backends: [{ address: "10.0.0.10:8080" }]
+  blog:
+    backends: [{ address: "10.0.0.20:2368" }]
+```
+
+- **`website`** answers two names. `||` joins alternatives; the rule matches when either host matches.
+- **`blog`** sends one name to a second application.
+- **`shop`** uses the structured form of `match`. `hosts: [shop.example.com]` is the same as ``Host(`shop.example.com`)``. A structured match can also hold `path_prefix`, `methods`, `headers`, `query` and `client_ips`; all given conditions must hold. See [`routes` reference](/docs/reference/configuration/routes/).
+- Two routes may share a service: `website` and `shop` both go to `10.0.0.10:8080`. The application sees which site was asked for in the `Host` header.
+
+The certificate used here covers `example.com` and `*.example.com`. If yours does not cover the bare domain, add a second entry under `certificates` for it; ReverseDock picks the certificate per handshake by the requested name.
+
+## One rule for many subdomains
+
+`Host` accepts a one-label wildcard:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  tenants:
+    match: "Host(`*.example.com`)"
+    service: tenants
+```
+
+`*.example.com` matches `acme.example.com`, but not `example.com` or `a.b.example.com`. For other patterns use `HostRegexp`, which takes a regular expression. `HostRegexp` is not anchored, so write `^` and `$` yourself:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  previews:
+    match: "HostRegexp(`^pr-[0-9]+\\.example\\.com$`)"
+    service: previews
+```
+
+In a double-quoted YAML string a backslash is written twice, so `\\.` reaches the rule as `\.`.
+
+## Which route wins
+
+When several routes match a request, the one with the higher priority wins. Without `priority`, a route's priority is the length of its rule as written, so a more specific rule (longer) wins over a shorter one, and ``Host(`*.example.com`)`` loses to ``Host(`blog.example.com`)``. Ties go to the route name in alphabetical order. Set `priority` when you need a different order. See [Routing and priority](/docs/concepts/routing-and-priority/).
+
+## Check that it works
+
+```sh
+rdock validate --strict /etc/rdock/rdock.yaml
+curl -sI https://www.example.com/
+curl -sI https://blog.example.com/
+```
+
+Each request reaches its own application. The [access log](/docs/guides/logs-and-metrics/) records the matched route in the `route` field, which is the quickest way to see which route took a request.
+
+A name that no route matches, such as `unknown.example.com`, gets ReverseDock's `404 Not Found` page.
+
+## Sites on plain HTTP only
+
+A site that should stay on HTTP, for example an internal status page, needs a route attached to the plain listener with TLS turned off:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  status:
+    match: "Host(`status.internal.example.com`)"
+    service: status
+    listeners: [web]
+    tls: off
+```
+
+Routes on the `web` listener are served there and are not redirected to HTTPS.
+
+## Related
+
+- [Route by path](/docs/guides/path-routing/)
+- [Rules reference](/docs/reference/rules/)
+- [TLS certificates](/docs/guides/tls-certificates/)

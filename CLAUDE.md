@@ -17,6 +17,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - Architecture, config-model, label-grammar, public-API and security-model changes need an ADR in `docs/decisions/` (copy `0000-template.md`). Accepted ADRs are only changed to mark them superseded.
 - Requirement IDs in `docs/04-requirements.md` are stable: never renumber or reuse one. Every ID is scheduled in `docs/07-roadmap.md` or listed there as unscheduled.
 - `docs/03-feature-matrix.md` is generated below its `<!-- GENERATED` marker by `scripts/xlsx2md.py` from the workbook in `docs/research/`. Never hand-edit the generated part.
+- User-facing behaviour changes update their page in `apps/website/src/content/docs/` in the same PR; run `pnpm gen` there after changing the schema or the CLI ([apps/website/README.md](apps/website/README.md)).
 - Facts about third-party projects (Pingora, Traefik, Let's Encrypt, Gateway API) must cite an official source and a date.
 
 ## Code conventions
@@ -40,6 +41,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/07-roadmap.md](docs/07-roadmap.md) | Milestones M0 → v1.0 with acceptance criteria |
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
 | [docs/09-website.md](docs/09-website.md) | Public website and docs plan (Astro + Starlight, `apps/website`) |
+| [apps/website/](apps/website/README.md) | The website: landing page, docs pages, generators and checks |
 | [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0017 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |

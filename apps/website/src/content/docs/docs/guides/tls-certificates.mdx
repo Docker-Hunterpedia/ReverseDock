@@ -1,0 +1,146 @@
+---
+title: TLS certificates
+description: Serve HTTPS with certificates you provide, choose the TLS policy, use encrypted keys and replace certificates without a restart.
+sidebar:
+  order: 4
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock v0.1 serves HTTPS with certificates you provide as PEM files <Status since="v0.1" />. Automatic certificates from Let's Encrypt or another ACME CA <Status planned="v0.3" /> are not available yet: `rdock validate` warns about an `acme` section and `rdock run` refuses it.
+
+## What you need
+
+- A certificate chain in PEM format, leaf certificate first, followed by the intermediates.
+- Its private key in PEM format: PKCS#8, PKCS#1 (RSA) or SEC1 (EC). A PKCS#8 key may be encrypted.
+- Files readable by the user ReverseDock runs as.
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: { policy: intermediate } }
+
+certificates:
+  wildcard:
+    cert_file: /etc/rdock/certs/wildcard.example.com.pem
+    key_file: /etc/rdock/certs/wildcard.example.com.key
+  apex:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+defaults:
+  certificate: wildcard
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+  website:
+    match: "Host(`example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+```
+
+A listener with a `tls` block terminates TLS. Every TLS listener uses every certificate under `certificates`; routes do not name a certificate.
+
+## How a certificate is chosen
+
+For each TLS handshake, ReverseDock looks at the server name the client sends (SNI) and the names in each certificate's subject alternative names:
+
+1. A certificate with exactly that name.
+2. A certificate with a one-label wildcard for it: `*.example.com` covers `app.example.com`, but not `example.com` or `a.b.example.com`.
+3. The certificate named in `defaults.certificate`.
+
+If nothing matches and no default is set, the handshake fails. Clients that send no server name, for example a request to an IP address, get the default certificate. When several certificates cover the same name, the one that expires last is used.
+
+The common name (CN) is not used, only subject alternative names. A certificate without them is only served as the default, and `rdock validate` warns about it.
+
+## Every HTTPS host needs a certificate
+
+Until automatic certificates exist, each route on a TLS listener needs a certificate that covers its hosts, or a `defaults.certificate`. Otherwise `rdock validate` reports:
+
+```text
+warning: routes.app.tls: no certificate covers app.example.com; automatic certificates are not supported yet (planned for v0.3)
+    add the certificate under `certificates`, set `defaults.certificate`, or use `tls: off` on a plain listener
+```
+
+and `rdock run` refuses the configuration. A route without a `Host` matcher, such as ``PathPrefix(`/`)``, can only be served over HTTPS with `defaults.certificate`.
+
+## TLS policies
+
+`listeners.<name>.tls.policy` selects the protocol versions:
+
+| Policy | Versions | Use it when |
+|---|---|---|
+| `intermediate` (default) | TLS 1.3 and TLS 1.2 with forward-secret AEAD cipher suites | You serve the public, including older clients. |
+| `modern` | TLS 1.3 only | All clients are recent (current browsers, curl, recent mobile apps). |
+
+Both offer HTTP/2 and HTTP/1.1 through ALPN, and both enable session tickets with rotating keys. 0-RTT (early data) is not enabled. TLS is provided by rustls with the ring crypto provider.
+
+Check the version a client negotiates:
+
+```sh
+openssl s_client -connect app.example.com:443 -servername app.example.com </dev/null 2>/dev/null | grep -E 'Protocol|subject='
+```
+
+## Encrypted private keys
+
+An encrypted PKCS#8 key (`-----BEGIN ENCRYPTED PRIVATE KEY-----`) needs `key_password`. Keep the password out of the configuration file and reference a file instead:
+
+```yaml title="rdock.yaml (excerpt)"
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+    key_password: "${file:/run/secrets/example_key_password}"
+```
+
+`key_password` is a secret field: the reference stays in the loaded configuration, the history and the last-known-good copy, and is resolved only when the key is loaded. A password written in plain text works, but `rdock validate` warns about it. See [Secrets](/docs/guides/secrets/).
+
+Keys encrypted in the legacy OpenSSL format (`Proc-Type: 4,ENCRYPTED`) are not supported. Convert such a key to PKCS#8:
+
+```sh
+openssl pkcs8 -topk8 -v2 aes-256-cbc -in old.key -out example.com.key
+```
+
+A wrong password is reported as `cannot decrypt …: wrong password or unsupported encryption`.
+
+## Replace a certificate
+
+ReverseDock watches `cert_file` and `key_file`. When either changes, it loads the configuration again and new handshakes use the new certificate; open connections keep theirs. Nothing needs to be restarted, and no signal is needed.
+
+Write the new files in place, or write them elsewhere and move them over the old ones; editors and tools that replace files are handled, because ReverseDock watches the directory. If the new pair cannot be used (wrong key, unreadable file), the reload is rejected and the previous certificate stays in use; the error is in the application log. See [Reload the configuration](/docs/guides/reloads/).
+
+Run `rdock reload` after replacing certificates if ReverseDock was started with `--no-watch`.
+
+## Watch expiry
+
+The metric `rdock_cert_expiry_timestamp_seconds{name="…"}` holds the expiry of each certificate in seconds since the Unix epoch. An alert rule:
+
+```yaml title="alerts.yaml"
+groups:
+  - name: rdock
+    rules:
+      - alert: CertificateExpiresSoon
+        expr: rdock_cert_expiry_timestamp_seconds - time() < 14 * 86400
+        labels: { severity: warning }
+        annotations:
+          summary: "Certificate {{ $labels.name }} expires in less than 14 days"
+```
+
+See [Logs and metrics](/docs/guides/logs-and-metrics/).
+
+## Automatic certificates <Status planned="v0.3" />
+
+ACME issuance (HTTP-01, TLS-ALPN-01 and DNS-01), renewal and storage are planned for v0.3. The `acme` section and `tls: auto` on routes already exist in the configuration model so that configurations can be written now; see the [`acme` reference](/docs/reference/configuration/acme/) and the [roadmap](/docs/project/roadmap/).
+
+## Related
+
+- [HTTPS redirect and HSTS](/docs/guides/https-redirect-and-hsts/)
+- [`certificates` reference](/docs/reference/configuration/certificates/) and [`listeners` reference](/docs/reference/configuration/listeners/)
+- [Security model](/docs/concepts/security-model/)

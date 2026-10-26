@@ -1,0 +1,78 @@
+---
+title: Reloads and last-known-good
+description: What triggers a reload, the steps a new configuration passes before it serves traffic, why a bad file never takes the proxy down, and where history and the last-known-good copy live.
+sidebar:
+  order: 4
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock changes its configuration while it runs, without dropping requests and without a restart, also when listeners are added or removed. A configuration that fails any check is rejected and the running one stays in use.
+
+## What starts a reload
+
+| Trigger | Name in logs and `rdock status` |
+|---|---|
+| `rdock.yaml`, or a file it refers to, changes | `file change` |
+| `SIGHUP` (`systemctl reload rdock`, `docker kill -s HUP`) | `SIGHUP` |
+| `rdock reload`, or `POST /api/v1/config/reload` on the admin listener with the admin token | `api` |
+
+The watcher follows the configuration file and the files it refers to: certificate and key files, `basic_auth` `users_file` lists, and `errors` and `maintenance` pages. It watches their directories, so editors that replace files and Kubernetes `ConfigMap` updates are seen. Events are debounced for 250 ms, and a reload is skipped when the watched files' contents have not changed. `rdock run --no-watch` turns the watcher off; `SIGHUP` and `rdock reload` still work.
+
+## The steps of a reload
+
+Each step must succeed before the next one starts. Until the publish step, the running configuration serves every request unchanged.
+
+1. **Load.** The file is parsed (YAML, or JSON for a `.json` file), `${NAME}`, `${env:NAME}` and `${file:/path}` references are resolved, and unknown keys are reported as errors.
+2. **Validate.** References between objects, rule syntax and value ranges are checked, as `rdock validate` does.
+3. **Compile.** Rules and regular expressions are compiled, certificates and page files are read, middlewares and backend pools are built, and the hosts of HTTPS routes that do not name a certificate must be covered by one. Settings that are planned for a later version are errors here (`rdock validate` only warns about them).
+4. **Prepare.** Sockets for new or moved listeners are bound and TLS settings for changed listeners are built. A port that is already in use rejects the reload. New backend names are resolved.
+5. **Publish.** The new runtime snapshot replaces the old one in one atomic step, and the certificate resolver is swapped.
+6. **Reconcile listeners.** Listeners with an unchanged address keep their socket and get their new settings; new ones start accepting; removed ones stop accepting and drain for up to `lifecycle.drain_timeout`.
+7. **Record.** The document is saved as the last-known-good copy and, when it differs from the previous one, as a history entry. The log line `configuration applied` carries the generation and a summary such as `routes added: api; services changed: app`.
+
+The generation number goes up by one with each applied configuration and is exported as `rdock_config_generation`. Every attempt is counted in `rdock_config_reloads_total` with `result` `applied` or `rejected`.
+
+## What happens to traffic
+
+- A request uses the snapshot that was current when it started, until it ends. A reload never changes the route, middlewares or backend of a request in flight.
+- New requests use the new snapshot at once, also on keep-alive connections that were open before the reload. Open connections keep the timeouts and TLS settings they were accepted with.
+- New TLS handshakes use the new certificates as soon as they are published.
+- The end-to-end suite runs reloads under load and checks that no request fails.
+
+## When a reload is rejected
+
+Nothing changes. The process keeps serving the previous generation and:
+
+- logs `configuration rejected; the previous one stays in use` with each error and its path,
+- answers `POST /api/v1/config/reload` with 422 and the diagnostics,
+- makes `rdock reload` print the diagnostics and `rejected: …; generation N stays in use`, and exit 1,
+- shows `last reload  rejected by …` in `rdock status`.
+
+Fix the file and save it again, or send another reload. Run `rdock validate --strict` on a file before you put it in place to see the same diagnostics without touching the running proxy.
+
+## Last-known-good
+
+After each configuration applied from the file, ReverseDock writes it to `$RDOCK_DATA_DIR/state/lkg.json` (`/var/lib/rdock/state/lkg.json` by default, readable by the owner only).
+
+At start, if the configuration file cannot be used (it is missing, does not parse, fails validation, or cannot be compiled or applied), rdock logs `the configuration file cannot be used; serving the last-known-good configuration` with the errors and starts with the copy instead. `rdock status` then shows `(last-known-good)` after the file name. The next reload that succeeds from the file replaces it.
+
+If there is no copy, or the copy fails too, `rdock run` prints the errors and exits with status 1.
+
+The copy holds the document as written. `${env:…}` and `${file:…}` references are resolved again when it is loaded, so secrets are never stored in it, and the variables and files it refers to must still exist.
+
+## History
+
+Each applied configuration that differs from the previous one is also written to `$RDOCK_DATA_DIR/state/history/`. An entry holds the time it was applied, the generation, the change summary and the document as written. The newest 50 entries are kept. Viewing and rolling back history from the admin API and dashboard is <Status planned="v0.5" />; until then the entries are plain JSON files you can read.
+
+## Shutdown
+
+On `SIGTERM`, `SIGINT` or `SIGQUIT`, rdock stops being ready, stops accepting, tells open connections to finish (`Connection: close`, HTTP/2 GOAWAY), closes idle keep-alive connections and exits as soon as nothing is open, or after `lifecycle.drain_timeout` (8 s by default). A second `SIGTERM` or `SIGINT` stops it at once. Keep `drain_timeout` below the supervisor's stop timeout: Docker waits 10 s before it kills the process.
+
+## Related
+
+- [Reloads guide](/docs/guides/reloads/)
+- [Architecture](/docs/concepts/architecture/)
+- [Files and directories](/docs/reference/files/)
+- [Lifecycle configuration](/docs/reference/configuration/lifecycle/)
+- [CLI reference](/docs/reference/cli/)

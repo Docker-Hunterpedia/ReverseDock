@@ -1,0 +1,125 @@
+---
+title: Cross-origin requests (CORS)
+description: Let browser code on other origins call your API with the cors middleware; preflight requests are answered by ReverseDock with 204.
+sidebar:
+  order: 18
+---
+
+import Status from '../../../../components/Status.astro';
+
+Browsers block scripts on one origin, such as `https://app.example.com`, from reading responses
+from another, such as `https://api.example.com`, unless the second one allows it with CORS
+headers. The `cors` middleware <Status since="v0.1" /> adds those headers, so the backend does
+not need to.
+
+## Before you start
+
+- Know the exact origins that call the API: scheme, host and port, for example
+  `https://app.example.com`. An origin has no path and no trailing slash.
+- Decide whether the calls carry cookies or HTTP authentication. That needs
+  `allow_credentials: true` and an explicit list of origins.
+
+## Configure the middleware
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [api-cors]
+
+services:
+  api:
+    backends: [{ address: "api:8080" }]
+
+middlewares:
+  api-cors:
+    type: cors
+    allowed_origins: ["https://app.example.com", "https://admin.example.com"]
+    allowed_methods: [GET, POST, PUT, DELETE]
+    allowed_headers: [Content-Type, Authorization]
+    exposed_headers: [X-Request-ID]
+    allow_credentials: true
+    max_age: 10m
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `allowed_origins` | required | Origins allowed to call, or `*` for any origin. |
+| `allowed_methods` | `GET`, `HEAD`, `POST` | Sent as `Access-Control-Allow-Methods` in preflight answers. |
+| `allowed_headers` | none | Request headers scripts may send (`Access-Control-Allow-Headers`). |
+| `exposed_headers` | none | Response headers scripts may read (`Access-Control-Expose-Headers`). |
+| `allow_credentials` | `false` | Allow cookies and HTTP authentication (`Access-Control-Allow-Credentials: true`). |
+| `max_age` | none | How long browsers may cache a preflight answer (`Access-Control-Max-Age`, in seconds). |
+
+Origins are compared without regard to case.
+
+## Preflight requests
+
+Before a request with a method or headers outside the simple set, a browser sends a preflight:
+an `OPTIONS` request with `Origin` and `Access-Control-Request-Method`. ReverseDock answers
+every preflight on the route itself with **204 No Content**; preflights never reach the
+backend.
+
+- When the origin is allowed, the answer carries `Access-Control-Allow-Origin`,
+  `Access-Control-Allow-Methods`, and, when configured, `Access-Control-Allow-Headers`,
+  `Access-Control-Allow-Credentials` and `Access-Control-Max-Age`.
+- When the origin is not allowed, the answer has no CORS headers, and the browser blocks the
+  actual request.
+- Every preflight answer has
+  `Vary: Origin, Access-Control-Request-Method, Access-Control-Request-Headers`.
+
+## Other requests
+
+Requests that are not preflights go to the backend as usual. When the `Origin` is allowed, the
+response gets `Access-Control-Allow-Origin`, plus `Access-Control-Allow-Credentials` and
+`Access-Control-Expose-Headers` when configured, and `Vary: Origin`. Without an allowed origin,
+the response is passed on unchanged.
+
+CORS is enforced by browsers, not by ReverseDock: a request from a disallowed origin still
+reaches the backend, the browser only refuses to show the response to the script. Use
+[authentication](/docs/guides/forward-auth/) to keep clients out.
+
+## Any origin
+
+`allowed_origins: ["*"]` allows every origin. Responses then carry
+`Access-Control-Allow-Origin: *`. If the list holds `*` and some explicit origins, those
+origins are echoed back and all others get `*`.
+
+`*` together with `allow_credentials: true` is a validation error, because browsers refuse
+credentials with the `*` origin:
+
+```text
+error: middlewares.api-cors.allow_credentials: browsers reject credentials with the `*` origin; list the origins
+```
+
+List the origins instead.
+
+## Check that it worked
+
+Send a preflight the way a browser would:
+
+```sh
+curl -s -o /dev/null -D - -X OPTIONS https://api.example.com/items \
+  -H 'Origin: https://app.example.com' \
+  -H 'Access-Control-Request-Method: PUT'
+```
+
+The answer is `204` with `access-control-allow-origin: https://app.example.com` and
+`access-control-allow-methods: GET, POST, PUT, DELETE`. With
+`-H 'Origin: https://evil.example'` the answer is still `204`, without those headers.
+
+## Related
+
+- [Security headers](/docs/guides/security-headers/)
+- [Forward authentication](/docs/guides/forward-auth/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

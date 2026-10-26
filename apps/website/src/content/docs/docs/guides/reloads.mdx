@@ -1,0 +1,128 @@
+---
+title: Reload the configuration
+description: Apply configuration changes without dropping requests, see why a reload was rejected, and shut down cleanly.
+sidebar:
+  order: 10
+---
+
+ReverseDock applies a changed configuration while it runs. A reload never drops requests, and a configuration with an error is never applied: the running one stays in place.
+
+## Four ways to reload
+
+| Trigger | How |
+|---|---|
+| File change | Save `rdock.yaml`. ReverseDock also watches the files it refers to: certificates and keys, `users_file` of `basic_auth`, and the page files of `errors` and `maintenance`. |
+| Signal | `kill -HUP <pid>`, or `systemctl reload rdock` with the [systemd unit](/docs/install/systemd/), whose `ExecReload` sends `SIGHUP`. |
+| Command | `rdock reload` on the same machine. |
+| Admin API | `POST /api/v1/config/reload` on the admin listener, with the admin token. |
+
+The file watcher watches directories rather than single files, so editors that write a new file and rename it, and Kubernetes ConfigMap updates, are seen. Events are collected for 250 ms, and a change that leaves the contents as they were does not reload. Start with `rdock run --no-watch` to turn the watcher off; signals, `rdock reload` and the API still work.
+
+## What happens on a reload
+
+1. The file is read and `${…}` references are resolved.
+2. The configuration is validated, as `rdock validate` does, and compiled: rules, certificates, user files and pages are loaded, and settings planned for later versions are refused.
+3. New listener sockets are bound.
+4. The new configuration replaces the old one in a single step. New requests use it; requests already in progress finish with the configuration they started with.
+
+If any step fails, nothing changes, and the error is logged:
+
+```text
+ERROR rdock::engine: configuration rejected; the previous one stays in use trigger=file change error="the configuration has errors"
+ERROR rdock::engine: service `missing` does not exist path=routes.api.service
+```
+
+Run `rdock validate --strict` before you save to catch most of these in advance.
+
+## Reload from the command line
+
+```sh
+rdock reload
+```
+
+```text
+applied generation 4
+```
+
+When the configuration is rejected, `rdock reload` prints the errors and exits with status 1:
+
+```text
+error: routes.api.service: service `missing` does not exist
+    defined services: app
+rejected: the configuration has errors; generation 3 stays in use
+```
+
+`rdock reload` and `rdock status` talk to the admin listener (`127.0.0.1:2080` unless `admin.listener` says otherwise) and read the admin token from `$RDOCK_DATA_DIR/admin/token`, or from `RDOCK_ADMIN_TOKEN`. They find the admin listener in the configuration file; if the file cannot be read and you changed `admin.listener`, pass `--admin 127.0.0.1:2080` with the address in use. In a container, run them inside it: `docker compose exec rdock rdock reload`. See the [CLI reference](/docs/reference/cli/).
+
+`rdock status` shows the generation in use and the result of the last reload:
+
+```text
+rdock 0.1.0-alpha.3 (…)
+ready        true
+generation   4
+config       /etc/rdock/rdock.yaml (file)
+started      2026-10-27T09:12:03.371Z
+listener     web :80 http (0 routes)
+listener     websecure :443 https/intermediate (2 routes)
+last reload  applied by file change at 2026-10-27T09:40:17.396Z
+```
+
+## Reload through the admin API
+
+```sh
+curl -s -X POST \
+  -H "Authorization: Bearer $(cat /var/lib/rdock/admin/token)" \
+  http://127.0.0.1:2080/api/v1/config/reload
+```
+
+The answer is a JSON report with `result` (`applied` or `rejected`), `generation`, `trigger`, `error` and `diagnostics`. The status is `200` when the configuration was applied, `422` when it was rejected and `401` without a valid token.
+
+## Listener changes
+
+Adding, removing or moving a listener does not need a restart. New sockets are bound before anything changes; if an address is already in use, the reload is rejected and the old listeners keep running. A listener whose address is unchanged keeps its socket. A removed listener stops accepting connections, and its open requests may finish for up to `lifecycle.drain_timeout`.
+
+The admin listener is the exception: it is bound once at start, so a change to `admin.listener` (or to `admin.enabled`) takes effect after a restart.
+
+## History and last-known-good
+
+Each applied configuration that differs from the previous one is recorded in `$RDOCK_DATA_DIR/state/history/` (the last 50), with a summary of what changed. The last configuration applied from the file is kept as `$RDOCK_DATA_DIR/state/lkg.json`. Both hold the document as written, with `${…}` references unresolved.
+
+When ReverseDock starts and the file cannot be used (a syntax error, a missing file, a failed validation), it starts with the last-known-good copy instead and logs:
+
+```text
+ERROR rdock::engine: the configuration file cannot be used; serving the last-known-good configuration
+```
+
+followed by the errors in the file. `rdock status` then shows `(last-known-good)` after the file name. Fix the file and reload. Without a last-known-good copy, `rdock run` prints the errors and exits with status 1.
+
+`$RDOCK_DATA_DIR` is `/var/lib/rdock` by default. Keep it on persistent storage (a volume in Docker), or the copy is lost with the container. See [Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/).
+
+## Shutdown and drain
+
+On `SIGTERM`, `SIGINT` or `SIGQUIT`, ReverseDock:
+
+1. reports not ready: `/readyz` on the admin listener answers `503`, so load balancers stop sending traffic;
+2. stops accepting connections;
+3. lets open requests finish for up to `lifecycle.drain_timeout` (8 seconds by default), then closes what is left.
+
+A second `SIGTERM` or `SIGINT` stops at once.
+
+```yaml title="rdock.yaml (excerpt)"
+lifecycle:
+  drain_timeout: 8s
+```
+
+Keep `drain_timeout` below the time your supervisor waits before it kills the process: Docker waits 10 seconds by default (`stop_grace_period` in Compose), and the provided systemd unit sets `TimeoutStopSec=15s`.
+
+## Watch reloads
+
+- `rdock_config_reloads_total{result="applied"}` and `{result="rejected"}` count reload attempts.
+- `rdock_config_generation` is the generation in use.
+
+An alert on rejected reloads tells you when a change was not applied. See [Logs and metrics](/docs/guides/logs-and-metrics/).
+
+## Related
+
+- [Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/)
+- [`lifecycle` reference](/docs/reference/configuration/lifecycle/)
+- [Files ReverseDock reads and writes](/docs/reference/files/)

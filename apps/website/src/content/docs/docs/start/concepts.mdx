@@ -1,0 +1,167 @@
+---
+title: Concepts
+description: Listeners, routes, services, middlewares, certificates and defaults, and how they refer to each other by name.
+sidebar:
+  order: 3
+---
+
+A ReverseDock configuration is made of a few kinds of objects. Each kind is a map in `rdock.yaml`: the key is the object's name, and other objects refer to it by that name. This page explains each kind and then follows one request through all of them.
+
+## The objects
+
+| Object | Section | What it is | Refers to |
+|---|---|---|---|
+| Listener | `listeners` | A socket that accepts traffic, such as `:80` or `:443` with TLS | nothing |
+| Route | `routes` | A rule that picks requests, and where they go | listeners, a service, middlewares, optionally a certificate |
+| Service | `services` | A pool of backends that answer requests | nothing |
+| Middleware | `middlewares` | A reusable policy applied to requests and responses | nothing (some read files) |
+| Certificate | `certificates` | A certificate and key you provide | nothing |
+| Defaults | `defaults` | Values for routes that do not set their own | listeners, a certificate |
+
+References only point one way, from routes to the rest. A name that does not exist is an error, and `rdock validate` suggests the nearest name.
+
+### Listeners
+
+A listener binds an address and speaks HTTP, or HTTPS when it has a `tls` block. HTTP listeners also accept h2c; HTTPS listeners negotiate HTTP/1.1 or HTTP/2.
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: { policy: intermediate } }
+```
+
+With no `listeners` section, ReverseDock uses `web` on `:80` and `websecure` on `:443` with TLS. Listener timeouts and the TLS policy are in the [listeners reference](/docs/reference/configuration/listeners/).
+
+### Routes
+
+A route has a `match` rule, a `service` and optionally `middlewares`, `listeners`, `priority`, `tls` and `timeouts`. Rules use the Traefik v3 grammar:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  api:
+    match: "Host(`app.example.com`) && PathPrefix(`/api`)"
+    service: api
+    middlewares: [api-limit]
+```
+
+On each listener, routes are tried from the highest priority down, and the first match wins. A route without `priority` gets the length of its rule, so more specific rules usually win. When nothing matches, ReverseDock answers 404. See [Rules](/docs/reference/rules/) and [Routing and priority](/docs/concepts/routing-and-priority/).
+
+### Services
+
+A service is a list of backends and how to reach them: `scheme` (`http`, `https` or `h2c`), timeouts, and TLS settings towards the backends. A backend is `host:port`, `[ipv6]:port` or `unix:///path.sock`. DNS names are resolved in the background and again every 10 seconds.
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  api:
+    backends:
+      - address: "10.0.0.5:3000"
+      - address: "10.0.0.6:3000"
+        weight: 2
+```
+
+Requests are spread with smooth weighted round-robin. See [Backends](/docs/guides/backends/) and the [services reference](/docs/reference/configuration/services/).
+
+### Middlewares
+
+A middleware has a `type` and settings for that type. Routes list middlewares by name, so one definition can serve many routes.
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  api-limit: { type: rate_limit, average: 100, burst: 200 }
+```
+
+Middlewares run in the order the route lists them for the request, and in reverse order for the response. A middleware can answer by itself, for example `basic_auth` with 401 or `rate_limit` with 429; the request then never reaches the service. The [middlewares reference](/docs/reference/configuration/middlewares/) lists every type.
+
+### Certificates
+
+A certificate is a PEM chain and key on disk. ReverseDock reads the names in each certificate and picks one during the TLS handshake from the name the client asks for (SNI): an exact name first, then a one-label wildcard such as `*.example.com`, then `defaults.certificate`. Files are re-read when they change.
+
+```yaml title="rdock.yaml (excerpt)"
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+```
+
+Automatic certificates from Let's Encrypt are planned for v0.3. Until then, every host of an HTTPS route needs a certificate that covers it. See [Your own TLS certificate](/docs/guides/tls-certificates/).
+
+### Defaults
+
+`defaults` fills in what routes leave out:
+
+- `defaults.listeners`: the listeners of routes that name none (default `[websecure]`).
+- `defaults.tls`: `auto` (the default, HTTPS with a certificate for each host) or `off` for plain HTTP.
+- `defaults.certificate`: the certificate served when no other one matches, or when the client sends no SNI.
+- `defaults.redirect_http_to_https`: redirect plain HTTP to HTTPS for hosts that have an HTTPS route (default `true`).
+
+## One request, step by step
+
+This configuration serves `app.example.com` over HTTPS and redirects plain HTTP to it:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+defaults:
+  listeners: [websecure]
+  certificate: example
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [security-headers]
+
+services:
+  app:
+    backends:
+      - address: "app:3000"
+
+middlewares:
+  security-headers:
+    type: headers
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+```
+
+A browser opens `https://app.example.com/`:
+
+```text
+client ──TLS, SNI app.example.com──▶ listener websecure (:443)
+                                        │  certificate "example" (covers *.example.com)
+                                        ▼
+                                     route app  ── Host(`app.example.com`) matches
+                                        │
+                                        ▼
+                                     middleware security-headers (request phase: nothing to do)
+                                        │
+                                        ▼
+                                     service app ──▶ backend app:3000
+                                        │
+                                        ▼  response
+                                     middleware security-headers (response phase: adds the header)
+                                        │
+client ◀────────────────────────────────┘
+```
+
+1. The connection arrives on `websecure`. The client asks for `app.example.com`; the certificate `example` covers it.
+2. ReverseDock checks the request against its limits, works out the client IP and assigns a request ID.
+3. Routes on `websecure` are tried by priority. `app` is attached to `websecure` through `defaults.listeners`, and its rule matches.
+4. The request runs through the route's middlewares, then goes to a backend of `app` with `X-Forwarded-*` headers and `X-Request-ID`.
+5. The response runs back through the middlewares in reverse order and is streamed to the client.
+
+A request to `http://app.example.com/` arrives on `web`. No route is attached to `web`, but `app.example.com` has an HTTPS route, so ReverseDock answers with a redirect to `https://app.example.com/` (301 for GET, 308 for other methods so the method and body are kept).
+
+## Related
+
+- [Quickstart](/docs/start/quickstart/)
+- [Configuration reference](/docs/reference/configuration/)
+- [Request lifecycle](/docs/concepts/request-lifecycle/)
+- [Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/)

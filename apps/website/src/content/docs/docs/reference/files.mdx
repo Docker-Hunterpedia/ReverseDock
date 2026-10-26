@@ -1,0 +1,120 @@
+---
+title: Files and directories
+description: Where ReverseDock reads its configuration, what it keeps in its data directory (history, last-known-good copy, admin token), and the permissions it needs.
+sidebar:
+  order: 7
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock <Status since="v0.1" /> reads one configuration file and the files it refers to, and
+writes state to one data directory. Nothing else on disk is touched.
+
+| Path | Default | Change with | Access needed |
+|---|---|---|---|
+| Configuration file | `/etc/rdock/rdock.yaml` | `--config`, `RDOCK_CONFIG` | read |
+| Data directory | `/var/lib/rdock` | `--data-dir`, `RDOCK_DATA_DIR` | read and write |
+
+## Configuration file
+
+`/etc/rdock/rdock.yaml` is YAML; a file whose name ends in `.json` is read as JSON. ReverseDock
+only reads it, so it can be mounted read-only, as the Compose example in `deploy/docker` does.
+
+ReverseDock watches the file and reloads when it changes, unless `rdock run` was started with
+`--no-watch`. It watches the directory rather than the file, so editors that save by replacing
+the file, and Kubernetes `ConfigMap` updates, are noticed. See [Reloads](/docs/guides/reloads/).
+
+### Files the configuration refers to
+
+| Setting | Read | Reloaded when the file changes |
+|---|---|---|
+| `certificates.<name>.cert_file`, `key_file` | at load | yes |
+| `basic_auth` `users_file` | at load | yes |
+| `errors` `file` | at load | yes |
+| `maintenance` `file` | at load | yes |
+| `${file:/path}` references | at load | no: reload with `SIGHUP` or `rdock reload` |
+
+`${file:…}` paths must be absolute, and the file may hold at most 64 KiB of UTF-8 text; one
+trailing newline is removed. Usual places are `/run/secrets/<name>` for secrets and
+`/etc/rdock/certs/` for certificates. Paths in the configuration are used as written, so prefer
+absolute paths.
+
+## Data directory
+
+`rdock run` creates the data directory when it is missing. After the first start it looks like
+this:
+
+```text
+/var/lib/rdock/
+├── admin/
+│   └── token
+└── state/
+    ├── lkg.json
+    └── history/
+        ├── 1793052107061-008a11695c9ffc55.json
+        └── …
+```
+
+### `admin/token`
+
+The bearer token of the admin API, created on first start as `rdk_` followed by 64 hexadecimal
+characters. `rdock status` and `rdock reload` read it from here. It is not created when
+`RDOCK_ADMIN_TOKEN` is set, and not when the admin API is turned off (`admin.enabled: false`).
+Delete the file and restart to get a new token.
+
+### `state/lkg.json`
+
+The **last-known-good** configuration: the most recent configuration loaded from the file and
+applied successfully. When the configuration file cannot be used at start, because it is
+missing, broken or refers to something that fails, ReverseDock logs the errors and starts with
+this copy instead, and `rdock status` shows the origin. A reload never replaces a running
+configuration with a broken one. See
+[Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/).
+
+### `state/history/`
+
+A history of applied configurations, at most 50 entries; older ones are deleted. A new entry is
+written when the applied document differs from the previous one. Each file is named
+`<milliseconds since the Unix epoch>-<hash>.json` and holds:
+
+| Field | Meaning |
+|---|---|
+| `applied_at_ms` | When it was applied, in milliseconds since the Unix epoch. |
+| `generation` | Generation number in the process that applied it. Starts at 1 on every start. |
+| `summary` | What changed compared with the previous configuration. |
+| `source` | The configuration document as written. |
+
+### Secrets on disk
+
+`lkg.json` and the history store the document **as written**, with `${env:…}` and `${file:…}`
+references not resolved. Secrets that you pass as references are never copied into the data
+directory; they are read again from their source when the copy is used.
+
+### Planned contents
+
+With automatic certificates <Status planned="v0.3" />, ACME accounts and certificates are stored
+under `acme/` in the data directory by default (`acme.storage`).
+
+## Permissions
+
+- Files ReverseDock writes (`admin/token`, `lkg.json`, history entries) are created with mode
+  **0600**, readable by their owner only. Each is written to a temporary file, flushed to disk
+  and renamed into place, so a crash never leaves a half-written file.
+- Directories are created with the process's default permissions. Make the data directory
+  itself private, for example mode 0700.
+- ReverseDock needs no root rights for its files. Run it as an unprivileged user that can read
+  the configuration and the files it refers to, and write the data directory.
+
+How the shipped packages set this up:
+
+| Setup | User | Data directory |
+|---|---|---|
+| Container image | `nonroot` (UID 65532) | `/var/lib/rdock`, owned by UID 65532; mount a volume there to keep state across containers. |
+| `deploy/systemd/rdock.service` | a dynamic user (`DynamicUser=yes`) | `/var/lib/rdock`, created by systemd (`StateDirectory=rdock`, mode 0700). |
+
+## Related
+
+- [Environment variables](/docs/reference/environment/)
+- [Reloads](/docs/guides/reloads/)
+- [Secrets](/docs/guides/secrets/)
+- [Install with systemd](/docs/install/systemd/)

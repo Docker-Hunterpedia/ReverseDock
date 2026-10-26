@@ -1,0 +1,184 @@
+---
+title: Redirects and path rewrites
+description: Send clients to another URL with the redirect middleware, or change the path the backend sees with rewrite, strip_prefix, add_prefix and replace_path.
+sidebar:
+  order: 13
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock has two kinds of middleware for URLs. A **redirect** answers the client with a
+`Location` header, and the client makes a new request. A **path middleware** changes the path
+before the request goes to the backend, and the client never sees the change.
+
+Both kinds are available <Status since="v0.1" />.
+
+## Before you start
+
+- A working route and service. See [Route a domain to an app](/docs/guides/route-a-domain/).
+- Routing happens before middlewares run. A path middleware changes what the backend sees,
+  not which route matched.
+
+## Redirect to another URL
+
+The `redirect` middleware has two forms: `scheme` alone, or `regex` with `replacement`.
+
+- `scheme: https` (or `http`) keeps the host, path and query and changes the scheme. Set
+  `port` when the target port is not the scheme's default. If the request already uses the
+  target scheme, the middleware does nothing.
+- `regex` is matched against the full request URL, `scheme://host[:port]/path?query`, where the
+  scheme is `https` on a TLS connection and `http` otherwise, and the host is the `Host` header
+  as the client sent it. `replacement` can use groups as `$1` or `${name}`. If the regex does
+  not match, or the result is the current URL, the request continues to the backend.
+
+### Status codes
+
+`permanent` defaults to `false`.
+
+| `permanent` | GET | Other methods |
+|---|---|---|
+| `false` (default) | 302 Found | 307 Temporary Redirect |
+| `true` | 301 Moved Permanently | 308 Permanent Redirect |
+
+The second code tells the client to repeat the request with the same method and body, so a
+redirected `POST` stays a `POST`. Browsers cache 301 and 308 answers, so start with the default
+and set `permanent: true` once the target is final.
+
+:::note
+For plain HTTP to HTTPS you usually do not need this middleware. ReverseDock redirects HTTP
+requests for hosts that have an HTTPS route on its own (`defaults.redirect_http_to_https`, on
+by default), with 301 or 308. See [HTTPS redirect and HSTS](/docs/guides/https-redirect-and-hsts/).
+:::
+
+### Example: move `www` to the bare domain
+
+This configuration serves `example.com` and sends every request for `www.example.com` to it,
+keeping the path and query.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  www:
+    match: "Host(`www.example.com`)"
+    service: site
+    middlewares: [to-apex]
+  site:
+    match: "Host(`example.com`)"
+    service: site
+
+services:
+  site:
+    backends: [{ address: "site:8080" }]
+
+middlewares:
+  to-apex:
+    type: redirect
+    regex: "^http://www\\.example\\.com/(.*)$"
+    replacement: "http://example.com/$1"
+    permanent: true
+```
+
+Check it:
+
+```sh
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
+  -H 'Host: www.example.com' 'http://localhost/blog/post?id=7'
+```
+
+```text
+301 http://example.com/blog/post?id=7
+```
+
+`curl -I` sends `HEAD`, which is not `GET`, so it gets 308 instead of 301.
+
+The regex sees the `Host` header exactly as the client sent it. A client that sends
+`Host: www.example.com:80` does not match `^http://www\.example\.com/`; write
+`www\.example\.com(:\d+)?/` if that matters to you.
+
+## Change the path the backend sees
+
+| Type | Setting | What it does |
+|---|---|---|
+| `strip_prefix` | `prefixes` (list) | Removes the first listed prefix the path starts with. Adds `X-Forwarded-Prefix` with the removed prefix. |
+| `add_prefix` | `prefix` | Puts `prefix` in front of the path. A trailing `/` on the prefix is ignored. |
+| `replace_path` | `path` | Replaces the whole path. Adds `X-Replaced-Path` with the original path. |
+| `rewrite` | `regex`, `replacement` | Replaces every match of `regex` in the path. Adds `X-Replaced-Path` when the regex matched. |
+
+All four keep the query string. They work on the path after
+[normalisation](/docs/reference/rules/#path-normalisation): percent-encoded, with dot segments and
+`//` already removed.
+
+Prefixes are plain string prefixes, as in `PathPrefix`. A `strip_prefix` of `/api` turns `/api/users`
+into `/users`, `/api` into `/`, and also `/apiv2` into `/v2`. If that is not what you want,
+route with ``PathPrefix(`/api/`)`` and strip `/api`.
+
+If the new path is not in normalised form, for example `/api./x` stripped of `/api` becomes
+`/./x`, the request is refused with **400**. The backend never receives a path that differs from
+what was routed and checked.
+
+### Example: serve an API under `/api`
+
+The backend serves `/v1/users`; the public URL is `https://app.example.com/api/users`.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  api:
+    match: "Host(`app.example.com`) && PathPrefix(`/api/`)"
+    service: api
+    middlewares: [strip-api, add-v1]
+
+services:
+  api:
+    backends: [{ address: "api:8080" }]
+
+middlewares:
+  strip-api:
+    type: strip_prefix
+    prefixes: ["/api"]
+  add-v1:
+    type: add_prefix
+    prefix: /v1
+```
+
+Middlewares run in the order listed: `/api/users?page=2` becomes `/users?page=2`, then
+`/v1/users?page=2`. The backend also receives `X-Forwarded-Prefix: /api`, which some frameworks
+use to build links.
+
+A `rewrite` does the same in one step:
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  api-to-v1:
+    type: rewrite
+    regex: "^/api/(.*)"
+    replacement: "/v1/$1"
+```
+
+Regular expressions use the syntax of the Rust `regex` crate: no look-around and no
+backreferences. `rdock validate` reports a pattern that does not compile.
+
+## Check that it worked
+
+- `rdock validate /etc/rdock/rdock.yaml` reports a redirect without `scheme` or
+  `regex` + `replacement`, a prefix that does not start with `/`, and invalid patterns.
+- To see the path the backend receives, point the route at an echo service such as
+  `traefik/whoami` and look at the request line it prints.
+
+## Related
+
+- [Path routing](/docs/guides/path-routing/)
+- [Rules reference](/docs/reference/rules/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

@@ -1,0 +1,125 @@
+---
+title: Timeouts and limits
+description: The client and backend timeouts, the request size limits, their defaults and the status codes clients get when one is reached.
+sidebar:
+  order: 12
+---
+
+ReverseDock limits how long connections may stay silent and how large requests may be. The defaults suit most sites; this page shows where to change them and what a client sees when a limit is reached.
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure:
+    address: ":443"
+    tls: {}
+    timeouts: { request_header: 10s, read: 60s, write: 60s, idle: 60s }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+  reports:
+    match: "Host(`app.example.com`) && PathPrefix(`/reports/`)"
+    service: app
+    timeouts: { read: 5m }
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+    timeouts: { connect: 5s, read: 60s, write: 60s, idle: 90s }
+
+security:
+  limits:
+    max_header_bytes: 64KiB
+    max_headers: 100
+    max_uri_bytes: 8KiB
+    max_body_bytes: 50MiB
+```
+
+Every value above except `max_body_bytes` and the `reports` route timeout is the default. Durations take the units `ms`, `s`, `m`, `h` and `d` (`1h30m`); sizes take `B`, `KB`, `MB`, `GB`, `KiB`, `MiB`, `GiB` and similar, or a plain number of bytes.
+
+## Timeouts are per read and write
+
+Read and write timeouts limit how long one read or write may wait, not how long a whole request may take. A download that keeps sending data never hits `read: 60s`, however long it lasts; a backend that sends nothing for 60 seconds does. This is what makes long uploads, downloads, [WebSockets and event streams](/docs/guides/websockets-sse-grpc/) work with the defaults, as long as data keeps flowing.
+
+## Client side: `listeners.<name>.timeouts`
+
+| Setting | Default | Limits |
+|---|---|---|
+| `request_header` | `10s` | Time to receive the complete request headers, counted from their first byte. |
+| `read` | `60s` | Wait for data from the client while a request or an upgraded connection is open. |
+| `write` | `60s` | Wait for the client to accept data. |
+| `idle` | `60s` | How long an idle keep-alive connection is kept open. |
+
+`request_header` protects against clients that send headers one byte at a time to hold connections open: a per-read timeout alone does not stop them. When it runs out, the connection is closed without an answer. It applies to HTTP/1 headers and not to upgraded (WebSocket) connections. A client that stops sending a request body for longer than `read` gets `408 Request Timeout` when an answer can still be sent.
+
+## Backend side: `services.<name>.timeouts` and `routes.<name>.timeouts`
+
+| Setting | Default | Limits |
+|---|---|---|
+| `connect` | `5s` | Establishing a connection to a backend. |
+| `read` | `60s` | Wait for response data from the backend. |
+| `write` | `60s` | Wait while sending request data to the backend. |
+| `idle` | `90s` | How long an unused connection stays in the pool for reuse (service only). |
+
+A route's `timeouts` override the service's for that route only; unset values come from the service. In the configuration above, reports may take up to five minutes before their first byte while the rest of the application keeps the 60 second limit.
+
+| What happened | Client gets |
+|---|---|
+| The backend refused the connection or could not be reached | `502 Bad Gateway` |
+| `connect`, `read` or `write` ran out towards the backend | `504 Gateway Timeout` |
+| The service has no backend address (a DNS name that never resolved) | `503 Service Unavailable` |
+
+These pages are ReverseDock's own; replace them with the `errors` middleware, see [Error pages and maintenance](/docs/guides/error-pages-and-maintenance/). Retries of failed requests are planned for v0.4.
+
+## Request limits: `security.limits`
+
+| Setting | Default | Counts | Over the limit |
+|---|---|---|---|
+| `max_header_bytes` | `64KiB` | The request line and all headers together | `431 Request Header Fields Too Large` |
+| `max_headers` | `100` | Number of request headers | `431 Request Header Fields Too Large` |
+| `max_uri_bytes` | `8KiB` | The request target: path and query | `414 URI Too Long` |
+| `max_body_bytes` | none (unlimited) | The request body | `413 Content Too Large` |
+
+`max_body_bytes` is checked against `Content-Length` before the request is forwarded, and counted while the body streams, so chunked bodies without a length are limited too. Set it when your applications accept uploads only up to a known size; without it, ReverseDock forwards bodies of any size. The limits apply to every listener; a value of `0` is a validation error.
+
+Large cookies or long authentication tokens are the usual reason for `431`. Raise `max_header_bytes` only as far as you need.
+
+## Other requests ReverseDock refuses
+
+These are not configurable:
+
+| Request | Answer |
+|---|---|
+| HTTP/1.1 without a `Host` header | `400 Bad Request` |
+| A path with an invalid percent-escape, or a `#` fragment | `400 Bad Request` |
+| `Expect` with a value other than `100-continue` | `417 Expectation Failed` |
+| A request header line ending in a bare LF instead of CRLF | The connection is closed. |
+
+They close gaps that request smuggling relies on, where ReverseDock and a backend could read the same bytes as different requests. See [HTTP behaviour](/docs/reference/http-behaviour/).
+
+## Check a limit
+
+```sh
+head -c 60000000 /dev/zero | curl -s -o /dev/null -w '%{http_code}\n' --data-binary @- https://app.example.com/upload
+```
+
+```text
+413
+```
+
+curl sends a 60 MB body with a `Content-Length`; with `max_body_bytes: 50MiB`, ReverseDock answers `413` without forwarding the request.
+
+## Related
+
+- [`listeners` reference](/docs/reference/configuration/listeners/), [`services` reference](/docs/reference/configuration/services/), [`routes` reference](/docs/reference/configuration/routes/) and [`security` reference](/docs/reference/configuration/security/)
+- [Rate limiting](/docs/guides/rate-limiting/)
+- [Troubleshooting](/docs/operations/troubleshooting/)

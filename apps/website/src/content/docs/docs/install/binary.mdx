@@ -1,0 +1,137 @@
+---
+title: Binary
+description: Install the static rdock binary for Linux (x86-64, ARM64) or macOS from the GitHub releases.
+sidebar:
+  order: 3
+---
+
+import { Tabs, TabItem } from '@astrojs/starlight/components';
+
+Every release on [GitHub](https://github.com/Docker-Hunterpedia/ReverseDock/releases) has an archive per platform. The Linux binaries are statically linked (musl) and run on any distribution.
+
+| Platform | Target | Archive |
+|---|---|---|
+| Linux x86-64 | `x86_64-unknown-linux-musl` | `rdock-0.1.0-alpha.3-x86_64-unknown-linux-musl.tar.gz` |
+| Linux ARM64 | `aarch64-unknown-linux-musl` | `rdock-0.1.0-alpha.3-aarch64-unknown-linux-musl.tar.gz` |
+| macOS on Apple silicon | `aarch64-apple-darwin` | `rdock-0.1.0-alpha.3-aarch64-apple-darwin.tar.gz` |
+
+The macOS build is meant for development and testing. Each archive holds a directory `rdock-<version>-<target>/` with `rdock`, `LICENSE`, `NOTICE` and `README.md`. Releases also carry `SHA256SUMS`, its signature `SHA256SUMS.sigstore.json` and an SPDX SBOM.
+
+## Download and install
+
+<Tabs syncKey="platform">
+<TabItem label="Linux x86-64">
+
+```sh
+VERSION=0.1.0-alpha.3
+TARGET=x86_64-unknown-linux-musl
+curl -fsSLO "https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION/rdock-$VERSION-$TARGET.tar.gz"
+curl -fsSLO "https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf "rdock-$VERSION-$TARGET.tar.gz"
+sudo install -m 0755 "rdock-$VERSION-$TARGET/rdock" /usr/local/bin/rdock
+```
+
+</TabItem>
+<TabItem label="Linux ARM64">
+
+```sh
+VERSION=0.1.0-alpha.3
+TARGET=aarch64-unknown-linux-musl
+curl -fsSLO "https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION/rdock-$VERSION-$TARGET.tar.gz"
+curl -fsSLO "https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION/SHA256SUMS"
+sha256sum --ignore-missing -c SHA256SUMS
+tar -xzf "rdock-$VERSION-$TARGET.tar.gz"
+sudo install -m 0755 "rdock-$VERSION-$TARGET/rdock" /usr/local/bin/rdock
+```
+
+</TabItem>
+<TabItem label="macOS">
+
+```sh
+VERSION=0.1.0-alpha.3
+TARGET=aarch64-apple-darwin
+curl -fsSLO "https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION/rdock-$VERSION-$TARGET.tar.gz"
+curl -fsSLO "https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION/SHA256SUMS"
+shasum -a 256 --ignore-missing -c SHA256SUMS
+tar -xzf "rdock-$VERSION-$TARGET.tar.gz"
+sudo install -m 0755 "rdock-$VERSION-$TARGET/rdock" /usr/local/bin/rdock
+```
+
+</TabItem>
+</Tabs>
+
+The checksum line must end in `OK`. To check the signature and build provenance as well, see [Verify a download](/docs/install/verify/).
+
+## Check the binary
+
+```sh
+rdock version
+```
+
+```text
+rdock 0.1.0-alpha.3
+commit  066f9c703c3b
+rustc   rustc 1.99.1 (58cf8f9c3 2026-10-13)
+target  x86_64-unknown-linux-musl
+```
+
+## First run
+
+By default `rdock run` reads `/etc/rdock/rdock.yaml` and keeps its state in `/var/lib/rdock`. For a test as your own user, use a local file, a local data directory and a port above 1024:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: "127.0.0.1:8080" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "PathPrefix(`/`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "127.0.0.1:3000"
+```
+
+```sh
+rdock validate --strict rdock.yaml
+rdock run --config rdock.yaml --data-dir ./rdock-data
+```
+
+With an application on port 3000, `curl http://127.0.0.1:8080/` reaches it through ReverseDock. Without one, the answer is a 502 page. Stop the proxy with Ctrl-C; open requests may finish first.
+
+In another terminal, the admin commands need the same file and data directory:
+
+```sh
+rdock status --config rdock.yaml --data-dir ./rdock-data
+```
+
+## Ports below 1024
+
+On Linux, binding ports 80 and 443 needs root or the `CAP_NET_BIND_SERVICE` capability. Run it as a service with the [systemd unit](/docs/install/systemd/), which grants only that capability, rather than as root. Outside systemd, you can give the binary the capability:
+
+```sh
+sudo setcap cap_net_bind_service=+ep /usr/local/bin/rdock
+```
+
+Repeat this after every upgrade, because replacing the file removes the capability.
+
+## Uninstall
+
+```sh
+sudo rm /usr/local/bin/rdock
+```
+
+Remove `/etc/rdock` and `/var/lib/rdock` too if you no longer need the configuration and its history.
+
+## Related
+
+- [systemd](/docs/install/systemd/)
+- [Verify a download](/docs/install/verify/)
+- [CLI reference](/docs/reference/cli/)

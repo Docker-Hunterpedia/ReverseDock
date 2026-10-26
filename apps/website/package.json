@@ -1,0 +1,31 @@
+{
+  "name": "@reversedock/website",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "check": "astro check",
+    "gen": "node scripts/gen-config-reference.ts && node scripts/gen-cli-reference.ts && node scripts/gen-changelog.ts",
+    "check:status": "node scripts/check-status.ts",
+    "check:snippets": "node scripts/check-snippets.ts",
+    "check:a11y": "node scripts/check-a11y.ts"
+  },
+  "dependencies": {
+    "@astrojs/sitemap": "3.7.4",
+    "@astrojs/starlight": "0.42.7",
+    "@reversedock/harbor-tokens": "workspace:*",
+    "astro": "7.4.2",
+    "sharp": "0.35.5",
+    "starlight-links-validator": "0.27.0",
+    "starlight-llms-txt": "0.12.0"
+  },
+  "devDependencies": {
+    "@astrojs/check": "0.9.12",
+    "@axe-core/playwright": "4.13.0",
+    "@types/node": "24.19.2",
+    "playwright": "1.64.0",
+    "typescript": "6.0.3"
+  }
+}

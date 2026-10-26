@@ -1,0 +1,17 @@
+---
+/**
+ * When a feature became available, or when it is planned (ADR-0017: the docs never present
+ * planned features as shipped). Both take a milestone such as `v0.1`.
+ */
+import release from '../data/release.json';
+
+interface Props {
+  since?: string;
+  planned?: string;
+}
+const { since, planned } = Astro.props;
+if (!since && !planned) throw new Error('<Status> needs `since` or `planned`');
+const kind = since ? 'shipped' : planned === release.next ? 'next' : 'planned';
+const label = since ? `since ${since}` : `planned for ${planned}`;
+---
+<span class={`rd-status rd-status--${kind}`}>{label}</span>

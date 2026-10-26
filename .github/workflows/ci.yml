@@ -169,7 +169,7 @@ jobs:
       - name: Run the image (read-only, no capabilities) and stop it gracefully
         run: |
           docker run -d --name rdock-smoke --read-only --cap-drop ALL \
-            -v "$PWD/deploy/docker/rdock.yaml:/etc/rdock/rdock.yaml:ro" -v rdock-smoke-data:/var/lib/rdock rdock:ci
+            -v "$PWD/deploy/docker/config:/etc/rdock:ro" -v rdock-smoke-data:/var/lib/rdock rdock:ci
           for _ in $(seq 1 30); do
             if docker exec rdock-smoke /usr/local/bin/rdock healthcheck; then break; fi
             sleep 1

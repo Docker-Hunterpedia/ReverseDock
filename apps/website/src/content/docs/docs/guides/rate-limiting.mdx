@@ -1,0 +1,125 @@
+---
+title: Rate limiting
+description: Limit how many requests a client, a route or an API key may send with the rate_limit middleware, a token bucket that answers 429 with Retry-After.
+sidebar:
+  order: 17
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `rate_limit` middleware <Status since="v0.1" /> limits how fast requests may arrive. Requests
+over the limit get **429 Too Many Requests** with a `Retry-After` header and never reach the
+backend.
+
+## How the limit works
+
+Each key (by default, each client IP) has a bucket that holds up to `burst` tokens and refills
+at `average` tokens per `period`. Every request takes one token. A request that finds the bucket
+empty is refused, and `Retry-After` says in whole seconds, at least 1, when the next token is
+available.
+
+So `average: 10`, `period: 1s`, `burst: 50` allows a steady 10 requests per second and short
+bursts of up to 50.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `average` | required | Requests allowed per `period` on average. Must be at least 1. |
+| `period` | `1s` | Period of `average`, for example `1s`, `1m` or `1h`. |
+| `burst` | same as `average` | Size of the bucket: the most requests accepted at once. |
+| `key` | `client_ip` | What to count by (see below). |
+
+## What to count by
+
+| `key` | One bucket per |
+|---|---|
+| `client_ip` | Resolved client IP, after [trusted-proxy handling](/docs/guides/behind-a-proxy/). |
+| `route` | Route. All clients of the route share one bucket. |
+| `header:<Name>` | Value of a request header, for example `header:X-Api-Key`. Requests without the header share one bucket. |
+
+If ReverseDock runs behind a load balancer or CDN that is not listed in
+`security.trusted_proxies`, every request seems to come from that proxy and all clients share
+one bucket. List the proxy first.
+
+## Example: protect a login endpoint
+
+This configuration lets each client send 5 login attempts per minute, with up to 5 at once,
+and leaves the rest of the site unlimited.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  login:
+    match: "Host(`app.example.com`) && Path(`/login`) && Method(`POST`)"
+    service: app
+    middlewares: [login-limit]
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "app:3000" }]
+
+middlewares:
+  login-limit:
+    type: rate_limit
+    average: 5
+    period: 1m
+```
+
+The `login` route has the longer rule, so it has the higher priority and is checked first. See
+[routing and priority](/docs/concepts/routing-and-priority/).
+
+## Example: limit by API key
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  per-key:
+    type: rate_limit
+    key: "header:X-Api-Key"
+    average: 100
+    period: 1m
+    burst: 20
+```
+
+Clients without the header share one bucket and can block each other. To keep them out of
+the route, require the header in the rule, for example
+``Host(`api.example.com`) && HeaderRegexp(`X-Api-Key`, `.`)``.
+
+## What to know
+
+- **Per process, in memory.** Buckets live in the ReverseDock process. Two instances each
+  enforce the limit on their own, and buckets start full after every applied reload or restart.
+- **Bounded memory.** Each `rate_limit` middleware tracks at most 65,536 keys. When that is
+  reached, idle clients (full buckets) are dropped first, then the least recently used, so a
+  flood of distinct addresses cannot exhaust memory.
+- **Shared middlewares share buckets.** A middleware used by several routes counts their
+  requests together (except with `key: route`). Define one middleware per route if you want
+  separate limits.
+- **Order matters.** Put `rate_limit` after `ip_allow` or `ip_deny` so blocked clients do not
+  use up tokens, and before `basic_auth` to slow down password guessing.
+
+## Check that it worked
+
+```sh
+for i in $(seq 1 7); do
+  curl -s -o /dev/null -w '%{http_code}\n' -X POST https://app.example.com/login
+done
+```
+
+The first five lines show the backend's status; the last two show `429`. Add `-D -` to one of
+the refused requests to see the `Retry-After` header.
+
+## Related
+
+- [IP filtering](/docs/guides/ip-filtering/)
+- [Timeouts and limits](/docs/guides/timeouts-and-limits/), for request size limits
+- [Middleware settings](/docs/reference/configuration/middlewares/)

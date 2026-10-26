@@ -1,0 +1,67 @@
+/* Starlight mapped onto Harbor UI (docs/08-design-system.md): warm stone neutrals, amber acts,
+   blue links. Starlight's own props are dark on :root and light under [data-theme='light']. */
+:root {
+  --sl-font: var(--rd-font-sans);
+  --sl-font-mono: var(--rd-font-mono);
+
+  --sl-color-white: #fafaf9;
+  --sl-color-gray-1: #e7e5e4;
+  --sl-color-gray-2: #d6d3d1;
+  --sl-color-gray-3: #a8a29e;
+  --sl-color-gray-4: #78716c;
+  --sl-color-gray-5: #2e2a27;
+  --sl-color-gray-6: #1c1917;
+  --sl-color-black: #0c0a09;
+
+  --sl-color-accent-low: #3a2a10;
+  --sl-color-accent: #ffa826;
+  --sl-color-accent-high: #ffc14d;
+  --sl-color-text-invert: #1c1917;
+}
+
+:root[data-theme='light'] {
+  --sl-color-white: #1c1917;
+  --sl-color-gray-1: #292524;
+  --sl-color-gray-2: #44403c;
+  --sl-color-gray-3: #57534e;
+  --sl-color-gray-4: #78716c;
+  --sl-color-gray-5: #d6d3d1;
+  --sl-color-gray-6: #f5f5f4;
+  --sl-color-gray-7: #fafaf9;
+  --sl-color-black: #ffffff;
+
+  /* amber-700 for text and the current-page pill: amber-500 is 2.3:1 on white */
+  --sl-color-accent-low: #fff4e0;
+  --sl-color-accent: #a85a00;
+  --sl-color-accent-high: #7a4100;
+  --sl-color-text-invert: #ffffff;
+}
+
+/* Blue links in prose; amber stays for actions and the current page. */
+.sl-markdown-content a:not(:where(.not-content *)) {
+  color: var(--rd-link);
+}
+
+/* Hairlines, not shadows. */
+header.header {
+  border-bottom: 1px solid var(--rd-border);
+}
+
+.sl-markdown-content :not(pre) > code {
+  border-radius: 4px;
+}
+
+/* Status badges used across the docs ("since v0.1", "planned for v0.3"). */
+.rd-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35em;
+  padding: 0.1em 0.6em;
+  border-radius: var(--rd-radius-pill);
+  font: 500 0.75rem/1.6 var(--rd-font-mono);
+  white-space: nowrap;
+  vertical-align: middle;
+}
+.rd-status--shipped { color: var(--rd-ok-text); background: color-mix(in srgb, var(--rd-ok) 14%, transparent); }
+.rd-status--next { color: var(--rd-accent-text); background: var(--rd-accent-soft); }
+.rd-status--planned { color: var(--rd-text-3); border: 1px solid var(--rd-border); }

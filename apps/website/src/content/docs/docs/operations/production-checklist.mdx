@@ -1,0 +1,113 @@
+---
+title: Production checklist
+description: What to check before ReverseDock serves real traffic, with a hardened example configuration.
+sidebar:
+  order: 1
+---
+
+import Status from '../../../../components/Status.astro';
+
+Go through this list before ReverseDock serves real traffic. Each item says what to check and how. ReverseDock 0.1.0-alpha.3 is a pre-release; read the [changelog](/docs/project/changelog/) for every upgrade.
+
+## Installation
+
+- **The download is verified.** Checksums, cosign signature and provenance pass ([Verify a download](/docs/install/verify/)). For images, deploy by digest.
+- **The version is pinned.** Use `ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3`, not `latest`.
+- **rdock runs unprivileged.** The image runs as user 65532; the [systemd unit](/docs/install/systemd/) uses `DynamicUser` and only `CAP_NET_BIND_SERVICE`. In Compose, keep `read_only: true`, `cap_drop: [ALL]` and `no-new-privileges`.
+- **The data directory persists.** `/var/lib/rdock` is a named volume or the systemd `StateDirectory`, so history and the last-known-good copy survive restarts and upgrades.
+- **Configuration files are mounted as a directory** in containers, so file replacements are seen.
+
+## Configuration
+
+- **`rdock validate --strict` passes** with the version you run. Run it in CI on every change to `rdock.yaml`.
+- **Every HTTPS host has a certificate**, and `defaults.certificate` is set for clients without SNI. Automatic certificates are <Status planned="v0.3" />.
+- **Certificates are renewed before they expire.** Watch `rdock_cert_expiry_timestamp_seconds` and replace the files in time; rdock picks up the new files without a restart.
+- **Private keys and secrets are readable only by rdock**, and secrets are referenced with `${file:/run/secrets/...}` rather than written into `rdock.yaml` ([Secrets](/docs/guides/secrets/)).
+- **`security.trusted_proxies` lists exactly the proxies in front of rdock**, or nothing when clients connect directly. A wrong entry lets clients choose their own IP address, which affects `ip_allow`, `rate_limit` and logs ([Behind a proxy](/docs/guides/behind-a-proxy/)).
+- **`security.limits.max_body_bytes` is set.** There is no body limit by default.
+- **HSTS is on** for sites that are HTTPS-only, once HTTPS works everywhere ([HTTP to HTTPS and HSTS](/docs/guides/https-redirect-and-hsts/)).
+- **Sensitive endpoints are protected** with `basic_auth`, `forward_auth` or `ip_allow`, and abusable ones with `rate_limit`.
+- **Backend timeouts fit your application.** The defaults are 5 seconds to connect and 1 minute per read or write ([Timeouts and limits](/docs/guides/timeouts-and-limits/)).
+- **`lifecycle.drain_timeout` is shorter than the stop timeout** of Docker (`stop_grace_period`, 10 seconds by default) or systemd (`TimeoutStopSec=15s` in the unit).
+
+## Admin API and monitoring
+
+- **The admin listener stays on `127.0.0.1:2080`.** `rdock validate` warns when it is reachable from the network. `/healthz`, `/readyz` and `/metrics` need no token; `/api/v1/status` and `/api/v1/config/reload` need the token from `/var/lib/rdock/admin/token` or `RDOCK_ADMIN_TOKEN`.
+- **The admin token is protected** like a password; anyone with it can reload the configuration.
+- **Prometheus scrapes `/metrics`.** Alert on the rate of 5xx in `rdock_http_requests_total`, on `rdock_upstream_errors_total`, on `rdock_config_reloads_total{result="rejected"}` and on certificate expiry ([Metrics](/docs/reference/metrics/)).
+- **Access logs are collected and redacted.** By default `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are redacted; add any other header that carries secrets to `observability.access_log.redact`.
+- **Health checks use `rdock healthcheck`** (container) or `/readyz` (load balancer in front).
+
+## Operations
+
+- **You have tried a reload under load** and a rejected reload, and know where the logs show them ([Reloads](/docs/guides/reloads/)).
+- **You know how to roll back**: the previous image tag or binary, and the configuration history under `/var/lib/rdock/state/history` ([Upgrade](/docs/install/upgrade/)).
+- **Only ports 80 and 443 are open** to the internet on the host, and backends are not published directly.
+
+## A hardened starting point
+
+```yaml title="rdock.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: { policy: intermediate } }
+
+defaults:
+  listeners: [websecure]
+  certificate: example
+  redirect_http_to_https: true
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [secure-headers, per-client-limit, gzip]
+
+services:
+  app:
+    backends:
+      - address: "app:3000"
+    timeouts: { connect: 5s, read: 60s, write: 60s }
+
+middlewares:
+  secure-headers:
+    type: headers
+    hsts: { max_age: 365d, include_subdomains: true }
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: DENY
+        Referrer-Policy: strict-origin-when-cross-origin
+  per-client-limit: { type: rate_limit, average: 50, burst: 100, period: 1s }
+  gzip: { type: compress }
+
+security:
+  limits:
+    max_body_bytes: 10MiB
+    max_header_bytes: 64KiB
+
+admin:
+  listener: 127.0.0.1:2080
+
+observability:
+  access_log:
+    format: json
+    redact: [authorization, proxy-authorization, cookie, set-cookie, x-api-key]
+  metrics: { prometheus: true }
+
+lifecycle:
+  drain_timeout: 8s
+```
+
+Adjust the limits and the rate to your traffic; a rate limit that is too low turns a busy hour into 429 errors.
+
+## Related
+
+- [Security model](/docs/concepts/security-model/)
+- [Troubleshooting](/docs/operations/troubleshooting/)
+- [Configuration reference](/docs/reference/configuration/)

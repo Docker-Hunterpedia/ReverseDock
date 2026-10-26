@@ -1,0 +1,228 @@
+---
+title: Rules
+description: The route rule grammar, compatible with Traefik v3 - every matcher, how hosts, paths, headers and queries are compared, priorities, and path normalisation.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+A route's `match` is a rule in the Traefik v3 syntax, such as
+``Host(`app.example.com`) && PathPrefix(`/api`)``, or a structured object that is turned into
+such a rule. This page describes the grammar as ReverseDock implements it <Status since="v0.1" />.
+For how routes use rules, see [Routing and priority](/docs/concepts/routing-and-priority/).
+
+## Syntax
+
+A rule is one or more **matchers** combined with operators:
+
+| Element | Example | Meaning |
+|---|---|---|
+| Matcher | ``Host(`example.com`)`` | A name and its arguments in parentheses. |
+| `&&` | ``Host(`a.example.com`) && Method(`GET`)`` | Both must match. |
+| `\|\|` | ``Host(`a.example.com`) \|\| Host(`b.example.com`)`` | At least one must match. |
+| `!` | ``!PathPrefix(`/admin`)`` | Negation. |
+| `( )` | ``(Path(`/a`) \|\| Path(`/b`)) && Method(`POST`)`` | Grouping. |
+
+`!` binds tightest, then `&&`, then `||`. Whitespace, including line breaks, is ignored between
+tokens. `&` and `|` must be doubled.
+
+Arguments are strings in one of two forms:
+
+- **Backticks**: `` `text` ``. Everything up to the next backtick is taken as it is; there are
+  no escapes. This is the usual form, because it needs no escaping inside YAML double quotes.
+- **Double quotes**: `"text"`, with the escapes `\\`, `\"`, `\n`, `\r` and `\t`. A raw line break
+  inside the string is an error; write `\n`.
+
+**Matcher names are case-insensitive**: `Host`, `host` and `HOST` are the same matcher. Each
+matcher takes a fixed number of arguments. As in Traefik v3, `Host` takes one host; write
+``Host(`a.example.com`) || Host(`b.example.com`)`` for two.
+
+Limits: a rule is at most 16 KiB, and parentheses and `!` nest at most 32 levels deep.
+
+## HTTP matchers
+
+| Matcher | Arguments | Matches when |
+|---|---|---|
+| `Host` | host | The request host equals the host, or fits a `*.` wildcard. `*` matches any host. |
+| `HostRegexp` | regex | The regex matches the request host. |
+| `Path` | path | The path equals the argument. |
+| `PathPrefix` | prefix | The path starts with the argument. |
+| `PathRegexp` | regex | The regex matches the path. |
+| `Method` | method | The method equals the argument, compared in upper case. |
+| `Header` | name, value | Any value of the header equals `value`. |
+| `HeaderRegexp` | name, regex | Any value of the header matches the regex. |
+| `Query` | key, value | Any value of the query parameter equals `value`. |
+| `Query` | key | The parameter is present with an empty value. |
+| `QueryRegexp` | key, regex | Any value of the parameter matches the regex. |
+| `ClientIP` | IP or CIDR | The resolved client IP is the address or inside the range. |
+
+### Host and HostRegexp
+
+The request host is taken from the `Host` header (or the HTTP/2 `:authority`) and prepared
+before it is compared: the port is removed, a trailing dot is removed, it is lower-cased, and
+IPv6 brackets are removed. So ``Host(`app.example.com`)`` matches `APP.example.com:8443` and
+`app.example.com.`.
+
+- An argument is compared the same way: case does not matter, a trailing dot is allowed, and
+  IPv6 addresses may be written with or without brackets (``Host(`[2001:db8::1]`)`` or
+  ``Host(`2001:db8::1`)``).
+- ``Host(`*.example.com`)`` matches exactly one label in front of `example.com`:
+  `a.example.com`, but not `example.com` and not `a.b.example.com`.
+- The argument must not include a port ("a host must not include a port; routing ignores the
+  port"). Non-ASCII names must be written in punycode (`xn--…`). Underscores are allowed,
+  because container names use them.
+- `HostRegexp` is matched against the prepared host (lower case, no port). It is **not
+  anchored**: ``HostRegexp(`example`)`` matches `www.example.com`. Write
+  ``HostRegexp(`^[a-z]+\.example\.com$`)`` to match whole names.
+
+### Path, PathPrefix and PathRegexp
+
+These match the request path after [normalisation](#path-normalisation), without the query
+string. They compare case-sensitively.
+
+- `Path` and `PathPrefix` arguments must start with `/`.
+- `PathPrefix` is a **plain string prefix**: ``PathPrefix(`/api`)`` matches `/api`, `/api/users`
+  and also `/apiv2`. Use ``PathPrefix(`/api/`)`` to match only below `/api/`.
+- `PathRegexp` is **not anchored**: ``PathRegexp(`v[0-9]+`)`` matches `/api/v2/x`. Use `^` and
+  `$` to match the whole path.
+
+### Method
+
+The argument is upper-cased, so ``Method(`get`)`` matches `GET`. It must be a valid HTTP
+method token.
+
+### Header and HeaderRegexp
+
+The header name is case-insensitive and must be a valid header name. The value is compared
+exactly, including case. When the header appears more than once, the matcher matches if any
+one value matches. `HeaderRegexp` is not anchored.
+
+### Query and QueryRegexp
+
+The query string is decoded as `application/x-www-form-urlencoded`: `%20` and `+` become a
+space. When a parameter appears more than once, any one value may match.
+
+``Query(`debug`)`` with one argument matches only an empty value: `?debug` or `?debug=`. It does
+not match `?debug=1`; use ``QueryRegexp(`debug`, `.*`)`` to match the parameter with any value.
+
+### ClientIP
+
+The argument is an IPv4 or IPv6 address or a CIDR range. It is compared with the **resolved
+client IP**: the TCP peer, or the address from `X-Forwarded-For` / `X-Real-IP` when the peer is
+listed in `security.trusted_proxies`. See [Behind another proxy](/docs/guides/behind-a-proxy/).
+
+### Regular expressions
+
+`HostRegexp`, `PathRegexp`, `HeaderRegexp` and `QueryRegexp` use the syntax of the Rust `regex`
+crate. They are case-sensitive unless you start them with `(?i)`, are not anchored, and their
+compiled size is limited to 1 MiB. Inside a YAML double-quoted string, a backslash must be
+doubled (``"PathRegexp(`^/v[0-9]+\\.json$`)"``), or write the rule in single quotes.
+
+## TCP matchers
+
+`HostSNI`, `HostSNIRegexp` and `ALPN` exist for TCP routes, which are <Status planned="v0.6" />.
+The parser and `rdock validate` check them in `tcp_routes`, and refuse them in HTTP routes. A
+TCP rule may also use `ClientIP`. `ALPN` refuses `acme-tls/1`, which is reserved for ACME
+challenges.
+
+## Structured match
+
+Instead of a rule, `match` can be an object. All given conditions must hold; inside a list, any
+item may match:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  api:
+    match:
+      hosts: [api.example.com, api.example.org]
+      path_prefix: /v1/
+      methods: [GET, POST]
+    service: api
+```
+
+| Key | Equivalent |
+|---|---|
+| `hosts` | `Host` for each, combined with `\|\|` |
+| `path` | `Path` |
+| `path_prefix` | `PathPrefix` |
+| `path_regex` | `PathRegexp` |
+| `methods` | `Method` for each, combined with `\|\|` |
+| `headers` | `Header(name, value)` for each entry, combined with `&&` |
+| `query` | `Query(key, value)` for each entry, combined with `&&` |
+| `client_ips` | `ClientIP` for each, combined with `\|\|` |
+
+The example is the same as
+``(Host(`api.example.com`) || Host(`api.example.org`)) && PathPrefix(`/v1/`) && (Method(`GET`) || Method(`POST`))``.
+An empty object is an error.
+
+## Priority
+
+Each listener checks its routes from the highest priority to the lowest and uses the first
+route whose rule matches.
+
+- A route's priority is its `priority` setting when that is not `0`.
+- Otherwise it is the **length of the rule in bytes, as written**. Longer rules are usually more
+  specific, so ``Host(`app.example.com`) && PathPrefix(`/api`)`` is checked before
+  ``Host(`app.example.com`)``. For a structured match, the length of the equivalent rule is used.
+- **Ties go to the route name**, in ascending byte order, so the result never depends on the
+  order of the file.
+- Explicit and computed priorities compete with each other. `priority: 1` makes a catch-all
+  that runs after every other route; a large value such as `priority: 10000` puts a route first.
+
+A request that matches no route gets 404. On a plain HTTP listener, if its host has an HTTPS
+route, it is redirected to HTTPS instead (`defaults.redirect_http_to_https`).
+
+## Path normalisation
+
+Before routing, ReverseDock normalises the request path. The
+**normalised path is what the backend receives**, so the backend sees exactly the path that
+was routed.
+
+1. Percent-escapes of unreserved characters (letters, digits, `-`, `.`, `_`, `~`) are decoded,
+   and all other escapes are written in upper case: `%7e` becomes `~`, `%2f` becomes `%2F`.
+2. Dot segments are resolved and empty segments removed: `/./a/../b//c` becomes `/b/c`. A
+   trailing slash is kept. Escaped dots are decoded first, so `/%2e%2e/admin` becomes `/admin`.
+3. An empty path becomes `/`. The asterisk form `*` (as in `OPTIONS *`) is kept.
+
+A path with a `%` not followed by two hex digits, or with a `#` fragment, is refused with
+**400**.
+
+Matchers then see a decoded form of the normalised path, in which reserved characters and `%25`
+stay encoded:
+
+| Request path | Forwarded to the backend | Seen by `Path` matchers |
+|---|---|---|
+| `/foo%20bar` | `/foo%20bar` | `/foo bar` |
+| `/caf%C3%A9` | `/caf%C3%A9` | `/café` |
+| `/a%2Fb` | `/a%2Fb` | `/a%2Fb` |
+| `/100%25` | `/100%25` | `/100%25` |
+| `/%7Euser//x/.` | `/~user/x/` | `/~user/x/` |
+
+So ``PathPrefix(`/foo bar`)`` matches `/foo%20bar`, but ``PathPrefix(`/a/b`)`` does not match
+`/a%2Fb`: an encoded slash is never a path separator. Encoded slashes are allowed in requests.
+If the decoded bytes are not valid UTF-8, matchers see the encoded form.
+
+Path middlewares (`strip_prefix`, `rewrite` and the others) work on the normalised path, and a
+result that is not itself normalised is refused with 400. See
+[Redirects and rewrites](/docs/guides/redirects-and-rewrites/).
+
+## Errors
+
+`rdock validate` reports rule errors with the route's path and a caret under the problem:
+
+```text
+error: routes.app.match: invalid rule: unknown matcher `Hots`; did you mean `Host`?
+    Hots(`a.example.com`)
+    ^ unknown matcher `Hots`; did you mean `Host`?
+```
+
+It also checks each matcher: hosts and IP ranges are well formed, paths start with `/`, regular
+expressions compile, header names are valid, and TCP matchers are not used in HTTP routes.
+
+## Related
+
+- [Routing and priority](/docs/concepts/routing-and-priority/)
+- [Path routing](/docs/guides/path-routing/)
+- [`routes` settings](/docs/reference/configuration/routes/)
+- [Migrate from Traefik](/docs/migrate/from-traefik/)

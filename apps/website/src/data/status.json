@@ -1,0 +1,149 @@
+[
+  {
+    "path": "acme",
+    "planned": "v0.3",
+    "what": "Automatic certificates (ACME)",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nacme:\n  email: ops@example.com\n"
+  },
+  {
+    "path": "listeners.<name>.proxy_protocol",
+    "planned": "v0.6",
+    "what": "The PROXY protocol",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\", proxy_protocol: { trusted: [\"10.0.0.0/8\"] } }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.protocol",
+    "planned": "v0.6",
+    "what": "TCP and UDP listeners (`tcp`, `udp`)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  raw: { address: \":5432\", protocol: tcp }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "tcp_routes",
+    "planned": "v0.6",
+    "what": "TCP routes",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  raw: { address: \":5432\", protocol: tcp }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\ntcp_routes:\n  db: { match: \"HostSNI(`*`)\", service: db, listeners: [raw] }\ntcp_services:\n  db: { backends: [{ address: \"127.0.0.1:5433\" }] }\n"
+  },
+  {
+    "path": "tcp_services",
+    "planned": "v0.6",
+    "what": "TCP services",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\ntcp_services:\n  db: { backends: [{ address: \"127.0.0.1:5433\" }] }\n"
+  },
+  {
+    "path": "routes.<name>.tls.dns_provider",
+    "planned": "v0.3",
+    "what": "DNS-01 certificates",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\nroutes:\n  app:\n    match: \"Host(`app.example.com`)\"\n    service: app\n    tls: { dns_provider: cf }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nacme:\n  email: ops@example.com\n  dns_providers:\n    cf: { type: cloudflare, api_token: \"${env:CF_API_TOKEN}\" }\n"
+  },
+  {
+    "path": "routes.<name>.tls.domains",
+    "planned": "v0.3",
+    "what": "Automatic certificate names",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\nroutes:\n  app:\n    match: \"Host(`app.example.com`)\"\n    service: app\n    tls: { domains: [\"example.com\"] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.algorithms",
+    "planned": "v0.4",
+    "what": "`br` and `zstd` compression",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nmiddlewares:\n  zip: { type: compress, algorithms: [br, gzip] }\n"
+  },
+  {
+    "path": "providers.file.paths",
+    "planned": "v0.2",
+    "what": "Additional configuration files",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  file: { paths: [\"/etc/rdock/conf.d/*.yaml\"] }\n"
+  },
+  {
+    "path": "providers.docker",
+    "planned": "v0.2",
+    "what": "The Docker provider",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  docker: {}\n"
+  },
+  {
+    "path": "providers.swarm",
+    "planned": "v0.6",
+    "what": "The Swarm provider",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  swarm: {}\n"
+  },
+  {
+    "path": "providers.kubernetes",
+    "planned": "v0.7",
+    "what": "The Kubernetes provider",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  kubernetes: {}\n"
+  },
+  {
+    "path": "security.trusted_proxies",
+    "planned": "v0.3",
+    "what": "`cloudflare` (synced edge ranges)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nsecurity:\n  trusted_proxies: [cloudflare]\n"
+  },
+  {
+    "path": "security.client_ip_header",
+    "planned": "v0.3",
+    "what": "`cf-connecting-ip`",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nsecurity:\n  trusted_proxies: [cloudflare]\n  client_ip_header: cf-connecting-ip\n"
+  },
+  {
+    "path": "observability.tracing",
+    "planned": "v0.4",
+    "what": "OpenTelemetry tracing",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nobservability:\n  tracing: { otlp: \"http://tempo:4318\" }\n"
+  },
+  {
+    "path": "services.<name>.split",
+    "planned": "v0.4",
+    "what": "Weighted traffic splits",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    split: [{ service: blue, weight: 90 }, { service: green, weight: 10 }]\n  blue: { backends: [{ address: \"127.0.0.1:3001\" }] }\n  green: { backends: [{ address: \"127.0.0.1:3002\" }] }\n"
+  },
+  {
+    "path": "services.<name>.load_balancer.policy",
+    "planned": "v0.4",
+    "what": "Policies other than `round_robin` and `random`",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    load_balancer: { policy: least_conn }\n"
+  },
+  {
+    "path": "services.<name>.health",
+    "planned": "v0.4",
+    "what": "Health checks",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    health: { passive: {} }\n"
+  },
+  {
+    "path": "services.<name>.retries",
+    "planned": "v0.4",
+    "what": "Retries",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    retries: { attempts: 2 }\n"
+  },
+  {
+    "path": "services.<name>.sticky",
+    "planned": "v0.4",
+    "what": "Sticky sessions",
+    "value": false,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    sticky: { cookie: { name: srv } }\n"
+  },
+  {
+    "path": "services.<name>.tls",
+    "planned": "v0.4",
+    "what": "Client certificates to backends (`tls.client_certificate`)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    tls: { cert_file: /etc/rdock/certs/client.pem, key_file: /etc/rdock/certs/client.key }\n"
+  }
+]

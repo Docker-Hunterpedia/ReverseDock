@@ -1,0 +1,55 @@
+---
+title: Security
+description: How to report a vulnerability in ReverseDock privately, what to expect, and how releases are signed.
+sidebar:
+  order: 4
+---
+
+ReverseDock sits in front of other people's infrastructure, so security reports have the highest priority. The full policy is [SECURITY.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/SECURITY.md) on GitHub.
+
+## Report a vulnerability privately
+
+Do not open a public issue, discussion or pull request for a security problem.
+
+1. Use GitHub's private vulnerability reporting: [Report a vulnerability](https://github.com/Docker-Hunterpedia/ReverseDock/security/advisories/new).
+2. If you cannot use GitHub, email **contact@oday-bakkour.com** with the subject `[SECURITY] ReverseDock`.
+
+Include:
+
+- the affected version or commit, and how you run it (binary, Docker, systemd);
+- a description of the issue and its impact;
+- a minimal reproduction (configuration, requests) with secrets removed;
+- any proof of concept, logs or packet captures that help confirm it.
+
+## What to expect
+
+| Step | Target |
+|---|---|
+| Acknowledgement | within 3 working days |
+| Initial assessment and severity (CVSS v4) | within 7 days |
+| Fix, advisory and coordinated disclosure | within 90 days, sooner for actively exploited issues |
+
+You are kept informed, the disclosure date is agreed with you, a CVE is requested through GitHub when appropriate, and you are credited in the advisory unless you prefer to stay anonymous.
+
+## Supported versions
+
+During 0.x only the latest minor release receives fixes. From 1.0, the two most recent minor releases are supported.
+
+## Scope
+
+**In scope:** the `rdock` binary (HTTP proxying, request parsing, TLS, middlewares and, as they ship, ACME, providers and TCP/UDP), the admin API and the dashboard, the official container images, manifests and systemd unit, and documented examples whose defaults would lead to an insecure deployment.
+
+**Out of scope:** vulnerabilities in third-party dependencies that are already public (report them upstream, and tell the project if ReverseDock is affected), volumetric denial of service, issues that need an already compromised host, a malicious administrator or social engineering, and missing hardening that is documented as a deliberate, configurable default.
+
+## Safe harbour
+
+The project will not pursue or support legal action against anyone who researches and reports security issues in good faith under this policy. Avoid privacy violations, data destruction and service degradation, test only systems you own or may test, and allow reasonable time for a fix before disclosure.
+
+## Signed releases
+
+Every release publishes `SHA256SUMS` with a keyless cosign signature, an SPDX SBOM, and GitHub build-provenance attestations for each archive. Container images are signed and attested too. [Verify a download](/docs/install/verify/) shows the commands.
+
+## Related
+
+- [Security model](/docs/concepts/security-model/)
+- [Production checklist](/docs/operations/production-checklist/)

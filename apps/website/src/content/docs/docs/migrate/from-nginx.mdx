@@ -1,0 +1,453 @@
+---
+title: Migrate from NGINX
+description: Move an NGINX reverse-proxy configuration to rdock.yaml, with a directive map, five side-by-side setups, the differences that matter and a cutover plan.
+sidebar:
+  order: 2
+---
+
+import Status from '../../../../components/Status.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+This page moves an NGINX configuration that proxies HTTP to backends: `server` blocks with `location`, `proxy_pass`, TLS, authentication and limits. ReverseDock does not serve static files or cache responses in v0.1; keep a small web server as a backend for files.
+
+The NGINX facts below come from the official module documentation at nginx.org (checked 2026-10-27): [core](https://nginx.org/en/docs/http/ngx_http_core_module.html), [proxy](https://nginx.org/en/docs/http/ngx_http_proxy_module.html), [upstream](https://nginx.org/en/docs/http/ngx_http_upstream_module.html), [realip](https://nginx.org/en/docs/http/ngx_http_realip_module.html), [limit_req](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html), [auth_basic](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html) and [WebSocket proxying](https://nginx.org/en/docs/http/websocket.html).
+
+## Concept map
+
+| NGINX | ReverseDock |
+|---|---|
+| `listen` in a `server` block | `listeners` ([reference](/docs/reference/configuration/listeners/)): one per address, shared by every site |
+| `server_name` | ``Host(`…`)`` in the route's `match` |
+| `location` | the path part of `match` (`Path`, `PathPrefix`, `PathRegexp`) and `priority` |
+| `proxy_pass` | the route's `service` |
+| `upstream` with `server … weight=N` | `services.<name>.backends` with `weight` |
+| `proxy_pass https://…`, `proxy_ssl_trusted_certificate`, `proxy_ssl_name` | `scheme: https`, `tls.ca_file`, `tls.server_name` |
+| `ssl_certificate`, `ssl_certificate_key` | `certificates` (chosen by SNI, no per-site reference needed) |
+| `ssl_protocols` | `listeners.<name>.tls.policy`: `intermediate` (TLS 1.2 and 1.3) or `modern` (TLS 1.3) |
+| `return 301 https://$host$request_uri` | automatic (`defaults.redirect_http_to_https`) |
+| `return 301 …`, `rewrite … redirect` | `redirect` middleware |
+| `rewrite … break` | `rewrite` middleware |
+| `proxy_pass` with a URI part | `strip_prefix`, `add_prefix` or `replace_path` |
+| `proxy_set_header Host $host` | the default (`pass_host_header: true`) |
+| `proxy_set_header X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto` | added automatically |
+| other `proxy_set_header`, `add_header` | `headers` middleware (`request.set`, `response.set`, `hsts`) |
+| `auth_basic`, `auth_basic_user_file` | `basic_auth` (`realm`, `users_file`) |
+| `auth_request` | `forward_auth` |
+| `allow`, `deny` | `ip_allow`, `ip_deny` |
+| `limit_req_zone`, `limit_req` | `rate_limit` |
+| `gzip` | `compress` |
+| `error_page` | `errors` |
+| `client_max_body_size` | `security.limits.max_body_bytes` (one value for all routes) |
+| `large_client_header_buffers` | `security.limits.max_header_bytes`, `max_headers`, `max_uri_bytes` |
+| `client_header_timeout`, `keepalive_timeout` | `listeners.<name>.timeouts.request_header`, `idle` |
+| `proxy_connect_timeout`, `proxy_read_timeout`, `proxy_send_timeout` | `services.<name>.timeouts` or `routes.<name>.timeouts` (`connect`, `read`, `write`) |
+| `set_real_ip_from`, `real_ip_header` | `security.trusted_proxies`, `security.client_ip_header` |
+| `access_log` | `observability.access_log` |
+| `nginx -t` | `rdock validate` |
+| `nginx -s reload` | automatic on file change, or `rdock reload`, or `SIGHUP` |
+| `stream` module | `tcp_routes` <Status planned="v0.6" /> |
+
+## Five common setups
+
+Each pair shows the NGINX configuration and a complete `rdock.yaml` that passes `rdock validate --strict`.
+
+### 1. One HTTPS site with an HTTP redirect
+
+```nginx title="/etc/nginx/conf.d/app.conf"
+server {
+    listen 80;
+    server_name app.example.com;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl;
+    server_name app.example.com;
+    ssl_certificate     /etc/nginx/certs/example.pem;
+    ssl_certificate_key /etc/nginx/certs/example.key;
+    ssl_protocols       TLSv1.2 TLSv1.3;
+
+    location / {
+        proxy_pass http://10.0.0.5:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+}
+```
+
+Routes attach to the `websecure` listener by default, the redirect to HTTPS is automatic, and the forwarding headers are written for you.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: { policy: intermediate } }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+```
+
+The automatic redirect answers 301 for GET and 308 for other methods, so a POST keeps its method and body.
+
+### 2. Several sites and an API under a path
+
+`proxy_pass` with a URI part replaces the matched `location` prefix: `/api/users` reaches the API as `/users`.
+
+```nginx title="/etc/nginx/conf.d/sites.conf"
+server {
+    listen 443 ssl;
+    server_name www.example.com;
+    ssl_certificate     /etc/nginx/certs/example.pem;
+    ssl_certificate_key /etc/nginx/certs/example.key;
+
+    location / {
+        proxy_pass http://10.0.0.10:8080;
+        proxy_set_header Host $host;
+    }
+    location /api/ {
+        proxy_pass http://10.0.0.11:9000/;
+        proxy_set_header Host $host;
+    }
+}
+
+server {
+    listen 443 ssl;
+    server_name blog.example.com;
+    ssl_certificate     /etc/nginx/certs/example.pem;
+    ssl_certificate_key /etc/nginx/certs/example.key;
+
+    location / {
+        proxy_pass http://10.0.0.12:2368;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  www:
+    match: "Host(`www.example.com`)"
+    service: www
+  api:
+    match: "Host(`www.example.com`) && PathPrefix(`/api/`)"
+    service: api
+    middlewares: [strip-api]
+  blog:
+    match: "Host(`blog.example.com`)"
+    service: blog
+
+middlewares:
+  strip-api: { type: strip_prefix, prefixes: ["/api"] }
+
+services:
+  www:
+    backends: [{ address: "10.0.0.10:8080" }]
+  api:
+    backends: [{ address: "10.0.0.11:9000" }]
+  blog:
+    backends: [{ address: "10.0.0.12:2368" }]
+```
+
+The `api` route is tried before `www` because its rule is longer (see [Location matching](#location-matching-and-route-priority)). `strip_prefix` removes `/api` and keeps the slash after it, so the API receives `/users`, and it adds `X-Forwarded-Prefix: /api`. One certificate covers both sites because ReverseDock picks it by SNI.
+
+### 3. Load balancing and WebSockets
+
+NGINX needs the `Upgrade` and `Connection` headers passed explicitly for WebSockets, and `proxy_http_version 1.1` before NGINX 1.29.7.
+
+```nginx title="/etc/nginx/conf.d/chat.conf"
+upstream chat {
+    server 10.0.0.30:8080 weight=2;
+    server 10.0.0.31:8080;
+}
+
+server {
+    listen 443 ssl;
+    server_name chat.example.com;
+    ssl_certificate     /etc/nginx/certs/example.pem;
+    ssl_certificate_key /etc/nginx/certs/example.key;
+
+    location / {
+        proxy_pass http://chat;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection "upgrade";
+        proxy_read_timeout 1h;
+    }
+}
+```
+
+ReverseDock passes WebSocket upgrades without extra settings. Long-lived connections that stay silent need longer read timeouts on both sides: the route's `timeouts.read` towards the backend, and the listener's `timeouts.read` towards the client.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure:
+    address: ":443"
+    tls: {}
+    timeouts: { read: 1h }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  chat:
+    match: "Host(`chat.example.com`)"
+    service: chat
+    timeouts: { read: 1h }
+
+services:
+  chat:
+    backends:
+      - { address: "10.0.0.30:8080", weight: 2 }
+      - { address: "10.0.0.31:8080" }
+```
+
+Both proxies use weighted round-robin by default. NGINX also marks a server unavailable after failed attempts (`max_fails` 1, `fail_timeout` 10 s); ReverseDock health checks are <Status planned="v0.4" />, so until then a backend that is down still receives its share and those requests get 502. See [WebSockets, SSE and gRPC](/docs/guides/websockets-sse-grpc/).
+
+### 4. Basic authentication, security headers and an upload limit
+
+```nginx title="/etc/nginx/conf.d/admin.conf"
+server {
+    listen 443 ssl;
+    server_name admin.example.com;
+    ssl_certificate     /etc/nginx/certs/example.pem;
+    ssl_certificate_key /etc/nginx/certs/example.key;
+
+    client_max_body_size 50m;
+    auth_basic           "Admin";
+    auth_basic_user_file /etc/nginx/admins.htpasswd;
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options DENY always;
+
+    location / {
+        proxy_pass http://10.0.0.20:8000;
+        proxy_set_header Host $host;
+    }
+}
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+security:
+  limits: { max_body_bytes: 50MiB }
+
+routes:
+  admin:
+    match: "Host(`admin.example.com`)"
+    service: admin
+    middlewares: [admin-auth, secure-headers]
+
+middlewares:
+  admin-auth:
+    type: basic_auth
+    users_file: /etc/rdock/admins.htpasswd
+    realm: Admin
+  secure-headers:
+    type: headers
+    hsts: { max_age: 365d, include_subdomains: true }
+    response:
+      set:
+        X-Frame-Options: DENY
+
+services:
+  admin:
+    backends: [{ address: "10.0.0.20:8000" }]
+```
+
+`max_body_bytes` applies to every route, not to one site; requests over it get 413, also when the body is chunked. HSTS from the `headers` middleware is sent on HTTPS responses only. `htpasswd` files with Apache MD5 (`$apr1$`), MD5-crypt (`$1$`) or `{SHA}` hashes load with a warning, which `--strict` turns into an error; other `crypt()` formats and `{SSHA}` are refused. Re-create entries with `rdock hash --user NAME` (see [Basic auth](/docs/guides/basic-auth/)).
+
+### 5. Behind a load balancer: real client IP, allow-list and rate limit
+
+```nginx title="/etc/nginx/conf.d/api.conf"
+limit_req_zone $binary_remote_addr zone=api:10m rate=100r/s;
+
+server {
+    listen 443 ssl;
+    server_name api.example.com;
+    ssl_certificate     /etc/nginx/certs/example.pem;
+    ssl_certificate_key /etc/nginx/certs/example.key;
+
+    set_real_ip_from  10.0.0.0/24;
+    real_ip_header    X-Forwarded-For;
+    real_ip_recursive on;
+
+    location / {
+        allow 203.0.113.0/24;
+        deny  all;
+        limit_req zone=api burst=200 nodelay;
+        proxy_pass http://10.0.0.40:8080;
+        proxy_set_header Host $host;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+    }
+}
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+security:
+  trusted_proxies: [10.0.0.0/24]
+  client_ip_header: x-forwarded-for
+
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [office-only, api-limit]
+
+middlewares:
+  office-only: { type: ip_allow, cidrs: [203.0.113.0/24] }
+  api-limit: { type: rate_limit, average: 100, period: 1s, burst: 200 }
+
+services:
+  api:
+    backends: [{ address: "10.0.0.40:8080" }]
+```
+
+ReverseDock walks `X-Forwarded-For` from the right and skips trusted addresses, like `real_ip_recursive on`. The resolved address is used by `ip_allow`, `rate_limit` and the access log. A blocked client gets 403; a client over the limit gets 429 with `Retry-After`. See [Behind a proxy](/docs/guides/behind-a-proxy/) and [Rate limiting](/docs/guides/rate-limiting/).
+
+## Differences and gotchas
+
+### Location matching and route priority
+
+NGINX selects the longest matching prefix `location`, then checks regular-expression locations in the order they appear and uses the first that matches; `=` ends the search on an exact match and `^~` skips the regular expressions.
+
+ReverseDock has no separate prefix and regex passes. Every route has one priority number: `priority` when set, else the length of the rule text. Routes are tried from the highest number down; ties go to the route name. A request that matches no route gets ReverseDock's 404 page.
+
+| NGINX | ReverseDock rule |
+|---|---|
+| `location = /health` | ``Path(`/health`)`` |
+| `location /api/` | ``PathPrefix(`/api/`)`` (a plain string prefix: `/api/x` but not `/api`) |
+| `location ^~ /static/` | ``PathPrefix(`/static/`)`` with a `priority` above your regex routes |
+| `location ~ \.php$` | ``PathRegexp(`\.php$`)``; unanchored, so add `^` or `$` as needed |
+| `location ~* \.(png\|jpg)$` | ``PathRegexp(`(?i)\.(png\|jpg)$`)`` |
+| `server_name a.example.com b.example.com` | ``Host(`a.example.com`) \|\| Host(`b.example.com`)`` |
+| `server_name *.example.com` | ``Host(`*.example.com`)`` (exactly one label; on HTTPS the route names its certificate with `tls: { certificate: <name> }` until automatic certificates arrive) |
+| `default_server` | a catch-all route such as ``PathPrefix(`/`)`` with `priority: 1` (on HTTPS also `tls: { certificate: <name> }`), and `defaults.certificate` for TLS clients whose name no certificate covers |
+
+Because a regex location does not automatically win over a prefix in ReverseDock, give routes that must win an explicit `priority`. Regular expressions use the Rust `regex` syntax, which has no look-around and no back-references. See [Routing and priority](/docs/concepts/routing-and-priority/) and [Rules](/docs/reference/rules/).
+
+### Paths sent to the backend
+
+NGINX passes the request URI as the client sent it when `proxy_pass` has no URI part. ReverseDock normalises the path before routing (unreserved escapes decoded, dot segments and `//` removed) and forwards the normalised path, so the backend sees exactly the path that was routed. Path middlewares replace the URI part of `proxy_pass`: `strip_prefix` for `location /api/ { proxy_pass http://b/; }`, `replace_path` for a fixed target, `add_prefix` for `proxy_pass http://b/prefix/` under `location /`, and `rewrite` for regular expressions.
+
+### `proxy_set_header` versus automatic headers
+
+- **Host:** NGINX sends `Host: $proxy_host` (the upstream's name) unless you set `proxy_set_header Host $host`. ReverseDock sends the client's `Host` by default. Set `pass_host_header: false` on the service to send the backend's address instead.
+- **Forwarding headers:** NGINX adds none unless configured. ReverseDock always writes `X-Forwarded-For` (the peer appended), `X-Real-IP` (the resolved client IP), `X-Forwarded-Proto` (`http`, `https`, `ws` or `wss`), `X-Forwarded-Host` and `X-Forwarded-Port`, and adds `X-Request-ID`. From clients that are not in `security.trusted_proxies`, incoming forwarding headers (`X-Forwarded-*`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`, also with `_`) are removed first, so they cannot be spoofed.
+- **Inheritance:** NGINX inherits `proxy_set_header` from the outer level only when the inner level sets none. ReverseDock has no levels: list the same `headers` middleware on each route that needs it.
+- **Connection and Upgrade:** handled for you; WebSocket and HTTP/2 need no header settings.
+
+### Limits
+
+| NGINX default | ReverseDock default |
+|---|---|
+| `client_max_body_size 1m` (413) | no body limit; set `security.limits.max_body_bytes` (413) |
+| `large_client_header_buffers 4 8k` | 64 KiB of request line and headers, 100 headers (431), 8 KiB request target (414) |
+| `client_header_timeout 60s` (408) | `listeners.<name>.timeouts.request_header` 10 s |
+| `keepalive_timeout 75s` | `listeners.<name>.timeouts.idle` 60 s |
+| `proxy_connect_timeout 60s` | `services.<name>.timeouts.connect` 5 s |
+| `proxy_read_timeout 60s`, `proxy_send_timeout 60s`, between two operations | `read` 60 s, `write` 60 s, also per operation |
+
+The body limit is global in v0.1. An upload endpoint that needs more than the rest of the site raises the limit for every route. See [Timeouts and limits](/docs/guides/timeouts-and-limits/) and [HTTP behaviour](/docs/reference/http-behaviour/).
+
+### Other behaviour
+
+- **Rate limiting:** `limit_req` delays requests over the rate until the burst is used up and rejects with 503 by default (`limit_req_status`). `rate_limit` never delays: requests over the bucket get 429 and `Retry-After` at once. `burst` is the bucket size and defaults to `average`.
+- **Buffering:** NGINX buffers backend responses by default (`proxy_buffering on`). ReverseDock streams them, so server-sent events and gRPC work without extra settings.
+- **Redirects:** `redirect` defaults to `permanent: false`, which answers 302 for GET and 307 for other methods; `permanent: true` gives 301 and 308.
+- **Strict requests:** HTTP/1.1 requests without `Host` get 400, `Expect` values other than `100-continue` get 417, and bare-LF line endings in request headers close the connection.
+- **No variables or `if`:** conditions are matchers in the route's `match` (`Header`, `Query`, `Method`, `ClientIP`), and per-request values come from the middlewares.
+- **Reloads:** ReverseDock reloads when `rdock.yaml` or a file it refers to changes. A configuration with errors is rejected and the running one stays; at start, a broken file falls back to the last-known-good copy. See [Reloads](/docs/guides/reloads/).
+- **Settings for later versions:** `rdock validate` warns about settings planned for a later version, such as health checks or `least_conn`, and `rdock run` refuses them.
+
+## Cutover
+
+Run ReverseDock next to NGINX on other ports, compare the answers, then move the ports. NGINX keeps its configuration, so rolling back means starting it again.
+
+<Steps>
+
+1. Write `rdock.yaml`, then validate it:
+
+   ```sh
+   rdock validate --strict rdock.yaml
+   ```
+
+2. Copy it to `rdock-test.yaml`, change only the listener addresses to free ports (for example `:8081` and `:8444`), and start a test instance with its own data directory:
+
+   ```sh
+   rdock run --config rdock-test.yaml --data-dir ./rdock-test-data
+   ```
+
+3. Send the same requests to both and compare status lines and headers. `--resolve` keeps the real host name while connecting to the local port:
+
+   ```sh
+   curl -sk -o /dev/null -D - --resolve app.example.com:443:127.0.0.1 https://app.example.com/
+   curl -sk -o /dev/null -D - --resolve app.example.com:8444:127.0.0.1 https://app.example.com:8444/
+   ```
+
+   Cover every `location`: exact paths, prefixes with and without the trailing slash, regex locations, authenticated pages (`-u user:password`), an upload near the body limit, and a WebSocket endpoint. For the HTTP redirect, `curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Host: app.example.com' http://127.0.0.1:8081/` should print `301 https://app.example.com:8444/`.
+
+4. Check the test instance's access log for 404, 502 and 504 answers. Each line names the `route`, `service` and `upstream`, which shows which rule caught a request.
+
+5. Switch: stop NGINX, then start ReverseDock with the real `rdock.yaml` on ports 80 and 443. With systemd: `systemctl stop nginx`, then `systemctl enable --now rdock`.
+
+6. Watch the first minutes with `rdock status` and `curl -s http://127.0.0.1:2080/metrics` (`rdock_http_requests_total` by route and status class, `rdock_upstream_errors_total` by service).
+
+7. Roll back if needed: `systemctl stop rdock`, then `systemctl start nginx`.
+
+</Steps>
+
+## Checklist
+
+- Every `server_name` and `location` pair has a route, and routes that must win over longer rules have a `priority`.
+- Regex locations are rewritten as `PathRegexp` with explicit `^` and `$` where NGINX relied on them.
+- `proxy_pass` URI parts are replaced by `strip_prefix`, `replace_path` or `add_prefix`.
+- Backends that expect `Host: $proxy_host` have `pass_host_header: false`.
+- `set_real_ip_from` networks are in `security.trusted_proxies`.
+- `client_max_body_size` is carried over to `security.limits.max_body_bytes` (NGINX's default was 1 MiB; ReverseDock has none).
+- Long `proxy_read_timeout` values are carried over to `timeouts.read` on the route, and on the listener for WebSockets.
+- `htpasswd` entries are argon2id or bcrypt (`rdock hash`), or the MD5 and SHA-1 warnings are accepted without `--strict`.
+- Every certificate is under `certificates`, and `defaults.certificate` is set if clients connect without SNI.
+- `rdock validate --strict rdock.yaml` exits 0, responses were compared on the test ports, and the rollback steps are written down.
+
+Related: [Concepts](/docs/start/concepts/) · [Route a domain](/docs/guides/route-a-domain/) · [Path routing](/docs/guides/path-routing/) · [Configuration reference](/docs/reference/configuration/)

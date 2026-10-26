@@ -1,0 +1,6 @@
+{
+  "name": "@reversedock/harbor-tokens",
+  "private": true,
+  "description": "Harbor UI design tokens (docs/08-design-system.md) as CSS custom properties, shared by the website and the dashboard.",
+  "exports": { "./tokens.css": "./tokens.css" }
+}

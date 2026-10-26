@@ -1,0 +1,100 @@
+---
+title: Request lifecycle
+description: What happens to a request from the TCP connection to the access-log line, step by step, with the status codes each step can answer.
+sidebar:
+  order: 2
+---
+
+Every request goes through the same steps. Each step can end the request with an answer of its own; the table at the end lists which status comes from where.
+
+## 1. Connection
+
+The listener's accept loop accepts the TCP connection and counts it in `rdock_connections_total` and `rdock_connections_open`. Each listener has its own loop, its own timeouts and, for HTTPS, its own TLS settings.
+
+On a plain listener, rdock reads the first bytes itself: the HTTP/2 connection preface means h2c, anything else is HTTP/1. The client has `listeners.<name>.timeouts.request_header` (10 s by default) to send them.
+
+## 2. TLS and SNI
+
+On an HTTPS listener the TLS handshake runs with the listener's policy: `intermediate` (TLS 1.2 and 1.3, the default) or `modern` (TLS 1.3 only). The certificate is chosen from the server name the client sends (SNI):
+
+1. a certificate whose names contain the exact name,
+2. then one with a one-label wildcard (`*.example.com` covers `app.example.com`, not `a.b.example.com`),
+3. then `defaults.certificate`.
+
+When several certificates cover a name, the one that expires last is used. ALPN offers `h2` and `http/1.1`. The handshake must finish within the request-header timeout; failures are counted in `rdock_tls_handshake_errors_total`. The SNI is kept for the access log.
+
+## 3. HTTP parsing
+
+Pingora parses the request. Its parser rejects conflicting `Content-Length`, invalid `Transfer-Encoding` and other framing that could be used for request smuggling, and re-frames every body it forwards. rdock adds two checks at the connection level for HTTP/1: the complete request headers must arrive within `timeouts.request_header`, counted from their first byte, and a bare LF line ending in the headers closes the connection.
+
+Then ReverseDock's own hooks run, in this order.
+
+## 4. Early checks (`early_request_filter`)
+
+- The listener's `read`, `write` and `idle` timeouts are applied to the connection.
+- The **client IP** is resolved: the TCP peer, or, when the peer is in `security.trusted_proxies`, the address taken from the forwarding headers (see [Behind a proxy](/docs/guides/behind-a-proxy/)).
+- The **request ID** is taken from `X-Request-ID` when a trusted proxy sent a valid one, otherwise a new UUIDv7 is created.
+- **Limits** from `security.limits`: a request target over `max_uri_bytes` gets 414; more than `max_headers` headers or more than `max_header_bytes` of request line and headers gets 431; a `Content-Length` over `max_body_bytes` gets 413.
+- HTTP/1.1 without `Host` gets 400; an `Expect` other than `100-continue` gets 417.
+
+## 5. Router (`request_filter`)
+
+- The path is **normalised**: unreserved escapes decoded, other escapes upper-cased, dot segments and `//` removed. An invalid escape gets 400. The normalised path is what the backend receives.
+- The listener's routes are tried in priority order and the first match wins (see [Routing and priority](/docs/concepts/routing-and-priority/)).
+- No match: on a plain listener, while `defaults.redirect_http_to_https` is on (the default), a host that has a route on an HTTPS listener gets the automatic redirect to HTTPS (301 for GET, 308 otherwise). Any other request gets the 404 page.
+- On a match, the forwarding headers are rewritten (`X-Forwarded-For`, `X-Real-IP`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`; untrusted incoming values removed first) and `X-Request-ID` is set on the request.
+
+## 6. Middlewares, request phase
+
+The route's middlewares run in the order listed. Each one can change the request (headers, path) or answer it: `basic_auth` with 401, `ip_allow` and `ip_deny` with 403, `rate_limit` with 429, `redirect`, `cors` preflights with 204, `maintenance` with its page, `forward_auth` with the auth service's answer, or 502 or 504 when that service fails.
+
+When a middleware answers, the middlewares before it still run their response phase on that answer, so a CORS or security header is added to a 401 as well. The ones after it do not run.
+
+## 7. Request body
+
+While the body streams to the backend, its bytes are counted, chunked bodies included. Going over `security.limits.max_body_bytes` ends the request with 413.
+
+## 8. Upstream selection (`upstream_peer`, `upstream_request_filter`)
+
+The service's balancer picks a backend: smooth weighted round-robin, or weighted random. A service without a usable backend answers 503. The connection uses the service's `scheme` (`http`, `https` or `h2c`), its TLS settings, and the timeouts of the route, falling back to the service's (`connect` 5 s, `read` 60 s, `write` 60 s by default). Connections are pooled per listener.
+
+`Host` is the client's, unless the service sets `pass_host_header: false`; then it is the backend's name and port. Pingora removes hop-by-hop request headers.
+
+## 9. Response phase (`upstream_response_filter`, `response_filter`, `response_body_filter`)
+
+- Hop-by-hop headers are removed from the backend's response; HTTP/1 clients always get an HTTP/1.1 response.
+- The middlewares' response phase runs in **reverse order**: header rules and HSTS, CORS headers, compression decisions, error pages.
+- `X-Request-ID` is added unless the backend already set one.
+- The body streams to the client. `compress` gzips it chunk by chunk; `errors` replaces it with the configured page while keeping the status.
+
+## 10. Errors (`fail_to_connect`, `error_while_proxy`, `fail_to_proxy`)
+
+- A connection that cannot be opened is counted in `rdock_upstream_errors_total` with `kind` `connect` or `timeout`.
+- v0.1 retries only one case, Pingora's built-in retry when a pooled connection was closed by the backend, and only for idempotent methods whose body can be replayed and when nothing was sent to the client yet. Configurable retries are planned for v0.4.
+- Timeouts towards the backend become 504, other backend failures 502. If nothing was written to the client yet, the error page is sent: an `errors` page when a middleware of the route covers the status, otherwise ReverseDock's page with the request ID, as HTML or JSON depending on `Accept`. 503 and 429 pages carry `Retry-After`.
+
+## 11. Access log and metrics (`logging`)
+
+Last, one access-log line is written and the request is counted in `rdock_http_requests_total` and `rdock_http_request_duration_seconds`, labelled by listener, route, service, method and status class. The line holds the request ID, client IP, method, host, path, query length (not the query), protocol, status, bytes in and out, duration, listener, route, service, backend, TLS version, cipher and SNI, the authenticated user, and the `User-Agent`, `Referer` (without its query) and `CF-Ray` headers; headers listed in `observability.access_log.redact` are written as `***`. See [Logs and metrics](/docs/guides/logs-and-metrics/).
+
+Requests that Pingora's parser rejects never reach the hooks, so they have no access-log line.
+
+## Where each status comes from
+
+| Status | Step |
+|---|---|
+| 301, 308 | Router: automatic redirect to HTTPS |
+| 301, 302, 307, 308 | `redirect` middleware |
+| 400 | Early checks (no `Host`), router (invalid path), path middlewares |
+| 401 | `basic_auth`; `forward_auth` passes the auth service's status |
+| 403 | `ip_allow`, `ip_deny` |
+| 404 | Router: no route matched |
+| 408 | Client too slow to send or receive data |
+| 413, 414, 431 | Early checks and request body (`security.limits`) |
+| 417 | Early checks (`Expect`) |
+| 429 | `rate_limit` |
+| 502 | Backend failed, or `forward_auth` service unreachable |
+| 503 | No usable backend, `maintenance` |
+| 504 | Backend or `forward_auth` timeout |
+
+Related: [Architecture](/docs/concepts/architecture/) · [HTTP behaviour](/docs/reference/http-behaviour/) · [Troubleshooting](/docs/operations/troubleshooting/)

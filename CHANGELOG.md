@@ -4,6 +4,13 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Added
+- The public website and documentation in `apps/website` (Astro + Starlight, ADR-0017): a landing page and 69 pages of guides, install and migration guides (from Traefik and NGINX), concepts, operations and reference. The configuration and CLI reference are generated from the schema and the binary; every complete configuration in the docs passes `rdock validate --strict` in CI, and "planned for vX.Y" badges are checked against what `rdock` refuses.
+
+### Fixed
+- `rdock validate` no longer warns that a route without `Host` needs a host name for automatic HTTPS when `defaults.certificate` serves it.
+- The Compose example mounts the config directory instead of the single file (editors replace files on save, which broke reloads), and starts after the backend so its name resolves on the first request.
+
 ## [0.1.0-alpha.3] — v0.1 "hello proxy"
 
 ### Breaking

@@ -1,0 +1,77 @@
+---
+title: Architecture
+description: How ReverseDock is built on Pingora's HTTP engine, which crates do what, and why the data plane never waits for the control plane.
+sidebar:
+  order: 1
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock is one process, `rdock`, written in Rust. It has two halves:
+
+- The **control plane** reads `rdock.yaml`, validates it, compiles it and hands the result to the data plane. It also runs the file watcher, signal handling, the admin listener and the background refresh of backend DNS names.
+- The **data plane** accepts connections, terminates TLS, routes requests, runs middlewares and forwards to backends.
+
+Configuration flows one way: file → load → validate → compile → an immutable runtime snapshot → data plane. The data plane only ever reads the snapshot it was given.
+
+## Own listeners, Pingora's HTTP engine
+
+ReverseDock uses [Cloudflare Pingora](https://github.com/cloudflare/pingora) 0.9 as a library for HTTP, not as a server framework ([ADR-0012](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0012-own-listeners-pingora-http-engine.md)):
+
+- `rdock run` builds its own Tokio runtime, binds every listener itself and runs one accept loop per listener. Pingora's `Server` is not used.
+- Each accepted connection is handed to that listener's Pingora `HttpProxy`, which runs the complete HTTP/1.1, HTTP/2 and h2c pipeline and calls ReverseDock's `ProxyHttp` hooks (see [Request lifecycle](/docs/concepts/request-lifecycle/)).
+- TLS handshakes use rustls with the ring provider and ReverseDock's own server configuration per listener: the `modern` or `intermediate` policy, ALPN `h2` and `http/1.1`, rotating session tickets, and a certificate resolver that is swapped on reload.
+- The accept loop reads the first bytes of cleartext connections itself, so h2c is detected without waiting, and wraps each connection to enforce the request-header deadline and refuse bare-LF line endings.
+
+Owning the listeners is what makes these behaviours possible:
+
+| Behaviour | Why it needs own listeners |
+|---|---|
+| A port that cannot be bound is reported before anything changes | rdock binds new sockets first and publishes the configuration only when every bind succeeded |
+| Listeners are added, changed and removed without a restart | unchanged addresses keep their socket; removed listeners stop accepting and drain |
+| Readiness means "listening" | systemd `READY=1` and `/readyz` are sent after the first configuration is applied |
+| Shutdown waits only as long as needed | rdock exits as soon as no connection is open, or when `lifecycle.drain_timeout` (8 s by default) has passed |
+| Per-listener TLS policies | each listener has its own rustls configuration |
+
+Each listener has its own upstream connection pool. Zero-downtime upgrades of the binary itself are a later track, not part of v0.1.
+
+## Crates
+
+The workspace has one binary and a set of library crates. Crates for later milestones exist as placeholders so the layout stays stable.
+
+| Crate | Role in v0.1 |
+|---|---|
+| `rdock` | The binary: `run`, `validate`, `reload`, `status`, `healthcheck`, `hash`, `schema`, `version`. Holds the configuration engine (load, apply, history, last-known-good) and the file watcher |
+| `rdock-model` | Configuration types, defaults, validation with paths and hints, and the JSON Schema (`rdock schema`) |
+| `rdock-rules` | The Traefik v3 rule grammar: parser, validation and path normalisation |
+| `rdock-config` | YAML and JSON loading, `${…}` references, unknown-key checks, the state directory (history and last-known-good copy) |
+| `rdock-proxy` | Compilation into a runtime snapshot, listeners and accept loops, the `ProxyHttp` hooks, router, forwarding headers, error pages, backend selection and DNS refresh |
+| `rdock-tls` | Certificate loading, the SNI index (exact name, one-label wildcard, default) and TLS policies |
+| `rdock-middleware` | The built-in middlewares, from `headers` to `maintenance` |
+| `rdock-balancer` | Smooth weighted round-robin and weighted random |
+| `rdock-limits` | Token buckets with bounded key counts, used by `rate_limit` |
+| `rdock-observability` | Application logs, the access log with redaction, Prometheus metrics |
+| `rdock-admin` | The admin listener: `/healthz`, `/readyz`, `/metrics`, `/api/v1/status`, `/api/v1/config/reload` |
+| `rdock-testkit` | Test backends, certificates and a client for the end-to-end suites |
+| `rdock-acme`, `rdock-cloudflare`, `rdock-migrate`, `providers/*` | Placeholders for automatic certificates <Status planned="v0.3" />, Cloudflare integration <Status planned="v0.3" />, `rdock migrate traefik` <Status planned="v0.2" /> and the Docker <Status planned="v0.2" />, Swarm <Status planned="v0.6" /> and Kubernetes <Status planned="v0.7" /> providers |
+
+Dependencies point one way: `rdock` depends on `rdock-admin` and `rdock-proxy`; `rdock-proxy` depends on `rdock-config`, `rdock-model`, `rdock-rules`, `rdock-tls`, `rdock-middleware`, `rdock-balancer` and `rdock-observability`. Nothing in the data plane depends on `rdock-admin`.
+
+## The data plane never waits for the control plane
+
+A request never blocks on configuration work:
+
+- **One snapshot per request.** The compiled runtime is held in an atomic pointer (`ArcSwap`). Each request takes a reference to the current snapshot when it starts and uses it until it ends, so a reload in the middle of a request never mixes two configurations, and nothing locks on the request path.
+- **Compilation happens beside traffic.** A reload loads, validates and compiles the new configuration, reads the certificate and page files it refers to, binds new sockets and builds new TLS settings, all while the old snapshot keeps serving. Only a complete result is published. A failure at any step leaves the running configuration in place.
+- **Name resolution is in the background.** Backend host names are resolved when a configuration is applied and every 10 s afterwards. Requests use the last resolved addresses; a failed lookup keeps the previous ones.
+- **No disk on the request path.** Certificates, `users_file` lists and error or maintenance pages are read during compilation. History and the last-known-good copy are written after the new snapshot is live.
+- **The admin listener is separate.** It runs on its own socket (`127.0.0.1:2080` by default) and only reads state or asks the engine to reload. If it is disabled or unreachable, traffic is unaffected.
+
+The only network calls on the request path are the ones the configuration asks for: the backend itself, a `forward_auth` service, and an `errors` page `service`.
+
+## Related
+
+- [Request lifecycle](/docs/concepts/request-lifecycle/)
+- [Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/)
+- [Security model](/docs/concepts/security-model/)
+- [Roadmap](/docs/project/roadmap/)

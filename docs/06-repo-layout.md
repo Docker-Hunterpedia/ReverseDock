@@ -140,6 +140,7 @@ reversedock/
 | Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly on dedicated runner; results committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
 | UI | Vitest, Playwright (light/dark, LTR/RTL, 400 px–1440 px) | `apps/dashboard` | every PR |
+| Website | generated-page freshness, `rdock validate --strict` on every config snippet, status badges vs `rdock`, link check, `astro check`, axe (WCAG 2.2 AA) | `apps/website` | PRs touching the site, schema, CLI or changelog |
 
 ## 6. Code graph tooling (Graphify)
 

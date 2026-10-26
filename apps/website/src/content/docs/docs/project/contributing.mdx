@@ -1,0 +1,44 @@
+---
+title: Contributing
+description: How to propose changes to ReverseDock, from a typo fix to a design proposal.
+sidebar:
+  order: 3
+---
+
+ReverseDock is built in the open and welcomes contributions. The full guide is [CONTRIBUTING.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/CONTRIBUTING.md) on GitHub; this page is a summary.
+
+## Where to start
+
+| You want to | Start with |
+|---|---|
+| Report a bug | The *Bug report* form in [Issues](https://github.com/Docker-Hunterpedia/ReverseDock/issues/new/choose) |
+| Report a Traefik, NGINX or Caddy migration gap | The *Migration / compatibility gap* form |
+| Propose a feature | The *Feature request* form; check the [roadmap](/docs/project/roadmap/) first |
+| Change the architecture, configuration model or public API | A *Design proposal*, which becomes an ADR in `docs/decisions/` |
+| Fix the documentation | A pull request directly for small fixes; the *Documentation* form for larger ones |
+| Ask a question | [Discussions, Q&A](https://github.com/Docker-Hunterpedia/ReverseDock/discussions) |
+| Report a security problem | Privately, as described in [Security](/docs/project/security/), never in a public issue |
+
+Comment on an issue before larger work so nobody duplicates it. Issues labelled `good first issue` and `help wanted` are ready to pick up.
+
+## What a pull request needs
+
+- **A branch** named `type/short-topic`, for example `fix/acme-ari-retry`. `main` is protected, and every change is squash-merged through a pull request.
+- **A title in Conventional Commits form:** `type(scope): summary`, such as `fix(proxy): keep the Host header on redirects`. The title becomes the commit message on `main`.
+- **A sign-off on every commit** (`git commit -s`), certifying the [Developer Certificate of Origin](https://developercertificate.org/). There is no CLA.
+- **The template filled in:** the linked issue and the requirement ID it implements.
+- **Green checks.** Run `just ci` before pushing; it runs what the required Rust and docs checks run.
+
+Keep a pull request to one topic. Under about 400 changed lines is easiest to review.
+
+## Development setup
+
+You need Rust through rustup (the toolchain pinned in `rust-toolchain.toml` installs itself), a C compiler and CMake, and `just`, `cargo-nextest`, `cargo-deny`, `actionlint` and `shellcheck` for the development recipes. See [Build from source](/docs/install/from-source/) and the setup section of CONTRIBUTING.md.
+
+## This website
+
+These pages live in `apps/website` in the same repository. Every page has an "Edit page" link at the bottom. Complete configurations on the pages are checked with `rdock validate --strict`, so a change to an example must still validate.
+
+## Code of conduct
+
+Everyone who takes part agrees to follow the [Code of Conduct](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/CODE_OF_CONDUCT.md).

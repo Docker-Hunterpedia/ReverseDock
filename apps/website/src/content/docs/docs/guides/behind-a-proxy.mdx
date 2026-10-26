@@ -1,0 +1,113 @@
+---
+title: Run behind another proxy
+description: Trust forwarding headers from a load balancer or CDN in front of ReverseDock, so the real client IP is used.
+sidebar:
+  order: 8
+---
+
+import Status from '../../../../components/Status.astro';
+
+When ReverseDock sits behind a load balancer, a CDN or another proxy, every connection comes from that proxy. The client's address is only in headers such as `X-Forwarded-For`, which any client can also send. ReverseDock believes those headers only from the proxies you list in `security.trusted_proxies`.
+
+## What you need
+
+- The addresses or networks the proxy in front connects from. For a cloud load balancer, this is usually the subnet it runs in.
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+
+security:
+  trusted_proxies: [10.0.100.0/24, 192.0.2.10]
+```
+
+Here a load balancer in `10.0.100.0/24` terminates TLS and forwards plain HTTP to port 80. Entries are IP addresses or CIDR networks, IPv4 or IPv6.
+
+## Which client IP is used
+
+For each request ReverseDock works out one client IP:
+
+- **The connection comes from an untrusted address:** that address is the client. Forwarding headers in the request are ignored.
+- **The connection comes from a trusted proxy:** ReverseDock reads `X-Forwarded-For` from right to left, skips addresses that are themselves trusted proxies, and takes the first one that is not. If every entry is trusted, the left-most one is used. At most 32 entries are examined, and an entry that is not an IP address ends the search.
+
+Reading from the right matters: a client can put anything at the left of `X-Forwarded-For`, but the entries added by your own proxies are on the right.
+
+`security.client_ip_header` selects the source:
+
+| Value | Client IP from a trusted proxy |
+|---|---|
+| `auto` (default) | `X-Forwarded-For`, as above |
+| `x-forwarded-for` | `X-Forwarded-For`, as above |
+| `x-real-ip` | `X-Real-IP` sent by the proxy |
+| `cf-connecting-ip` <Status planned="v0.3" /> | `CF-Connecting-IP` from a verified Cloudflare hop |
+
+This client IP is the one used by the `ClientIP` rule matcher, by `ip_allow`, `ip_deny`, `rate_limit` with `key: client_ip`, by the `allow` list of `maintenance`, and in the `client_ip` field of the access log. Without trusted proxies, all of these see the proxy's address, and a rate limit would throttle every client together.
+
+## What the backend receives
+
+**From an untrusted peer**, ReverseDock removes these request headers, including spellings with `_` instead of `-`, and then writes its own:
+
+`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Forwarded-Prefix`, `X-Forwarded-Server`, `X-Forwarded-Uri`, `X-Forwarded-Method`, `X-Forwarded-Tls-Client-Cert`, `X-Forwarded-Tls-Client-Cert-Info`, `X-Real-IP`, `Forwarded`, `CF-Connecting-IP`.
+
+**From a trusted proxy**, these headers are kept.
+
+In both cases ReverseDock then:
+
+- appends the address of the connection to `X-Forwarded-For` (`198.51.100.7, 10.0.100.4` when the proxy at `10.0.100.4` sent `X-Forwarded-For: 198.51.100.7`);
+- sets `X-Real-IP` to the client IP worked out above;
+- sets `X-Forwarded-Proto` (`http`, `https`, or `ws`/`wss` on WebSocket handshakes), `X-Forwarded-Host` and `X-Forwarded-Port` when the request does not already have them. From a trusted proxy that terminated TLS, its `X-Forwarded-Proto: https` is kept, so the application knows the client used HTTPS.
+
+An incoming `X-Request-ID` is also kept only from trusted proxies (visible ASCII, at most 128 bytes); otherwise ReverseDock creates a new ID.
+
+## Check that it works
+
+Send a request through the proxy in front and look at the access log:
+
+```sh
+curl -s -o /dev/null https://app.example.com/
+```
+
+The `client_ip` field of the access log line should be your own public address, not the proxy's. A backend that echoes request headers shows `X-Real-IP` with the same address.
+
+A request sent to ReverseDock directly, bypassing the proxy, with a forged header must not change the client IP:
+
+```sh
+curl -s -o /dev/null -H 'X-Forwarded-For: 203.0.113.99' http://10.0.0.2/ -H 'Host: app.example.com'
+```
+
+Its access log line shows the address you connected from, not `203.0.113.99`.
+
+## Cloudflare
+
+The value `cloudflare` in `trusted_proxies`, which keeps Cloudflare's edge ranges up to date on its own, is planned for v0.3 <Status planned="v0.3" />. `rdock validate` accepts it with a warning and `rdock run` refuses it.
+
+Until then, list Cloudflare's ranges as networks. Cloudflare publishes them at [cloudflare.com/ips](https://www.cloudflare.com/ips/), with plain-text lists at `https://www.cloudflare.com/ips-v4/` and `https://www.cloudflare.com/ips-v6/` (checked 2026-10-27). The ranges change from time to time, so update the list when they do. With `client_ip_header: auto`, the client IP comes from `X-Forwarded-For`, which Cloudflare sets.
+
+:::caution
+Trust only addresses that you control or that belong to the proxy in front. A trusted network that also contains clients, for example `0.0.0.0/0` or a shared office network, lets those clients choose their own IP address, and with it bypass `ip_allow` and rate limits.
+:::
+
+## PROXY protocol
+
+Load balancers that pass the client address with the PROXY protocol instead of headers are not supported yet <Status planned="v0.6" />. Configure such a load balancer to send `X-Forwarded-For`.
+
+## Related
+
+- [IP filtering](/docs/guides/ip-filtering/) and [Rate limiting](/docs/guides/rate-limiting/)
+- [`security` reference](/docs/reference/configuration/security/)
+- [Security model](/docs/concepts/security-model/)

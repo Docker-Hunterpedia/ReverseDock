@@ -138,6 +138,19 @@ fn automatic_https_needs_hosts_and_dns_for_wildcards() {
         "routes.app.tls",
         "needs a host name"
     ));
+    let default_certificate = with(
+        app(),
+        json!({
+            "routes": { "app": { "match": "PathPrefix(`/`)" } },
+            "defaults": { "certificate": "site" },
+            "certificates": { "site": { "cert_file": "/etc/rdock/site.pem", "key_file": "/etc/rdock/site.key" } }
+        }),
+    );
+    assert!(!has(
+        &warnings(default_certificate),
+        "routes.app.tls",
+        "needs a host name"
+    ));
     let wildcard = with(
         app(),
         json!({ "routes": { "app": { "match": "Host(`*.example.com`)" } } }),
