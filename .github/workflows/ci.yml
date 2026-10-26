@@ -1,4 +1,4 @@
-# Required checks for main: docs, dco, pr-title. Rust and dashboard jobs join in M0.
+# Required checks for main: docs, dco, pr-title, rust, msrv, deny, docker. semgrep reports only.
 name: ci
 
 on:
@@ -14,10 +14,14 @@ concurrency:
   group: ci-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: short
+
 jobs:
   docs:
     name: docs
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -33,7 +37,7 @@ jobs:
 
   dco:
     name: dco
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -63,7 +67,7 @@ jobs:
 
   pr-title:
     name: pr-title
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     timeout-minutes: 2
     steps:
       - name: PR title is a Conventional Commit
@@ -78,3 +82,88 @@ jobs:
             echo "::error::PR title must look like 'type(scope): summary', e.g. 'feat(docker): select network by label'. Got: $TITLE"
             exit 1
           fi
+
+  rust:
+    name: rust
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just,cargo-nextest
+      - name: Format
+        run: just fmt-check
+      - name: Clippy (warnings are errors)
+        run: just clippy
+      - name: Tests (unit, integration, property, doc; includes schema freshness)
+        run: just test
+      - name: API docs build without warnings
+        run: just doc
+
+  msrv:
+    name: msrv
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: msrv
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just
+      - name: Check with the minimum supported Rust version
+        run: just msrv
+
+  deny:
+    name: deny
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: cargo-deny
+      - name: Licenses, advisories, bans and sources
+        run: cargo deny check
+
+  docker:
+    name: docker
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag rdock:ci .
+      - name: Smoke test
+        run: |
+          docker run --rm rdock:ci version
+          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml
+
+  semgrep:
+    name: semgrep
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install Semgrep
+        run: python -m pip install --disable-pip-version-check semgrep==1.180.0
+      - name: Scan Rust, workflows and Dockerfile
+        run: semgrep scan --metrics=off --error --config p/rust --config p/github-actions --config p/dockerfile

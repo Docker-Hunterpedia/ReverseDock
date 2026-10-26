@@ -1,0 +1,14 @@
+target/
+**/target/
+.git/
+.github/
+.claude/
+.agents/
+docs/
+benchmarks/
+graphify-out/
+apps/dashboard/node_modules/
+apps/dashboard/dist/
+*.md
+!README.md
+!crates/**/README.md

@@ -10,4 +10,23 @@ updates:
     groups:
       actions:
         patterns: ["*"]
-  # cargo (/) and npm (/apps/dashboard) are added in M0 when the manifests exist.
+  - package-ecosystem: cargo
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "type/chore"]
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      cargo-minor-and-patch:
+        update-types: [minor, patch]
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    labels: ["dependencies", "type/chore"]
+    commit-message:
+      prefix: build
+      include: scope
+  # npm (/apps/dashboard) is added with the dashboard in v0.5.
