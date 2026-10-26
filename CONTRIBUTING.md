@@ -32,7 +32,7 @@ Comment on an issue before starting larger work so nobody duplicates effort. Iss
 The workspace needs:
 
 - **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml` and installs itself. The minimum supported version is 1.89.
-- **just**, **cargo-nextest** and **cargo-deny** for the dev recipes (`brew install just cargo-nextest cargo-deny`, or `cargo install --locked …`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just msrv` and `just docker` run the other two jobs.
+- **just**, **cargo-nextest**, **cargo-deny**, **actionlint** and **shellcheck** for the dev recipes (`brew install just cargo-nextest cargo-deny actionlint shellcheck`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just msrv` and `just docker` run the other two jobs.
 - **Node 24 + pnpm** for the dashboard in `apps/dashboard`.
 - **Docker** for end-to-end tests (Pebble ACME, toxiproxy, Docker provider).
 - Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.
