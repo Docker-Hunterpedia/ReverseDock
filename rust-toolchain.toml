@@ -1,0 +1,6 @@
+# Toolchain used for development and CI. Bump it in its own PR when a new stable ships.
+# The minimum supported Rust version (MSRV) is separate: `rust-version` in Cargo.toml (see docs/06-repo-layout.md).
+[toolchain]
+channel = "1.99.1"
+components = ["rustfmt", "clippy"]
+profile = "minimal"
