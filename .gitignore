@@ -3,6 +3,10 @@
 **/target/
 **/*.rs.bk
 *.pdb
+# cargo-fuzz working directories (the seed corpus in tests/fuzz/seeds is committed)
+/tests/fuzz/artifacts/
+/tests/fuzz/corpus/
+/tests/fuzz/coverage/
 # Cargo.lock is committed (binary crate / workspace)
 
 # ---- Dashboard (Node / pnpm) ----

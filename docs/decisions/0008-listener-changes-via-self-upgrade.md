@@ -1,6 +1,6 @@
 # ADR-0008: Listener-set changes need a restart until the supervisor model lands
 
-- Status: accepted (supersedes the first draft that used in-process self-upgrade) · Date: 2026-10-26
+- Status: superseded by [ADR-0012](0012-own-listeners-pingora-http-engine.md) (supersedes the first draft that used in-process self-upgrade) · Date: 2026-10-26
 
 ## Context
 Pingora binds listeners when services start; there is no public API to add or remove listening sockets at runtime. Pingora's zero-downtime path is a *process upgrade*: a new process inherits the listening fds over an upgrade socket and the old one drains. That works under a supervisor that starts the new process, but not when `rdock` itself is PID 1 in a container (or tini's only child): when the old process exits, the container exits. The admin listener (ADR-0007) is also outside Pingora's fd transfer, so a child would collide with the parent on `127.0.0.1:2080`.

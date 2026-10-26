@@ -306,3 +306,30 @@ services:
         tokio::time::sleep(Duration::from_millis(100)).await;
     }
 }
+
+#[tokio::test]
+async fn one_file_change_reloads_once() {
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let rdock = Rdock::start(RDOCK, &config(&[("web", port)], backend.addr, "before"));
+    let reloads = |rdock: &Rdock| rdock.log().matches("\"trigger\":\"file change\"").count();
+    rdock.write_config(&config(&[("web", port)], backend.addr, "after"));
+    let started = Instant::now();
+    while reloads(&rdock) == 0 {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "no reload\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    // Reading the file during the reload must not count as another change.
+    tokio::time::sleep(Duration::from_millis(1500)).await;
+    assert_eq!(reloads(&rdock), 1, "{}", rdock.log());
+    assert_eq!(
+        client::http1(addr(port), get("x", "/"))
+            .await
+            .header("x-generation"),
+        Some("after")
+    );
+}

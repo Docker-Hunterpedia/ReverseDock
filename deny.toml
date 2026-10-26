@@ -6,6 +6,15 @@ all-features = true
 [advisories]
 version = 2
 yanked = "deny"
+# Pingora 0.9.0 transitive dependencies without a fixed release. Re-check on every Pingora bump.
+ignore = [
+  { id = "RUSTSEC-2024-0388", reason = "derivative (unmaintained proc-macro) via pingora-core 0.9.0; upstream cloudflare/pingora#889" },
+  { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile (unmaintained) via pingora-rustls 0.9.0 and rustls-native-certs 0.7; our code parses PEM with rustls-pki-types; upstream cloudflare/pingora#1011" },
+  { id = "RUSTSEC-2024-0449", reason = "unsafe-libyaml (unmaintained) via serde_yaml in pingora-core 0.9.0; ReverseDock builds ServerConf in code and never loads Pingora YAML; upstream cloudflare/pingora#1058" },
+  { id = "RUSTSEC-2026-0391", reason = "zstd 0.13 via pingora-header-serde (pingora-cache); the affected stream with_context constructors are never called; upstream cloudflare/pingora#1073" },
+  { id = "RUSTSEC-2026-0398", reason = "zstd-safe 7 via pingora-header-serde; Seekable needs the `seekable` feature, which is off; upstream cloudflare/pingora#1073" },
+  { id = "RUSTSEC-2026-0403", reason = "zstd-safe 7 via pingora-header-serde; it only uses the bulk API, not DCtx::decompress_stream; upstream cloudflare/pingora#1073" },
+]
 
 [licenses]
 version = 2
@@ -23,6 +32,13 @@ allow = [
   "MIT",
   "Unicode-3.0",
   "Zlib",
+]
+# CC0-1.0 grants no patent licence, so it is allowed per crate, not globally.
+exceptions = [
+  # Build time only: const-random-macro (proc-macro) <- ahash "compile-time-rng" <- Pingora.
+  { crate = "tiny-keccak", allow = ["CC0-1.0"] },
+  # File watching for the file provider (B-CFG-07).
+  { crate = "notify", allow = ["CC0-1.0"] },
 ]
 
 [bans]

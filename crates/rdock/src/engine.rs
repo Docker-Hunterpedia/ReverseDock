@@ -70,6 +70,8 @@ pub(crate) struct Engine {
     metrics_enabled: AtomicBool,
     last: Mutex<Option<Report>>,
     watched: Mutex<BTreeSet<PathBuf>>,
+    /// Hash of the watched files when the configuration was last applied.
+    fingerprint: Mutex<Option<u64>>,
     started_at: SystemTime,
 }
 
@@ -98,6 +100,7 @@ impl Engine {
             metrics_enabled: AtomicBool::new(true),
             last: Mutex::new(None),
             watched: Mutex::new(BTreeSet::new()),
+            fingerprint: Mutex::new(None),
             started_at: SystemTime::now(),
         }
     }
@@ -163,6 +166,21 @@ impl Engine {
             }
             _ => Err(report),
         }
+    }
+
+    /// Reloads after a file event, unless the watched files are unchanged since the last apply
+    /// (editors and atomic replaces send several events for one change).
+    pub(crate) async fn reload_if_changed(&self, trigger: &str) -> Option<Report> {
+        let now = fingerprint(&self.watched_files());
+        if *self
+            .fingerprint
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            == Some(now)
+        {
+            return None;
+        }
+        Some(self.reload(trigger).await)
     }
 
     /// Loads the configuration file and applies it; on any problem the running configuration
@@ -232,8 +250,12 @@ impl Engine {
         {
             tracing::warn!(error = %err, "cannot write the last-known-good configuration");
         }
-        *self.watched.lock().unwrap_or_else(PoisonError::into_inner) =
-            referenced_files(&self.config_path, &config);
+        let files = referenced_files(&self.config_path, &config);
+        *self
+            .fingerprint
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = Some(fingerprint(&files));
+        *self.watched.lock().unwrap_or_else(PoisonError::into_inner) = files;
         self.metrics_enabled
             .store(config.observability.metrics.prometheus, Ordering::SeqCst);
         applied.config = Some(config);
@@ -363,6 +385,17 @@ fn diff_names<T: PartialEq>(
             parts.push(format!("{kind}s {verb}: {}", names.join(", ")));
         }
     }
+}
+
+/// A hash of the contents of `files` (missing files count as empty).
+fn fingerprint(files: &BTreeSet<PathBuf>) -> u64 {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    for file in files {
+        file.hash(&mut hasher);
+        std::fs::read(file).unwrap_or_default().hash(&mut hasher);
+    }
+    hasher.finish()
 }
 
 /// The configuration file and every file it refers to.

@@ -1,0 +1,33 @@
+# ReverseDock in front of one application, with Docker Compose.
+#
+#   docker compose up -d
+#   curl -H 'Host: whoami.localhost' http://localhost/
+#   docker compose exec rdock rdock status     # admin API from inside the container
+#
+# rdock.yaml is mounted read-only and reloaded when it changes; state (history, the
+# last-known-good copy and the admin token) lives in the `rdock-data` volume.
+name: reversedock
+
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3
+    # Or build from this repository: `build: ../..`
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./rdock.yaml:/etc/rdock/rdock.yaml:ro
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    # Docker lets non-root processes bind ports below 1024 (net.ipv4.ip_unprivileged_port_start=0).
+    stop_grace_period: 10s
+
+  whoami:
+    image: traefik/whoami:v1.11
+    restart: unless-stopped
+
+volumes:
+  rdock-data:

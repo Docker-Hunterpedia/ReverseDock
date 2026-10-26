@@ -1,5 +1,7 @@
 [workspace]
 resolver = "3"
+# Fuzz targets live in their own workspace (nightly, cargo-fuzz, libFuzzer's licence).
+exclude = ["tests/fuzz"]
 members = [
   "crates/rdock",
   "crates/rdock-model",

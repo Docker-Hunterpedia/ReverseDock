@@ -1,0 +1,63 @@
+# Fuzzing: the differential HTTP/1 framing target, the rule parser and the configuration loader.
+# Weekly, on changes to parsers or the data plane, and on demand. Not a required check.
+name: fuzz
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"
+  workflow_dispatch:
+    inputs:
+      seconds:
+        description: Seconds per target
+        default: "600"
+  pull_request:
+    paths:
+      - "crates/rdock-rules/**"
+      - "crates/rdock-config/**"
+      - "crates/rdock-proxy/**"
+      - "tests/fuzz/**"
+      - ".github/workflows/fuzz.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: fuzz-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  fuzz:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        target: [h1_framing, rules_parser, config_loader]
+    env:
+      SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'pull_request' && '120') || '600' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install nightly and cargo-fuzz
+        run: |
+          rustup toolchain install nightly --profile minimal
+          cargo +nightly install cargo-fuzz --locked --version 0.13.2
+      - name: Replay the seed corpus on stable
+        working-directory: tests/fuzz
+        run: cargo test --locked
+      - name: Fuzz ${{ matrix.target }}
+        working-directory: tests/fuzz
+        run: |
+          mkdir -p corpus/"$TARGET"
+          if [ -d seeds/"$TARGET" ]; then cp seeds/"$TARGET"/* corpus/"$TARGET"/; fi
+          cargo +nightly fuzz run "$TARGET" corpus/"$TARGET" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
+        env:
+          TARGET: ${{ matrix.target }}
+      - name: Keep crashing inputs
+        if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: fuzz-artifacts-${{ matrix.target }}
+          path: tests/fuzz/artifacts/
+          retention-days: 30

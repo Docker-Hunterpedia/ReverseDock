@@ -1,6 +1,6 @@
 # ADR-0010: Retry semantics follow Pingora's hook model
 
-- Status: accepted · Date: 2026-10-26
+- Status: superseded by [ADR-0015](0015-status-code-retries.md) · Date: 2026-10-26
 
 ## Context
 `pingora-proxy` 0.9 exposes three failure hooks: `fail_to_connect` (connect errors; may mark the error retryable), `error_while_proxy` (errors while proxying, i.e. before or during the upstream response; retryable only before response headers were sent downstream) and `fail_to_proxy` (terminal: write the error response). There is no hook to retry after an upstream *status code* (502/503/504) has been received; Zentinel adds one in a fork (`should_retry_response`). ADR-0001 commits us to a thin adapter and no fork.

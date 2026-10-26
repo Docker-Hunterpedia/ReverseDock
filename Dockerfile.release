@@ -1,0 +1,19 @@
+# syntax=docker/dockerfile:1
+#
+# Release image: the static binaries built and signed by .github/workflows/release.yml, copied
+# into distroless (non-root, no shell). The workflow places them in image/<arch>/rdock.
+
+FROM gcr.io/distroless/static-debian13:nonroot
+ARG TARGETARCH
+LABEL org.opencontainers.image.title="ReverseDock" \
+      org.opencontainers.image.description="Open-source reverse proxy on Cloudflare Pingora" \
+      org.opencontainers.image.source="https://github.com/Docker-Hunterpedia/ReverseDock" \
+      org.opencontainers.image.licenses="Apache-2.0"
+COPY --chmod=0755 image/${TARGETARCH}/rdock /usr/local/bin/rdock
+COPY --chown=65532:65532 image/data /var/lib/rdock
+USER nonroot:nonroot
+EXPOSE 80 443
+HEALTHCHECK --interval=10s --timeout=3s --start-period=10s --retries=3 \
+  CMD ["/usr/local/bin/rdock", "healthcheck"]
+ENTRYPOINT ["/usr/local/bin/rdock"]
+CMD ["run"]

@@ -134,7 +134,7 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
                 engine.reload("SIGHUP").await;
             }
             Some(()) = changes.recv() => {
-                engine.reload("file change").await;
+                engine.reload_if_changed("file change").await;
             }
             _ = signals.terminate.recv() => break,
             _ = signals.quit.recv() => break,

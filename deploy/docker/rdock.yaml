@@ -1,0 +1,32 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# Configuration for compose.yaml. Plain HTTP; for HTTPS add a certificate (see
+# docs/05-architecture.md §10) and a `websecure` listener with `tls: {}`.
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  whoami:
+    match: "Host(`whoami.localhost`) || PathPrefix(`/`)"
+    service: whoami
+    middlewares: [security-headers, gzip]
+
+services:
+  whoami:
+    backends: [{ address: "whoami:80" }]
+
+middlewares:
+  security-headers:
+    type: headers
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+        Referrer-Policy: strict-origin-when-cross-origin
+  gzip: { type: compress }
+
+lifecycle:
+  drain_timeout: 8s   # below Docker's 10 s stop timeout

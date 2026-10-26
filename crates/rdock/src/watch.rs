@@ -7,7 +7,8 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
-use notify::RecursiveMode;
+use notify::event::ModifyKind;
+use notify::{EventKind, RecursiveMode};
 use notify_debouncer_full::{DebounceEventResult, Debouncer, RecommendedCache, new_debouncer};
 use tokio::sync::mpsc;
 
@@ -38,7 +39,20 @@ impl FileWatcher {
         let debouncer = new_debouncer(DEBOUNCE, None, move |result: DebounceEventResult| {
             let Ok(events) = result else { return };
             let files = watched.lock().unwrap_or_else(PoisonError::into_inner);
-            let relevant = events.iter().flat_map(|e| e.paths.iter()).any(|path| {
+            // Reading a file (which every reload does) produces access and metadata events on
+            // Linux; only content, name and existence changes matter.
+            let content_events = events.iter().filter(|e| {
+                matches!(
+                    e.kind,
+                    EventKind::Create(_)
+                        | EventKind::Remove(_)
+                        | EventKind::Modify(
+                            ModifyKind::Data(_) | ModifyKind::Name(_) | ModifyKind::Any
+                        )
+                        | EventKind::Any
+                )
+            });
+            let relevant = content_events.flat_map(|e| e.paths.iter()).any(|path| {
                 files.contains(path)
                     || path
                         .file_name()
