@@ -1,0 +1,9 @@
+{
+  "$schema": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json",
+  "routes": {
+    "app": { "match": "Host(`app.example.com`)", "service": "app" }
+  },
+  "services": {
+    "app": { "backends": [{ "address": "app:3000" }] }
+  }
+}

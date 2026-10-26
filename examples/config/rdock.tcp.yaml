@@ -1,0 +1,38 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# A website plus a PostgreSQL port, with a structured match instead of a rule.
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: { policy: modern } }
+  postgres:  { address: ":5432", protocol: tcp }
+
+routes:
+  shop-api:
+    match:
+      hosts: [shop.example.com]
+      path_prefix: /api
+      methods: [GET, POST]
+    service: shop
+    middlewares: [limit]
+
+services:
+  shop:
+    backends:
+      - { address: "shop-1:8080" }
+      - { address: "shop-2:8080" }
+    load_balancer: { policy: least_requests }
+    health:
+      passive: {}
+
+middlewares:
+  limit: { type: rate_limit, key: "header:X-Api-Key", average: 50, burst: 100 }
+
+tcp_routes:
+  db:
+    match: "HostSNI(`*`)"
+    listeners: [postgres]
+    service: db
+
+tcp_services:
+  db:
+    backends: [{ address: "10.0.0.20:5432" }]
