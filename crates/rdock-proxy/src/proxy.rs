@@ -111,6 +111,15 @@ impl RdockProxy {
         {
             return Err(status_error(400, "HTTP/1.1 request without Host"));
         }
+        // RFC 9110 §10.1.1: only `100-continue` is defined; anything else (including obfuscated
+        // spellings a backend might still honour) is refused.
+        if req
+            .headers
+            .get(http::header::EXPECT)
+            .is_some_and(|v| !v.as_bytes().eq_ignore_ascii_case(b"100-continue"))
+        {
+            return Err(status_error(417, "unsupported Expect"));
+        }
         if let Some(max) = limits.max_body_bytes
             && let Some(length) = req
                 .headers
@@ -368,22 +377,14 @@ impl ProxyHttp for RdockProxy {
         let (Some(route), Some(candidate)) = (&ctx.route, &ctx.upstream) else {
             return Ok(());
         };
-        if !route.service.pass_host_header {
-            let host = match candidate {
-                Candidate::Tcp { host, addr } => {
-                    let default = matches!(
-                        (route.service.scheme, addr.port()),
-                        (rdock_model::service::Scheme::Https, 443) | (_, 80)
-                    );
-                    if default {
-                        host.clone()
-                    } else {
-                        format!("{host}:{}", addr.port())
-                    }
-                }
-                Candidate::Unix(_) => "localhost".to_owned(),
-            };
-            upstream_request.insert_header(http::header::HOST, host)?;
+        // HTTP/1.0 clients may omit Host; backends (and HTTP/2) need one.
+        let missing = !upstream_request.headers.contains_key(http::header::HOST)
+            && upstream_request.uri.authority().is_none();
+        if !route.service.pass_host_header || missing {
+            upstream_request.insert_header(
+                http::header::HOST,
+                backend_authority(route.service.scheme, candidate),
+            )?;
         }
         Ok(())
     }
@@ -400,10 +401,14 @@ impl ProxyHttp for RdockProxy {
 
     async fn response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
+        // An HTTP/1.0 backend must not turn the client's HTTP/1.1 connection into HTTP/1.0.
+        if !session.is_http2() {
+            upstream_response.set_version(Version::HTTP_11);
+        }
         if let (Some(route), Some(cx)) = (&ctx.route, ctx.mw.as_mut()) {
             for mw in route.middlewares.iter().rev() {
                 mw.response(upstream_response, cx).await;
@@ -603,6 +608,25 @@ impl ProxyHttp for RdockProxy {
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
         };
         log.write(&record);
+    }
+}
+
+/// `Host` for a backend: its configured name, with the port unless it is the scheme's default.
+fn backend_authority(scheme: rdock_model::service::Scheme, candidate: &Candidate) -> String {
+    use rdock_model::service::Scheme;
+    match candidate {
+        Candidate::Tcp { host, addr } => {
+            let default = matches!(
+                (scheme, addr.port()),
+                (Scheme::Https, 443) | (Scheme::Http | Scheme::H2c, 80)
+            );
+            if default {
+                host.clone()
+            } else {
+                format!("{host}:{}", addr.port())
+            }
+        }
+        Candidate::Unix(_) => "localhost".to_owned(),
     }
 }
 

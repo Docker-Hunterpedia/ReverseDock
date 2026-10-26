@@ -3,6 +3,8 @@
 //!
 //! - A deadline for HTTP/1 request headers, counted from their first byte. Pingora only has a
 //!   per-read timeout, which a client sending one byte at a time defeats (slowloris).
+//! - Strict line endings: a bare LF in HTTP/1 request headers ends the connection. Pingora's
+//!   parser accepts it, but a backend may split the request differently (RFC 9112 §2.2).
 //! - The answer to Pingora's h2c "peek": the accept loop already read the first bytes, so the
 //!   answer is immediate, instead of Pingora waiting for 24 bytes that a short HTTP/1.0 request
 //!   never sends.
@@ -27,8 +29,9 @@ use tokio::time::{Instant, Sleep};
 /// Where an HTTP/1 connection is in its request/response cycle.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Phase {
-    /// Reading request headers; `blank` is true while the current line is still empty.
-    Headers { blank: bool },
+    /// Reading request headers; `blank` is true while the current line is still empty, `cr`
+    /// when the previous byte was a carriage return.
+    Headers { blank: bool, cr: bool },
     /// Headers complete; the request body may follow until the response starts.
     Request,
     /// A final response is being written; the next bytes read start a new request.
@@ -67,7 +70,10 @@ impl ConnStream {
             inner,
             peek,
             phase: if http1 {
-                Phase::Headers { blank: false }
+                Phase::Headers {
+                    blank: false,
+                    cr: false,
+                }
             } else {
                 Phase::Off
             },
@@ -76,32 +82,36 @@ impl ConnStream {
         }
     }
 
-    /// Advances the phase over bytes read from the client.
-    fn on_read(&mut self, data: &[u8]) {
+    /// Advances the phase over bytes read from the client. Fails on a bare LF in the headers.
+    fn on_read(&mut self, data: &[u8]) -> Result<(), ()> {
         if data.is_empty() {
-            return;
+            return Ok(());
         }
         if self.phase == Phase::Responding {
-            self.phase = Phase::Headers { blank: false };
+            self.phase = Phase::Headers {
+                blank: false,
+                cr: false,
+            };
             let at = Instant::now() + self.header_timeout;
             self.deadline.as_mut().reset(at);
         }
-        if let Phase::Headers { mut blank } = self.phase {
+        if let Phase::Headers { mut blank, mut cr } = self.phase {
             for &byte in data {
-                // An empty line ends the headers; CR is ignored, so bare LF counts as Pingora's
-                // parser accepts it.
                 match byte {
+                    b'\n' if !cr => return Err(()),
                     b'\n' if blank => {
                         self.phase = Phase::Request;
-                        return;
+                        return Ok(());
                     }
                     b'\n' => blank = true,
                     b'\r' => {}
                     _ => blank = false,
                 }
+                cr = byte == b'\r';
             }
-            self.phase = Phase::Headers { blank };
+            self.phase = Phase::Headers { blank, cr };
         }
+        Ok(())
     }
 
     /// Advances the phase over bytes written to the client.
@@ -135,7 +145,13 @@ impl AsyncRead for ConnStream {
         let result = Pin::new(&mut this.inner).poll_read(cx, buf);
         if let Poll::Ready(Ok(())) = result {
             let filled = buf.filled()[before..].to_vec();
-            this.on_read(&filled);
+            if this.on_read(&filled).is_err() {
+                buf.set_filled(before);
+                return Poll::Ready(Err(io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "bare LF in request headers",
+                )));
+            }
         }
         result
     }
@@ -238,9 +254,9 @@ mod tests {
     #[tokio::test]
     async fn tracks_request_and_response_phases() {
         let mut c = stream();
-        c.on_read(b"GET / HTTP/1.1\r\nHost: a\r\n");
+        c.on_read(b"GET / HTTP/1.1\r\nHost: a\r").unwrap();
         assert!(matches!(c.phase, Phase::Headers { .. }));
-        c.on_read(b"\r\n");
+        c.on_read(b"\n\r\n").unwrap();
         assert_eq!(c.phase, Phase::Request);
         c.on_write(b"HTTP/1.1 100 Continue\r\n\r\n");
         assert_eq!(c.phase, Phase::Request, "1xx keeps the request open");
@@ -248,16 +264,16 @@ mod tests {
         assert_eq!(c.phase, Phase::Responding);
         c.on_write(b"body bytes");
         assert_eq!(c.phase, Phase::Responding);
-        c.on_read(b"GET /next");
+        c.on_read(b"GET /next").unwrap();
         assert!(
             matches!(c.phase, Phase::Headers { .. }),
             "a new request starts"
         );
-        c.on_read(b" HTTP/1.1\n\n");
-        assert_eq!(c.phase, Phase::Request, "bare LF line ends count");
+        assert!(c.on_read(b" HTTP/1.1\n\n").is_err(), "bare LF is refused");
+        c.phase = Phase::Request;
         c.on_write(b"HTTP/1.1 101 Switching Protocols\r\n");
         assert_eq!(c.phase, Phase::Off);
-        c.on_read(b"\r\n\r\nanything");
+        c.on_read(b"\nanything").unwrap();
         assert_eq!(c.phase, Phase::Off);
     }
 

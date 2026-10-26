@@ -97,7 +97,7 @@ pub struct RedirectConfig {
     #[serde(default)]
     pub replacement: Option<String>,
     /// `301`/`308` when true, `302`/`307` when false (the second code of each pair is used for
-    /// methods other than GET and HEAD, so the method and body are kept).
+    /// methods other than GET, so the method and body are kept), as in Traefik.
     #[serde(default)]
     pub permanent: bool,
     /// Port for scheme redirects when it is not the scheme's default.

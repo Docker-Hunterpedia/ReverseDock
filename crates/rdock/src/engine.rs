@@ -67,6 +67,7 @@ pub(crate) struct Engine {
     plane: Arc<DataPlane>,
     applied: tokio::sync::Mutex<Applied>,
     ready: AtomicBool,
+    metrics_enabled: AtomicBool,
     last: Mutex<Option<Report>>,
     watched: Mutex<BTreeSet<PathBuf>>,
     started_at: SystemTime,
@@ -94,6 +95,7 @@ impl Engine {
                 origin: Origin::File,
             }),
             ready: AtomicBool::new(false),
+            metrics_enabled: AtomicBool::new(true),
             last: Mutex::new(None),
             watched: Mutex::new(BTreeSet::new()),
             started_at: SystemTime::now(),
@@ -232,6 +234,8 @@ impl Engine {
         }
         *self.watched.lock().unwrap_or_else(PoisonError::into_inner) =
             referenced_files(&self.config_path, &config);
+        self.metrics_enabled
+            .store(config.observability.metrics.prometheus, Ordering::SeqCst);
         applied.config = Some(config);
         applied.source = Some(source);
         applied.origin = origin;
@@ -386,7 +390,9 @@ impl rdock_admin::Control for Engine {
     }
 
     fn metrics(&self) -> Option<String> {
-        Some(self.plane.metrics().render())
+        self.metrics_enabled
+            .load(Ordering::SeqCst)
+            .then(|| self.plane.metrics().render())
     }
 
     async fn status(&self) -> Value {

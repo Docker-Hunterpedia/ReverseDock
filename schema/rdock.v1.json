@@ -1243,7 +1243,7 @@
           "type": "object",
           "properties": {
             "permanent": {
-              "description": "`301`/`308` when true, `302`/`307` when false (the second code of each pair is used for\nmethods other than GET and HEAD, so the method and body are kept).",
+              "description": "`301`/`308` when true, `302`/`307` when false (the second code of each pair is used for\nmethods other than GET, so the method and body are kept), as in Traefik.",
               "type": "boolean",
               "default": false
             },

@@ -34,5 +34,20 @@ tokio.workspace = true
 tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 
+[dev-dependencies]
+bytes.workspace = true
+flate2.workspace = true
+futures-util = "0.3.34"
+http.workspace = true
+http-body-util.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rdock-testkit.workspace = true
+rustls.workspace = true
+serde_json.workspace = true
+tempfile.workspace = true
+tokio.workspace = true
+tokio-tungstenite.workspace = true
+
 [lints]
 workspace = true

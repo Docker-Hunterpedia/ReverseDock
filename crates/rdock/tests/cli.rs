@@ -27,12 +27,19 @@ fn validates_the_examples() {
     ]);
     assert!(output.status.success(), "{}", stdout(&output));
     let text = stdout(&output);
-    assert!(text.contains("examples/config/rdock.full.yaml: valid, "), "{text}");
+    assert!(
+        text.contains("examples/config/rdock.full.yaml: valid, "),
+        "{text}"
+    );
     assert!(
         text.contains("warning: providers.docker: the Docker provider: not supported in this version (planned for v0.2)"),
         "{text}"
     );
-    let quickstart = rdock(&["validate", "--strict", "examples/config/rdock.quickstart.yaml"]);
+    let quickstart = rdock(&[
+        "validate",
+        "--strict",
+        "examples/config/rdock.quickstart.yaml",
+    ]);
     assert!(quickstart.status.success(), "{}", stdout(&quickstart));
     assert_eq!(
         stdout(&quickstart),
@@ -61,7 +68,10 @@ fn reports_errors_with_paths_and_hints() {
         ),
         "{text}"
     );
-    assert!(text.ends_with("broken.yaml: 2 errors, 0 warnings\n"), "{text}");
+    assert!(
+        text.ends_with("broken.yaml: 2 errors, 0 warnings\n"),
+        "{text}"
+    );
 
     let json = rdock(&["validate", "--format", "json", file.to_str().unwrap()]);
     let report: serde_json::Value = serde_json::from_slice(&json.stdout).unwrap();
