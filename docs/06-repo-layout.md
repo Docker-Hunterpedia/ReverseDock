@@ -11,13 +11,13 @@ reversedock/
 ├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                  # today: docs, dco, pr-title (required); M0 adds fmt, clippy -D warnings, nextest, schema, deny/audit
+│   │   ├── ci.yml                  # docs, dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; semgrep (report only)
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
 │   │   ├── fuzz.yml                # (v0.1+) cargo-fuzz, weekly + on parser changes
 │   │   ├── bench.yml               # (v0.4+) nightly on a dedicated runner, publishes to benchmarks/results
-│   │   └── release.yml             # (M0) cargo-dist: binaries, checksums, SBOM, cosign; multi-arch images → ghcr.io
+│   │   └── release.yml             # static binaries (linux x86-64/arm64 musl, macOS arm64), SHA256SUMS, SPDX SBOM, provenance, cosign
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
 │   ├── PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · release.yml (release-note categories)
 ├── crates/
@@ -56,8 +56,9 @@ reversedock/
 │       └── dist/                   # build output (gitignored), embedded by rdock-admin
 ├── schema/
 │   └── rdock.v1.json               # generated JSON Schema, committed; CI fails if stale
+├── Dockerfile                      # static musl build → distroless, non-root (images published from v0.1)
 ├── deploy/
-│   ├── docker/                     # Dockerfile (static musl, distroless, non-root), compose examples
+│   ├── docker/                     # compose examples
 │   ├── helm/reversedock/           # chart (P2)
 │   ├── kubernetes/                 # raw manifests, kustomize (P2)
 │   └── systemd/                    # rdock.service (CAP_NET_BIND_SERVICE; no socket activation)
@@ -79,7 +80,7 @@ reversedock/
 
 | Topic | Rule |
 |---|---|
-| Edition / MSRV | Rust 2024 edition; MSRV = the highest MSRV among the Pingora crates we use (1.88 as of 0.9.0), declared once in `[workspace.package] rust-version`, checked in CI |
+| Edition / MSRV | Rust 2024 edition; MSRV = the highest MSRV among our dependencies, **1.89** today (serde-saphyr; Pingora 0.9 needs 1.88), declared once in `[workspace.package] rust-version`, checked by the `msrv` job ([ADR-0011](decisions/0011-yaml-parser-and-msrv.md)) |
 | Safety | `[lints.rust] unsafe_code = "forbid"` in the workspace; exceptions need an ADR |
 | Clippy | `clippy::all` + selected `pedantic`; `unwrap_used`/`expect_used`/`panic` denied in library crates (allowed in tests and the binary's startup path with a message) |
 | Errors | `thiserror` enums in libraries; `miette` diagnostics with source spans for config/label errors; `anyhow` only in the binary |
@@ -103,7 +104,7 @@ reversedock/
 | `http3` | off, experimental | QUIC ingress; requires the `boringssl` backend |
 | `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
 
-`cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard).
+`cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard). The features appear as their crates gain code; M0 has none yet.
 
 ## 3. Dashboard conventions
 
@@ -120,7 +121,7 @@ reversedock/
 - Release tags `v*` are protected by the **Protect release tags** ruleset: only admins create them; nobody can move or delete them.
 - Conventional Commits (`feat(docker): …`, `fix(acme): …`); the PR title becomes the squash commit and is checked by `pr-title`. DCO sign-off (`git commit -s`) checked by `dco`; web commits get sign-off automatically. No CLA.
 - Versioning: SemVer. `0.x` may break config between minors with a migration note and `rdock config migrate`. Config schema is versioned (`apiVersion`-style `version: 1` optional key).
-- Releases via `cargo-dist`: Linux x86-64/aarch64 (musl static), macOS (dev only); checksums, SPDX SBOM (syft), cosign signatures, `CHANGELOG.md` from git-cliff; images `ghcr.io/reversedock/rdock:{version,major.minor,latest}` multi-arch, non-root, read-only-FS friendly.
+- Releases come from `.github/workflows/release.yml` when an admin pushes a `v*` tag: static binaries built natively for Linux x86-64 and aarch64 (musl) and macOS arm64, `SHA256SUMS` signed keylessly with cosign, an SPDX SBOM (syft), and GitHub build-provenance attestations; pre-release tags (`-alpha`, `-rc`) become GitHub pre-releases. A hand-written workflow replaced `cargo-dist` so every action is pinned by SHA and signing is under our control. Container images `ghcr.io/docker-hunterpedia/rdock` (multi-arch, non-root) start with v0.1.
 - Support policy: last two minor releases get security fixes; `SECURITY.md` with private reporting (GitHub advisories) and a 90-day disclosure target.
 
 ## 5. Testing strategy

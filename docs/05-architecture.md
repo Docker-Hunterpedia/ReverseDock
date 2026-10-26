@@ -66,7 +66,7 @@ rdock-testkit        spawn upstream servers, Pebble ACME, toxiproxy, docker-in-C
 rdock                the binary (clap): run / validate / reload / status / config / cert / migrate / trust / version
 ```
 
-Dependency direction: `rdock` → `rdock-admin`, `rdock-proxy`, providers → `rdock-config` → `rdock-model` ← `rdock-rules`. No crate depends on `rdock-admin` or on any provider. `rdock-proxy` depends on `rdock-tls`, `rdock-balancer`, `rdock-middleware`, `rdock-limits`, `rdock-observability`. `rdock-cloudflare` depends on `rdock-acme` (it implements its `DnsProvider` trait).
+Dependency direction: `rdock` → `rdock-admin`, `rdock-proxy`, providers → `rdock-config` → `rdock-model` → `rdock-rules` (the model validates `match` rules with the grammar crate). No crate depends on `rdock-admin` or on any provider. `rdock-proxy` depends on `rdock-tls`, `rdock-balancer`, `rdock-middleware`, `rdock-limits`, `rdock-observability`. `rdock-cloudflare` depends on `rdock-acme` (it implements its `DnsProvider` trait).
 
 ## 3. Desired-state model (`rdock-model`)
 
@@ -76,7 +76,7 @@ The model is deliberately a **superset of Traefik's dynamic configuration** (ent
 |---|---|---|
 | `Listener` | A bound socket | `address`, `protocol` (`http`,`https`,`tcp`,`udp`), `tls` policy, `proxy_protocol`, `http3` (later) |
 | `Route` | HTTP match → service | `match` (rule string **or** structured), `listeners`, `priority`, `middlewares[]`, `service`, `tls` (`auto` / cert ref / dns provider / off) |
-| `Service` | A backend pool | `backends[]` (`address`, `weight`, `unix:` sockets), `scheme` (`http`,`https`,`h2c`,`grpc`), `load_balancer`, `health`, `retries`, `timeouts`, `tls` (upstream), `sticky`, `mirror`, `split[]` |
+| `Service` | A backend pool | `backends[]` (`address`, `weight`, `unix:` sockets), `scheme` (`http`,`https`,`h2c`; gRPC rides on `h2c` or `https`), `load_balancer`, `health`, `retries`, `timeouts`, `tls` (upstream), `sticky`, `mirror`, `split[]` |
 | `Middleware` | Typed, reusable policy | `type` + typed config (see §8) |
 | `TcpRoute`/`UdpRoute` + `TcpService` | L4 routing | `match: HostSNI(...)`, `passthrough`, `tls` termination |
 | `Certificate` | Manual cert | `cert`, `key` (paths or secret refs) |
@@ -90,7 +90,7 @@ Every object carries metadata the user never writes: `owner` (`file:/etc/rdock/r
 ### 3.1 Canonical YAML (what a user writes)
 
 ```yaml
-# $schema: https://reversedock.dev/schema/v1.json   (domain TBD; the schema is also committed at schema/rdock.v1.json)
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
 listeners:
   web:       { address: ":80" }
   websecure: { address: ":443", tls: { policy: intermediate } }
@@ -106,7 +106,7 @@ acme:
   profile: tlsserver              # classic | tlsserver | shortlived
   challenges: [http-01, tls-alpn-01]
   dns_providers:
-    cf: { type: cloudflare, api_token: ${file:/run/secrets/cf_token} }
+    cf: { type: cloudflare, api_token: "${file:/run/secrets/cf_token}" }   # quoted: `{` `}` are YAML flow characters
 
 routes:
   app:
@@ -158,6 +158,8 @@ observability:
 ```
 
 Everything is optional. With **no file at all**, `rdock run` starts `:80`/`:443`, the Docker provider, automatic HTTPS and the admin API on localhost.
+
+This block is tested: it is identical to [`examples/config/rdock.full.yaml`](../examples/config/rdock.full.yaml), and CI loads it in strict mode and validates it against [`schema/rdock.v1.json`](../schema/rdock.v1.json).
 
 ## 4. Providers and the merge engine
 

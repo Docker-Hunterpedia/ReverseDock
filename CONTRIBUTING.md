@@ -29,10 +29,10 @@ Comment on an issue before starting larger work so nobody duplicates effort. Iss
 
 ## Development setup
 
-From M0 on, the workspace needs:
+The workspace needs:
 
-- **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml`.
-- **just** for the dev recipes (`just ci`, `just e2e`, `just dashboard`).
+- **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml` and installs itself. The minimum supported version is 1.89.
+- **just**, **cargo-nextest** and **cargo-deny** for the dev recipes (`brew install just cargo-nextest cargo-deny`, or `cargo install --locked …`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just msrv` and `just docker` run the other two jobs.
 - **Node 24 + pnpm** for the dashboard in `apps/dashboard`.
 - **Docker** for end-to-end tests (Pebble ACME, toxiproxy, Docker provider).
 - Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.
@@ -53,7 +53,7 @@ Conventions for crates, errors, logging, features and tests are in [docs/06-repo
 
 `main` is protected: nobody can push to it directly, and every change is merged as a **squash commit** through a pull request. A PR can be merged when:
 
-1. The `docs`, `dco` and `pr-title` checks pass (heavier Rust and dashboard checks join from M0).
+1. The required checks pass: `docs`, `dco`, `pr-title`, `rust`, `msrv`, `deny`, `docker` (`semgrep` reports findings without blocking).
 2. The branch is up to date with `main`.
 3. A code owner approved the latest push, and every review conversation is resolved.
 

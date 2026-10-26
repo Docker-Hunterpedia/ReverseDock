@@ -1,6 +1,6 @@
 # ReverseDock — rules for AI assistants
 
-ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). It is in the **design phase**: the plan lives in `docs/`, and code starts with milestone M0. Read [docs/README.md](docs/README.md) before proposing changes.
+ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestone M0 is done (workspace, rule grammar, config model and schema, `rdock validate`); v0.1 adds the proxy. Read [docs/README.md](docs/README.md) before proposing changes.
 
 ## Working rules
 
@@ -9,7 +9,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - **Sign off every commit:** `git commit -s` (Developer Certificate of Origin). The `dco` check fails without a `Signed-off-by` line matching the commit author.
 - **PR titles are Conventional Commits:** `type(scope): summary`. Types: `feat`, `fix`, `docs`, `perf`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`, `security`; add `!` for breaking changes. Scopes are crate or area names without the `rdock-` prefix (`proxy`, `rules`, `config`, `tls`, `acme`, `balancer`, `middleware`, `docker`, `swarm`, `kubernetes`, `cloudflare`, `admin`, `dashboard`, `observability`, `adr`, `repo`). The `pr-title` check enforces this; the title becomes the commit on `main`.
 - **Fill in the PR template:** link the issue (`Closes #123`) and the requirement ID from `docs/04-requirements.md` (e.g. `B-NET-04`). One topic per PR.
-- **Required checks:** `docs`, `dco`, `pr-title`. Run `python3 -I scripts/check-docs.py` before pushing documentation changes.
+- **Required checks:** `docs`, `dco`, `pr-title`, `rust`, `msrv`, `deny`, `docker`. Run `just ci` before pushing (it includes `python3 -I scripts/check-docs.py`); run `just schema` after changing `rdock-model`.
 - **No secrets** (tokens, keys, private hostnames, personal data) in code, docs, fixtures or logs. Security problems go through [SECURITY.md](SECURITY.md), never a public issue.
 
 ## Documentation rules
@@ -19,7 +19,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - `docs/03-feature-matrix.md` is generated below its `<!-- GENERATED` marker by `scripts/xlsx2md.py` from the workbook in `docs/research/`. Never hand-edit the generated part.
 - Facts about third-party projects (Pingora, Traefik, Let's Encrypt, Gateway API) must cite an official source and a date.
 
-## Code conventions (from M0)
+## Code conventions
 
 - Toolchain pinned in `rust-toolchain.toml`; MSRV in `Cargo.toml` `rust-version`. Details in [docs/06-repo-layout.md](docs/06-repo-layout.md) §2.
 - `unsafe_code = "forbid"`; no `unwrap`/`expect`/`panic` in library crates; `thiserror` in libraries, `miette` for config diagnostics, `anyhow` only in the binary; `tracing` for all logging.

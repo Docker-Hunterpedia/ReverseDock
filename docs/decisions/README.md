@@ -14,3 +14,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0008](0008-listener-changes-via-self-upgrade.md) | Listener set changes need a (supervised) restart until the v0.9 supervisor model; everything else hot-swaps |
 | [0009](0009-provider-ownership-and-merge.md) | Provider-namespaced ownership and deterministic merge rules |
 | [0010](0010-retry-semantics.md) | Retries live in `fail_to_connect`/`error_while_proxy`; status-code retries wait for upstream Pingora support |
+| [0011](0011-yaml-parser-and-msrv.md) | YAML is parsed with serde-saphyr (YAML 1.2 booleans); MSRV is 1.89 |
