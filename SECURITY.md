@@ -54,6 +54,23 @@ Out of scope:
 
 We will not pursue or support legal action against anyone who researches and reports security issues in good faith under this policy: avoid privacy violations, data destruction and service degradation, only test against systems you own or have permission to test, and give us reasonable time to fix the issue before disclosure.
 
+## Verifying releases
+
+Every release publishes `SHA256SUMS`, a keyless cosign signature of it, an SPDX SBOM, and GitHub build-provenance attestations for each archive.
+
+```bash
+# 1. The checksums file was signed by this repository's release workflow
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
+
+# 2. Your archive matches the signed checksums
+sha256sum --ignore-missing -c SHA256SUMS
+
+# 3. The archive was built by GitHub Actions from this repository
+gh attestation verify rdock-<version>-<target>.tar.gz --repo Docker-Hunterpedia/ReverseDock
+```
+
 ## Hardening references
 
 The threat model and controls are documented in [docs/05-architecture.md §15](docs/05-architecture.md#15-security-model).

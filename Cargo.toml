@@ -1,0 +1,79 @@
+[workspace]
+resolver = "3"
+members = [
+  "crates/rdock",
+  "crates/rdock-model",
+  "crates/rdock-rules",
+  "crates/rdock-config",
+  "crates/rdock-proxy",
+  "crates/rdock-tls",
+  "crates/rdock-acme",
+  "crates/rdock-balancer",
+  "crates/rdock-middleware",
+  "crates/rdock-limits",
+  "crates/rdock-observability",
+  "crates/rdock-admin",
+  "crates/rdock-cloudflare",
+  "crates/rdock-migrate",
+  "crates/rdock-testkit",
+  "crates/providers/rdock-provider-file",
+  "crates/providers/rdock-provider-docker",
+  "crates/providers/rdock-provider-swarm",
+  "crates/providers/rdock-provider-kubernetes",
+  "crates/providers/rdock-provider-api",
+]
+
+[workspace.package]
+version = "0.1.0-alpha.1"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+authors = ["The ReverseDock Authors"]
+repository = "https://github.com/Docker-Hunterpedia/ReverseDock"
+homepage = "https://github.com/Docker-Hunterpedia/ReverseDock"
+publish = false
+
+[workspace.dependencies]
+# Internal crates
+rdock-config = { path = "crates/rdock-config" }
+rdock-model = { path = "crates/rdock-model" }
+rdock-rules = { path = "crates/rdock-rules" }
+
+# External crates (versions verified on crates.io, 2026-10-26)
+anyhow = "1.0.104"
+clap = { version = "4.6.7", features = ["derive"] }
+ipnet = "2.12.2"
+regex = "1.13.1"
+schemars = "1.2.3"
+serde = { version = "1.0.229", features = ["derive"] }
+serde-saphyr = { version = "2.0.0", default-features = false, features = ["deserialize"] }
+serde_json = "1.0.154"
+serde_path_to_error = "0.1.20"
+thiserror = "2.0.21"
+url = "2.5.8"
+
+# Test-only
+assert_cmd = "2.2.2"
+jsonschema = { version = "0.60.1", default-features = false }
+predicates = "3.1.4"
+proptest = "1.12.0"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+missing_docs = "warn"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+unwrap_used = "warn"
+expect_used = "warn"
+panic = "warn"
+dbg_macro = "warn"
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+missing_errors_doc = "allow"
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"

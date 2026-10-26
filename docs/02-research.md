@@ -73,7 +73,7 @@ This document replaces the original research notes (kept verbatim in [`research/
 | Docker | `bollard` | Async Docker Engine API, events stream |
 | Kubernetes | `kube` 4.x, `gateway-api` 0.22, `k8s-openapi` | Controller-runtime style watches |
 | Admin API | `axum` + `utoipa` (OpenAPI) + `tower-http` | Separate listener, typed, documented |
-| Config | `serde`, `serde_yaml_ng` / `serde_json`, `schemars` (JSON Schema), `jsonschema` (validation), `figment`-style env overlay | Canonical schema, IDE autocomplete |
+| Config | `serde`, `serde-saphyr` (YAML, pure Rust, [ADR-0011](decisions/0011-yaml-parser-and-msrv.md)) / `serde_json`, `schemars` 1.x (JSON Schema 2020-12), `jsonschema` (tests), `serde_path_to_error` | Canonical schema, IDE autocomplete, precise error paths |
 | Rule grammar | hand-written `nom`/`winnow` parser for the Traefik v3 rule language | Deterministic, no regex backtracking for the grammar itself |
 | Regex | `regex` (linear-time; no catastrophic backtracking) | Safe `PathRegexp`/`HostRegexp` |
 | Runtime state swap | `arc-swap` | Lock-free config snapshots |

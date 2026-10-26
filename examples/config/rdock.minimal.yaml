@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# The smallest useful configuration: one HTTPS site in front of one container.
+# Listeners default to :80 and :443, and the certificate is issued automatically.
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:3000"

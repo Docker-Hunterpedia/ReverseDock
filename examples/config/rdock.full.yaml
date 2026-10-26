@@ -1,0 +1,65 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: { policy: intermediate } }
+
+defaults:
+  listeners: [websecure]
+  redirect_http_to_https: true
+  tls: auto
+
+acme:
+  email: ops@example.com
+  ca: letsencrypt                 # or a directory URL; staging: true for tests
+  profile: tlsserver              # classic | tlsserver | shortlived
+  challenges: [http-01, tls-alpn-01]
+  dns_providers:
+    cf: { type: cloudflare, api_token: "${file:/run/secrets/cf_token}" }   # quoted: `{` `}` are YAML flow characters
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"             # Traefik grammar, or:
+    # match: { hosts: [app.example.com], path_prefix: /api, methods: [GET, POST] }
+    service: app
+    middlewares: [secure-headers, api-limit]
+  wildcard-tenant:
+    match: "HostRegexp(`^[a-z0-9-]+\\.tenants\\.example\\.com$`)"
+    service: tenants
+    tls: { auto: true, dns_provider: cf, domains: ["*.tenants.example.com"] }
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000", weight: 2 }]
+    scheme: http
+    load_balancer: { policy: least_conn }
+    health:
+      active:  { path: /healthz, interval: 10s, timeout: 2s, healthy: 2, unhealthy: 3 }
+      passive: { failures: 5, window: 30s, ejection: 30s }
+    retries:  { attempts: 2, on: [connect, reset, timeout], budget_percent: 20 }   # status-code retries are P2 (ADR-0010)
+    timeouts: { connect: 5s, read: 60s, write: 60s, idle: 90s }
+  tenants:
+    backends: [{ address: "unix:///run/tenants.sock" }]
+
+middlewares:
+  secure-headers: { type: headers, response: { set: { X-Frame-Options: DENY, Referrer-Policy: strict-origin-when-cross-origin } } }
+  api-limit:      { type: rate_limit, key: client_ip, average: 100, burst: 200, period: 1s }
+  office-only:    { type: ip_allow, cidrs: [10.0.0.0/8, 203.0.113.0/24] }
+  sso:            { type: forward_auth, address: http://authelia:9091/api/verify, copy_headers: [Remote-User, Remote-Groups] }
+
+providers:
+  file:   { paths: ["/etc/rdock/conf.d/*.yaml"], watch: true }
+  docker: { endpoint: unix:///var/run/docker.sock, expose_by_default: false, network: proxy, traefik_labels: true }
+
+security:
+  trusted_proxies: [cloudflare, 10.0.0.0/8]      # 'cloudflare' = auto-synced ranges
+  client_ip_header: auto                          # CF-Connecting-IP on verified CF hop, else rightmost-untrusted XFF
+  limits: { max_header_bytes: 32KiB, max_body_bytes: 100MiB }
+
+admin:
+  listener: 127.0.0.1:2080
+  dashboard: true
+
+observability:
+  access_log: { format: json, redact: [authorization, cookie, set-cookie] }
+  metrics: { prometheus: true }
+  tracing: { otlp: http://tempo:4318, sample_ratio: 0.1 }

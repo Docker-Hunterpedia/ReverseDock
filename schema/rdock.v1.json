@@ -1,0 +1,2490 @@
+{
+  "$id": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReverseDock configuration (rdock.yaml)",
+  "description": "A complete ReverseDock configuration, as written in `rdock.yaml`.\n\nEvery section is optional. Names of listeners, routes, services, middlewares and\ncertificates are map keys; other objects refer to them by name.",
+  "type": "object",
+  "properties": {
+    "$schema": {
+      "description": "JSON Schema reference for editors. Ignored by ReverseDock.",
+      "type": [
+        "string",
+        "null"
+      ],
+      "default": null
+    },
+    "acme": {
+      "description": "Automatic certificates (ACME). Let's Encrypt with HTTP-01 and TLS-ALPN-01 is used when\nomitted.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Acme"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null
+    },
+    "admin": {
+      "description": "Admin API and dashboard.",
+      "$ref": "#/$defs/Admin",
+      "default": {
+        "dashboard": true,
+        "enabled": true,
+        "listener": "127.0.0.1:2080"
+      }
+    },
+    "certificates": {
+      "description": "Certificates you provide yourself.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Certificate"
+      },
+      "default": {}
+    },
+    "defaults": {
+      "description": "Defaults applied to routes that do not set a value.",
+      "$ref": "#/$defs/Defaults",
+      "default": {
+        "listeners": [
+          "websecure"
+        ],
+        "redirect_http_to_https": true,
+        "tls": "auto"
+      }
+    },
+    "listeners": {
+      "description": "Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)\nare used.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Listener"
+      },
+      "default": {}
+    },
+    "middlewares": {
+      "description": "Reusable request and response policies.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Middleware"
+      },
+      "default": {}
+    },
+    "observability": {
+      "description": "Logs, metrics and traces.",
+      "$ref": "#/$defs/Observability",
+      "default": {
+        "access_log": {
+          "format": "json",
+          "redact": [
+            "authorization",
+            "proxy-authorization",
+            "cookie",
+            "set-cookie"
+          ]
+        },
+        "metrics": {
+          "prometheus": true
+        },
+        "tracing": null
+      }
+    },
+    "providers": {
+      "description": "Dynamic configuration sources (file, Docker, Swarm, Kubernetes).",
+      "$ref": "#/$defs/Providers",
+      "default": {
+        "docker": null,
+        "file": null,
+        "kubernetes": null,
+        "swarm": null
+      }
+    },
+    "routes": {
+      "description": "HTTP routes: which requests go to which service, through which middlewares.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Route"
+      },
+      "default": {}
+    },
+    "security": {
+      "description": "Client IP trust and request limits.",
+      "$ref": "#/$defs/Security",
+      "default": {
+        "client_ip_header": "auto",
+        "limits": {
+          "max_body_bytes": "100MiB",
+          "max_header_bytes": "32KiB",
+          "max_uri_bytes": "8KiB"
+        },
+        "trusted_proxies": []
+      }
+    },
+    "services": {
+      "description": "Backend pools that routes send traffic to.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Service"
+      },
+      "default": {}
+    },
+    "tcp_routes": {
+      "description": "TCP routes (SNI routing, passthrough, plain TCP).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/TcpRoute"
+      },
+      "default": {}
+    },
+    "tcp_services": {
+      "description": "TCP backend pools.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/TcpService"
+      },
+      "default": {}
+    },
+    "version": {
+      "description": "Configuration format version. Only `1` exists; omit it to use the latest.",
+      "type": [
+        "integer",
+        "null"
+      ],
+      "format": "uint32",
+      "default": null,
+      "minimum": 0
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "AccessLog": {
+      "description": "Access log settings.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "Output format.",
+          "$ref": "#/$defs/LogFormat",
+          "default": "json"
+        },
+        "redact": {
+          "description": "Header names whose values are replaced by `***`.",
+          "type": "array",
+          "default": [
+            "authorization",
+            "proxy-authorization",
+            "cookie",
+            "set-cookie"
+          ],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Acme": {
+      "description": "ACME (automatic certificates) settings.",
+      "type": "object",
+      "properties": {
+        "ca": {
+          "description": "Certificate authority: a known name or an `https://` ACME directory URL.",
+          "$ref": "#/$defs/CaRef",
+          "default": "letsencrypt"
+        },
+        "challenges": {
+          "description": "Challenge types to use, in order of preference.",
+          "type": "array",
+          "default": [
+            "http-01",
+            "tls-alpn-01"
+          ],
+          "items": {
+            "$ref": "#/$defs/Challenge"
+          }
+        },
+        "dns_providers": {
+          "description": "DNS providers for DNS-01, referenced by routes.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/DnsProvider"
+          },
+          "default": {}
+        },
+        "eab": {
+          "description": "External account binding, required by some CAs.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ExternalAccountBinding"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "email": {
+          "description": "Contact address for the CA account (optional for Let's Encrypt).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "profile": {
+          "description": "Certificate profile (Let's Encrypt): `classic` (90 days), `tlsserver` (45 days) or\n`shortlived` (about 6 days, needed for IP addresses).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AcmeProfile"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "staging": {
+          "description": "Use the CA's staging environment (untrusted certificates, high rate limits).",
+          "type": "boolean",
+          "default": false
+        },
+        "storage": {
+          "description": "Where accounts and certificates are stored. Defaults to `$RDOCK_DATA_DIR/acme`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "AcmeProfile": {
+      "description": "Let's Encrypt certificate profiles.",
+      "oneOf": [
+        {
+          "description": "90-day certificates (the default).",
+          "type": "string",
+          "const": "classic"
+        },
+        {
+          "description": "45-day certificates without legacy fields.",
+          "type": "string",
+          "const": "tlsserver"
+        },
+        {
+          "description": "About 6-day certificates; the only profile that allows IP addresses.",
+          "type": "string",
+          "const": "shortlived"
+        }
+      ]
+    },
+    "ActiveHealth": {
+      "description": "Periodic HTTP probes.",
+      "type": "object",
+      "properties": {
+        "expected_status": {
+          "description": "Accepted status codes, e.g. `200` or `200-399`.",
+          "type": "string",
+          "default": "200-399"
+        },
+        "healthy": {
+          "description": "Consecutive successes before a backend is healthy.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
+        },
+        "interval": {
+          "description": "Time between probes.",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "path": {
+          "description": "Path to request.",
+          "type": "string",
+          "default": "/"
+        },
+        "port": {
+          "description": "Probe this port instead of the backend's.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "timeout": {
+          "description": "Probe timeout.",
+          "$ref": "#/$defs/Duration",
+          "default": "2s"
+        },
+        "unhealthy": {
+          "description": "Consecutive failures before a backend is unhealthy.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "Admin": {
+      "description": "Admin API and dashboard.",
+      "type": "object",
+      "properties": {
+        "dashboard": {
+          "description": "Serve the embedded dashboard on the admin listener.",
+          "type": "boolean",
+          "default": true
+        },
+        "enabled": {
+          "description": "Serve the admin API.",
+          "type": "boolean",
+          "default": true
+        },
+        "listener": {
+          "description": "Address of the admin API. Keep it on loopback unless it is protected.",
+          "$ref": "#/$defs/ListenAddress",
+          "default": "127.0.0.1:2080"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Backend": {
+      "description": "One backend server.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "`host:port`, `[ipv6]:port` or `unix:///path.sock`.",
+          "$ref": "#/$defs/BackendAddress"
+        },
+        "weight": {
+          "description": "Relative share of traffic.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "address"
+      ]
+    },
+    "BackendAddress": {
+      "description": "Backend address: `host:port`, `[ipv6]:port` or `unix:///absolute/path.sock`.",
+      "type": "string",
+      "examples": [
+        "app:3000",
+        "10.0.0.5:8080",
+        "unix:///run/app.sock"
+      ]
+    },
+    "ByteSize": {
+      "description": "Size in bytes, optionally with a unit (KB = 1000, KiB = 1024).",
+      "anyOf": [
+        {
+          "type": "integer",
+          "minimum": 0
+        },
+        {
+          "type": "string",
+          "pattern": "^[0-9]+(B|KB|MB|GB|TB|KiB|MiB|GiB|TiB)?$"
+        }
+      ],
+      "examples": [
+        "32KiB",
+        "100MiB",
+        1048576
+      ]
+    },
+    "CaRef": {
+      "description": "A certificate authority.",
+      "anyOf": [
+        {
+          "description": "A CA known by name.",
+          "$ref": "#/$defs/KnownCa"
+        },
+        {
+          "description": "Any RFC 8555 ACME directory.",
+          "$ref": "#/$defs/HttpUrl"
+        }
+      ]
+    },
+    "Certificate": {
+      "description": "A certificate and private key provided as files.",
+      "type": "object",
+      "properties": {
+        "cert_file": {
+          "description": "PEM certificate chain.",
+          "type": "string"
+        },
+        "key_file": {
+          "description": "PEM private key.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cert_file",
+        "key_file"
+      ]
+    },
+    "Challenge": {
+      "description": "ACME challenge types.",
+      "oneOf": [
+        {
+          "description": "HTTP-01 on port 80.",
+          "type": "string",
+          "const": "http-01"
+        },
+        {
+          "description": "TLS-ALPN-01 on port 443.",
+          "type": "string",
+          "const": "tls-alpn-01"
+        },
+        {
+          "description": "DNS-01 through a DNS provider; needed for wildcard certificates.",
+          "type": "string",
+          "const": "dns-01"
+        }
+      ]
+    },
+    "ClientIpHeader": {
+      "description": "Sources of the client IP.",
+      "oneOf": [
+        {
+          "description": "`CF-Connecting-IP` from verified Cloudflare hops, otherwise the right-most untrusted\n`X-Forwarded-For` entry.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Right-most untrusted `X-Forwarded-For` entry.",
+          "type": "string",
+          "const": "x-forwarded-for"
+        },
+        {
+          "description": "`X-Real-IP` from a trusted proxy.",
+          "type": "string",
+          "const": "x-real-ip"
+        },
+        {
+          "description": "`CF-Connecting-IP` from a verified Cloudflare hop.",
+          "type": "string",
+          "const": "cf-connecting-ip"
+        }
+      ]
+    },
+    "CompressAlgorithm": {
+      "description": "Compression algorithms.",
+      "oneOf": [
+        {
+          "description": "gzip.",
+          "type": "string",
+          "const": "gzip"
+        },
+        {
+          "description": "Brotli.",
+          "type": "string",
+          "const": "br"
+        },
+        {
+          "description": "Zstandard.",
+          "type": "string",
+          "const": "zstd"
+        }
+      ]
+    },
+    "Defaults": {
+      "description": "Defaults applied to routes.",
+      "type": "object",
+      "properties": {
+        "listeners": {
+          "description": "Listeners used by routes that do not name any.",
+          "type": "array",
+          "default": [
+            "websecure"
+          ],
+          "items": {
+            "type": "string"
+          }
+        },
+        "redirect_http_to_https": {
+          "description": "Redirect plain HTTP requests to HTTPS for hosts that have a TLS route.",
+          "type": "boolean",
+          "default": true
+        },
+        "tls": {
+          "description": "TLS for routes that do not set `tls`: `auto` (automatic certificates) or `off`.",
+          "$ref": "#/$defs/TlsMode",
+          "default": "auto"
+        }
+      },
+      "additionalProperties": false
+    },
+    "DnsProvider": {
+      "description": "A DNS provider for DNS-01 challenges.",
+      "oneOf": [
+        {
+          "description": "Cloudflare DNS with a scoped API token (Zone → DNS → Edit).",
+          "type": "object",
+          "properties": {
+            "api_token": {
+              "description": "API token. Reference a secret instead of writing it here:\n`\"${file:/run/secrets/cf_token}\"`.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "cloudflare"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "api_token"
+          ]
+        }
+      ]
+    },
+    "DockerProvider": {
+      "description": "Docker provider.",
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "description": "Docker Engine API endpoint. Read-only access is enough; a socket proxy is recommended.",
+          "$ref": "#/$defs/Endpoint",
+          "default": "unix:///var/run/docker.sock"
+        },
+        "entrypoints": {
+          "description": "Traefik entrypoint name → listener name, for Traefik labels.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "expose_by_default": {
+          "description": "Expose containers without `rdock.enable=true`. Off by default.",
+          "type": "boolean",
+          "default": false
+        },
+        "host_address": {
+          "description": "Address used for containers in host network mode.",
+          "type": "string",
+          "format": "ip",
+          "default": "127.0.0.1"
+        },
+        "network": {
+          "description": "Network used to reach containers that are on several networks.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "traefik_labels": {
+          "description": "Also read `traefik.*` labels (supported subset).",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "Duration": {
+      "description": "Duration made of numbers with units: ms, s, m, h, d.",
+      "type": "string",
+      "examples": [
+        "10s",
+        "250ms",
+        "1h30m"
+      ],
+      "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+    },
+    "Endpoint": {
+      "type": "string",
+      "examples": [
+        "unix:///var/run/docker.sock",
+        "tcp://socket-proxy:2375"
+      ]
+    },
+    "ExternalAccountBinding": {
+      "description": "External account binding credentials.",
+      "type": "object",
+      "properties": {
+        "hmac_key": {
+          "description": "Base64url HMAC key from the CA. Reference a secret instead of writing it here.",
+          "type": "string"
+        },
+        "key_id": {
+          "description": "Key identifier from the CA.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "key_id",
+        "hmac_key"
+      ]
+    },
+    "FileProvider": {
+      "description": "File provider.",
+      "type": "object",
+      "properties": {
+        "paths": {
+          "description": "Files or glob patterns (`/etc/rdock/conf.d/*.yaml`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "watch": {
+          "description": "Reload when the files change.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "paths"
+      ]
+    },
+    "HeaderRules": {
+      "description": "Header operations, applied in the order remove, set, add.",
+      "type": "object",
+      "properties": {
+        "add": {
+          "description": "Append header values.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "remove": {
+          "description": "Remove headers.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "set": {
+          "description": "Replace headers.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "Health": {
+      "description": "Health checks.",
+      "type": "object",
+      "properties": {
+        "active": {
+          "description": "Periodic probes.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ActiveHealth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "passive": {
+          "description": "Ejection based on observed failures.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PassiveHealth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "HttpUrl": {
+      "type": "string",
+      "format": "uri",
+      "examples": [
+        "http://authelia:9091/api/verify"
+      ],
+      "pattern": "^https?://"
+    },
+    "IpNetwork": {
+      "description": "IP address or CIDR range.",
+      "type": "string",
+      "examples": [
+        "10.0.0.0/8",
+        "2001:db8::/32",
+        "192.0.2.7"
+      ]
+    },
+    "KnownCa": {
+      "description": "Certificate authorities known by name.",
+      "oneOf": [
+        {
+          "description": "Let's Encrypt.",
+          "type": "string",
+          "const": "letsencrypt"
+        },
+        {
+          "description": "ZeroSSL (needs `eab`).",
+          "type": "string",
+          "const": "zerossl"
+        },
+        {
+          "description": "Buypass Go SSL.",
+          "type": "string",
+          "const": "buypass"
+        },
+        {
+          "description": "Google Trust Services (needs `eab`).",
+          "type": "string",
+          "const": "google"
+        }
+      ]
+    },
+    "KubernetesProvider": {
+      "description": "Kubernetes provider.",
+      "type": "object",
+      "properties": {
+        "gateway_class": {
+          "description": "`GatewayClass` name this instance serves.",
+          "type": "string",
+          "default": "reversedock"
+        },
+        "ingress": {
+          "description": "Also translate `networking.k8s.io/v1` Ingress resources.",
+          "type": "boolean",
+          "default": false
+        },
+        "namespaces": {
+          "description": "Namespaces to watch; all when empty.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "LbPolicy": {
+      "description": "Backend selection policies.",
+      "oneOf": [
+        {
+          "description": "Weighted round-robin.",
+          "type": "string",
+          "const": "round_robin"
+        },
+        {
+          "description": "Weighted random.",
+          "type": "string",
+          "const": "random"
+        },
+        {
+          "description": "Fewest open connections.",
+          "type": "string",
+          "const": "least_conn"
+        },
+        {
+          "description": "Fewest in-flight requests.",
+          "type": "string",
+          "const": "least_requests"
+        },
+        {
+          "description": "Power of two random choices.",
+          "type": "string",
+          "const": "p2c"
+        },
+        {
+          "description": "Consistent hash of the client IP.",
+          "type": "string",
+          "const": "ip_hash"
+        },
+        {
+          "description": "Consistent hash of a request header (`hash_on`).",
+          "type": "string",
+          "const": "header_hash"
+        },
+        {
+          "description": "Consistent hash of a cookie (`hash_on`).",
+          "type": "string",
+          "const": "cookie_hash"
+        }
+      ]
+    },
+    "Limits": {
+      "description": "Request size limits.",
+      "type": "object",
+      "properties": {
+        "max_body_bytes": {
+          "description": "Request body size, also enforced for chunked bodies.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "100MiB"
+        },
+        "max_header_bytes": {
+          "description": "Total size of request headers.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "32KiB"
+        },
+        "max_uri_bytes": {
+          "description": "Request target (path and query) length.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "8KiB"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ListenAddress": {
+      "description": "Listen address: `:port` for all interfaces, or `ip:port`.",
+      "type": "string",
+      "examples": [
+        ":443",
+        "127.0.0.1:2080",
+        "[::1]:2080"
+      ],
+      "pattern": "^(\\[[0-9A-Fa-f:.]+\\]|[0-9.]+)?:[0-9]{1,5}$"
+    },
+    "Listener": {
+      "description": "A socket ReverseDock accepts connections on.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "Address to bind, e.g. `:443` or `127.0.0.1:8080`.",
+          "$ref": "#/$defs/ListenAddress"
+        },
+        "protocol": {
+          "description": "Protocol. Inferred when omitted: `https` if `tls` is set, otherwise `http`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerProtocol"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "proxy_protocol": {
+          "description": "Accept the PROXY protocol (v1 or v2) from these sources only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProxyProtocolIn"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "tls": {
+          "description": "TLS termination settings.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerTls"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "address"
+      ]
+    },
+    "ListenerProtocol": {
+      "description": "Listener protocols.",
+      "oneOf": [
+        {
+          "description": "Plain HTTP/1.1 and h2c.",
+          "type": "string",
+          "const": "http"
+        },
+        {
+          "description": "HTTP over TLS (HTTP/1.1 and HTTP/2).",
+          "type": "string",
+          "const": "https"
+        },
+        {
+          "description": "Raw TCP, optionally with TLS termination or SNI passthrough.",
+          "type": "string",
+          "const": "tcp"
+        },
+        {
+          "description": "UDP datagrams.",
+          "type": "string",
+          "const": "udp"
+        }
+      ]
+    },
+    "ListenerTls": {
+      "description": "TLS termination settings of a listener.",
+      "type": "object",
+      "properties": {
+        "policy": {
+          "description": "TLS versions and cipher suites.",
+          "$ref": "#/$defs/TlsPolicy",
+          "default": "intermediate"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LoadBalancer": {
+      "description": "Backend selection.",
+      "type": "object",
+      "properties": {
+        "hash_on": {
+          "description": "Header or cookie name for `header_hash` and `cookie_hash`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "policy": {
+          "description": "Selection policy.",
+          "$ref": "#/$defs/LbPolicy",
+          "default": "round_robin"
+        }
+      },
+      "additionalProperties": false
+    },
+    "LogFormat": {
+      "description": "Access log formats.",
+      "oneOf": [
+        {
+          "description": "One JSON object per line.",
+          "type": "string",
+          "const": "json"
+        },
+        {
+          "description": "Human-readable text.",
+          "type": "string",
+          "const": "text"
+        },
+        {
+          "description": "No access log.",
+          "type": "string",
+          "const": "off"
+        }
+      ]
+    },
+    "MatchSpec": {
+      "description": "How a route selects requests.",
+      "anyOf": [
+        {
+          "description": "A rule in Traefik v3 syntax, e.g. ``Host(`app.example.com`) && PathPrefix(`/api`)``.",
+          "type": "string"
+        },
+        {
+          "description": "Conditions that must all hold; lists inside one condition are alternatives.",
+          "$ref": "#/$defs/StructuredMatch"
+        }
+      ]
+    },
+    "Metrics": {
+      "description": "Metrics settings.",
+      "type": "object",
+      "properties": {
+        "prometheus": {
+          "description": "Serve Prometheus metrics at `/metrics` on the admin listener.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "Middleware": {
+      "description": "A reusable request/response policy, selected by `type`.",
+      "oneOf": [
+        {
+          "description": "Set, add or remove request and response headers.",
+          "type": "object",
+          "properties": {
+            "request": {
+              "description": "Changes to the request sent to the backend.",
+              "$ref": "#/$defs/HeaderRules",
+              "default": {
+                "add": {},
+                "remove": [],
+                "set": {}
+              }
+            },
+            "response": {
+              "description": "Changes to the response sent to the client.",
+              "$ref": "#/$defs/HeaderRules",
+              "default": {
+                "add": {},
+                "remove": [],
+                "set": {}
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "headers"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Redirect to another scheme or to a URL built from a regular expression.",
+          "type": "object",
+          "properties": {
+            "permanent": {
+              "description": "`301`/`308` when true, `302`/`307` when false.",
+              "type": "boolean",
+              "default": true
+            },
+            "port": {
+              "description": "Port for scheme redirects when it is not the scheme's default.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "regex": {
+              "description": "Regular expression matched against the full request URL.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "replacement": {
+              "description": "Target URL; may use `$1`, `${name}` groups from `regex`.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "scheme": {
+              "description": "Redirect to this scheme, keeping host, path and query.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RedirectScheme"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "redirect"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Rewrite the path with a regular expression.",
+          "type": "object",
+          "properties": {
+            "regex": {
+              "description": "Regular expression matched against the path.",
+              "type": "string"
+            },
+            "replacement": {
+              "description": "Replacement path; may use `$1`, `${name}` groups.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "rewrite"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "regex",
+            "replacement"
+          ]
+        },
+        {
+          "description": "Remove a path prefix before forwarding.",
+          "type": "object",
+          "properties": {
+            "prefixes": {
+              "description": "Prefixes to remove; the first that matches is used.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "strip_prefix"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "prefixes"
+          ]
+        },
+        {
+          "description": "Add a path prefix before forwarding.",
+          "type": "object",
+          "properties": {
+            "prefix": {
+              "description": "Prefix to add, starting with `/`.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "add_prefix"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "prefix"
+          ]
+        },
+        {
+          "description": "Replace the whole path before forwarding.",
+          "type": "object",
+          "properties": {
+            "path": {
+              "description": "New path, starting with `/`.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "replace_path"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "path"
+          ]
+        },
+        {
+          "description": "HTTP Basic authentication with hashed passwords.",
+          "type": "object",
+          "properties": {
+            "realm": {
+              "description": "Realm shown by browsers.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "remove_header": {
+              "description": "Remove the `Authorization` header before forwarding.",
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "type": "string",
+              "const": "basic_auth"
+            },
+            "users": {
+              "description": "`user:hash` entries.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "users_file": {
+              "description": "File with one `user:hash` entry per line.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Ask an external service (Authelia, Authentik, oauth2-proxy…) whether to allow a request.",
+          "type": "object",
+          "properties": {
+            "address": {
+              "description": "Authentication endpoint. A 2xx answer allows the request; anything else is returned to\nthe client.",
+              "$ref": "#/$defs/HttpUrl"
+            },
+            "copy_headers": {
+              "description": "Response headers of the auth service copied to the forwarded request.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "request_headers": {
+              "description": "Request headers sent to the auth service (all when empty).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeout": {
+              "description": "Time allowed for the auth service. Requests fail closed on timeout.",
+              "$ref": "#/$defs/Duration",
+              "default": "5s"
+            },
+            "trust_forward_header": {
+              "description": "Trust `X-Forwarded-*` headers already present on the request.",
+              "type": "boolean",
+              "default": false
+            },
+            "type": {
+              "type": "string",
+              "const": "forward_auth"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "address"
+          ]
+        },
+        {
+          "description": "Allow only these client networks.",
+          "type": "object",
+          "properties": {
+            "cidrs": {
+              "description": "IP addresses or CIDR ranges.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IpNetwork"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "ip_allow"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "cidrs"
+          ]
+        },
+        {
+          "description": "Reject these client networks.",
+          "type": "object",
+          "properties": {
+            "cidrs": {
+              "description": "IP addresses or CIDR ranges.",
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/IpNetwork"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "ip_deny"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "cidrs"
+          ]
+        },
+        {
+          "description": "Token-bucket rate limiting.",
+          "type": "object",
+          "properties": {
+            "average": {
+              "description": "Requests allowed per `period` on average.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "burst": {
+              "description": "Largest burst; defaults to `average`.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "default": null,
+              "minimum": 0
+            },
+            "key": {
+              "description": "What to count by.",
+              "$ref": "#/$defs/RateLimitKey",
+              "default": "client_ip"
+            },
+            "period": {
+              "description": "Period of `average`.",
+              "$ref": "#/$defs/Duration",
+              "default": "1s"
+            },
+            "type": {
+              "type": "string",
+              "const": "rate_limit"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "average"
+          ]
+        },
+        {
+          "description": "Cross-origin resource sharing.",
+          "type": "object",
+          "properties": {
+            "allow_credentials": {
+              "description": "Allow cookies and credentials. Not allowed together with `*`.",
+              "type": "boolean",
+              "default": false
+            },
+            "allowed_headers": {
+              "description": "Allowed request headers.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowed_methods": {
+              "description": "Allowed methods.",
+              "type": "array",
+              "default": [
+                "GET",
+                "HEAD",
+                "POST"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "allowed_origins": {
+              "description": "Allowed origins (`https://app.example.com`) or `*`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "exposed_headers": {
+              "description": "Response headers exposed to scripts.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "max_age": {
+              "description": "How long browsers may cache the preflight answer.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Duration"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "cors"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "allowed_origins"
+          ]
+        },
+        {
+          "description": "Response compression.",
+          "type": "object",
+          "properties": {
+            "algorithms": {
+              "description": "Algorithms offered, in order of preference.",
+              "type": "array",
+              "default": [
+                "gzip"
+              ],
+              "items": {
+                "$ref": "#/$defs/CompressAlgorithm"
+              }
+            },
+            "content_types": {
+              "description": "Content types to compress; common text types when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "min_size": {
+              "description": "Smallest response compressed.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1KiB"
+            },
+            "type": {
+              "type": "string",
+              "const": "compress"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Custom error pages.",
+          "type": "object",
+          "properties": {
+            "file": {
+              "description": "Static HTML file to serve. Set this or `service`.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "path": {
+              "description": "Path requested from `service`; `{status}` is replaced by the code.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "service": {
+              "description": "Service that renders the error page. Set this or `file`.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "status": {
+              "description": "Status codes or ranges, e.g. `404` or `500-599`.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "errors"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "status"
+          ]
+        },
+        {
+          "description": "Maintenance mode.",
+          "type": "object",
+          "properties": {
+            "allow": {
+              "description": "Clients that still reach the service (e.g. your office).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/IpNetwork"
+              }
+            },
+            "enabled": {
+              "description": "Turn maintenance mode on.",
+              "type": "boolean",
+              "default": true
+            },
+            "file": {
+              "description": "HTML page to serve.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "retry_after": {
+              "description": "`Retry-After` value sent to clients.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Duration"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "status": {
+              "description": "Status code returned.",
+              "type": "integer",
+              "format": "uint16",
+              "default": 503,
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "maintenance"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "Observability": {
+      "description": "Logs, metrics and traces.",
+      "type": "object",
+      "properties": {
+        "access_log": {
+          "description": "Access log.",
+          "$ref": "#/$defs/AccessLog",
+          "default": {
+            "format": "json",
+            "redact": [
+              "authorization",
+              "proxy-authorization",
+              "cookie",
+              "set-cookie"
+            ]
+          }
+        },
+        "metrics": {
+          "description": "Metrics.",
+          "$ref": "#/$defs/Metrics",
+          "default": {
+            "prometheus": true
+          }
+        },
+        "tracing": {
+          "description": "Distributed tracing.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Tracing"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "PassiveHealth": {
+      "description": "Ejection of backends that keep failing.",
+      "type": "object",
+      "properties": {
+        "ejection": {
+          "description": "How long an ejected backend stays out before it is tried again.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "failures": {
+          "description": "Failures within `window` that eject a backend.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "window": {
+          "description": "Sliding window for counting failures.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false
+    },
+    "Providers": {
+      "description": "Configuration sources besides this file.",
+      "type": "object",
+      "properties": {
+        "docker": {
+          "description": "Docker containers and their labels.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/DockerProvider"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "file": {
+          "description": "More configuration files, merged with this one.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FileProvider"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "kubernetes": {
+          "description": "Kubernetes Gateway API and Ingress resources.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/KubernetesProvider"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "swarm": {
+          "description": "Docker Swarm services and their `deploy.labels`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SwarmProvider"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "ProxyProtocolIn": {
+      "description": "Inbound PROXY protocol settings.",
+      "type": "object",
+      "properties": {
+        "trusted": {
+          "description": "Sources allowed to send a PROXY header. Others are rejected.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IpNetwork"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "trusted"
+      ]
+    },
+    "ProxyProtocolVersion": {
+      "description": "PROXY protocol versions.",
+      "oneOf": [
+        {
+          "description": "Text format.",
+          "type": "string",
+          "const": "v1"
+        },
+        {
+          "description": "Binary format.",
+          "type": "string",
+          "const": "v2"
+        }
+      ]
+    },
+    "RateLimitKey": {
+      "type": "string",
+      "examples": [
+        "client_ip",
+        "header:X-Api-Key"
+      ],
+      "pattern": "^(client_ip|route|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+    },
+    "RedirectScheme": {
+      "description": "Redirect target schemes.",
+      "oneOf": [
+        {
+          "description": "`http://`.",
+          "type": "string",
+          "const": "http"
+        },
+        {
+          "description": "`https://`.",
+          "type": "string",
+          "const": "https"
+        }
+      ]
+    },
+    "Retries": {
+      "description": "Retry policy.",
+      "type": "object",
+      "properties": {
+        "attempts": {
+          "description": "Additional attempts after the first.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
+        },
+        "budget_percent": {
+          "description": "Maximum share of retries relative to requests, in percent, to avoid retry storms.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 20,
+          "minimum": 0
+        },
+        "on": {
+          "description": "Failures that are retried.",
+          "type": "array",
+          "default": [
+            "connect"
+          ],
+          "items": {
+            "$ref": "#/$defs/RetryOn"
+          }
+        },
+        "retry_non_idempotent": {
+          "description": "Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "RetryOn": {
+      "description": "Retryable failures (before upstream response headers).",
+      "oneOf": [
+        {
+          "description": "The connection to the backend could not be established.",
+          "type": "string",
+          "const": "connect"
+        },
+        {
+          "description": "The connection was reset before response headers arrived.",
+          "type": "string",
+          "const": "reset"
+        },
+        {
+          "description": "The backend did not answer within `timeouts.read`.",
+          "type": "string",
+          "const": "timeout"
+        }
+      ]
+    },
+    "Route": {
+      "description": "An HTTP route: which requests it matches, which middlewares run, which service answers.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Set to `false` to keep the route defined but inactive.",
+          "type": "boolean",
+          "default": true
+        },
+        "listeners": {
+          "description": "Listeners the route is attached to. Defaults to `defaults.listeners`.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "match": {
+          "description": "Requests this route handles: a Traefik v3 rule or a structured match.",
+          "$ref": "#/$defs/MatchSpec"
+        },
+        "middlewares": {
+          "description": "Middlewares applied in order (`name` or `name@provider`).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "description": "Higher priorities are evaluated first. `0` uses the rule length, like Traefik.",
+          "type": "integer",
+          "format": "int64",
+          "default": 0
+        },
+        "service": {
+          "description": "Service that handles matching requests (`name` or `name@provider`).",
+          "type": "string"
+        },
+        "tls": {
+          "description": "TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RouteTls"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "service"
+      ]
+    },
+    "RouteTls": {
+      "description": "TLS of a route.",
+      "anyOf": [
+        {
+          "description": "`auto` or `off`.",
+          "$ref": "#/$defs/TlsMode"
+        },
+        {
+          "description": "Detailed settings.",
+          "$ref": "#/$defs/RouteTlsOptions"
+        }
+      ]
+    },
+    "RouteTlsOptions": {
+      "description": "Detailed TLS settings of a route.",
+      "type": "object",
+      "properties": {
+        "auto": {
+          "description": "Issue certificates automatically.",
+          "type": "boolean",
+          "default": true
+        },
+        "certificate": {
+          "description": "A certificate from `certificates` to use instead of automatic issuance.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "dns_provider": {
+          "description": "DNS provider (a key of `acme.dns_providers`) for DNS-01; required for wildcards.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "domains": {
+          "description": "Names to put on the certificate instead of the route's hosts.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "SameSite": {
+      "description": "`SameSite` cookie attribute.",
+      "oneOf": [
+        {
+          "description": "`Lax`.",
+          "type": "string",
+          "const": "lax"
+        },
+        {
+          "description": "`Strict`.",
+          "type": "string",
+          "const": "strict"
+        },
+        {
+          "description": "`None` (requires `secure`).",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "Scheme": {
+      "description": "Protocols spoken to backends.",
+      "oneOf": [
+        {
+          "description": "HTTP/1.1 in cleartext.",
+          "type": "string",
+          "const": "http"
+        },
+        {
+          "description": "HTTP/1.1 or HTTP/2 over TLS.",
+          "type": "string",
+          "const": "https"
+        },
+        {
+          "description": "HTTP/2 in cleartext (gRPC without TLS).",
+          "type": "string",
+          "const": "h2c"
+        }
+      ]
+    },
+    "Security": {
+      "description": "Client IP trust and request limits.",
+      "type": "object",
+      "properties": {
+        "client_ip_header": {
+          "description": "Where the real client IP comes from.",
+          "$ref": "#/$defs/ClientIpHeader",
+          "default": "auto"
+        },
+        "limits": {
+          "description": "Request size limits.",
+          "$ref": "#/$defs/Limits",
+          "default": {
+            "max_body_bytes": "100MiB",
+            "max_header_bytes": "32KiB",
+            "max_uri_bytes": "8KiB"
+          }
+        },
+        "trusted_proxies": {
+          "description": "Proxies whose forwarded headers are believed. Headers from anyone else are replaced.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/TrustedProxy"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
+    "Service": {
+      "description": "An HTTP service: either a pool of backends or a weighted split over other services.",
+      "type": "object",
+      "properties": {
+        "backends": {
+          "description": "Backend servers. Set this or `split`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/Backend"
+          }
+        },
+        "health": {
+          "description": "Active and passive health checks.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Health"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "load_balancer": {
+          "description": "How a backend is chosen for each request.",
+          "$ref": "#/$defs/LoadBalancer",
+          "default": {
+            "hash_on": null,
+            "policy": "round_robin"
+          }
+        },
+        "pass_host_header": {
+          "description": "Forward the client's `Host` header (otherwise the backend address is used).",
+          "type": "boolean",
+          "default": true
+        },
+        "retries": {
+          "description": "Retries of failed requests (transport failures only, see ADR-0010).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Retries"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "scheme": {
+          "description": "Protocol spoken to the backends. gRPC uses `h2c` (cleartext) or `https`.",
+          "$ref": "#/$defs/Scheme",
+          "default": "http"
+        },
+        "split": {
+          "description": "Weighted traffic split over other services (canary, blue/green). Set this or `backends`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/SplitTarget"
+          }
+        },
+        "sticky": {
+          "description": "Session affinity with a cookie.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Sticky"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "timeouts": {
+          "description": "Upstream timeouts.",
+          "$ref": "#/$defs/Timeouts",
+          "default": {
+            "connect": "5s",
+            "idle": "1m30s",
+            "read": "1m",
+            "write": "1m"
+          }
+        },
+        "tls": {
+          "description": "TLS to the backends when `scheme` is `https`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UpstreamTls"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
+    "SplitTarget": {
+      "description": "One target of a weighted split.",
+      "type": "object",
+      "properties": {
+        "service": {
+          "description": "Another service (`name` or `name@provider`).",
+          "type": "string"
+        },
+        "weight": {
+          "description": "Relative share of traffic.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "service",
+        "weight"
+      ]
+    },
+    "Sticky": {
+      "description": "Session affinity.",
+      "type": "object",
+      "properties": {
+        "cookie": {
+          "description": "Affinity cookie.",
+          "$ref": "#/$defs/StickyCookie"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cookie"
+      ]
+    },
+    "StickyCookie": {
+      "description": "Affinity cookie settings.",
+      "type": "object",
+      "properties": {
+        "http_only": {
+          "description": "Hide from JavaScript.",
+          "type": "boolean",
+          "default": true
+        },
+        "max_age": {
+          "description": "Lifetime; a session cookie when omitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "name": {
+          "description": "Cookie name.",
+          "type": "string"
+        },
+        "same_site": {
+          "description": "`SameSite` attribute.",
+          "$ref": "#/$defs/SameSite",
+          "default": "lax"
+        },
+        "secure": {
+          "description": "Send only over HTTPS.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "name"
+      ]
+    },
+    "StructuredMatch": {
+      "description": "Structured match conditions. All given conditions must hold.",
+      "type": "object",
+      "properties": {
+        "client_ips": {
+          "description": "Any of these client IPs or CIDR ranges.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "headers": {
+          "description": "Header name → exact value; all must match.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "hosts": {
+          "description": "Any of these hosts (`example.com`, `*.example.com`).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "methods": {
+          "description": "Any of these methods.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "path": {
+          "description": "Exact path.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "path_prefix": {
+          "description": "Path prefix.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "path_regex": {
+          "description": "Path regular expression.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "query": {
+          "description": "Query parameter → exact value; all must match.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        }
+      },
+      "additionalProperties": false
+    },
+    "SwarmEndpointMode": {
+      "description": "How Swarm services are reached.",
+      "oneOf": [
+        {
+          "description": "The service's virtual IP; Swarm balances between tasks.",
+          "type": "string",
+          "const": "vip"
+        },
+        {
+          "description": "Each running task directly; ReverseDock balances and health-checks.",
+          "type": "string",
+          "const": "tasks"
+        }
+      ]
+    },
+    "SwarmProvider": {
+      "description": "Docker Swarm provider.",
+      "type": "object",
+      "properties": {
+        "endpoint": {
+          "description": "Docker Engine API endpoint of a manager node.",
+          "$ref": "#/$defs/Endpoint",
+          "default": "unix:///var/run/docker.sock"
+        },
+        "endpoint_mode": {
+          "description": "Route to the service's virtual IP or to each task.",
+          "$ref": "#/$defs/SwarmEndpointMode",
+          "default": "vip"
+        },
+        "expose_by_default": {
+          "description": "Expose services without `rdock.enable=true`. Off by default.",
+          "type": "boolean",
+          "default": false
+        },
+        "network": {
+          "description": "Overlay network used to reach services.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "traefik_labels": {
+          "description": "Also read `traefik.*` labels (supported subset).",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    },
+    "TcpRoute": {
+      "description": "A TCP route.",
+      "type": "object",
+      "properties": {
+        "listeners": {
+          "description": "Listeners (`tcp` or `https`) the route is attached to.",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "match": {
+          "description": "Rule with TCP matchers: ``HostSNI(`db.example.com`)``, ``HostSNI(`*`)``, `ClientIP`, `ALPN`.",
+          "type": "string"
+        },
+        "priority": {
+          "description": "Higher priorities are evaluated first. `0` uses the rule length.",
+          "type": "integer",
+          "format": "int64",
+          "default": 0
+        },
+        "service": {
+          "description": "TCP service (a key of `tcp_services`).",
+          "type": "string"
+        },
+        "tls": {
+          "description": "TLS handling.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TcpRouteTls"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "match",
+        "service"
+      ]
+    },
+    "TcpRouteTls": {
+      "description": "TLS handling of a TCP route.",
+      "type": "object",
+      "properties": {
+        "passthrough": {
+          "description": "Forward the encrypted stream without terminating TLS (routing by SNI only).",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "TcpService": {
+      "description": "A TCP service.",
+      "type": "object",
+      "properties": {
+        "backends": {
+          "description": "Backend servers.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Backend"
+          }
+        },
+        "proxy_protocol": {
+          "description": "Send a PROXY protocol header to backends.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ProxyProtocolVersion"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "backends"
+      ]
+    },
+    "Timeouts": {
+      "description": "Upstream timeouts.",
+      "type": "object",
+      "properties": {
+        "connect": {
+          "description": "Establishing a connection.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        },
+        "idle": {
+          "description": "Keeping an idle pooled connection.",
+          "$ref": "#/$defs/Duration",
+          "default": "1m30s"
+        },
+        "read": {
+          "description": "Waiting for response data.",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        },
+        "write": {
+          "description": "Sending request data.",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TlsMode": {
+      "description": "`auto` issues certificates automatically; `off` serves the route without TLS.",
+      "oneOf": [
+        {
+          "description": "Automatic certificates (ACME) for the route's hosts.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "No TLS.",
+          "type": "string",
+          "const": "off"
+        }
+      ]
+    },
+    "TlsPolicy": {
+      "description": "TLS policies.",
+      "oneOf": [
+        {
+          "description": "TLS 1.3 only.",
+          "type": "string",
+          "const": "modern"
+        },
+        {
+          "description": "TLS 1.2 and 1.3 with forward-secret AEAD ciphers (Mozilla \"intermediate\").",
+          "type": "string",
+          "const": "intermediate"
+        }
+      ]
+    },
+    "Tracing": {
+      "description": "OpenTelemetry tracing.",
+      "type": "object",
+      "properties": {
+        "otlp": {
+          "description": "OTLP/HTTP collector endpoint, e.g. `http://tempo:4318`.",
+          "$ref": "#/$defs/HttpUrl"
+        },
+        "sample_ratio": {
+          "description": "Share of requests traced, from 0 to 1.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "otlp"
+      ]
+    },
+    "TrustedProxy": {
+      "description": "`cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.",
+      "type": "string",
+      "examples": [
+        "cloudflare",
+        "10.0.0.0/8"
+      ]
+    },
+    "UpstreamTls": {
+      "description": "TLS to backends.",
+      "type": "object",
+      "properties": {
+        "ca_file": {
+          "description": "CA bundle used instead of the system roots.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "cert_file": {
+          "description": "Client certificate for upstream mTLS.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "key_file": {
+          "description": "Client key for upstream mTLS.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "server_name": {
+          "description": "SNI and verification name, when it differs from the backend host.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "verify": {
+          "description": "Verify the backend certificate and host name.",
+          "type": "boolean",
+          "default": true
+        }
+      },
+      "additionalProperties": false
+    }
+  }
+}

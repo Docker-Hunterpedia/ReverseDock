@@ -19,6 +19,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 ---
 
 ## M0 — Foundations
+**Status:** implemented (`0.1.0-alpha.1`): workspace, `rdock-rules`, `rdock-model` + schema, `rdock-config` loader, `rdock validate|schema|version`, CI, release pipeline, Dockerfile.
 **Scope:** workspace skeleton (all crates with READMEs), `rdock-model` + JSON Schema export, `rdock-rules` parser with property tests, CI (fmt/clippy/nextest/deny/audit/Semgrep), release pipeline (`cargo-dist`, checksums, SBOM, cosign — empty releases are fine), `justfile`, Dockerfile skeleton, CONTRIBUTING/SECURITY/CoC/issue templates, ADRs 0001–0010. IDs: F-OSS-01, F-OSS-02, F-OSS-03.
 **Done when:** `just ci` is green; `schema/rdock.v1.json` is generated and validated against the YAML examples in `docs/05-architecture.md`; a tagged pre-release produces signed artifacts.
 

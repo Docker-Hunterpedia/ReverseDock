@@ -45,6 +45,7 @@ Thumbs.db
 
 # ---- AI assistant tooling (per-developer, third-party skill copies) ----
 .agents/
+.codex/
 .claude/*
 !.claude/settings.json
 skills-lock.json
