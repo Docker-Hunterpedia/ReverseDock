@@ -1,6 +1,6 @@
 # ReverseDock — Website and documentation plan
 
-The public site at `reversedock.dev`: a landing page and complete documentation for installing, using, migrating to and operating ReverseDock. The stack and the rules come from [ADR-0017](decisions/0017-website-astro-starlight.md): Astro + Starlight in `apps/website`, generated reference pages, validated snippets and status badges. Requirement: F-MGMT-05 ([04-requirements](04-requirements.md)).
+The public site, later at `reversedock.dev`: a landing page and complete documentation for installing, using, migrating to and operating ReverseDock. The stack and the rules come from [ADR-0017](decisions/0017-website-astro-starlight.md): Astro + Starlight in `apps/website`, generated reference pages, validated snippets and status badges. Requirement: F-MGMT-05 ([04-requirements](04-requirements.md)).
 
 ## 1. Goals
 
@@ -115,13 +115,17 @@ Other outputs: a sitemap, OG images per page, `llms.txt` for AI assistants, "Edi
 
 | Phase | Ships with | Scope |
 |---|---|---|
-| **W0 — Launch** | before v0.2 | Workspace, tokens package, Starlight theme · landing page · Get started, Install (all v0.1 methods + verification) · ⚙ config, ⚙ CLI, rules, middlewares, HTTP behaviour reference · v0.1 guides · migrate from NGINX and Traefik (file config) · troubleshooting · ⚙ changelog · CI job · Cloudflare deploy and domain |
+| **W0 — Launch** | before v0.2 | Workspace, tokens package, Starlight theme · landing page (approved design first, §9) · Get started, Install (all v0.1 methods + verification) · ⚙ config, ⚙ CLI, rules, middlewares, HTTP behaviour reference · v0.1 guides · migrate from NGINX and Traefik (file config) · troubleshooting · ⚙ changelog · CI job · Cloudflare deploy on its `workers.dev` address |
 | **W1** | v0.2 | Docker labels guides and ⚙ reference · Traefik labels migration with `rdock migrate traefik` · Compose examples (Dokploy, Coolify, Portainer) · migrate from Caddy and Nginx Proxy Manager |
 | **W2** | v0.3 | Automatic HTTPS, DNS-01 and Cloudflare guides · Arabic for core pages · blog with release posts |
 | **W3** | v0.5 → v1.0 | Config playground (CodeMirror + JSON Schema in the browser; `rdock-config` compiled to WebAssembly for exact diagnostics, after a spike) · ⚙ admin API (OpenAPI) · benchmark pages · versioned docs from 1.0 |
 
 ## 8. Open decisions for the maintainer
 
-1. **Register `reversedock.dev`** ([01-vision](01-vision.md) lists it as "to be registered"). The schema `$id` and the Kubernetes controller name will move to it.
-2. **Analytics:** none, or Cloudflare Web Analytics (cookie-free, no consent banner). The vision promises no telemetry in the product; the website is a separate question.
-3. **Hosting account:** which Cloudflare account owns the site.
+1. **Analytics:** none, or Cloudflare Web Analytics (cookie-free, no consent banner). The vision promises no telemetry in the product; the website is a separate question.
+2. **Hosting account:** which Cloudflare account owns the site.
+3. **The domain comes last.** The site runs on its Cloudflare `workers.dev` address until everything else is done; registering `reversedock.dev` ([01-vision](01-vision.md) lists it as "to be registered") and moving the schema `$id` and the Kubernetes controller name to it is the final step.
+
+## 9. Design
+
+The look is approved on a design before any code: the home page is drawn in Claude Design with the ReverseDock design system (the Harbor UI tokens of [08-design-system](08-design-system.md), plus a proposed website type scale), reviewed, and only then built in `apps/website`.
