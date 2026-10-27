@@ -95,6 +95,29 @@ async fn status_of(addr: SocketAddr, host: &str) -> u16 {
     client::http1(addr, get(host, "/")).await.status
 }
 
+/// The Docker provider's state in the admin status (`connected` or `degraded`).
+fn provider_state(rdock: &Rdock) -> Option<String> {
+    let (_, body) = rdock.get_admin("/api/v1/status")?;
+    let status: serde_json::Value = serde_json::from_str(&body).ok()?;
+    status["providers"]["docker"]["state"]
+        .as_str()
+        .map(str::to_owned)
+}
+
+async fn wait_for_provider(rdock: &Rdock, state: &str, limit: Duration) {
+    let start = Instant::now();
+    while start.elapsed() < limit {
+        if provider_state(rdock).as_deref() == Some(state) {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    panic!(
+        "the Docker provider was not {state} within {limit:?}: {:?}",
+        provider_state(rdock)
+    );
+}
+
 async fn wait_for(addr: SocketAddr, host: &str, status: u16, limit: Duration) -> Duration {
     let start = Instant::now();
     while start.elapsed() < limit {
@@ -146,7 +169,7 @@ async fn docker_containers_are_routed_and_socket_loss_keeps_traffic() {
 
     // Docker goes away: the route keeps working and the provider reports it.
     forwarder.cut();
-    tokio::time::sleep(Duration::from_secs(2)).await;
+    wait_for_provider(&rdock, "degraded", Duration::from_secs(10)).await;
     assert_eq!(status_of(addr, &host).await, 200);
     assert!(
         rdock.log().contains("Docker is unreachable"),
@@ -155,8 +178,9 @@ async fn docker_containers_are_routed_and_socket_loss_keeps_traffic() {
     );
 
     // Docker is back: stopping the container removes the route.
+    // Reconnecting waits out the backoff (up to 30 s).
     let mut forwarder = SocketForwarder::start(&socket);
-    tokio::time::sleep(Duration::from_secs(3)).await;
+    wait_for_provider(&rdock, "connected", Duration::from_secs(40)).await;
     docker(&["stop", "-t", "1", &name]);
     let removed = wait_for(addr, &host, 404, Duration::from_secs(5)).await;
     eprintln!("route removed {removed:?} after the container stopped");
