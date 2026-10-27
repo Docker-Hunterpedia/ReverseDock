@@ -15,6 +15,7 @@ mod providers;
 mod run;
 mod validate;
 mod watch;
+mod zero_config;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 const COMMIT: &str = env!("RDOCK_BUILD_COMMIT");
@@ -67,9 +68,10 @@ struct HashArgs {
 
 #[derive(Args)]
 struct RunArgs {
-    /// Configuration file.
-    #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
-    config: PathBuf,
+    /// Configuration file [default: /etc/rdock/rdock.yaml]. Without one, rdock runs in
+    /// zero-config mode: HTTP on :80, routes from Docker labels.
+    #[arg(short, long, env = "RDOCK_CONFIG")]
+    config: Option<PathBuf>,
     /// Directory for state (configuration history, last-known-good copy, admin token).
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,

@@ -12,7 +12,11 @@ use tokio::sync::{mpsc, watch};
 
 use crate::engine::Engine;
 use crate::watch::FileWatcher;
+use crate::zero_config::Source;
 use crate::{COMMIT, LogFormatArg, RunArgs, VERSION};
+
+/// The socket zero-config mode reads containers from (`providers.docker`'s default).
+const DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
 pub(crate) fn run(args: &RunArgs) -> anyhow::Result<ExitCode> {
     let format = match args.log_format {
@@ -91,22 +95,35 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
             args.data_dir.display()
         )
     })?;
+    let source = Source::choose(args.config.as_deref(), Path::new(crate::DEFAULT_CONFIG));
+    if source == Source::ZeroConfig && !Path::new(DOCKER_SOCKET).exists() {
+        eprintln!(
+            "error: there is no configuration file at {} and no Docker socket at {DOCKER_SOCKET}\n  \
+             hint: write a configuration file (see `rdock validate --help`), pass one with --config, \
+             or mount the Docker socket to route labelled containers without one",
+            crate::DEFAULT_CONFIG
+        );
+        return Ok(ExitCode::from(1));
+    }
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
     let plane = Arc::new(DataPlane::new(metrics, Runtime::empty()));
-    let engine = Arc::new(Engine::new(
-        args.config.clone(),
-        &args.data_dir,
-        plane.clone(),
-    ));
+    let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
 
-    tracing::info!(version = VERSION, commit = COMMIT, config = %args.config.display(), "starting rdock");
+    tracing::info!(version = VERSION, commit = COMMIT, config = %source.describe(), "starting rdock");
+    if source == Source::ZeroConfig {
+        tracing::info!(
+            "no configuration file: zero-config mode serves labelled Docker containers over HTTP on :80 \
+             (HTTPS arrives in v0.3; write {} to configure more)",
+            crate::DEFAULT_CONFIG
+        );
+    }
     engine.restore_snapshots();
     let report = match engine.boot().await {
         Ok(report) => report,
         Err(report) => {
             eprintln!(
                 "error: {} cannot be used: {}",
-                args.config.display(),
+                source.describe(),
                 report.error.as_deref().unwrap_or("unknown error")
             );
             for line in crate::validate::render_diagnostics(&report.diagnostics) {
