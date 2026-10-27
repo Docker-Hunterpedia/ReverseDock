@@ -22,4 +22,4 @@ pnpm build && pnpm check:a11y        # build (links checked) and axe in light an
 
 ## Deploying
 
-Cloudflare Workers static assets, connected through Cloudflare's Git integration (no deploy token in GitHub). Settings: root directory `apps/website`, build command `pnpm install --frozen-lockfile && pnpm build`, deploy command `npx wrangler deploy`, environment variable `SITE_URL` = the public address (the `workers.dev` address until the domain is registered). Pull requests get preview URLs from the same integration.
+Cloudflare Workers static assets, connected through Cloudflare's Git integration (no deploy token in GitHub). Settings: root directory `apps/website`, build command `pnpm install --frozen-lockfile && pnpm build`, deploy command `npx wrangler deploy`, build variables `SITE_URL=https://reversedock.oday-bakkour.com` and `NODE_VERSION=24`. The Worker `reversedock-website` serves the custom domain **https://reversedock.oday-bakkour.com**; every push to `main` redeploys it, and other branches get preview builds. The project's own domain (`reversedock.dev`) replaces it as the last step (docs/09-website.md).
