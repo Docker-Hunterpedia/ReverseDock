@@ -19,6 +19,7 @@ fn container(name: &str, ip: u8, ports: &[u16], labels: &[(&str, &str)]) -> Cont
         host_network: false,
         exposed_ports: ports.iter().copied().collect(),
         health: Health::None,
+        stopping: false,
     }
 }
 
@@ -389,4 +390,18 @@ fn translated_objects_pass_the_merged_validation() {
         merged.config.routes["who@docker"].middlewares,
         ["strip@docker", "limit@docker", "secure-headers@docker"]
     );
+}
+
+#[test]
+fn a_stopping_replica_leaves_the_pool_at_once() {
+    let labels = [
+        ("rdock.enable", "true"),
+        ("rdock.host", "app.example.com"),
+        ("com.docker.compose.service", "app"),
+        ("com.docker.compose.project", "demo"),
+    ];
+    let mut leaving = container("demo-app-2", 3, &[80], &labels);
+    leaving.stopping = true;
+    let t = run(&[container("demo-app-1", 2, &[80], &labels), leaving]);
+    assert_eq!(backends(&t, "app-demo"), ["172.18.0.2:80"]);
 }

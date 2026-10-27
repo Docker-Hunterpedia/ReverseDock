@@ -11,6 +11,7 @@ containers:
     networks: { web: "172.18.0.2" }   # network → IP
     ports: [80]                       # exposed ports
     health: healthy                   # none | starting | healthy | unhealthy (default none)
+    stopping: false                   # Docker sent the stop signal (kill event)
     host_network: false
 expect:
   routes:      { app: { service: app } }   # exactly these objects; fields compared as a subset

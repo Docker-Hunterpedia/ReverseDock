@@ -5,12 +5,12 @@
 //! read-only socket proxy is enough. When the socket is lost, the last snapshot stays in
 //! service and the loop reconnects with backoff; traffic never stops because Docker did.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::net::IpAddr;
 use std::time::Duration;
 
 use bollard::Docker;
-use bollard::models::{ContainerInspectResponse, HealthStatusEnum};
+use bollard::models::{ContainerInspectResponse, EventMessage, HealthStatusEnum};
 use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptionsBuilder};
 use futures_util::StreamExt;
 use rdock_config::merge::Snapshot;
@@ -95,26 +95,66 @@ async fn session(settings: &DockerProvider, tx: &watch::Sender<State>) -> Result
     let mut events = docker.events(Some(
         EventsOptionsBuilder::default().filters(&filters).build(),
     ));
-    publish(&docker, settings, tx).await?;
+    let mut stopping = Stopping::default();
+    publish(&docker, settings, tx, &mut stopping).await?;
     let mut reconcile = tokio::time::interval(RECONCILE);
     reconcile.tick().await;
     loop {
         tokio::select! {
             event = events.next() => match event {
-                Some(Ok(_)) => {
-                    drain(&mut events).await?;
-                    publish(&docker, settings, tx).await?;
+                Some(Ok(event)) => {
+                    stopping.note(&event);
+                    drain(&mut events, &mut stopping).await?;
+                    publish(&docker, settings, tx, &mut stopping).await?;
                 }
                 Some(Err(err)) => return Err(err.to_string()),
                 None => return Ok(()),
             },
-            _ = reconcile.tick() => publish(&docker, settings, tx).await?,
+            _ = reconcile.tick() => publish(&docker, settings, tx, &mut stopping).await?,
+        }
+    }
+}
+
+/// Containers Docker has been told to stop or pause, by name. `docker stop` sends a `kill`
+/// event when it signals the container and `die` only when the process has exited; taking the
+/// container out of its pool at `kill` lets requests already sent finish while no new ones
+/// arrive, instead of new ones waiting on a container that is about to vanish (W-DKR-06).
+#[derive(Debug, Default)]
+struct Stopping(HashSet<String>);
+
+impl Stopping {
+    fn note(&mut self, event: &EventMessage) {
+        let Some(name) = event
+            .actor
+            .as_ref()
+            .and_then(|a| a.attributes.as_ref())
+            .and_then(|a| a.get("name"))
+        else {
+            return;
+        };
+        match event.action.as_deref() {
+            Some("kill" | "stop" | "pause") => {
+                self.0.insert(name.clone());
+            }
+            Some("start" | "unpause" | "die" | "destroy") => {
+                self.0.remove(name);
+            }
+            _ => {}
+        }
+    }
+
+    /// Marks the listed containers that are stopping, and forgets the ones that are gone.
+    fn apply(&mut self, containers: &mut [Container]) {
+        let listed: HashSet<&str> = containers.iter().map(|c| c.name.as_str()).collect();
+        self.0.retain(|name| listed.contains(name.as_str()));
+        for container in containers {
+            container.stopping = self.0.contains(&container.name);
         }
     }
 }
 
 /// Waits for a pause in a burst of events (a Compose `up` sends dozens).
-async fn drain<S>(events: &mut S) -> Result<(), String>
+async fn drain<S>(events: &mut S, stopping: &mut Stopping) -> Result<(), String>
 where
     S: futures_util::Stream<Item = Result<bollard::models::EventMessage, bollard::errors::Error>>
         + Unpin,
@@ -122,7 +162,7 @@ where
     loop {
         match tokio::time::timeout(COALESCE, events.next()).await {
             Err(_) | Ok(None) => return Ok(()),
-            Ok(Some(Ok(_))) => {}
+            Ok(Some(Ok(event))) => stopping.note(&event),
             Ok(Some(Err(err))) => return Err(err.to_string()),
         }
     }
@@ -152,8 +192,10 @@ async fn publish(
     docker: &Docker,
     settings: &DockerProvider,
     tx: &watch::Sender<State>,
+    stopping: &mut Stopping,
 ) -> Result<(), String> {
-    let containers = list(docker).await?;
+    let mut containers = list(docker).await?;
+    stopping.apply(&mut containers);
     let translation = translate(&containers, settings);
     let snapshot = Snapshot {
         provider: PROVIDER.to_owned(),
@@ -241,6 +283,7 @@ fn container(inspected: ContainerInspectResponse) -> Option<Container> {
         host_network: network_mode.as_deref() == Some("host"),
         exposed_ports,
         health,
+        stopping: false,
     })
 }
 
@@ -307,6 +350,35 @@ mod tests {
                 .host_network
         );
         assert_eq!(container(inspected(false, "proxy", None)), None);
+    }
+
+    fn event(action: &str, name: &str) -> EventMessage {
+        EventMessage {
+            action: Some(action.to_owned()),
+            actor: Some(bollard::models::EventActor {
+                attributes: Some(HashMap::from([("name".to_owned(), name.to_owned())])),
+                ..Default::default()
+            }),
+            ..Default::default()
+        }
+    }
+
+    #[test]
+    fn stop_signals_mark_containers_until_they_exit_or_start() {
+        let mut stopping = Stopping::default();
+        let mut listed = vec![container(inspected(true, "proxy", None)).unwrap()];
+        stopping.note(&event("kill", "web-1"));
+        stopping.apply(&mut listed);
+        assert!(listed[0].stopping);
+        stopping.note(&event("start", "web-1"));
+        stopping.apply(&mut listed);
+        assert!(!listed[0].stopping);
+        stopping.note(&event("pause", "web-1"));
+        stopping.apply(&mut []);
+        assert!(
+            stopping.0.is_empty(),
+            "containers no longer listed are forgotten"
+        );
     }
 
     #[test]

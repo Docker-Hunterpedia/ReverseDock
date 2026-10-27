@@ -43,6 +43,8 @@ struct FixtureContainer {
     ports: BTreeSet<u16>,
     #[serde(default)]
     health: Option<String>,
+    #[serde(default)]
+    stopping: bool,
 }
 
 #[derive(Deserialize)]
@@ -76,6 +78,7 @@ fn container(c: FixtureContainer) -> Container {
             Some("unhealthy") => Health::Unhealthy,
             Some(other) => panic!("unknown health `{other}`"),
         },
+        stopping: c.stopping,
     }
 }
 
