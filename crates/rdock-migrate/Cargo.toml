@@ -10,5 +10,13 @@ repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
 
+[dependencies]
+rdock-config.workspace = true
+rdock-model.workspace = true
+rdock-provider-docker.workspace = true
+serde.workspace = true
+serde-saphyr = { workspace = true, features = ["serialize"] }
+serde_json.workspace = true
+
 [lints]
 workspace = true

@@ -11,6 +11,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 mod ctl;
 mod engine;
 mod hash;
+mod migrate;
 mod providers;
 mod run;
 mod validate;
@@ -49,6 +50,9 @@ enum Command {
     Healthcheck(CtlArgs),
     /// Create an argon2id password hash for `basic_auth` (reads the password from stdin).
     Hash(HashArgs),
+    /// Turn another proxy's configuration into rdock.yaml.
+    #[command(subcommand)]
+    Migrate(MigrateCommand),
     /// Print the JSON Schema of rdock.yaml.
     Schema,
     /// Print version and build information.
@@ -57,6 +61,24 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum MigrateCommand {
+    /// Traefik labels (a Compose file) or a Traefik dynamic configuration → rdock.yaml.
+    Traefik(MigrateTraefikArgs),
+}
+
+#[derive(Args)]
+struct MigrateTraefikArgs {
+    /// Compose file or Traefik dynamic configuration; `-` reads standard input.
+    input: PathBuf,
+    /// Migrate Compose services without `traefik.enable`, as Traefik's `exposedByDefault` does.
+    #[arg(long)]
+    expose_by_default: bool,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -146,6 +168,7 @@ fn main() -> ExitCode {
         Command::Status(args) => ctl::status(&args),
         Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
         Command::Hash(args) => hash::hash(&args),
+        Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };

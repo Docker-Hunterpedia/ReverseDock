@@ -284,6 +284,7 @@ fn container(inspected: ContainerInspectResponse) -> Option<Container> {
         exposed_ports,
         health,
         stopping: false,
+        dns_name: None,
     })
 }
 

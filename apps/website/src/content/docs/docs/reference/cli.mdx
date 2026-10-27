@@ -21,6 +21,7 @@ Commands:
   status       Show the state of the running proxy
   healthcheck  Exit 0 when the running proxy is ready (for container health checks)
   hash         Create an argon2id password hash for `basic_auth` (reads the password from stdin)
+  migrate      Turn another proxy's configuration into rdock.yaml
   schema       Print the JSON Schema of rdock.yaml
   version      Print version and build information
   help         Print this message or the help of the given subcommand(s)
@@ -150,6 +151,22 @@ Options:
       --user <USER>  Print a complete `user:hash` entry for `basic_auth.users`
   -h, --help         Print help
   -V, --version      Print version
+```
+
+## `rdock migrate`
+
+```text
+Turn another proxy's configuration into rdock.yaml
+
+Usage: rdock migrate <COMMAND>
+
+Commands:
+  traefik  Traefik labels (a Compose file) or a Traefik dynamic configuration → rdock.yaml
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 ## `rdock schema`

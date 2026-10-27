@@ -30,6 +30,7 @@ notify-debouncer-full.workspace = true
 rdock-admin.workspace = true
 rdock-config.workspace = true
 rdock-middleware.workspace = true
+rdock-migrate.workspace = true
 rdock-model.workspace = true
 rdock-observability.workspace = true
 rdock-provider-docker = { workspace = true, optional = true }

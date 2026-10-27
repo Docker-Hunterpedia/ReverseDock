@@ -20,6 +20,7 @@ fn container(name: &str, ip: u8, ports: &[u16], labels: &[(&str, &str)]) -> Cont
         exposed_ports: ports.iter().copied().collect(),
         health: Health::None,
         stopping: false,
+        dns_name: None,
     }
 }
 

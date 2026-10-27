@@ -79,6 +79,7 @@ fn container(c: FixtureContainer) -> Container {
             Some(other) => panic!("unknown health `{other}`"),
         },
         stopping: c.stopping,
+        dns_name: None,
     }
 }
 
