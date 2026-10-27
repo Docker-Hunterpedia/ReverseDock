@@ -109,9 +109,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
             "v0.2",
         );
     }
-    if providers.docker.is_some() {
-        gate.unsupported("providers.docker", "the Docker provider", "v0.2");
-    }
     if providers.swarm.is_some() {
         gate.unsupported("providers.swarm", "the Swarm provider", "v0.6");
     }

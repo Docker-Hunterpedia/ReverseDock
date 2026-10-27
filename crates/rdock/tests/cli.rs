@@ -32,7 +32,7 @@ fn validates_the_examples() {
         "{text}"
     );
     assert!(
-        text.contains("warning: providers.docker: the Docker provider: not supported in this version (planned for v0.2)"),
+        text.contains("warning: observability.tracing: OpenTelemetry tracing: not supported in this version (planned for v0.4)"),
         "{text}"
     );
     let quickstart = rdock(&[

@@ -71,6 +71,17 @@ struct Applied {
     origin: Origin,
 }
 
+/// Providers whose snapshots the engine merges.
+const PROVIDERS: [&str; 1] = ["docker"];
+
+/// Whether the file configuration enables `provider`.
+fn enabled(file: &Config, provider: &str) -> bool {
+    match provider {
+        "docker" => file.providers.docker.is_some(),
+        _ => false,
+    }
+}
+
 /// Rounds of "leave out the provider objects that fail to compile, try again".
 const COMPILE_ROUNDS: usize = 4;
 
@@ -88,6 +99,8 @@ pub(crate) struct Engine {
     fingerprint: Mutex<Option<u64>>,
     /// The latest snapshot of each provider, by provider name.
     snapshots: Mutex<BTreeMap<String, Snapshot>>,
+    /// Why a provider cannot reach its source, while it cannot.
+    degraded: Mutex<BTreeMap<String, String>>,
     started_at: SystemTime,
 }
 
@@ -118,6 +131,7 @@ impl Engine {
             watched: Mutex::new(BTreeSet::new()),
             fingerprint: Mutex::new(None),
             snapshots: Mutex::new(BTreeMap::new()),
+            degraded: Mutex::new(BTreeMap::new()),
             started_at: SystemTime::now(),
         }
     }
@@ -151,11 +165,44 @@ impl Engine {
             })
     }
 
-    fn current_snapshots(&self) -> Vec<Snapshot> {
+    /// Takes a provider's new snapshot; the caller reloads to apply it.
+    pub(crate) fn set_snapshot(&self, snapshot: Snapshot) {
+        self.snapshots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(snapshot.provider.clone(), snapshot);
+    }
+
+    /// Records whether a provider can reach its source (`None`: it can).
+    pub(crate) fn set_degraded(&self, provider: &str, reason: Option<String>) {
+        let mut degraded = self.degraded.lock().unwrap_or_else(PoisonError::into_inner);
+        match reason {
+            Some(reason) => degraded.insert(provider.to_owned(), reason),
+            None => degraded.remove(provider),
+        };
+    }
+
+    /// Serves the stored snapshots until the providers report, so a restart while Docker is
+    /// unreachable keeps its routes (ADR-0018).
+    pub(crate) fn restore_snapshots(&self) {
+        for provider in PROVIDERS {
+            match self.state.load_snapshot(provider) {
+                Ok(Some(snapshot)) => self.set_snapshot(snapshot),
+                Ok(None) => {}
+                Err(err) => {
+                    tracing::warn!(%provider, error = %err, "cannot read the stored provider snapshot");
+                }
+            }
+        }
+    }
+
+    /// The snapshots of the providers `file` enables.
+    fn current_snapshots(&self, file: &Config) -> Vec<Snapshot> {
         self.snapshots
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .values()
+            .filter(|s| enabled(file, &s.provider))
             .cloned()
             .collect()
     }
@@ -239,7 +286,7 @@ impl Engine {
             source,
             mut diagnostics,
         } = loaded;
-        let snapshots = self.current_snapshots();
+        let snapshots = self.current_snapshots(&file);
         for snapshot in &snapshots {
             diagnostics.extend(snapshot.diagnostics.iter().cloned());
         }
@@ -491,18 +538,21 @@ fn referenced_files(config_path: &Path, config: &Config) -> BTreeSet<PathBuf> {
 }
 
 impl Engine {
-    /// Object counts and diagnostics of each provider's latest snapshot.
+    /// Object counts, connection state and diagnostics of each provider's latest snapshot.
     fn provider_status(&self) -> Value {
         let snapshots = self
             .snapshots
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
+        let degraded = self.degraded.lock().unwrap_or_else(PoisonError::into_inner);
         snapshots
             .iter()
             .map(|(name, s)| {
                 (
                     name.clone(),
                     serde_json::json!({
+                        "state": if degraded.contains_key(name) { "degraded" } else { "connected" },
+                        "error": degraded.get(name),
                         "routes": s.fragment.routes.len(),
                         "services": s.fragment.services.len(),
                         "middlewares": s.fragment.middlewares.len(),

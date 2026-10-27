@@ -90,6 +90,10 @@ sha1 = "0.11.0"
 subtle = "2.6.1"
 uuid = { version = "1.29.0", features = ["v7"] }
 
+# Providers (bollard 0.21.1 released 2026-08-16; no TLS features, Docker endpoints are unix sockets or plain tcp://)
+bollard = { version = "0.21.1", default-features = false, features = ["http", "pipe"] }
+futures-util = { version = "0.3.34", default-features = false }
+
 # Operations
 notify = "8.2.1"
 notify-debouncer-full = "0.7.0"

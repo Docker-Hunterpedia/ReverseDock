@@ -100,6 +100,7 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     ));
 
     tracing::info!(version = VERSION, commit = COMMIT, config = %args.config.display(), "starting rdock");
+    engine.restore_snapshots();
     let report = match engine.boot().await {
         Ok(report) => report,
         Err(report) => {
@@ -121,6 +122,10 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         tokio::spawn(async move { plane.refresh_dns(stop_rx).await })
     };
     let (on_change, mut changes) = mpsc::channel(1);
+    let (on_snapshot, mut snapshots) = mpsc::channel(1);
+    let boot_config = engine.config().await.unwrap_or_default();
+    let provider_tasks =
+        crate::providers::start(&engine, &boot_config, &stop.subscribe(), &on_snapshot);
     let mut watcher = (!args.no_watch)
         .then(|| start_watcher(&engine, on_change))
         .flatten();
@@ -139,6 +144,10 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
             }
             Some(()) = changes.recv() => {
                 engine.reload_if_changed("file change").await;
+                warn_if_providers_changed(&engine, &boot_config).await;
+            }
+            Some(()) = snapshots.recv() => {
+                engine.reload("provider").await;
             }
             _ = signals.terminate.recv() => break,
             _ = signals.quit.recv() => break,
@@ -151,11 +160,23 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     shut_down(&engine, &plane, &mut signals).await;
     let _ = stop.send(true);
     let _ = dns.await;
+    for task in provider_tasks {
+        let _ = task.await;
+    }
     if let Some(admin) = admin {
         let _ = admin.await;
     }
     tracing::info!("rdock stopped");
     Ok(ExitCode::SUCCESS)
+}
+
+/// Provider settings are read at start; say so when a reload changes them.
+async fn warn_if_providers_changed(engine: &Engine, boot: &rdock_model::Config) {
+    if let Some(config) = engine.config().await
+        && config.providers != boot.providers
+    {
+        tracing::warn!("`providers` changed; restart rdock to apply the new provider settings");
+    }
 }
 
 async fn start_admin(
