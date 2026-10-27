@@ -29,7 +29,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 **Done when:** e2e suite proves h1/h2/h2c/WebSocket/SSE/gRPC proxying, forwarded-header rules, reload under load (no failed requests in a 60 s `oha` run during 20 reloads), listener-change restart path under Docker and systemd, smuggling test vectors rejected, differential fuzz target exists.
 
 ## v0.2 — Docker-native (P0 providers)
-**Scope:** W-DKR-01…08, B-DKR-01, B-SEC-10, B-CFG-11, W-PLAT-02 (zero-config mode), F-MGMT-03 (`rdock migrate traefik`: labels → YAML preview), Traefik subset table in architecture §11, diagnostics for unsupported labels, Compose examples (basic, Dokploy, Coolify, Portainer), socket-proxy docs.
+**Scope:** W-DKR-01…08, B-DKR-01, B-SEC-10, B-CFG-11, W-PLAT-02 (zero-config mode), F-MGMT-03 (`rdock migrate traefik`: labels → YAML preview), Traefik subset table in architecture §11, diagnostics for unsupported labels, Compose examples (basic, Dokploy, Coolify, Portainer), socket-proxy docs. The provider merge of [ADR-0018](decisions/0018-docker-provider-and-merge.md), which also brings extra configuration files (`providers.file.paths`). Plan and issues: the [v0.2 milestone](https://github.com/Docker-Hunterpedia/ReverseDock/milestone/3).
 **Done when:** `tests/conformance/traefik-labels` (≥ 40 Compose fixtures) produce the expected routing tables; container start/stop/health events reflected within 1 s; Docker socket loss does not drop traffic.
 
 ## v0.3 — Automatic HTTPS (P0 TLS)
