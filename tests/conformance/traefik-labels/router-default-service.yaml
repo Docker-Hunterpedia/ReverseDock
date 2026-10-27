@@ -1,0 +1,19 @@
+description: "A router without any service label gets a service named after the container, on its only port."
+containers:
+  - name: "blog"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.blog.rule: "Host(`blog.example.com`)"
+    networks:
+      web: "172.18.0.4"
+    ports:
+      - 2368
+expect:
+  routes:
+    blog:
+      service: "blog"
+  services:
+    blog:
+      backends:
+        - address: "172.18.0.4:2368"
+          weight: 1

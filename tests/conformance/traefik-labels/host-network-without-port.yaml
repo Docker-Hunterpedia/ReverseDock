@@ -1,0 +1,14 @@
+description: "Host-network containers need a port label."
+containers:
+  - name: "node"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.node.rule: "Host(`node.example.com`)"
+    host_network: true
+    ports:
+      - 9100
+expect:
+  routes:
+    node: {}
+  diagnostics:
+    - "docker.node: service `node`: a container on the host network needs a port label"

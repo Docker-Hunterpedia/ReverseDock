@@ -199,7 +199,8 @@ impl<'a> Scope<'a> {
             if traefik && !self.settings.traefik_labels {
                 continue;
             }
-            if value.contains("${") {
+            // Regular-expression replacements use `${1}` for capture groups (ADR-0016).
+            if value.contains("${") && !key.ends_with(".replacement") {
                 self.warn(
                     &key,
                     "`${…}` references are not allowed in labels; the label is ignored",

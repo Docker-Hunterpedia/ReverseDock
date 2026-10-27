@@ -1,0 +1,22 @@
+description: "basicauth users (as written in Compose after $$ unescaping)."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.auth.basicauth.users: "test:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/,test2:$apr1$d9hr9HBB$4HxwgUir3HP4EsggP/QNo0"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    auth:
+      type: "basic_auth"
+      users:
+        - "test:$apr1$H6uskkkW$IgXLP6ewTrSuBkTrqE8wj/"
+        - "test2:$apr1$d9hr9HBB$4HxwgUir3HP4EsggP/QNo0"

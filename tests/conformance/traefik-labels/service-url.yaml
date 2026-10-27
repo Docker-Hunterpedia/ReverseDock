@@ -1,0 +1,20 @@
+description: "server.url points the service at an explicit address."
+containers:
+  - name: "proxy"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.ext.rule: "Host(`ext.example.com`)"
+      traefik.http.services.ext.loadbalancer.server.url: "https://10.1.2.3:8443/"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    ext: {}
+  services:
+    ext:
+      scheme: "https"
+      backends:
+        - address: "10.1.2.3:8443"
+          weight: 1

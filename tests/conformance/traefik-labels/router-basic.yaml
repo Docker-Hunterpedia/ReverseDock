@@ -1,0 +1,22 @@
+description: "A router and a service with an explicit port."
+containers:
+  - name: "whoami"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.who.rule: "Host(`who.example.com`)"
+      traefik.http.routers.who.service: "who"
+      traefik.http.services.who.loadbalancer.server.port: "80"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    who:
+      match: "Host(`who.example.com`)"
+      service: "who"
+  services:
+    who:
+      backends:
+        - address: "172.18.0.2:80"
+          weight: 1

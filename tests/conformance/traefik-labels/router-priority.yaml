@@ -1,0 +1,17 @@
+description: "Router priority becomes the route priority."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "PathPrefix(`/`)"
+      traefik.http.routers.app.priority: "42"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      priority: 42
+  services:
+    app: {}

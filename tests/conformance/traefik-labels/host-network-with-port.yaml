@@ -1,0 +1,17 @@
+description: "Host-network containers use host_address and the port label."
+containers:
+  - name: "node"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.node.rule: "Host(`node.example.com`)"
+      traefik.http.services.node.loadbalancer.server.port: "9100"
+    host_network: true
+    ports: []
+expect:
+  routes:
+    node: {}
+  services:
+    node:
+      backends:
+        - address: "127.0.0.1:9100"
+          weight: 1

@@ -1,0 +1,13 @@
+description: "${\u2026} in a label is rejected; secrets never come from labels."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`${DOMAIN}`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  diagnostics:
+    - "app.rule\"]: `${\u2026}` references are not allowed in labels"

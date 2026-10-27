@@ -1,0 +1,24 @@
+description: "ratelimit average, burst and period."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.rl.ratelimit.average: "100"
+      traefik.http.middlewares.rl.ratelimit.burst: "50"
+      traefik.http.middlewares.rl.ratelimit.period: "1m"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    rl:
+      type: "rate_limit"
+      average: 100
+      burst: 50
+      period: "1m"

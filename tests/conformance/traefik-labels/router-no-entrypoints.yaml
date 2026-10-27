@@ -1,0 +1,16 @@
+description: "A router without entrypoints uses defaults.listeners (no listeners set)."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      listeners: null
+  services:
+    app: {}

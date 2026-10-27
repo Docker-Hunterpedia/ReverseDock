@@ -1,0 +1,22 @@
+description: "redirectscheme to https, permanent."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.https.redirectscheme.scheme: "https"
+      traefik.http.middlewares.https.redirectscheme.permanent: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    https:
+      type: "redirect"
+      scheme: "https"
+      permanent: true

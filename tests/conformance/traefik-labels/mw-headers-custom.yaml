@@ -1,0 +1,29 @@
+description: "Custom request and response headers; an empty value removes the header."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.h.headers.customrequestheaders.X-Script-Name: "test"
+      traefik.http.middlewares.h.headers.customresponseheaders.X-Custom: "yes"
+      traefik.http.middlewares.h.headers.customresponseheaders.Server: ""
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    h:
+      type: "headers"
+      request:
+        set:
+          x-script-name: "test"
+      response:
+        set:
+          x-custom: "yes"
+        remove:
+          - "server"

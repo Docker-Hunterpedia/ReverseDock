@@ -1,0 +1,17 @@
+description: "tls=false serves the route without TLS."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.tls: "false"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      tls: "off"
+  services:
+    app: {}

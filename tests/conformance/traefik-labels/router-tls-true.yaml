@@ -1,0 +1,18 @@
+description: "tls=true asks for automatic certificates."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.tls: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      tls:
+        auto: true
+  services:
+    app: {}

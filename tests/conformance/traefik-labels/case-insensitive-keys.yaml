@@ -1,0 +1,16 @@
+description: "Label keys are case-insensitive, as in Traefik."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      Traefik.HTTP.Routers.App.Rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      match: "Host(`app.example.com`)"
+  services:
+    app: {}

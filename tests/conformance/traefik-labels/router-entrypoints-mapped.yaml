@@ -1,0 +1,23 @@
+description: "Entrypoint names map through providers.docker.entrypoints."
+settings:
+  entrypoints:
+    https: "websecure"
+    http: "web"
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.entrypoints: "https,http"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      listeners:
+        - "websecure"
+        - "web"
+  services:
+    app: {}

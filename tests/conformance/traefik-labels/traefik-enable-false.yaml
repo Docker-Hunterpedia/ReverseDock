@@ -1,0 +1,13 @@
+description: "traefik.enable=false hides the container even with expose_by_default."
+settings:
+  expose_by_default: true
+containers:
+  - name: "hidden"
+    labels:
+      traefik.enable: "false"
+      traefik.http.routers.x.rule: "Host(`x.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect: {}

@@ -1,0 +1,15 @@
+description: "TCP routers are planned for v0.6 and say so."
+containers:
+  - name: "db"
+    labels:
+      traefik.enable: "true"
+      traefik.tcp.routers.db.rule: "HostSNI(`*`)"
+      traefik.tcp.services.db.loadbalancer.server.port: "5432"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 5432
+expect:
+  diagnostics:
+    - "traefik.tcp.routers.db.rule\"]: TCP and UDP routing are not supported in this version (planned for v0.6)"
+    - "traefik.tcp.services.db.loadbalancer.server.port\"]: TCP and UDP routing"

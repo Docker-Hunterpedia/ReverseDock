@@ -1,0 +1,22 @@
+description: "replacepathregex becomes a rewrite."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.rw.replacepathregex.regex: "^/foo/(.*)"
+      traefik.http.middlewares.rw.replacepathregex.replacement: "/bar/$1"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    rw:
+      type: "rewrite"
+      regex: "^/foo/(.*)"
+      replacement: "/bar/$1"

@@ -1,0 +1,20 @@
+description: "Middlewares outside the subset (chain, plugin) are warnings naming the label."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.c.chain.middlewares: "a,b"
+      traefik.http.middlewares.p.plugin.demo.key: "v"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "c.chain.middlewares\"]: not in the supported Traefik label subset"
+    - "p.plugin.demo.key\"]: not in the supported Traefik label subset"

@@ -1,0 +1,30 @@
+description: "rdock.host/port/path/tls/middlewares make one route and one service."
+containers:
+  - name: "shop-web-1"
+    labels:
+      rdock.enable: "true"
+      rdock.host: "shop.example.com"
+      rdock.path: "/api"
+      rdock.port: "3000"
+      rdock.tls: "off"
+      rdock.middlewares: "secure@file"
+      com.docker.compose.service: "web"
+      com.docker.compose.project: "shop"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+      - 3000
+expect:
+  routes:
+    web-shop:
+      match: "Host(`shop.example.com`) && PathPrefix(`/api`)"
+      service: "web-shop"
+      tls: "off"
+      middlewares:
+        - "secure@file"
+  services:
+    web-shop:
+      backends:
+        - address: "172.18.0.2:3000"
+          weight: 1

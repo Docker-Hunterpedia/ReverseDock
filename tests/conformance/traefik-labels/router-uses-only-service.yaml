@@ -1,0 +1,21 @@
+description: "A router without a service uses the container's only service."
+containers:
+  - name: "api"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.api.rule: "Host(`api.example.com`)"
+      traefik.http.services.backend.loadbalancer.server.port: "8080"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 80
+      - 8080
+expect:
+  routes:
+    api:
+      service: "backend"
+  services:
+    backend:
+      backends:
+        - address: "172.18.0.3:8080"
+          weight: 1

@@ -1,0 +1,32 @@
+description: "rdock.routes/services/middlewares full form."
+containers:
+  - name: "api"
+    labels:
+      rdock.enable: "true"
+      rdock.routes.api.match: "Host(`api.example.com`)"
+      rdock.routes.api.service: "api"
+      rdock.routes.api.middlewares: "robots"
+      rdock.services.api.scheme: "h2c"
+      rdock.middlewares.robots.type: "headers"
+      rdock.middlewares.robots.response.set.X-Robots-Tag: "none"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 4000
+expect:
+  routes:
+    api:
+      middlewares:
+        - "robots"
+  services:
+    api:
+      scheme: "h2c"
+      backends:
+        - address: "172.18.0.3:4000"
+          weight: 1
+  middlewares:
+    robots:
+      type: "headers"
+      response:
+        set:
+          x-robots-tag: "none"
