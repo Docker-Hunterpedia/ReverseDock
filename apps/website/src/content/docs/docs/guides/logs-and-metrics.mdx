@@ -1,0 +1,170 @@
+---
+title: Logs and metrics
+description: Read the application log and the access log, and scrape Prometheus metrics from the admin listener.
+sidebar:
+  order: 11
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock writes two logs and serves Prometheus metrics:
+
+- the **application log** on standard error: start-up, reloads, errors;
+- the **access log** on standard output: one line per request;
+- **metrics** at `/metrics` on the admin listener, `127.0.0.1:2080` by default.
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+
+observability:
+  access_log:
+    format: json
+    redact: [authorization, proxy-authorization, cookie, set-cookie, x-api-key]
+  metrics:
+    prometheus: true
+
+admin:
+  listener: 127.0.0.1:2080
+```
+
+`format: json`, `prometheus: true` and the admin listener address are the defaults; they are written out here to show where they live.
+
+## Application log
+
+The application log goes to standard error. Its format is set on the command line, not in `rdock.yaml`:
+
+| Flag | Variable | Values | Default |
+|---|---|---|---|
+| `--log-format` | `RDOCK_LOG_FORMAT` | `auto`, `json`, `text` | `auto`: JSON when standard error is not a terminal (containers, systemd), text otherwise |
+| `--log` | `RDOCK_LOG` | a filter such as `info`, `warn` or `info,rdock_proxy=debug` | `info` |
+
+A JSON line:
+
+```json
+{"timestamp":"2026-10-27T09:12:03.746192Z","level":"INFO","message":"rdock is ready","generation":1,"origin":"file","target":"rdock::run"}
+```
+
+Lines worth alerting on include `configuration rejected; the previous one stays in use` and `the configuration file cannot be used; serving the last-known-good configuration`. See [Reload the configuration](/docs/guides/reloads/).
+
+## Access log
+
+Each request produces one line on standard output, written by a separate thread so a slow log consumer never slows down requests. If the consumer cannot keep up, lines are dropped rather than queued without limit.
+
+A JSON line, wrapped here for reading:
+
+```json
+{"ts":"2026-10-27T09:15:05.236Z","request_id":"01a17a37-9454-71fc-8be2-5edc61e6661c",
+ "client_ip":"198.51.100.7","method":"GET","host":"app.example.com","path":"/",
+ "query_len":0,"proto":"HTTP/2","status":200,"bytes_in":0,"bytes_out":579,
+ "duration_ms":2.52,"listener":"websecure","route":"app","service":"app",
+ "upstream":"10.0.0.5:3000","tls_version":"TLSv1_3",
+ "tls_cipher":"TLS13_CHACHA20_POLY1305_SHA256","sni":"app.example.com",
+ "user_agent":"curl/8.7.1"}
+```
+
+| Field | Meaning |
+|---|---|
+| `ts` | When the request started, RFC 3339 in UTC. |
+| `request_id` | The request ID, also sent to the backend and to the client in `x-request-id`. |
+| `client_ip` | The client IP after [trusted-proxy handling](/docs/guides/behind-a-proxy/). |
+| `method`, `host`, `path`, `proto` | The request as received. `host` has no port. |
+| `query_len` | Length of the query string. The query itself is not logged, because it often carries tokens. |
+| `status` | Status sent to the client. |
+| `bytes_in`, `bytes_out` | Request and response body bytes. |
+| `duration_ms` | Total time in milliseconds. |
+| `listener`, `route`, `service`, `upstream` | Where the request went. `route` and `service` are missing when no route matched; `upstream` is the backend address. |
+| `tls_version`, `tls_cipher`, `sni` | TLS details, on TLS listeners. |
+| `user` | The user authenticated by a middleware such as `basic_auth`. |
+| `user_agent`, `referer` | Request headers. `referer` is logged without its query string. |
+| `cf_ray` | The `CF-Ray` request header, which Cloudflare adds. |
+| `error` | The error that ended the request, if any. |
+
+Fields without a value are left out.
+
+`redact` lists header names whose values are replaced by `***` in the log. The default list is `authorization`, `proxy-authorization`, `cookie` and `set-cookie`; setting `redact` replaces it, so repeat these when you add your own.
+
+`format: text` writes one line per request in a compact text form, and `format: off` turns the access log off.
+
+## Metrics
+
+Prometheus metrics are served at `/metrics` on the admin listener:
+
+```sh
+curl -s http://127.0.0.1:2080/metrics | grep '^rdock_config'
+```
+
+```text
+rdock_config_generation 1
+rdock_config_reloads_total{result="applied"} 1
+```
+
+| Metric | Type | Labels |
+|---|---|---|
+| `rdock_http_requests_total` | counter | `listener`, `route`, `service`, `method`, `status_class` |
+| `rdock_http_request_duration_seconds` | histogram | `listener`, `route` |
+| `rdock_upstream_errors_total` | counter | `service`, `kind` |
+| `rdock_connections_open` | gauge | `listener` |
+| `rdock_connections_total` | counter | `listener` |
+| `rdock_tls_handshake_errors_total` | counter | `listener` |
+| `rdock_config_generation` | gauge | |
+| `rdock_config_reloads_total` | counter | `result` |
+| `rdock_cert_expiry_timestamp_seconds` | gauge | `name` |
+| `rdock_build_info` | gauge | `version`, `commit` |
+
+Label values come from your configuration (listener, route and service names) or from small fixed sets: `status_class` is `1xx` to `5xx`, and methods other than the standard ones are counted as `OTHER`. Request data never becomes a label, so the number of series stays bounded. Details are in the [metrics reference](/docs/reference/metrics/).
+
+With `observability.metrics.prometheus: false`, `/metrics` answers `404`.
+
+## Scrape with Prometheus
+
+When Prometheus runs on the same machine:
+
+```yaml title="prometheus.yml"
+scrape_configs:
+  - job_name: rdock
+    static_configs:
+      - targets: ["127.0.0.1:2080"]
+```
+
+`/metrics`, `/healthz` and `/readyz` need no token; the API under `/api/v1/` does. If Prometheus runs elsewhere, for example in another container, the admin listener must listen on an address it can reach:
+
+```yaml title="rdock.yaml (excerpt)"
+admin:
+  listener: 10.0.0.2:2080
+```
+
+`rdock validate` then warns that the admin API is reachable from the network. Allow only the Prometheus host to reach that port, with a firewall or a private network, and keep the admin token secret.
+
+Example queries:
+
+```text
+sum by (route) (rate(rdock_http_requests_total{status_class="5xx"}[5m]))
+histogram_quantile(0.95, sum by (le, route) (rate(rdock_http_request_duration_seconds_bucket[5m])))
+increase(rdock_config_reloads_total{result="rejected"}[15m]) > 0
+```
+
+## Tracing <Status planned="v0.4" />
+
+OpenTelemetry tracing (`observability.tracing`) is planned for v0.4. `rdock validate` accepts the section with a warning and `rdock run` refuses it.
+
+## Related
+
+- [`observability` reference](/docs/reference/configuration/observability/) and [`admin` reference](/docs/reference/configuration/admin/)
+- [Metrics reference](/docs/reference/metrics/)
+- [Troubleshooting](/docs/operations/troubleshooting/)

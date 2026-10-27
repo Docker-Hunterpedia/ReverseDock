@@ -1,0 +1,146 @@
+---
+title: Backends and load balancing
+description: Point a service at backends by IP, DNS name or Unix socket, over HTTP, HTTPS or h2c, and spread requests by weight.
+sidebar:
+  order: 6
+---
+
+import Status from '../../../../components/Status.astro';
+
+A service is the pool of backends that answers a route. This guide covers how to address backends, which protocol ReverseDock speaks to them, and how requests are spread across them.
+
+## What you need
+
+- A route, as in [Route a domain to an app](/docs/guides/route-a-domain/).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+  docs:
+    match: "Host(`docs.example.com`)"
+    service: docs
+  billing:
+    match: "Host(`billing.example.com`)"
+    service: billing
+
+services:
+  app:
+    backends:
+      - { address: "10.0.0.5:3000", weight: 3 }
+      - { address: "10.0.0.6:3000" }
+      - { address: "app-3.internal:3000" }
+  docs:
+    backends: [{ address: "unix:///run/docs/http.sock" }]
+  billing:
+    scheme: https
+    tls:
+      server_name: billing.internal.example.com
+      ca_file: /etc/rdock/certs/internal-ca.pem
+    backends: [{ address: "10.0.1.20:8443" }]
+```
+
+## Backend addresses
+
+| Form | Example | Notes |
+|---|---|---|
+| IPv4 and port | `10.0.0.5:3000` | |
+| IPv6 and port | `[2001:db8::5]:3000` | Brackets are required. |
+| DNS name and port | `app-3.internal:3000`, `app:3000` | Container names on a Docker network work too. |
+| Unix socket | `unix:///run/docs/http.sock` | The path must be absolute. |
+
+**DNS names** are resolved when a configuration is applied and again every 10 seconds, so a container that restarts with a new IP address is picked up without a reload. A lookup that fails or takes longer than 2 seconds keeps the previous addresses and logs `cannot resolve backend` or `backend lookup timed out`. When a name resolves to several addresses, each address is a backend with the weight of the entry. A name that has never resolved leaves the service without backends, and its requests get `503`.
+
+**Unix sockets** need ReverseDock to have permission to open the socket file. In a container, mount the socket's directory into the ReverseDock container.
+
+## Protocols
+
+`scheme` sets what ReverseDock speaks to the backends of a service:
+
+| `scheme` | Protocol | Use it for |
+|---|---|---|
+| `http` (default) | HTTP/1.1 in clear text | Most applications. |
+| `https` | TLS; HTTP/2 when the backend offers it through ALPN, otherwise HTTP/1.1 | Backends that only accept TLS, or traffic that crosses an untrusted network. |
+| `h2c` | HTTP/2 in clear text | gRPC servers without TLS. See [WebSockets, SSE and gRPC](/docs/guides/websockets-sse-grpc/). |
+
+The protocol between the client and ReverseDock is independent: a client on HTTP/2 can be served by an HTTP/1.1 backend.
+
+## TLS to backends
+
+With `scheme: https`, ReverseDock verifies the backend's certificate and host name against the system's trusted roots. The `tls` block changes that:
+
+- **`server_name`**: the name sent in SNI and checked against the certificate, when it differs from the host in `address` (always set it when the address is an IP).
+- **`ca_file`**: a PEM bundle of CA certificates to trust instead of the system roots, for an internal CA.
+- **`verify: false`**: no verification at all.
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  legacy:
+    scheme: https
+    tls: { verify: false }
+    backends: [{ address: "10.0.1.30:8443" }]
+```
+
+:::danger[`verify: false` gives up the protection of TLS]
+Anyone who can intercept the traffic between ReverseDock and the backend can read and change it. `rdock validate` warns about it. Prefer `ca_file` with the CA that signed the backend's certificate.
+:::
+
+A backend whose certificate fails verification gets no request, and the client receives `502`. Client certificates to backends (`tls.cert_file`, `tls.key_file`) <Status planned="v0.4" /> are accepted by `rdock validate` with a warning and refused by `rdock run`.
+
+## Weights and balancing
+
+Each backend has a `weight`, `1` by default. In the `app` service above, `10.0.0.5` gets 3 of every 5 requests and the other two get 1 each.
+
+`load_balancer.policy` chooses how:
+
+- **`round_robin`** (default): smooth weighted round-robin. Over each cycle every backend gets its share, and the requests of a heavy backend are spread out rather than sent in a row.
+- **`random`**: weighted random choice.
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    load_balancer: { policy: random }
+    backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
+```
+
+Other policies (`least_conn`, `least_requests`, `p2c`, `ip_hash`, `header_hash`, `cookie_hash`) <Status planned="v0.4" />, health checks, retries, sticky sessions and weighted `split` between services are planned for v0.4. Until then, a backend that is down still gets its share of requests, and those requests fail with `502`. See the [roadmap](/docs/project/roadmap/).
+
+## The `Host` header
+
+By default the backend receives the `Host` header the client sent, which is what most applications expect. Set `pass_host_header: false` to send the backend's own address instead: its configured name, with the port unless it is the default for the scheme, or `localhost` for a Unix socket.
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  storage:
+    pass_host_header: false
+    backends: [{ address: "storage.internal:9000" }]
+```
+
+Use it for backends that serve a fixed virtual host, such as object storage or another proxy.
+
+## Check that it works
+
+Send a few requests and read the `upstream` field of the [access log](/docs/guides/logs-and-metrics/), which records the address each request went to:
+
+```sh
+for i in 1 2 3 4 5; do curl -s -o /dev/null https://app.example.com/; done
+```
+
+Connections that could not be established are counted in the metric `rdock_upstream_errors_total`, labelled with the `service` and a `kind` of `connect`, or `timeout` when the connection attempt timed out.
+
+## Related
+
+- [Timeouts and limits](/docs/guides/timeouts-and-limits/)
+- [`services` reference](/docs/reference/configuration/services/)

@@ -1,0 +1,120 @@
+---
+title: systemd
+description: Run ReverseDock as a hardened systemd service with the unit from the repository.
+sidebar:
+  order: 4
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+The repository ships a unit file, [`deploy/systemd/rdock.service`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/deploy/systemd/rdock.service). It runs `rdock` as an unprivileged, temporary user with only the right to bind ports below 1024, tells systemd when the proxy is ready, and reloads on `systemctl reload`.
+
+## What you need
+
+- A Linux machine with systemd.
+- The `rdock` binary in `/usr/local/bin/rdock` (see [Binary](/docs/install/binary/)).
+- A configuration file. Validate it with `rdock validate --strict` before the first start.
+
+## Install
+
+<Steps>
+
+1. Download the unit file for your release:
+
+   ```sh
+   curl -fsSLO https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/v0.1.0-alpha.3/deploy/systemd/rdock.service
+   ```
+
+2. Install the configuration and the unit:
+
+   ```sh
+   sudo install -D -m 0644 rdock.yaml /etc/rdock/rdock.yaml
+   sudo install -m 0644 rdock.service /etc/systemd/system/rdock.service
+   sudo rdock validate --strict /etc/rdock/rdock.yaml
+   ```
+
+3. Start it now and at every boot:
+
+   ```sh
+   sudo systemctl daemon-reload
+   sudo systemctl enable --now rdock
+   ```
+
+4. Check it:
+
+   ```sh
+   systemctl status rdock
+   sudo rdock status
+   ```
+
+   `systemctl status` shows `active (running)` once rdock has bound its listeners and applied the configuration. `rdock status` reads the admin token from `/var/lib/rdock`, which only root can read.
+
+</Steps>
+
+## What the unit does
+
+```ini title="rdock.service (excerpt)"
+[Service]
+Type=notify
+ExecStart=/usr/local/bin/rdock run --config /etc/rdock/rdock.yaml --data-dir /var/lib/rdock
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+TimeoutStopSec=15s
+Environment=RDOCK_LOG_FORMAT=json
+
+DynamicUser=yes
+StateDirectory=rdock
+StateDirectoryMode=0700
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+NoNewPrivileges=yes
+ProtectSystem=strict
+```
+
+**`Type=notify`.** rdock tells systemd it is ready only after the listeners are bound and the configuration is applied. `systemctl start` returns at that point, and units ordered after `rdock` start when it can serve. On shutdown rdock reports that it is stopping and lets open requests finish for `lifecycle.drain_timeout` (8 seconds by default); keep that below `TimeoutStopSec`.
+
+**`DynamicUser=yes`.** systemd creates a user for the service when it starts and removes it when it stops. There is no account to manage, and the process owns no files outside its state directory. `StateDirectory=rdock` creates `/var/lib/rdock` for that user with mode `0700`: history, last-known-good copy and admin token live there and survive restarts. With `ProtectSystem=strict` the rest of the file system is read-only to the service.
+
+**`CAP_NET_BIND_SERVICE`.** The only capability granted, so the unprivileged process can bind ports 80 and 443. `CapabilityBoundingSet` makes sure it can never gain any other, and `NoNewPrivileges` blocks setuid programs.
+
+**Reload.** `ExecReload` sends `SIGHUP`. rdock also reloads by itself when `rdock.yaml` or a file it references changes.
+
+The unit sets further hardening options (`PrivateTmp`, `ProtectHome`, `MemoryDenyWriteExecute`, a system-call filter and `LimitNOFILE=1048576`); read the file for the full list.
+
+## Files the service reads
+
+Because the user is created at start, files under `/etc/rdock` must be readable by any user, or by a group you add to the service. For private keys, use a group:
+
+```sh
+sudo groupadd --system rdock-certs
+sudo chgrp rdock-certs /etc/rdock/certs/example.key
+sudo chmod 0640 /etc/rdock/certs/example.key
+sudo systemctl edit rdock
+```
+
+In the editor, add:
+
+```ini title="override.conf"
+[Service]
+SupplementaryGroups=rdock-certs
+```
+
+Then `sudo systemctl restart rdock`. Secrets referenced with `${file:/run/secrets/...}` need the same treatment.
+
+## Reload, restart and logs
+
+```sh
+sudo systemctl reload rdock        # re-read the configuration (SIGHUP)
+sudo rdock reload                  # the same, and prints the result
+sudo systemctl restart rdock       # stop and start
+journalctl -u rdock -f             # application and access log (JSON)
+```
+
+`rdock reload` prints `applied generation N`, or the errors and `rejected: …; generation N stays in use`. A rejected configuration never replaces the running one. Listener changes, such as a new port, apply on reload without a restart.
+
+## Related
+
+- [Upgrade](/docs/install/upgrade/)
+- [Reloads](/docs/guides/reloads/)
+- [Files and directories](/docs/reference/files/)
+- [Production checklist](/docs/operations/production-checklist/)

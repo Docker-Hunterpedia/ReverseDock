@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="ReverseDock mark: two opposing arrows on an amber square">
+  <rect x="0" y="0" width="512" height="512" rx="112" fill="#F58F0A"/>
+  <rect x="0" y="0" width="512" height="256" rx="112" fill="#FFFFFF" opacity="0.08"/>
+  <path d="M136 206 H340 M290 150 L346 206 L290 262" fill="none" stroke="#1C1917" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M376 306 H172 M222 250 L166 306 L222 362" fill="none" stroke="#1C1917" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

@@ -1,0 +1,121 @@
+---
+title: WebSockets, SSE and gRPC
+description: Proxy long-lived connections, event streams and gRPC, and set the timeouts they need.
+sidebar:
+  order: 7
+---
+
+WebSockets, server-sent events (SSE) and gRPC work through ordinary routes; nothing has to be turned on. What they need is timeouts that fit connections which stay open, and for gRPC, HTTP/2 on both sides.
+
+## What you need
+
+- A route for each application, as in [Route a domain to an app](/docs/guides/route-a-domain/).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure:
+    address: ":443"
+    tls: {}
+    timeouts: { read: 5m }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  chat:
+    match: "Host(`chat.example.com`)"
+    service: chat
+    timeouts: { read: 5m }
+  events:
+    match: "Host(`app.example.com`) && PathPrefix(`/events/`)"
+    service: app
+    timeouts: { read: 5m }
+  grpc:
+    match: "Host(`grpc.example.com`)"
+    service: grpc
+
+services:
+  chat:
+    backends: [{ address: "10.0.0.7:8080" }]
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+  grpc:
+    scheme: h2c
+    backends: [{ address: "10.0.0.8:50051" }]
+```
+
+## WebSockets
+
+A WebSocket starts as an HTTP/1.1 request with `Upgrade: websocket`. ReverseDock forwards the handshake, the backend answers `101 Switching Protocols`, and from then on the connection carries WebSocket frames in both directions. Text and binary messages pass through unchanged.
+
+The backend sees `X-Forwarded-Proto: wss` on the handshake (`ws` on a plain listener), so applications that check the origin scheme work.
+
+Check the handshake with curl, forcing HTTP/1.1:
+
+```sh
+curl --http1.1 -si --max-time 2 \
+  -H 'Connection: Upgrade' -H 'Upgrade: websocket' \
+  -H 'Sec-WebSocket-Version: 13' -H 'Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==' \
+  https://chat.example.com/ | head -1
+```
+
+```text
+HTTP/1.1 101 Switching Protocols
+```
+
+curl stops after two seconds, because the connection stays open.
+
+## Server-sent events
+
+An SSE response (`Content-Type: text/event-stream`) is streamed to the client as the backend writes it; ReverseDock does not buffer it. The `compress` middleware never compresses event streams, so it is safe to have it on the same route.
+
+## Timeouts for long-lived connections
+
+Read timeouts in ReverseDock are per read, not totals: they limit how long a connection may stay silent, not how long it may last.
+
+- **Client side:** `listeners.<name>.timeouts.read`, 60 seconds by default, is the longest wait for data from the client while a request or upgraded connection is open.
+- **Backend side:** the route's `timeouts.read` (or the service's `timeouts.read`), 60 seconds by default, is the longest wait for data from the backend.
+
+A WebSocket or event stream that is quiet for longer than these is closed. There are two ways to keep it open:
+
+1. Send something more often than the timeout: WebSocket ping frames (the client answers with pong frames, so data flows both ways), or an SSE comment line (`: keep-alive`) every 30 seconds or so.
+2. Raise the timeouts, as in the configuration above, which allows 5 minutes of silence.
+
+Raising the listener timeout affects every route on that listener. The header deadline (`timeouts.request_header`, 10 seconds) only covers the time to receive request headers and does not apply once a connection is upgraded. See [Timeouts and limits](/docs/guides/timeouts-and-limits/).
+
+## gRPC
+
+gRPC runs over HTTP/2 and uses trailers for its status. ReverseDock passes trailers through, so `grpc-status` reaches the client.
+
+**Between the client and ReverseDock**, HTTP/2 is used:
+
+- on a TLS listener, when the client offers `h2` through ALPN (gRPC clients do);
+- on a plain listener, when the client speaks HTTP/2 without TLS (h2c with prior knowledge).
+
+**Between ReverseDock and the backend**, set the service's `scheme`:
+
+- `h2c` for a gRPC server without TLS, as in the configuration above;
+- `https` for a gRPC server with TLS; ReverseDock offers `h2` through ALPN. See [Backends and load balancing](/docs/guides/backends/#tls-to-backends).
+
+With the default `scheme: http`, ReverseDock speaks HTTP/1.1 to the backend, which gRPC servers do not accept.
+
+A streaming RPC is a long-lived request: for streams that can be silent for more than a minute, raise the route's `timeouts.read` as for WebSockets.
+
+The `compress` middleware does not touch gRPC responses; gRPC compresses messages itself.
+
+Check a gRPC route with [grpcurl](https://github.com/fullstorydev/grpcurl), if the server has reflection enabled:
+
+```sh
+grpcurl grpc.example.com:443 list
+```
+
+## Related
+
+- [Timeouts and limits](/docs/guides/timeouts-and-limits/)
+- [Compression](/docs/guides/compression/)
+- [HTTP behaviour](/docs/reference/http-behaviour/)

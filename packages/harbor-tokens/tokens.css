@@ -1,0 +1,60 @@
+/* Harbor UI tokens: the source of truth is docs/08-design-system.md §1.
+   Light values on :root; dark values when the page sets data-theme="dark",
+   or follows a dark system setting with no explicit theme. */
+:root {
+  --rd-bg: #fafaf9;
+  --rd-surface: #ffffff;
+  --rd-surface-2: #f5f5f4;
+  --rd-border: #e7e5e4;
+  --rd-text: #1c1917;
+  --rd-text-2: #57534e;
+  --rd-text-3: #78716c;
+  --rd-accent: #f58f0a;
+  --rd-accent-hover: #d47400;
+  --rd-accent-soft: #fff4e0;
+  --rd-accent-ink: #1c1917;
+  --rd-accent-text: #a85a00;
+  --rd-link: #1d4ed8;
+  --rd-ok: #15803d;
+  --rd-ok-text: #166534;
+  --rd-warn: #b45309;
+  --rd-danger: #b91c1c;
+  --rd-info: #1d4ed8;
+  --rd-focus: #a85a00;
+  --rd-code-bg: #1c1917;
+  --rd-code-fg: #e7e5e4;
+  --rd-code-border: #2e2a27;
+
+  --rd-font-sans: Inter, "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --rd-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
+
+  --rd-radius-sm: 6px;
+  --rd-radius-md: 8px;
+  --rd-radius-lg: 12px;
+  --rd-radius-pill: 999px;
+  --rd-shadow-overlay: 0 8px 24px rgba(0, 0, 0, 0.12);
+}
+
+:root[data-theme="dark"] {
+  --rd-bg: #0c0a09;
+  --rd-surface: #1c1917;
+  --rd-surface-2: #292524;
+  --rd-border: #2e2a27;
+  --rd-text: #fafaf9;
+  --rd-text-2: #a8a29e;
+  --rd-text-3: #8a847e;
+  --rd-accent: #ffa826;
+  --rd-accent-hover: #ffb84d;
+  --rd-accent-soft: #3a2a10;
+  --rd-accent-text: #ffa826;
+  --rd-link: #7db0ff;
+  --rd-ok: #4ade80;
+  --rd-ok-text: #4ade80;
+  --rd-warn: #fbbf24;
+  --rd-danger: #f87171;
+  --rd-info: #60a5fa;
+  --rd-focus: #ffa826;
+  --rd-code-bg: #141210;
+  --rd-shadow-overlay: none;
+  color-scheme: dark;
+}

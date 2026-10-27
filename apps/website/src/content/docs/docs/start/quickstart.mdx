@@ -1,0 +1,250 @@
+---
+title: Quickstart
+description: Run ReverseDock in front of one application with Docker Compose, check it with curl, and change the configuration while it runs.
+sidebar:
+  order: 2
+---
+
+import { Steps } from '@astrojs/starlight/components';
+
+In five minutes you will run ReverseDock with Docker Compose in front of a small test application, send it a request, and change the configuration without restarting anything.
+
+## What you need
+
+- Docker with the Compose plugin (`docker compose version` prints a version).
+- Port 80 free on your machine. If it is taken, change `"80:80"` to `"8080:80"` below and add `:8080` to the URLs.
+- `curl`.
+
+The backend is [`traefik/whoami`](https://github.com/traefik/whoami), a tiny server that answers with the request it received, so you can see what ReverseDock forwards.
+
+## Set it up
+
+<Steps>
+
+1. Create a project directory with a `config` directory inside it:
+
+   ```sh
+   mkdir -p rdock-quickstart/config
+   cd rdock-quickstart
+   ```
+
+2. Save this as `compose.yaml`:
+
+   ```yaml title="compose.yaml"
+   name: rdock-quickstart
+
+   services:
+     rdock:
+       image: ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3
+       restart: unless-stopped
+       depends_on: [whoami]
+       ports:
+         - "80:80"
+       volumes:
+         - ./config:/etc/rdock:ro
+         - rdock-data:/var/lib/rdock
+       read_only: true
+       cap_drop: [ALL]
+       security_opt: ["no-new-privileges:true"]
+
+     whoami:
+       image: traefik/whoami:v1.11
+       restart: unless-stopped
+
+   volumes:
+     rdock-data:
+   ```
+
+   `depends_on` starts `whoami` first, so its name resolves when ReverseDock starts. The `config` directory is mounted rather than the single file. Many editors save by replacing the file, and a container that mounts one file keeps seeing the old one. `rdock-data` holds the configuration history, the last-known-good copy and the admin token.
+
+3. Save this as `config/rdock.yaml`:
+
+   ```yaml title="rdock.yaml"
+   listeners:
+     web: { address: ":80" }
+
+   defaults:
+     listeners: [web]
+     tls: off
+
+   routes:
+     whoami:
+       match: "Host(`whoami.localhost`)"
+       service: whoami
+
+   services:
+     whoami:
+       backends:
+         - address: "whoami:80"
+   ```
+
+   One listener on port 80, one route for the host `whoami.localhost`, and one service that points at the `whoami` container. `tls: off` says these routes are plain HTTP; without it, every route expects a certificate.
+
+4. Check the file before starting:
+
+   ```sh
+   docker compose run --rm --no-deps rdock validate --strict /etc/rdock/rdock.yaml
+   ```
+
+   ```text
+   /etc/rdock/rdock.yaml: valid
+   ```
+
+5. Start both containers:
+
+   ```sh
+   docker compose up -d
+   ```
+
+</Steps>
+
+## Check that it works
+
+Send a request for the host the route matches:
+
+```sh
+curl -i -H 'Host: whoami.localhost' http://localhost/
+```
+
+The answer comes from `whoami`, through ReverseDock. The IDs and addresses differ on your machine:
+
+```text
+HTTP/1.1 200 OK
+Content-Type: text/plain; charset=utf-8
+x-request-id: 01a17a36-7869-76a6-ad2d-3d24c92aa277
+
+Hostname: 1c558379fccc
+...
+GET / HTTP/1.1
+Host: whoami.localhost
+User-Agent: curl/8.7.1
+Accept: */*
+X-Forwarded-For: 192.168.65.1
+X-Forwarded-Host: whoami.localhost
+X-Forwarded-Port: 80
+X-Forwarded-Proto: http
+X-Real-Ip: 192.168.65.1
+X-Request-Id: 01a17a36-7869-76a6-ad2d-3d24c92aa277
+```
+
+ReverseDock added the `X-Forwarded-*` headers and a request ID. A request for any other host gets ReverseDock's 404 page, because no route matches:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' http://localhost/
+```
+
+```text
+404
+```
+
+Ask the running proxy for its state. The admin API listens on `127.0.0.1:2080` inside the container, and `rdock status` reads the token from the data volume:
+
+```sh
+docker compose exec rdock rdock status
+```
+
+```text
+rdock 0.1.0-alpha.3 (066f9c703c3b)
+ready        true
+generation   1
+config       /etc/rdock/rdock.yaml (file)
+started      2026-10-26T21:55:43.722Z
+listener     web :80 http (1 routes)
+last reload  applied by start at 2026-10-26T21:55:43.733Z
+```
+
+## Change the configuration while it runs
+
+Add two security headers to every response of the route. Replace `config/rdock.yaml` with:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  whoami:
+    match: "Host(`whoami.localhost`)"
+    service: whoami
+    middlewares: [security-headers]
+
+services:
+  whoami:
+    backends:
+      - address: "whoami:80"
+
+middlewares:
+  security-headers:
+    type: headers
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+        Referrer-Policy: strict-origin-when-cross-origin
+```
+
+ReverseDock watches the file and applies the change within a second. The log shows it:
+
+```sh
+docker compose logs rdock | grep 'configuration applied' | tail -1
+```
+
+```text
+rdock-1  | {"timestamp":"…","level":"INFO","message":"configuration applied","generation":2,"trigger":"file change","summary":"routes changed: whoami; middlewares added: security-headers","target":"rdock::engine"}
+```
+
+If your setup does not deliver file events into the container, apply it yourself:
+
+```sh
+docker compose exec rdock rdock reload
+```
+
+```text
+applied generation 2
+```
+
+The response now carries the headers:
+
+```sh
+curl -sI -H 'Host: whoami.localhost' http://localhost/
+```
+
+```text
+HTTP/1.1 200 OK
+referrer-policy: strict-origin-when-cross-origin
+x-content-type-options: nosniff
+x-request-id: 01a17a36-be4f-74e4-b5e9-d2ef9d01f290
+```
+
+Requests in flight during a reload finish on the configuration they started with; none are dropped.
+
+## When a change is wrong
+
+Change `service: whoami` in the route to `service: whomai` and save. ReverseDock refuses the new file and keeps serving the previous configuration:
+
+```sh
+docker compose exec rdock rdock reload
+```
+
+```text
+error: routes.whoami.service: service `whomai` does not exist
+    did you mean `whoami`?
+rejected: the configuration has errors; generation 2 stays in use
+```
+
+Fix the typo and save again.
+
+## Clean up
+
+```sh
+docker compose down -v
+```
+
+## Next steps
+
+- [Concepts](/docs/start/concepts/): how listeners, routes, services and middlewares fit together.
+- [Route a domain to an app](/docs/guides/route-a-domain/) and [Several sites on one server](/docs/guides/multiple-sites/).
+- [Your own TLS certificate](/docs/guides/tls-certificates/): HTTPS with a certificate you provide. Automatic certificates arrive in v0.3.
+- [Docker Compose install](/docs/install/compose/): the setup above, ready for a server.

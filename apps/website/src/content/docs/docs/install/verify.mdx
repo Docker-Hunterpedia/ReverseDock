@@ -1,0 +1,98 @@
+---
+title: Verify a download
+description: Check release archives and container images with checksums, cosign signatures and GitHub build-provenance attestations.
+sidebar:
+  order: 6
+---
+
+Every release is built and signed by the [release workflow](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/.github/workflows/release.yml) in GitHub Actions, without long-lived signing keys. You can check that what you downloaded is what that workflow built, from this repository, for a release tag.
+
+| Artifact | What proves it |
+|---|---|
+| `rdock-<version>-<target>.tar.gz` | Listed in `SHA256SUMS`, and a GitHub build-provenance attestation |
+| `SHA256SUMS` | Keyless cosign signature in `SHA256SUMS.sigstore.json` |
+| `ghcr.io/docker-hunterpedia/rdock:<version>` | Keyless cosign signature and a build-provenance attestation, both stored in the registry |
+| `rdock-<version>.spdx.json` | SPDX SBOM of the Rust dependencies, for your own scanning |
+
+## What you need
+
+- [cosign](https://docs.sigstore.dev/cosign/system_config/installation/) for signatures.
+- The [GitHub CLI](https://cli.github.com/) (`gh`) for attestations.
+- `sha256sum` (Linux) or `shasum` (macOS).
+
+## Release archives
+
+Download the archive for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json` from the [release page](https://github.com/Docker-Hunterpedia/ReverseDock/releases) into one directory:
+
+```sh
+VERSION=0.1.0-alpha.3
+TARGET=x86_64-unknown-linux-musl
+BASE="https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION"
+curl -fsSLO "$BASE/rdock-$VERSION-$TARGET.tar.gz"
+curl -fsSLO "$BASE/SHA256SUMS"
+curl -fsSLO "$BASE/SHA256SUMS.sigstore.json"
+```
+
+**1. The checksums were signed by the release workflow of this repository, for a tag:**
+
+```sh
+cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
+```
+
+```text
+Verified OK
+```
+
+The identity ties the signature to `.github/workflows/release.yml` running for a `v*` tag. A repository ruleset lets only administrators create release tags.
+
+**2. Your archive matches the signed checksums:**
+
+```sh
+sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 --ignore-missing -c SHA256SUMS
+```
+
+```text
+rdock-0.1.0-alpha.3-x86_64-unknown-linux-musl.tar.gz: OK
+```
+
+**3. The archive was built by GitHub Actions from this repository:**
+
+```sh
+gh attestation verify "rdock-$VERSION-$TARGET.tar.gz" --repo Docker-Hunterpedia/ReverseDock
+```
+
+The command exits with status 0 when the attestation matches, and prints the workflow and commit that built the file.
+
+If any step fails, do not run the binary. Download it again from the release page, and report a persistent failure as described in [Security](/docs/project/security/).
+
+## Container images
+
+The image is signed by digest with cosign, using the same workflow identity:
+
+```sh
+cosign verify ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3 \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
+```
+
+cosign lists the checks it performed and prints the signature payload with the image digest. Check the build-provenance attestation too:
+
+```sh
+gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3 --repo Docker-Hunterpedia/ReverseDock
+```
+
+Tags are never overwritten once published, but a tag is still a name. To be certain you deploy what you verified, use the digest that `cosign verify` printed:
+
+```yaml title="compose.yaml (excerpt)"
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3@sha256:<digest>
+```
+
+## Related
+
+- [Binary](/docs/install/binary/)
+- [Docker](/docs/install/docker/)
+- [Security](/docs/project/security/)

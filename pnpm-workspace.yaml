@@ -1,0 +1,6 @@
+packages:
+  - apps/*
+  - packages/*
+
+# Exact versions in package.json; Dependabot proposes updates.
+saveExact: true

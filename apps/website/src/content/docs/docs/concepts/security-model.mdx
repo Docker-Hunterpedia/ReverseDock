@@ -1,0 +1,90 @@
+---
+title: Security model
+description: The trust boundaries of ReverseDock (clients, trusted proxies, backends, the admin API, the configuration and its secrets), the defaults that protect each one, and what is out of scope.
+sidebar:
+  order: 5
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock sits between the internet and your applications, so it treats every party differently. This page lists who is trusted with what, the defaults that hold each boundary, and what ReverseDock does not protect against. To report a vulnerability, follow the [security policy](/docs/project/security/); do not open a public issue.
+
+## Trust boundaries
+
+| Party | Trusted with | Not trusted with |
+|---|---|---|
+| Clients | nothing | their own forwarding headers, request IDs, framing, sizes, speed |
+| Trusted proxies (`security.trusted_proxies`) | reporting the client address and the request ID | anything else in the request |
+| Backends | the responses they produce | connection-level headers, a valid certificate unless verified |
+| Admin API callers | reading state and asking for a reload, with the token | changing the configuration (there is no write API in v0.1) |
+| Whoever can write `rdock.yaml` and the files it names | everything | — |
+
+### Clients
+
+Every client is untrusted. The defaults that protect the proxy and the backends:
+
+- **Forwarding headers are replaced.** From a peer that is not a trusted proxy, `X-Forwarded-*`, `X-Real-IP`, `Forwarded` and `CF-Connecting-IP` are removed, including spellings with `_` that some backends treat like `-`, and then written again from what ReverseDock saw. A client cannot claim another IP or scheme.
+- **Request IDs are new.** `X-Request-ID` from a client is replaced by a fresh UUIDv7.
+- **Request smuggling.** Pingora's parser rejects conflicting `Content-Length`, invalid `Transfer-Encoding` and malformed authorities and re-frames every body it forwards. ReverseDock also refuses HTTP/1.1 requests without `Host` (400), `Expect` values other than `100-continue` (417) and bare-LF line endings in request headers. The end-to-end suite replays a catalogue of smuggling vectors, and a differential fuzz target checks forwarded framing.
+- **Size limits.** 64 KiB of request line and headers and 100 headers (431), 8 KiB request target (414). There is no body limit by default; set `security.limits.max_body_bytes` (413, also for chunked bodies).
+- **Slow clients.** The request headers must arrive within 10 s of their first byte (`listeners.<name>.timeouts.request_header`), which a client sending one byte at a time cannot stretch. Reads and writes wait at most 60 s, idle keep-alive connections close after 60 s, and the TLS handshake has the same 10 s deadline.
+- **Paths.** The path is normalised before routing and the normalised path is forwarded, so the backend sees what was routed; `%2F` never acts as a separator. Path middlewares refuse results that normalisation would change (400).
+- **Regular expressions** in rules use the Rust `regex` crate, which runs in linear time, with a size limit when compiled. A request cannot make a rule slow.
+- **Bounded memory.** `rate_limit` keeps at most 65,536 keys per middleware, so many client addresses cannot grow it without limit.
+
+### Trusted proxies
+
+List in `security.trusted_proxies` only the load balancers, CDNs or tunnels you control. For requests from them, ReverseDock keeps the forwarding headers, appends the proxy to `X-Forwarded-For`, accepts a valid `X-Request-ID`, and takes the client IP from `X-Forwarded-For` by walking it from the right and skipping trusted addresses (at most 32 entries), or from `X-Real-IP` with `client_ip_header: x-real-ip`.
+
+That client IP is what `ClientIP`, `ip_allow`, `ip_deny`, `rate_limit`, `maintenance.allow` and the access log use. A trusted range that is too wide lets anyone inside it choose their own client IP, and with it pass an `ip_allow` list. Synchronised Cloudflare ranges (`trusted_proxies: [cloudflare]`) and `CF-Connecting-IP` are <Status planned="v0.3" />; until then list the networks yourself. See [Behind a proxy](/docs/guides/behind-a-proxy/).
+
+### Backends
+
+- **TLS to backends is verified** when `scheme: https`: the certificate must chain to a trusted root, or to `tls.ca_file` when it is set, and match the backend's name or `tls.server_name`. `verify: false` turns this off for that service only, and you have to write it.
+- **Connection headers are cleaned** in both directions: Pingora removes hop-by-hop request headers, and ReverseDock removes them from responses.
+- **Errors do not leak.** Proxy errors get ReverseDock's own page, which shows the status and the request ID, not backend addresses or messages; the cause is in the access log's `error` field.
+- **`forward_auth` fails closed.** If the auth service cannot be reached the request is refused with 502, or 504 on timeout, never let through. Headers listed in `copy_headers` are removed from the client's request before the auth service's values are copied, so a client cannot forge an identity header.
+- **`basic_auth`** accepts argon2id and bcrypt; Apache MD5 and SHA-1 hashes load with a warning, and plain-text passwords are refused. `rdock hash` creates argon2id hashes.
+
+### Admin API
+
+- It listens on its own socket, `127.0.0.1:2080` by default, never on a proxy listener. `rdock validate` warns when `admin.listener` is not a loopback address and reports an error when it overlaps a listener.
+- `/healthz`, `/readyz` and `/metrics` answer without a token. Metrics include your route, service and certificate names, so keep the listener private.
+- `/api/v1/status` and `/api/v1/config/reload` need `Authorization: Bearer <token>`; anything else gets 401. The token comes from `RDOCK_ADMIN_TOKEN`, or from `$RDOCK_DATA_DIR/admin/token`, which rdock creates with a random value on first start, readable by the owner only. The comparison runs in constant time.
+- The v0.1 API cannot change the configuration; it can only reload the file that is already there. Users, scoped tokens, audit logs and the dashboard are <Status planned="v0.5" />.
+
+Set `admin.enabled: false` if you do not need the admin listener; `rdock reload`, `rdock status` and `rdock healthcheck` then have nothing to talk to, and `SIGHUP` still reloads.
+
+### The configuration and its secrets
+
+Whoever can write `rdock.yaml`, or a certificate, key, user list or page it names, controls the proxy. Keep these files writable only by the operator, and mount them read-only in containers.
+
+- **Secrets stay references.** Write `${file:/run/secrets/name}` or `${env:NAME}` instead of a value. Files are read up to 64 KiB. Secret fields (`certificates.<name>.key_password` and the ACME tokens of v0.3) keep the reference in the loaded configuration and are resolved only by the component that uses them. See [Secrets](/docs/guides/secrets/).
+- **History never holds resolved values.** The history entries and the last-known-good copy store the document as written, with references unresolved, in files readable by the owner only. When a value from a reference fails to parse, the error message does not quote it.
+- **Unknown keys are errors**, so a misspelt security setting is reported instead of ignored.
+- **Logs redact.** The access log replaces `Authorization`, `Proxy-Authorization`, `Cookie` and `Set-Cookie` with `***` by default (`observability.access_log.redact`), logs only the length of the query string, and logs the `Referer` without its query.
+- **Settings that cannot be honoured are refused.** A setting planned for a later version makes `rdock run` refuse the configuration instead of running without it.
+
+### The process
+
+- The official image runs as a non-root user on a distroless base, and the Compose example adds a read-only root filesystem, `cap_drop: [ALL]` and `no-new-privileges`. The systemd unit uses `DynamicUser=yes` with only `CAP_NET_BIND_SERVICE` and the systemd sandboxing options.
+- ReverseDock's crates forbid `unsafe` code. TLS uses rustls with the ring provider.
+- Release artifacts are signed and come with checksums, an SBOM and build provenance; see [Verify a download](/docs/install/verify/).
+
+## Out of scope
+
+ReverseDock does not protect against these in v0.1. Plan for them elsewhere.
+
+- **Volumetric attacks.** Limits and `rate_limit` protect against single abusive clients, not floods that fill the network link. Use your provider's or a CDN's protection.
+- **Application attacks.** There is no web application firewall: SQL injection, XSS and similar attacks reach the backend if its route allows the request.
+- **A compromised host or operator.** Anyone with access to the configuration files, the data directory (admin token, history) or the process can control the proxy.
+- **A compromised trusted proxy.** Its forwarding headers are believed by design.
+- **Backends you disabled verification for.** `verify: false` accepts any certificate.
+- **Client-certificate authentication** of users is not available, and client certificates to backends are <Status planned="v0.4" />.
+
+## Related
+
+- [Production checklist](/docs/operations/production-checklist/)
+- [Security headers](/docs/guides/security-headers/)
+- [HTTP behaviour](/docs/reference/http-behaviour/)
+- [Request lifecycle](/docs/concepts/request-lifecycle/)

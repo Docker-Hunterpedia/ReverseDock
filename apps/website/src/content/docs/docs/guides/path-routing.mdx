@@ -1,0 +1,106 @@
+---
+title: Route by path
+description: Send parts of one site to different applications by path, and remove the path prefix before forwarding.
+sidebar:
+  order: 3
+---
+
+This guide serves `app.example.com` from a web application and sends everything under `/api` to a separate API service, which expects its paths without the `/api` prefix.
+
+## What you need
+
+- The setup from [Route a domain to an app](/docs/guides/route-a-domain/).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  web:
+    match: "Host(`app.example.com`)"
+    service: web
+  api:
+    match: "Host(`app.example.com`) && (Path(`/api`) || PathPrefix(`/api/`))"
+    service: api
+    middlewares: [strip-api]
+
+middlewares:
+  strip-api:
+    type: strip_prefix
+    prefixes: [/api]
+
+services:
+  web:
+    backends: [{ address: "10.0.0.5:3000" }]
+  api:
+    backends: [{ address: "10.0.0.6:8080" }]
+```
+
+Both routes match `app.example.com`. The `api` rule is longer, so its default priority is higher and it is tried first; requests it does not match fall through to `web`. See [Routing and priority](/docs/concepts/routing-and-priority/).
+
+## How path matchers compare
+
+- ``Path(`/api`)`` matches exactly `/api`.
+- ``PathPrefix(`/api/`)`` matches every path that starts with the string `/api/`.
+- `PathRegexp` takes a regular expression. It is not anchored: write `^` and `$` when you mean the whole path.
+
+`PathPrefix` compares plain strings, not path segments. ``PathPrefix(`/api`)`` matches `/api/users`, and also `/apiv2` and `/api-docs`. That is why the route above uses ``Path(`/api`) || PathPrefix(`/api/`)``: it takes `/api` and everything below it, and nothing else.
+
+## Normalised paths
+
+Before routing, ReverseDock normalises the path:
+
+- Percent-escapes of unreserved characters are decoded (`%7e` becomes `~`); other escapes are written in upper case (`%2f` becomes `%2F`).
+- Dot segments are removed and repeated slashes collapsed: `/a/./b/../c` becomes `/a/c`, `//api` becomes `/api`.
+
+The normalised path is the one matched **and the one forwarded**, so the backend sees exactly the path that was routed. A request for `/static/../api/users` is routed and forwarded as `/api/users`.
+
+For matching, ReverseDock decodes the path except for reserved characters such as `/` and `?`, and `%25`. ``PathPrefix(`/foo bar`)`` therefore matches `/foo%20bar`, but an encoded slash is never a separator: ``PathPrefix(`/a/b`)`` does not match `/a%2Fb`.
+
+A path with an invalid percent-escape, or a request target with a `#` fragment, is answered with `400 Bad Request`.
+
+## Remove the prefix
+
+The `strip-api` middleware removes `/api` before the request goes to the API service:
+
+| Client asks for | API receives |
+|---|---|
+| `/api` | `/` |
+| `/api/users` | `/users` |
+| `/api/users?page=2` | `/users?page=2` |
+
+`prefixes` is a list; the first prefix the path starts with is removed. The removed prefix is sent to the backend in `X-Forwarded-Prefix`, so an application can build links that include it.
+
+Pair `strip_prefix` with a rule that only matches the prefix as a whole segment, as above. With ``PathPrefix(`/api`)`` alone, `/apiv2` would match and arrive at the API as `/v2`.
+
+If removing the prefix leaves a path that is not in normalised form (for example `/api./x` stripped of `/api`), the request is answered with `400`, so the backend never sees a path that differs from what was routed.
+
+To add a prefix instead, or to replace or rewrite the path, use `add_prefix`, `replace_path` or `rewrite`. See [Redirects and rewrites](/docs/guides/redirects-and-rewrites/).
+
+## Check that it works
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://app.example.com/api/users
+```
+
+The API's access log should show a request for `/users`. In ReverseDock's [access log](/docs/guides/logs-and-metrics/), the line has `"route":"api"` and `path` as the client sent it.
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://app.example.com/apiv2
+```
+
+This request goes to the `web` service, because `/apiv2` is neither `/api` nor under `/api/`.
+
+## Related
+
+- [Rules reference](/docs/reference/rules/)
+- [HTTP behaviour](/docs/reference/http-behaviour/)
+- [`middlewares` reference](/docs/reference/configuration/middlewares/)

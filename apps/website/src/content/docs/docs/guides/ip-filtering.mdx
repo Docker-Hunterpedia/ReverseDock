@@ -1,0 +1,118 @@
+---
+title: Allow or block client networks
+description: Restrict a route to certain client IP ranges with ip_allow, or block ranges with ip_deny, based on the resolved client IP.
+sidebar:
+  order: 16
+---
+
+import Status from '../../../../components/Status.astro';
+
+Two middlewares <Status since="v0.1" /> filter requests by the client's IP address:
+
+- `ip_allow` lets only the listed networks through.
+- `ip_deny` blocks the listed networks and lets everyone else through.
+
+A refused request gets **403 Forbidden** with ReverseDock's built-in error page and never
+reaches the backend.
+
+## Before you start
+
+Decide which address counts as the client. ReverseDock uses the **resolved client IP**: the
+TCP peer, unless the peer is listed in `security.trusted_proxies`, in which case the client is
+read from `X-Forwarded-For` (or `X-Real-IP`). If ReverseDock runs behind a load balancer, a CDN
+or another proxy and you do not list it, every request appears to come from that proxy, and
+an allow-list either admits everyone or no one. See [Behind another proxy](/docs/guides/behind-a-proxy/).
+
+## Allow only your office and VPN
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  grafana:
+    match: "Host(`grafana.example.com`)"
+    service: grafana
+    middlewares: [office-only]
+
+services:
+  grafana:
+    backends: [{ address: "grafana:3000" }]
+
+middlewares:
+  office-only:
+    type: ip_allow
+    cidrs:
+      - 198.51.100.0/24     # office
+      - 10.8.0.0/16         # VPN
+      - 2001:db8:42::/48
+```
+
+`cidrs` takes IPv4 and IPv6 addresses and CIDR ranges. A single address such as `192.0.2.7`
+means that address only. IPv4 clients that arrive on an IPv6 socket as IPv4-mapped addresses
+(`::ffff:192.0.2.7`) are compared as IPv4. The list must not be empty.
+
+## Block a network
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  block-scanners:
+    type: ip_deny
+    cidrs: [203.0.113.0/24, 192.0.2.66]
+```
+
+## Combine with other middlewares
+
+Middlewares run in the order the route lists them, and the first one that answers stops the
+chain. Put the network check first, so blocked clients never reach a login prompt or count
+against a rate limit:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  admin:
+    match: "Host(`admin.example.com`)"
+    service: admin
+    middlewares: [office-only, office-login]
+```
+
+To match on the client IP in the route itself, use the `ClientIP` matcher, for example
+``Host(`admin.example.com`) && ClientIP(`10.8.0.0/16`)``. A request that matches no route gets
+404 instead of 403. See the [rules reference](/docs/reference/rules/).
+
+## Behind a trusted proxy
+
+When ReverseDock sits behind a load balancer at `10.0.0.5`, list it so the real client
+address is used:
+
+```yaml title="rdock.yaml (excerpt)"
+security:
+  trusted_proxies: [10.0.0.5]
+```
+
+ReverseDock then walks `X-Forwarded-For` from the right, skips trusted hops, and takes the
+first address that is not trusted. Headers from untrusted peers are removed and rewritten, so a
+client cannot choose its own address by sending `X-Forwarded-For`.
+
+## Check that it worked
+
+From a network that is not listed:
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://grafana.example.com/
+```
+
+prints `403`. The access log records the request with `"status":403` and the resolved
+`client_ip`, which is the address to compare with your list.
+
+## Related
+
+- [Behind another proxy](/docs/guides/behind-a-proxy/)
+- [Rate limiting](/docs/guides/rate-limiting/)
+- [Maintenance mode](/docs/guides/error-pages-and-maintenance/), which also has an `allow` list
+- [Middleware settings](/docs/reference/configuration/middlewares/)

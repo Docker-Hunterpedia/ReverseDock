@@ -1,0 +1,125 @@
+---
+title: Security headers
+description: Add, replace or remove request and response headers with the headers middleware, including HSTS on HTTPS responses.
+sidebar:
+  order: 20
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `headers` middleware <Status since="v0.1" /> changes headers on the way to the backend and on
+the way back to the client. A common use is a set of security headers that every response of a
+site should carry, whatever the backend sends.
+
+## Before you start
+
+- Serve the site over HTTPS if you want HSTS. `Strict-Transport-Security` is only sent on HTTPS
+  responses. See [TLS certificates](/docs/guides/tls-certificates/).
+- Check what your application already sends with `curl -s -o /dev/null -D - https://app.example.com/`,
+  so you replace values on purpose.
+
+## Configure the middleware
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [security-headers]
+
+services:
+  app:
+    backends: [{ address: "app:3000" }]
+
+middlewares:
+  security-headers:
+    type: headers
+    hsts:
+      max_age: 365d
+      include_subdomains: true
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+        X-Frame-Options: DENY
+        Referrer-Policy: strict-origin-when-cross-origin
+        Permissions-Policy: "camera=(), microphone=(), geolocation=()"
+      remove: [Server, X-Powered-By]
+    request:
+      set:
+        X-Environment: production
+      remove: [X-Debug]
+```
+
+## Header rules
+
+`request` changes the request sent to the backend; `response` changes the response sent to the
+client. Each has three operations, applied in this order:
+
+| Operation | Form | Effect |
+|---|---|---|
+| `remove` | list of names | Removes every value of the header. |
+| `set` | map of name to value | Replaces the header with one value. |
+| `add` | map of name to value | Appends a value and keeps the existing ones. |
+
+Header names are compared without regard to case. `rdock validate` refuses names that are not
+valid HTTP header names and values that contain a line break.
+
+Response rules also apply to answers that a later middleware in the chain produces, such as a
+401 from `basic_auth`, a 403 from `ip_allow` or a redirect. They do not apply to the 502, 503
+and 504 pages ReverseDock writes when a backend fails; use the
+[errors middleware](/docs/guides/error-pages-and-maintenance/) to change those.
+
+## HSTS
+
+`hsts` sends `Strict-Transport-Security` on HTTPS responses and never on plain HTTP:
+
+| Setting | Default | Header part |
+|---|---|---|
+| `max_age` | required | `max-age=<seconds>`, for example `365d` becomes `max-age=31536000`. |
+| `include_subdomains` | `false` | `; includeSubDomains` |
+| `preload` | `false` | `; preload` |
+
+The example above sends `Strict-Transport-Security: max-age=31536000; includeSubDomains`.
+
+:::caution
+After a browser sees this header it refuses plain HTTP for the host, and with
+`include_subdomains` for every subdomain, until `max_age` runs out. Start with a short value
+such as `5m`, raise it once every name works over HTTPS, and only set `preload` when you mean
+it: removal from browser preload lists takes months. `max_age: 0s` tells browsers to forget
+the policy.
+:::
+
+See [HTTPS redirect and HSTS](/docs/guides/https-redirect-and-hsts/) for the redirect that
+should go with it.
+
+## Headers ReverseDock manages itself
+
+Some request headers are set by ReverseDock before middlewares run: `X-Forwarded-For`,
+`X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`, `X-Real-IP` and `X-Request-ID`.
+A `headers` middleware runs after that, so it can change them, but you rarely should. See
+[HTTP behaviour](/docs/reference/http-behaviour/).
+
+## Check that it worked
+
+```sh
+curl -s -o /dev/null -D - https://app.example.com/
+```
+
+The response headers include `strict-transport-security: max-age=31536000; includeSubDomains`,
+`x-content-type-options: nosniff` and the others you set, and no `Server` or `X-Powered-By`
+from the backend. Headers that ReverseDock sets are printed in lower case.
+
+## Related
+
+- [HTTPS redirect and HSTS](/docs/guides/https-redirect-and-hsts/)
+- [CORS](/docs/guides/cors/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

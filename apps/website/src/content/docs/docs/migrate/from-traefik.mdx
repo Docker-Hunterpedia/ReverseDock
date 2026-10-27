@@ -1,0 +1,483 @@
+---
+title: Migrate from Traefik
+description: Move a Traefik v3 file-provider configuration to rdock.yaml, with a concept map, five side-by-side setups, the deliberate differences and a cutover plan.
+sidebar:
+  order: 1
+---
+
+import Status from '../../../../components/Status.astro';
+import { Steps } from '@astrojs/starlight/components';
+
+ReverseDock's configuration model is a superset of Traefik's dynamic configuration: entry points, routers, services and middlewares map onto listeners, routes, services and middlewares, and route rules use the Traefik v3 grammar unchanged. This page moves a configuration written for Traefik's **file provider** <Status since="v0.1" />.
+
+Traefik **Docker labels** and the `rdock migrate traefik` command that turns labels into YAML are <Status planned="v0.2" />. Until then, write the labels' routers and services as a file configuration first, then follow this page.
+
+The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-10-27) and from the ReverseDock research of Traefik v3.7.16, recorded in [ADR-0014](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0014-http-semantics-v0-1.md).
+
+## Concept map
+
+| Traefik v3 | ReverseDock |
+|---|---|
+| Static `entryPoints` | `listeners` ([reference](/docs/reference/configuration/listeners/)) |
+| `http.routers` | `routes` ([reference](/docs/reference/configuration/routes/)) |
+| Router `rule` | `routes.<name>.match` (same grammar, or a structured match) |
+| Router `priority` | `routes.<name>.priority` |
+| Router `entryPoints` (all entry points when unset) | `routes.<name>.listeners` (`defaults.listeners` when unset, which is `[websecure]`) |
+| Router `tls` and `certResolver` | `routes.<name>.tls` and `defaults.tls`; automatic certificates <Status planned="v0.3" /> |
+| `http.services.<name>.loadBalancer.servers[].url` | `services.<name>.backends[].address` plus `services.<name>.scheme` |
+| Server `weight` | `backends[].weight` |
+| `passHostHeader` (default true) | `pass_host_header` (default true) |
+| `serversTransport` (`rootCAs`, `serverName`, `insecureSkipVerify`, `forwardingTimeouts`) | `services.<name>.tls` (`ca_file`, `server_name`, `verify`) and `services.<name>.timeouts` |
+| `http.middlewares.<name>.<kind>` | `middlewares.<name>` with a `type` ([reference](/docs/reference/configuration/middlewares/)) |
+| `chain` middleware | the ordered `middlewares` list of the route |
+| `tls.certificates` (a list) | `certificates` (a map: each certificate has a name) |
+| `tls.stores.default.defaultCertificate` | `defaults.certificate` |
+| `entryPoints.<name>.forwardedHeaders.trustedIPs` | `security.trusted_proxies` (one list for all listeners) |
+| `entryPoints.<name>.http.redirections.entryPoint` | `defaults.redirect_http_to_https` (on by default) |
+| `entryPoints.<name>.transport.respondingTimeouts` | `listeners.<name>.timeouts` |
+| `name@file` references | `name` or `name@file` |
+| `providers.file.directory` | one `rdock.yaml`; extra files (`providers.file.paths`) <Status planned="v0.2" /> |
+| `providers.docker` and labels | `providers.docker` with `traefik_labels` <Status planned="v0.2" /> |
+| `certificatesResolvers` (ACME) | `acme` <Status planned="v0.3" /> |
+
+Middleware kinds:
+
+| Traefik `http.middlewares` | ReverseDock `type` |
+|---|---|
+| `headers` (`customRequestHeaders`, `customResponseHeaders`) | `headers` (`request.set`, `response.set`; an empty Traefik value that removes a header becomes `remove`) |
+| `headers` (`stsSeconds`, `stsIncludeSubdomains`, `stsPreload`) | `headers` with `hsts` (`max_age`, `include_subdomains`, `preload`) |
+| `headers` (`frameDeny`, `contentTypeNosniff`) | `headers` with `response.set` of `X-Frame-Options: DENY`, `X-Content-Type-Options: nosniff` |
+| `headers` (`accessControlAllowOriginList`, `accessControlAllowMethods` …) | `cors` (`allowed_origins`, `allowed_methods` …) |
+| `redirectScheme` | `redirect` with `scheme` |
+| `redirectRegex` | `redirect` with `regex` and `replacement` |
+| `stripPrefix` | `strip_prefix` |
+| `addPrefix` | `add_prefix` |
+| `replacePath` | `replace_path` |
+| `replacePathRegex` | `rewrite` |
+| `basicAuth` | `basic_auth` |
+| `forwardAuth` (`authResponseHeaders`, `trustForwardHeader`) | `forward_auth` (`copy_headers`, `trust_forward_header`) |
+| `ipAllowList` (`sourceRange`) | `ip_allow` (`cidrs`); `ip_deny` has no Traefik twin |
+| `rateLimit` | `rate_limit` |
+| `compress` | `compress` |
+| `errors` (`status`, `service`, `query`) | `errors` (`status`, `service`, `path`) |
+| (none) | `maintenance` |
+| `retry` | `services.<name>.retries` <Status planned="v0.4" /> |
+
+## Five common setups
+
+Each pair shows the Traefik configuration and a complete `rdock.yaml` that passes `rdock validate --strict`. Traefik's static configuration is `traefik.yml`; its dynamic configuration is a file read by the file provider.
+
+### 1. One HTTPS site with your own certificate
+
+Traefik redirects HTTP to HTTPS on the `web` entry point and serves the router on `websecure` with a certificate from the dynamic file.
+
+```yaml title="traefik.yml (static)"
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+  websecure:
+    address: ":443"
+providers:
+  file:
+    directory: /etc/traefik/dynamic
+```
+
+```yaml title="/etc/traefik/dynamic/app.yml"
+http:
+  routers:
+    app:
+      rule: "Host(`app.example.com`)"
+      entryPoints: [websecure]
+      service: app
+      tls: {}
+  services:
+    app:
+      loadBalancer:
+        servers:
+          - url: "http://10.0.0.5:3000"
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/example.pem
+      keyFile: /etc/traefik/certs/example.key
+```
+
+ReverseDock attaches routes to `websecure` and redirects plain HTTP to HTTPS by default, so neither needs to be written.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+```
+
+### 2. Several sites and a path prefix that is stripped
+
+```yaml title="/etc/traefik/dynamic/sites.yml"
+http:
+  routers:
+    www:
+      rule: "Host(`www.example.com`)"
+      entryPoints: [websecure]
+      service: www
+      tls: {}
+    api:
+      rule: "Host(`www.example.com`) && PathPrefix(`/api`)"
+      entryPoints: [websecure]
+      service: api
+      middlewares: [strip-api]
+      tls: {}
+    blog:
+      rule: "Host(`blog.example.com`)"
+      entryPoints: [websecure]
+      service: blog
+      tls: {}
+  middlewares:
+    strip-api:
+      stripPrefix:
+        prefixes: ["/api"]
+  services:
+    www:
+      loadBalancer:
+        servers: [{ url: "http://10.0.0.10:8080" }]
+    api:
+      loadBalancer:
+        servers: [{ url: "http://10.0.0.11:9000" }]
+    blog:
+      loadBalancer:
+        servers: [{ url: "http://10.0.0.12:2368" }]
+```
+
+The `api` route wins over `www` for `/api` paths in both proxies, because its rule is longer and the rule length is the default priority.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  www:
+    match: "Host(`www.example.com`)"
+    service: www
+  api:
+    match: "Host(`www.example.com`) && PathPrefix(`/api`)"
+    service: api
+    middlewares: [strip-api]
+  blog:
+    match: "Host(`blog.example.com`)"
+    service: blog
+
+middlewares:
+  strip-api: { type: strip_prefix, prefixes: ["/api"] }
+
+services:
+  www:
+    backends: [{ address: "10.0.0.10:8080" }]
+  api:
+    backends: [{ address: "10.0.0.11:9000" }]
+  blog:
+    backends: [{ address: "10.0.0.12:2368" }]
+```
+
+Both proxies add `X-Forwarded-Prefix: /api` when the prefix is stripped.
+
+### 3. Basic authentication and security headers
+
+```yaml title="/etc/traefik/dynamic/admin.yml"
+http:
+  routers:
+    admin:
+      rule: "Host(`admin.example.com`)"
+      entryPoints: [websecure]
+      service: admin
+      middlewares: [admin-auth, secure-headers]
+      tls: {}
+  middlewares:
+    admin-auth:
+      basicAuth:
+        usersFile: /etc/traefik/admins.htpasswd
+    secure-headers:
+      headers:
+        stsSeconds: 31536000
+        stsIncludeSubdomains: true
+        frameDeny: true
+        contentTypeNosniff: true
+  services:
+    admin:
+      loadBalancer:
+        servers: [{ url: "http://10.0.0.20:8000" }]
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  admin:
+    match: "Host(`admin.example.com`)"
+    service: admin
+    middlewares: [admin-auth, secure-headers]
+
+middlewares:
+  admin-auth:
+    type: basic_auth
+    users_file: /etc/rdock/admins.htpasswd
+    realm: Admin
+  secure-headers:
+    type: headers
+    hsts: { max_age: 365d, include_subdomains: true }
+    response:
+      set:
+        X-Frame-Options: DENY
+        X-Content-Type-Options: nosniff
+
+services:
+  admin:
+    backends: [{ address: "10.0.0.20:8000" }]
+```
+
+Traefik's `htpasswd` files usually hold Apache MD5 (`$apr1$`) hashes. ReverseDock accepts them with a warning, so `rdock validate --strict` fails on them. Re-create each entry with `rdock hash --user NAME`, which reads the password from standard input and prints an argon2id `user:hash` line. See [Basic auth](/docs/guides/basic-auth/).
+
+### 4. Weighted backends, one of them over HTTPS with a private CA
+
+```yaml title="/etc/traefik/dynamic/shop.yml"
+http:
+  routers:
+    shop:
+      rule: "Host(`shop.example.com`)"
+      entryPoints: [websecure]
+      service: shop
+      tls: {}
+  services:
+    shop:
+      loadBalancer:
+        serversTransport: internal-ca
+        servers:
+          - url: "https://10.0.0.30:8443"
+            weight: 2
+          - url: "https://10.0.0.31:8443"
+            weight: 1
+  serversTransports:
+    internal-ca:
+      serverName: shop.internal.example.com
+      rootCAs:
+        - /etc/traefik/certs/internal-ca.pem
+```
+
+In ReverseDock the scheme belongs to the service, not to each server, so every backend of a service speaks the same protocol.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  shop:
+    match: "Host(`shop.example.com`)"
+    service: shop
+
+services:
+  shop:
+    scheme: https
+    backends:
+      - { address: "10.0.0.30:8443", weight: 2 }
+      - { address: "10.0.0.31:8443", weight: 1 }
+    tls:
+      server_name: shop.internal.example.com
+      ca_file: /etc/rdock/certs/internal-ca.pem
+```
+
+Traefik's default strategy is weighted round-robin; ReverseDock's `round_robin` is the same, and `random` is the other policy available in v0.1. Health checks are <Status planned="v0.4" />, so a backend that is down keeps receiving its share of requests until then.
+
+### 5. Rate limit and IP allow-list behind a load balancer
+
+Traefik reads the client IP from the TCP peer unless the middleware has an `ipStrategy`; `depth` picks an entry of `X-Forwarded-For` counted from the right.
+
+```yaml title="/etc/traefik/dynamic/api.yml"
+http:
+  routers:
+    api:
+      rule: "Host(`api.example.com`)"
+      entryPoints: [websecure]
+      service: api
+      middlewares: [office-only, api-limit]
+      tls: {}
+  middlewares:
+    office-only:
+      ipAllowList:
+        sourceRange: ["203.0.113.0/24"]
+        ipStrategy:
+          depth: 1
+    api-limit:
+      rateLimit:
+        average: 100
+        burst: 200
+        period: 1s
+        sourceCriterion:
+          ipStrategy:
+            depth: 1
+  services:
+    api:
+      loadBalancer:
+        servers: [{ url: "http://10.0.0.40:8080" }]
+```
+
+ReverseDock resolves the client IP once, from `security.trusted_proxies`, and every middleware and the `ClientIP` matcher use that address. List the load balancer's network instead of an `ipStrategy`.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+security:
+  trusted_proxies: [10.0.0.0/24]
+
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [office-only, api-limit]
+
+middlewares:
+  office-only: { type: ip_allow, cidrs: [203.0.113.0/24] }
+  api-limit: { type: rate_limit, average: 100, burst: 200, period: 1s }
+
+services:
+  api:
+    backends: [{ address: "10.0.0.40:8080" }]
+```
+
+See [Behind a proxy](/docs/guides/behind-a-proxy/) for how the client IP is resolved.
+
+## Differences and gotchas
+
+These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0014-http-semantics-v0-1.md)). Rules written for Traefik route the same way unless a point below says otherwise.
+
+### Routing
+
+- **Priority is one number**, as in Traefik: `priority` when set, else the byte length of the rule as written. Explicit and computed priorities compete, so `priority: 1` still makes a catch-all. Ties go to the route name; Traefik breaks ties by provider and then leaves the order unspecified.
+- **Matchers behave as in Traefik:** names are case-insensitive; `Host` ignores case, the port and a trailing dot; `PathPrefix` is a plain string prefix (`/api` matches `/apiv2`); `HostRegexp` and `PathRegexp` are unanchored; one-argument ``Query(`k`)`` matches only an empty value; `Method` compares in upper case. See [Rules](/docs/reference/rules/).
+- **Paths are normalised and the normalised path is forwarded**, as in Traefik 3.7. Encoded slashes (`%2F`) are allowed and never act as separators.
+- **`ClientIP`, `ip_allow`, `ip_deny`, `rate_limit` and `maintenance.allow` use the resolved client IP.** Without `security.trusted_proxies` this is the TCP peer, the same as Traefik. Behind a load balancer it is the address the load balancer reports; Traefik needs an `ipStrategy` per middleware for that.
+- **Route defaults differ.** A Traefik router without `entryPoints` attaches to every entry point, and one without `tls` serves plain HTTP. A ReverseDock route without `listeners` attaches to `defaults.listeners` (`[websecure]`) and asks for HTTPS (`defaults.tls: auto`). A route meant for plain HTTP needs `listeners: [web]` and `tls: off`.
+- **Until automatic certificates arrive** <Status planned="v0.3" />, a route on an HTTPS listener needs a certificate under `certificates` that covers each of its hosts, or `defaults.certificate`. `rdock validate` warns, and `rdock run` refuses the configuration, when a host is not covered.
+
+### Forwarding headers and limits
+
+- From clients that are not trusted proxies, `X-Forwarded-*`, `X-Real-IP`, `Forwarded` and `CF-Connecting-IP` are removed (also when spelled with `_`) and then written again. From trusted proxies they are kept and the peer is appended to `X-Forwarded-For`. `X-Real-IP` carries the resolved client IP. `X-Forwarded-Proto` is `ws` or `wss` on WebSocket handshakes, as in Traefik.
+- HTTP/1.1 requests without `Host` get 400, `Expect` values other than `100-continue` get 417, and bare-LF line endings in request headers close the connection.
+- Request headers are limited to 64 KiB and 100 headers, and the request target to 8 KiB. Traefik allows far larger headers (Go's 1 MiB default, per the research behind ADR-0014). Requests over a limit get 431 or 414. There is no body limit unless you set `security.limits.max_body_bytes`, as in Traefik. See [Timeouts and limits](/docs/guides/timeouts-and-limits/).
+
+### Timeouts
+
+- Listener timeouts are per read and per write, not totals: `read` 60 s, `write` 60 s, `idle` 60 s, plus a 10 s deadline (`request_header`) for receiving the request headers. Traefik's `readTimeout` (60 s) bounds reading the whole request, `writeTimeout` is 0 (none) and `idleTimeout` is 180 s (Traefik entry points documentation, checked 2026-10-27).
+- Upstream timeouts are `connect` 5 s, `read` 60 s and `write` 60 s, each per operation as in NGINX, and `idle` 90 s for pooled connections. Traefik's `serversTransport` defaults are `dialTimeout` 30 s and `responseHeaderTimeout` 0 (none) (checked 2026-10-27). A backend that sends nothing for more than 60 s, such as a long poll, gets a 504 in ReverseDock; raise `services.<name>.timeouts.read` or `routes.<name>.timeouts.read` for it.
+
+### Middlewares
+
+- `redirect.permanent` defaults to `false` as in Traefik's `redirectScheme` (checked 2026-10-27): 302 for GET and 307 for other methods; with `permanent: true`, 301 and 308. A redirect to the current URL does nothing.
+- The automatic HTTP→HTTPS redirect uses 301 for GET and 308 otherwise, like Traefik's entry-point redirect, whose `permanent` defaults to true (checked 2026-10-27). It covers only hosts that have a route on an HTTPS listener; other hosts get 404 on the plain listener.
+- `basic_auth` accepts argon2id and bcrypt, and Apache MD5 (`$apr1$`, `$1$`) and SHA-1 (`{SHA}`) with a warning. Plain-text passwords are refused. The default realm is `rdock`; Traefik's is `traefik`.
+- `forward_auth` always removes the `copy_headers` from the client request before copying the auth service's values, so a client cannot forge them. If the auth service cannot be reached the request fails closed with 502, or 504 on timeout; Traefik answers 500. The default `timeout` is 5 s.
+- `rate_limit` defaults `burst` to `average`; Traefik's default burst is 1 (checked 2026-10-27). Requests over the limit get 429 with `Retry-After` at once; Traefik first delays them briefly (Traefik v3.7.16 source, per the research behind ADR-0014). `average: 0` is a validation error, where Traefik reads it as no limit.
+- `ip_allow` answers 403 and has no `rejectStatusCode`.
+- `cors` is its own middleware. It answers preflights itself with 204; `*` together with `allow_credentials: true` is a validation error, where Traefik echoes the request's `Origin`. List the origins instead.
+- `compress` uses gzip on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. Brotli and zstd are <Status planned="v0.4" />.
+- `errors` keeps the original status and also covers ReverseDock's own 502, 503 and 504 answers.
+- `maintenance` has no Traefik equivalent: it answers with its `status` (503 by default), `Retry-After`, `Cache-Control: no-store` and your page, except for the `allow` networks.
+
+### Configuration files
+
+- Unknown keys are errors, with a suggestion for the nearest valid key, so a Traefik key such as `stsSeconds` pasted into a ReverseDock middleware is reported, not ignored. Keys that start with `x-` are ignored, for YAML anchors.
+- Settings the model accepts but v0.1 cannot honour are reported: `rdock validate` lists them as warnings ("planned for vX.Y") and `rdock run` refuses them. In v0.1 these are ACME and DNS-01, TCP and UDP listeners and routes, the PROXY protocol, traffic splits, load-balancing policies other than `round_robin` and `random`, health checks, retries, sticky sessions, client certificates to backends, brotli and zstd, extra configuration files, the Docker, Swarm and Kubernetes providers, `cloudflare` in `trusted_proxies`, `client_ip_header: cf-connecting-ip`, and tracing. See the [roadmap](/docs/project/roadmap/).
+
+## Cutover
+
+Run ReverseDock next to Traefik on other ports, compare the answers, then move the ports. Traefik keeps its configuration untouched, so rolling back means starting it again.
+
+<Steps>
+
+1. Write `rdock.yaml` and validate it with the same files it refers to:
+
+   ```sh
+   rdock validate --strict rdock.yaml
+   ```
+
+2. Copy it to `rdock-test.yaml` and change only the listener addresses to free ports, for example `:8081` for `web` and `:8444` for `websecure`. If another service already uses port 2080, also set `admin.listener` to another loopback port. Start the test instance with its own data directory:
+
+   ```sh
+   rdock run --config rdock-test.yaml --data-dir ./rdock-test-data
+   ```
+
+3. Send the same requests to both proxies and compare status lines and headers. `--resolve` sends the real host name to the local port:
+
+   ```sh
+   curl -sk -o /dev/null -D - --resolve app.example.com:443:127.0.0.1 https://app.example.com/
+   curl -sk -o /dev/null -D - --resolve app.example.com:8444:127.0.0.1 https://app.example.com:8444/
+   ```
+
+   Repeat for every route: the paths behind `PathPrefix` rules, authenticated pages (with and without `-u user:password`), a WebSocket or long-running endpoint, and plain HTTP to check the redirect (`curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' http://127.0.0.1:8081/ -H 'Host: app.example.com'` should print `301 https://app.example.com:8444/`). ReverseDock adds an `X-Request-ID` header to every answer; it is also in the access log.
+
+4. Check the access log of the test instance for unexpected 404, 502 or 504 answers. Each line names the `route`, `service` and `upstream`.
+
+5. Switch: stop Traefik, then start ReverseDock with the real `rdock.yaml` on ports 80 and 443. With systemd that is `systemctl stop traefik` followed by `systemctl enable --now rdock`; with Docker Compose, move the `ports` from the Traefik service to the ReverseDock one and run `docker compose up -d`.
+
+6. Watch the first minutes: `rdock status` shows the generation and the last reload, and `curl -s http://127.0.0.1:2080/metrics` shows `rdock_http_requests_total` by route and status class.
+
+7. Roll back if needed: stop ReverseDock and start Traefik again. Nothing in Traefik's configuration changed.
+
+</Steps>
+
+## Checklist
+
+- Every router has a route, and every route's `match` is the router's `rule`.
+- Routers that served plain HTTP have `listeners: [web]` and `tls: off`.
+- Every HTTPS host is covered by a certificate under `certificates`, or by `defaults.certificate`.
+- `forwardedHeaders.trustedIPs` and every `ipStrategy` are replaced by `security.trusted_proxies`.
+- `basicAuth` users are re-hashed with `rdock hash`, or the MD5 and SHA-1 warnings are accepted without `--strict`.
+- `rate_limit` sets `burst` explicitly if you relied on Traefik's burst of 1.
+- Long polls, streams and slow backends have a `timeouts.read` long enough for them.
+- Redirects that should be cached by browsers set `permanent: true`.
+- `cors` lists origins instead of `*` when credentials are allowed.
+- Nothing planned for a later version is in the file: `rdock validate --strict rdock.yaml` exits 0.
+- Responses were compared with `curl` on the test ports before the switch, and the rollback steps are written down.
+
+Related: [Concepts](/docs/start/concepts/) · [Routing and priority](/docs/concepts/routing-and-priority/) · [HTTP behaviour](/docs/reference/http-behaviour/) · [Configuration reference](/docs/reference/configuration/)

@@ -1,0 +1,116 @@
+---
+title: Routing and priority
+description: How ReverseDock picks the route for a request, how priorities are computed from rule length, and how to make a catch-all or override the order.
+sidebar:
+  order: 3
+---
+
+A route says which requests it handles (`match`), which listeners it is on, which middlewares run and which service answers. For each request, ReverseDock picks exactly one route, or none.
+
+## How a route is chosen
+
+1. **Only the listener's routes count.** A route is attached to the listeners in its `listeners` field, or to `defaults.listeners` (`[websecure]` unless you change it). A request on another listener never sees it. Routes with `enabled: false` are not attached anywhere.
+2. **Routes are sorted by priority**, highest first; equal priorities are sorted by route name.
+3. **The first route whose rule matches wins.** Its middlewares and service handle the request.
+4. **No match:** on a plain listener, while `defaults.redirect_http_to_https` is on, a host that has a route on an HTTPS listener is redirected to HTTPS. Everything else gets the 404 page.
+
+The rules are evaluated against the normalised request: the host in lower case without port or trailing dot, the decoded and normalised path, the method in upper case, the headers, the decoded query parameters and the [resolved client IP](/docs/guides/behind-a-proxy/). The grammar is Traefik v3's; every matcher is listed in [Rules](/docs/reference/rules/).
+
+## Priority is one number
+
+A route's priority is:
+
+- its `priority` field, when it is set to a number other than 0, or
+- the length in bytes of its rule, as Traefik does. For a rule string this is the text after YAML parsing; for a structured `match` it is the length of the equivalent rule.
+
+Explicit and computed priorities are compared with each other: there is no separate tier for routes with a `priority`. Longer rules are usually more specific, so the default order is usually right:
+
+| Rule | Priority |
+|---|---|
+| ``PathPrefix(`/`)`` | 15 |
+| ``Host(`app.example.com`)`` | 23 |
+| ``HostRegexp(`^[a-z]+\.example\.com$`)`` | 36 |
+| ``Host(`app.example.com`) && PathPrefix(`/api`)`` | 45 |
+
+The structured match `{ hosts: [app.example.com], path_prefix: /api }` is the rule ``Host(`app.example.com`) && PathPrefix(`/api`)`` and also has priority 45.
+
+### When length gives the wrong order
+
+In the table above, the `HostRegexp` route (36) is tried before the exact `Host` route (23), so it would take every request for `app.example.com` that does not go to `/api`. Lower the broad route rather than raising the specific ones: a raised route also competes with every other computed priority.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+defaults:
+  certificate: example
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+  app-api:
+    match: "Host(`app.example.com`) && PathPrefix(`/api`)"
+    service: api
+  tenants:
+    match: "HostRegexp(`^[a-z]+\\.example\\.com$`)"
+    priority: 20
+    service: tenants
+    tls: { certificate: example }
+  fallback:
+    match: "PathPrefix(`/`)"
+    priority: 1
+    service: fallback
+    tls: { certificate: example }
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+  api:
+    backends: [{ address: "10.0.0.6:9000" }]
+  tenants:
+    backends: [{ address: "10.0.0.7:8080" }]
+  fallback:
+    backends: [{ address: "10.0.0.8:8080" }]
+```
+
+The resulting order on `websecure` is `app-api` (45), `app` (23), `tenants` (20), `fallback` (1):
+
+| Request | Route |
+|---|---|
+| `https://app.example.com/api/users` | `app-api` |
+| `https://app.example.com/` | `app` |
+| `https://shop.example.com/` | `tenants` |
+| `https://other.example.net/` | `fallback` |
+
+`priority: 1` is the usual way to write a catch-all: it sorts below every rule with a computed priority. Routes without a `Host` cannot ask for a certificate by name, so `tenants` and `fallback` name theirs with `tls: { certificate: example }`, and `defaults.certificate` is served to clients whose name no certificate covers. To check which route answered, look at the `route` field of the access-log line.
+
+## Matching details that surprise people
+
+- **`PathPrefix` is a plain string prefix.** ``PathPrefix(`/api`)`` matches `/api`, `/api/users` and also `/apiv2`. Write ``PathPrefix(`/api/`)`` to require the slash, and add ``Path(`/api`)`` with `||` if `/api` itself should match.
+- **Regular expressions are unanchored.** ``PathRegexp(`\.php`)`` matches `/x.php/y` too; anchor with `^` and `$`. They use the Rust `regex` syntax (linear time, no look-around, no back-references); `(?i)` makes them case-insensitive.
+- **`Host` wildcards cover one label.** ``Host(`*.example.com`)`` matches `app.example.com`, not `example.com` or `a.b.example.com`. ``Host(`*`)`` matches any host.
+- **One-argument `Query` matches an empty value.** ``Query(`debug`)`` matches `?debug` and `?debug=`, not `?debug=1`. For "present with any value" write ``QueryRegexp(`debug`, `^.*$`)``.
+- **`Header` and `Query` match when any value matches**, for headers and parameters that appear more than once.
+- **Encoded slashes are not separators.** ``PathPrefix(`/a/b`)`` does not match `/a%2Fb`. Other escapes are decoded for matching, so ``PathPrefix(`/foo bar`)`` matches `/foo%20bar`.
+- **`ClientIP` uses the resolved client IP**, not always the TCP peer: with `security.trusted_proxies` set, it is the address the trusted proxy reports.
+- **Matcher names are case-insensitive** (`pathprefix` works) and `Method` compares in upper case.
+
+## Routes on several listeners
+
+A route listed on both a plain and an HTTPS listener answers on both, and the plain listener does not redirect its hosts, because the route matches first. To serve a site only over HTTPS, keep its routes on `websecure` and let the plain listener redirect.
+
+A route meant for plain HTTP only sets `listeners: [web]` and `tls: off`. Without `tls: off`, a route on an HTTPS listener asks for a certificate for its hosts: a certificate under `certificates` that covers them, or `defaults.certificate`. Automatic certificates are planned for v0.3.
+
+## Related
+
+- [Rules reference](/docs/reference/rules/)
+- [Path routing](/docs/guides/path-routing/) and [Several sites](/docs/guides/multiple-sites/)
+- [Routes configuration](/docs/reference/configuration/routes/)
+- [Request lifecycle](/docs/concepts/request-lifecycle/)

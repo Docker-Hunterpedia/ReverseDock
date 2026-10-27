@@ -1,0 +1,88 @@
+---
+title: Upgrade
+description: Move to a new ReverseDock release safely, with validation first and the configuration history as a fallback.
+sidebar:
+  order: 7
+---
+
+ReverseDock is in pre-release (0.x). A new release can change the configuration format; each one says so in the [changelog](/docs/project/changelog/) under **Breaking**. Read it before you upgrade.
+
+Changing the binary needs a restart. Requests in flight during the stop get up to `lifecycle.drain_timeout` (8 seconds by default) to finish; new connections are refused until the new process is ready. Upgrades without that gap are planned for v0.9.
+
+## 1. Read the changelog
+
+Look at every release between yours and the target under **Breaking** and **Changed**. For example, 0.1.0-alpha.3 made unknown configuration keys an error and changed the default of `redirect.permanent` to `false`.
+
+## 2. Validate with the new version first
+
+Run the new binary's `validate` against your current configuration before you switch. Nothing is started.
+
+```sh
+# Binary: run the new rdock from where you unpacked it
+./rdock-0.1.0-alpha.3-x86_64-unknown-linux-musl/rdock validate --strict /etc/rdock/rdock.yaml
+
+# Docker
+docker run --rm -v /etc/rdock:/etc/rdock:ro \
+  ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3 validate --strict /etc/rdock/rdock.yaml
+```
+
+Fix what it reports. Settings that the new version does not support yet are listed as "planned for vX.Y". `--strict` also fails on warnings; drop it to see them without failing.
+
+## 3. Switch
+
+**Docker Compose:** change the image tag in `compose.yaml`, then:
+
+```sh
+docker compose pull rdock
+docker compose up -d rdock
+docker compose exec rdock rdock version
+```
+
+**systemd:** replace the binary and restart:
+
+```sh
+sudo install -m 0755 rdock-0.1.0-alpha.3-x86_64-unknown-linux-musl/rdock /usr/local/bin/rdock
+sudo systemctl restart rdock
+rdock version
+```
+
+If you gave the binary `CAP_NET_BIND_SERVICE` with `setcap`, set it again; the systemd unit does not need it.
+
+## 4. Check
+
+```sh
+sudo rdock status
+```
+
+`ready` should be `true`, the config line should end in `(file)`, and your listeners should be listed. If it ends in `(last-known-good)`, the new version could not use your file; see below.
+
+## The safety net: history and last-known-good
+
+ReverseDock keeps the configurations it applied under `/var/lib/rdock/state` (in Docker, the `rdock-data` volume):
+
+| Path | Contents |
+|---|---|
+| `state/lkg.json` | The last configuration applied from the file, as JSON |
+| `state/history/<unix-ms>-<hash>.json` | One entry per applied change: time, generation, a summary and the document; the last 50 are kept |
+
+If `rdock.yaml` cannot be used when rdock starts, it logs `the configuration file cannot be used; serving the last-known-good configuration` and serves `lkg.json` instead, provided this version can load it. Without a usable copy it exits with an error. `rdock status` then shows `(last-known-good)` as the origin. Fix the file and reload; once it applies, the origin goes back to `file`.
+
+To restore an earlier configuration by hand, take the `source` of a history entry, which is the document as written (references such as `${file:...}` stay references):
+
+```sh
+sudo ls /var/lib/rdock/state/history/
+sudo jq '.source' /var/lib/rdock/state/history/<entry>.json > restored.json
+rdock validate restored.json
+```
+
+Review `restored.json`, then put its content in place of `rdock.yaml`. YAML accepts JSON, so the file can stay `rdock.yaml`.
+
+## Downgrade
+
+Downgrading works the same way: validate with the older binary first, because a configuration written for a newer release may use keys the older one does not know.
+
+## Related
+
+- [Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/)
+- [Changelog](/docs/project/changelog/)
+- [Troubleshooting](/docs/operations/troubleshooting/)

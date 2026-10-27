@@ -1,0 +1,157 @@
+---
+title: HTTP behaviour
+description: What ReverseDock does to every request and response - forwarding headers, hop-by-hop headers, request IDs, refused requests and their status codes, limits and timeouts.
+sidebar:
+  order: 4
+---
+
+import Status from '../../../../components/Status.astro';
+
+This page lists what ReverseDock <Status since="v0.1" /> does to requests and responses on its
+own, before and after your middlewares run. The decisions behind it are recorded in ADR-0014
+(HTTP semantics of v0.1) in the repository's `docs/decisions/`.
+
+## Protocols
+
+- Clients: HTTP/1.0, HTTP/1.1, HTTP/2 over TLS (negotiated with ALPN), and h2c (HTTP/2 without
+  TLS, with prior knowledge) on plain listeners. WebSocket upgrades are passed through.
+- Backends: HTTP/1.1, HTTPS or h2c, set per service with `scheme`.
+- A response from an HTTP/1.0 backend is sent to HTTP/1.1 clients as HTTP/1.1, so the client
+  connection keeps working.
+
+## Client IP
+
+The **resolved client IP** is what `ClientIP`, `ip_allow`, `ip_deny`, `rate_limit`,
+`maintenance.allow`, `X-Real-IP` and the access log use.
+
+- When the TCP peer is **not** in `security.trusted_proxies`, the client IP is the peer.
+- When the peer is trusted, the client IP comes from the header chosen by
+  `security.client_ip_header`:
+  - `auto` (default) and `x-forwarded-for`: `X-Forwarded-For` is read from the right, trusted
+    hops are skipped, and the first untrusted address is the client. If every hop is trusted,
+    the left-most one is used. At most 32 entries are examined, and an entry that is not an IP
+    address ends the walk.
+  - `x-real-ip`: the `X-Real-IP` header, or the peer when it is missing or invalid.
+  - `cf-connecting-ip` and the `cloudflare` entry in `trusted_proxies` are <Status planned="v0.3" />.
+- IPv4-mapped IPv6 addresses (`::ffff:192.0.2.7`) are treated as IPv4.
+
+## Headers added to requests
+
+Before the first middleware runs, ReverseDock rewrites the forwarding headers.
+
+From a peer that is **not** trusted, these headers are removed first, including spellings with
+`_` instead of `-` (which CGI-style backends treat as the same header):
+
+`X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port`,
+`X-Forwarded-Prefix`, `X-Forwarded-Server`, `X-Forwarded-Uri`, `X-Forwarded-Method`,
+`X-Forwarded-Tls-Client-Cert`, `X-Forwarded-Tls-Client-Cert-Info`, `X-Real-IP`, `Forwarded`,
+`CF-Connecting-IP`.
+
+From a trusted peer they are kept. Then:
+
+| Header | Value |
+|---|---|
+| `X-Forwarded-For` | The peer's address is appended (the header is created when absent). |
+| `X-Real-IP` | Always set to the resolved client IP. |
+| `X-Forwarded-Proto` | Set when absent: `https` or `http`; `wss` or `ws` on WebSocket handshakes. |
+| `X-Forwarded-Host` | Set when absent: the `Host` the client sent, with port. |
+| `X-Forwarded-Port` | Set when absent: the port in `Host`, else 443 on TLS and 80 otherwise. |
+| `X-Request-ID` | Set to the request ID (see below). |
+
+`Forwarded` (RFC 7239) is removed from untrusted peers and not generated.
+
+`Host` is passed to the backend as the client sent it. With `pass_host_header: false` on the
+service, or when an HTTP/1.0 client sent no `Host`, the backend's own address is used instead:
+its configured name, with the port unless it is the scheme's default, or `localhost` for Unix
+sockets.
+
+Path middlewares add `X-Forwarded-Prefix` (`strip_prefix`) and `X-Replaced-Path` (`rewrite`,
+`replace_path`); see [Redirects and rewrites](/docs/guides/redirects-and-rewrites/).
+
+## Hop-by-hop headers
+
+Connection-specific request headers are not forwarded to backends. On responses from
+backends, ReverseDock removes `Keep-Alive`, `Proxy-Connection`, `Upgrade` and every header named
+in `Connection` (other than `close` and `keep-alive`). A `101 Switching Protocols` response is
+passed through unchanged, so WebSocket upgrades work. A request whose `Connection` header names
+`X-Forwarded-For` is refused, so a client cannot remove forwarding headers that way.
+
+## Request IDs
+
+Every request has an ID, sent to the backend and to the client as **`X-Request-ID`**.
+
+- From a trusted proxy, an incoming `X-Request-ID` of 1 to 128 visible ASCII characters is kept,
+  so one ID follows the request through several proxies.
+- Otherwise ReverseDock creates a new UUIDv7 and replaces any value the client sent.
+- The response gets `X-Request-ID` unless the backend already set one.
+- The ID appears in the access log (`request_id`) and on the built-in error pages.
+
+## Refused requests
+
+These requests are answered by ReverseDock and never reach a backend:
+
+| Status | When |
+|---|---|
+| 400 | An HTTP/1.1 request without `Host`; a path with an invalid `%` escape or a `#` fragment; a path middleware result that is not normalised. |
+| 4xx or closed | Duplicate `Host` headers; an absolute-form target with user info or a host that differs from `Host`; malformed header syntax (space before the colon, leading space, line folding, a bare CR in a value); a `Connection` header that names `X-Forwarded-For`. |
+| 4xx or closed | Conflicting or malformed `Content-Length` / `Transfer-Encoding`: duplicates, lists, signs or hex in `Content-Length`, unknown codings, chunked on HTTP/1.0, bad chunk framing. |
+| closed | A bare LF (without CR) as a line ending in HTTP/1 request headers: the connection is closed. |
+| closed | Request headers not complete within the listener's `timeouts.request_header`, counted from their first byte. |
+| 413 | `Content-Length` above `security.limits.max_body_bytes`, or a body (chunked included) that grows beyond it. |
+| 414 | Request target (path and query) longer than `max_uri_bytes`. |
+| 417 | An `Expect` value other than `100-continue`. |
+| 431 | More than `max_headers` headers, or request line and headers larger than `max_header_bytes`. |
+
+The ones with a status get the [built-in error page](/docs/guides/error-pages-and-maintenance/#built-in-error-pages).
+
+`Expect: 100-continue`, in any letter case, is accepted.
+
+### Answers when routing or the backend fails
+
+| Status | When |
+|---|---|
+| 404 | No route matches (and no HTTPS redirect applies). |
+| 301 / 308 | Plain HTTP request for a host with an HTTPS route, when `defaults.redirect_http_to_https` is on: 301 for GET, 308 for other methods. |
+| 408 | The client stopped sending the request for longer than the listener's `timeouts.read`. |
+| 502 | The backend refused the connection, closed it, or sent an invalid response. |
+| 503 | The service has no available backend. Sent with `Retry-After: 5`. |
+| 504 | Connecting to the backend, or waiting for it, took longer than the service's timeouts. |
+
+If the client goes away, nothing is sent; the access log records the request.
+
+A request is sent again on a new connection only when it is idempotent, its body can be
+replayed, nothing has been sent to the client yet, and it failed because a reused keep-alive
+connection to the backend was closed. Configurable retries are <Status planned="v0.4" />.
+
+## Defaults
+
+| Setting | Default | Notes |
+|---|---|---|
+| `security.limits.max_header_bytes` | `64KiB` | Request line plus all headers. |
+| `security.limits.max_headers` | `100` | |
+| `security.limits.max_uri_bytes` | `8KiB` | Path and query. |
+| `security.limits.max_body_bytes` | unlimited | Counted for chunked bodies too. |
+| `listeners.<name>.timeouts.request_header` | `10s` | Whole request header, from its first byte; also the TLS handshake. |
+| `listeners.<name>.timeouts.read` | `60s` | Longest wait for data from the client. |
+| `listeners.<name>.timeouts.write` | `60s` | Longest wait for the client to accept data. |
+| `listeners.<name>.timeouts.idle` | `60s` | Idle keep-alive connection. |
+| `services.<name>.timeouts.connect` | `5s` | Connecting to a backend. |
+| `services.<name>.timeouts.read` | `60s` | Longest wait for data from the backend. |
+| `services.<name>.timeouts.write` | `60s` | Longest wait while sending to the backend. |
+| `services.<name>.timeouts.idle` | `90s` | Idle pooled backend connection. |
+
+Read and write timeouts are **per read or write**, not totals: a response that streams for an
+hour is fine as long as no single wait is longer than `read`. Routes can override the service's
+`connect`, `read` and `write` with `routes.<name>.timeouts`. See
+[Timeouts and limits](/docs/guides/timeouts-and-limits/).
+
+The request-header deadline applies to HTTP/1 connections. HTTP/2 connections and upgraded
+(WebSocket) connections have no header deadline; idle HTTP/2 connections are closed after
+`timeouts.idle`.
+
+## Related
+
+- [Behind another proxy](/docs/guides/behind-a-proxy/)
+- [Timeouts and limits](/docs/guides/timeouts-and-limits/)
+- [`security` settings](/docs/reference/configuration/security/)
+- [Security model](/docs/concepts/security-model/)

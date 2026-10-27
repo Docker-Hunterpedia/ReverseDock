@@ -1,0 +1,128 @@
+---
+title: Forward authentication (Authelia, Authentik)
+description: Let an authentication service such as Authelia, Authentik or oauth2-proxy decide whether each request may reach your app, with the forward_auth middleware.
+sidebar:
+  order: 15
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `forward_auth` middleware <Status since="v0.1" /> sends a short request to an
+authentication service before each request goes to your backend. The service answers "yes"
+with a 2xx status, or answers with anything else, usually a redirect to its login page. This
+is how single sign-on portals such as Authelia, Authentik and oauth2-proxy sit in front of apps
+that have no login of their own. It works the same way as Traefik's `forwardAuth` middleware
+([Traefik docs](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/forwardauth/), checked 2026-10-27).
+
+## Before you start
+
+- A running authentication service that ReverseDock can reach, for example `authelia:9091` on
+  the same Docker network.
+- A route for the service's own login portal, so browsers can reach it.
+- HTTPS on the protected routes. Session cookies of the portal should never travel over plain
+  HTTP. See [TLS certificates](/docs/guides/tls-certificates/).
+
+## How a request is checked
+
+1. ReverseDock sends a `GET` to `address`, with the path and query of `address`, not of the
+   client's request.
+2. The auth request carries the client's headers (all of them, or only `request_headers` plus
+   every `X-Forwarded-*` header when that list is set), without connection headers such as
+   `Connection`, `Upgrade` and `Content-Length`. ReverseDock adds what the service needs to know
+   about the original request:
+
+   | Header | Value |
+   |---|---|
+   | `X-Forwarded-Method` | The client's method. |
+   | `X-Forwarded-Proto` | `https` on a TLS connection, else `http`. |
+   | `X-Forwarded-Host` | The `Host` the client sent, with port if any. |
+   | `X-Forwarded-Uri` | The path and query, after [normalisation](/docs/reference/rules/#path-normalisation). |
+
+   `X-Forwarded-For` and `X-Real-IP` carry the [resolved client IP](/docs/guides/behind-a-proxy/).
+3. **2xx**: the request continues. For each header in `copy_headers`, ReverseDock first removes
+   that header from the client's request, then copies the service's values. A client cannot
+   send its own `Remote-User` and have it reach the backend.
+4. **Any other status**: the service's answer goes to the client as it is (status, headers and
+   up to 1 MiB of body). A relative `Location` is resolved against `address`.
+5. **No answer**: the request **fails closed**. It is answered with **504** when the service did
+   not answer within `timeout`, and **502** when it could not be reached or its answer was
+   unusable. The backend is never called without a decision.
+
+## Example: Authelia
+
+Authelia documents `http://authelia:9091/api/authz/forward-auth` as its endpoint and the
+`Remote-User`, `Remote-Groups`, `Remote-Email` and `Remote-Name` headers
+([Authelia docs](https://www.authelia.com/integration/proxies/traefik/), checked 2026-10-27).
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  auth-portal:
+    match: "Host(`auth.example.com`)"
+    service: authelia
+  wiki:
+    match: "Host(`wiki.example.com`)"
+    service: wiki
+    middlewares: [sso]
+
+services:
+  authelia:
+    backends: [{ address: "authelia:9091" }]
+  wiki:
+    backends: [{ address: "wiki:3000" }]
+
+middlewares:
+  sso:
+    type: forward_auth
+    address: "http://authelia:9091/api/authz/forward-auth"
+    copy_headers: [Remote-User, Remote-Groups, Remote-Email, Remote-Name]
+    timeout: 5s
+```
+
+Authentik and oauth2-proxy work the same way: set `address` to the endpoint their documentation
+gives for Traefik's `forwardAuth`, and list the headers it returns in `copy_headers`.
+
+## Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `address` | required | `http://` or `https://` URL of the auth endpoint. |
+| `copy_headers` | none | Response headers of the service copied to the forwarded request. |
+| `request_headers` | all | Client headers sent to the service. `X-Forwarded-*` headers are always sent. |
+| `timeout` | `5s` | Time allowed for the whole exchange with the service. |
+| `trust_forward_header` | `false` | Keep `X-Forwarded-Method`, `-Proto`, `-Host` and `-Uri` already on the request instead of setting them. |
+
+Leave `trust_forward_header` off unless ReverseDock sits behind another proxy that sets these
+headers and is listed in `security.trusted_proxies`. ReverseDock removes forwarding headers
+from untrusted clients before any middleware runs, so even with the setting on, a client on the
+internet cannot choose the values.
+
+The auth service's host name is resolved through DNS and the answer is cached for 10 seconds;
+connections to it are reused.
+
+## Check that it worked
+
+```sh
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' https://wiki.example.com/
+```
+
+Without a session, Authelia answers with a redirect to its portal, and `curl` prints a 3xx
+status (or 401) and the portal URL. After you log in in a browser, the wiki opens and its
+backend receives `Remote-User`.
+
+If every request returns 502, ReverseDock cannot reach the service. The application log has a
+`forward authentication failed` warning with the address and the reason.
+
+## Related
+
+- [Basic authentication](/docs/guides/basic-auth/)
+- [Behind another proxy](/docs/guides/behind-a-proxy/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

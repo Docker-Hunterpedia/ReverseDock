@@ -1,0 +1,153 @@
+---
+title: Docker Compose
+description: Run ReverseDock with Docker Compose on a server, with HTTPS from your own certificate, reloads and graceful shutdown.
+sidebar:
+  order: 2
+---
+
+This page sets up ReverseDock with Docker Compose for a server: plain HTTP redirected to HTTPS, a certificate you provide, and one application behind it. For a first try on your own machine, the [Quickstart](/docs/start/quickstart/) is shorter.
+
+## What you need
+
+- Docker Engine with the Compose plugin.
+- Ports 80 and 443 free on the host.
+- A certificate and key in PEM format for your domain, here `app.example.com`. Automatic certificates are planned for v0.3.
+
+## Directory layout
+
+```text
+rdock/
+├── compose.yaml
+└── config/
+    ├── rdock.yaml
+    └── certs/
+        ├── example.pem      # certificate chain, leaf first
+        └── example.key      # private key
+```
+
+The whole `config` directory is mounted at `/etc/rdock`. Mounting a directory, rather than single files, lets ReverseDock see changes from editors and tools that replace files, and keeps certificates next to the configuration that names them.
+
+## compose.yaml
+
+```yaml title="compose.yaml"
+name: rdock
+
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3
+    restart: unless-stopped
+    depends_on: [app]
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./config:/etc/rdock:ro
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 10s
+
+  app:
+    image: traefik/whoami:v1.11
+    restart: unless-stopped
+
+volumes:
+  rdock-data:
+```
+
+- `depends_on` starts the application first, so its name resolves when ReverseDock starts. ReverseDock resolves backend names again every 10 seconds.
+- `rdock-data` keeps the configuration history, the last-known-good copy and the admin token across container updates.
+- `read_only`, `cap_drop: [ALL]` and `no-new-privileges` work as shown: rdock writes only to `/var/lib/rdock`, and Docker allows unprivileged processes in a container to bind ports below 1024.
+- Applications do not publish ports of their own; only ReverseDock is reachable from outside.
+
+## config/rdock.yaml
+
+```yaml title="rdock.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+defaults:
+  listeners: [websecure]
+  certificate: example
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [security-headers, gzip]
+
+services:
+  app:
+    backends:
+      - address: "app:80"
+
+middlewares:
+  security-headers:
+    type: headers
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+        Referrer-Policy: strict-origin-when-cross-origin
+  gzip: { type: compress }
+
+lifecycle:
+  drain_timeout: 8s
+```
+
+The route listens on `websecure`. Plain HTTP requests for `app.example.com` on `web` are redirected to HTTPS, because `defaults.redirect_http_to_https` is on by default. `lifecycle.drain_timeout` (8 seconds, also the default) stays below Compose's `stop_grace_period`, so open requests can finish before Docker stops the container.
+
+The container runs as user `65532`; make the key readable by it.
+
+## Start and check
+
+```sh
+docker compose run --rm --no-deps rdock validate --strict /etc/rdock/rdock.yaml
+docker compose up -d
+docker compose ps
+```
+
+`rdock` shows `healthy` once it is ready. From another machine, with DNS for `app.example.com` pointing at the server:
+
+```sh
+curl -sI http://app.example.com/
+```
+
+```text
+HTTP/1.1 301 Moved Permanently
+location: https://app.example.com/
+```
+
+```sh
+curl -s -o /dev/null -w '%{http_code}\n' https://app.example.com/
+```
+
+```text
+200
+```
+
+## Day-to-day operations
+
+| Task | Command |
+|---|---|
+| Apply a changed configuration | Save the file; it is applied automatically. Or `docker compose exec rdock rdock reload` |
+| See the state | `docker compose exec rdock rdock status` |
+| Follow the logs | `docker compose logs -f rdock` |
+| Replace a certificate | Overwrite the files in `config/certs/`; new handshakes use them at once |
+| Upgrade | Change the image tag, then `docker compose up -d` (see [Upgrade](/docs/install/upgrade/)) |
+
+A configuration with errors is refused and the previous one keeps serving. A changed listener, such as a new port, applies without a restart, but Docker only forwards the ports published in `compose.yaml`.
+
+## Related
+
+- [Docker](/docs/install/docker/): the same with `docker run`.
+- [Your own TLS certificate](/docs/guides/tls-certificates/) and [HTTP to HTTPS and HSTS](/docs/guides/https-redirect-and-hsts/).
+- [Reloads](/docs/guides/reloads/)
+- [Production checklist](/docs/operations/production-checklist/)

@@ -456,7 +456,8 @@ impl Validator<'_> {
         } else {
             domains
         };
-        if hosts.is_empty() {
+        // With `defaults.certificate`, a route without host names is served that certificate.
+        if hosts.is_empty() && self.config.defaults.certificate.is_none() {
             self.push(
                 Diagnostic::warning(&tls_path, "automatic HTTPS needs a host name, but the route has no Host(`…`) and no tls.domains")
                     .with_hint("add Host(`app.example.com`) to the match, list names in tls.domains, or set `tls: off`"),

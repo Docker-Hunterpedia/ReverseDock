@@ -64,3 +64,16 @@ docker tag="rdock:dev":
 # Rebuild the Graphify code graph (optional tool, see docs/06-repo-layout.md)
 graph:
     graphify update .
+
+# Website: dev server at http://localhost:4321 (apps/website)
+website:
+    pnpm install
+    cargo build -p rdock
+    pnpm --filter @reversedock/website dev
+
+# Website: everything the `website` CI job checks
+website-check:
+    pnpm install --frozen-lockfile
+    cargo build --locked -p rdock
+    cd apps/website && pnpm gen && git diff --exit-code -- src/content/docs
+    cd apps/website && pnpm check:status && pnpm check:snippets && pnpm check && pnpm build && pnpm check:a11y

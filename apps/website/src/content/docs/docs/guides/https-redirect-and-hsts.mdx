@@ -1,0 +1,136 @@
+---
+title: HTTPS redirect and HSTS
+description: How plain HTTP requests are redirected to HTTPS, how to turn the redirect off, and how to send Strict-Transport-Security.
+sidebar:
+  order: 5
+---
+
+ReverseDock redirects plain HTTP to HTTPS on its own for every host that has an HTTPS route. HSTS, which tells browsers to stop using plain HTTP altogether, is opt-in through the `headers` middleware.
+
+## What you need
+
+- A working HTTPS route, as in [Route a domain to an app](/docs/guides/route-a-domain/).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [hsts]
+
+middlewares:
+  hsts:
+    type: headers
+    hsts:
+      max_age: 365d
+      include_subdomains: true
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+```
+
+No setting is needed for the redirect: `defaults.redirect_http_to_https` is `true` unless you set it to `false`.
+
+## How the redirect works
+
+A request on a plain listener (one without `tls`) is redirected when:
+
+- no route on that listener matches it, and
+- its host is one of the hosts of the routes on the TLS listeners, and
+- `defaults.redirect_http_to_https` is `true` and at least one TLS listener exists.
+
+The redirect keeps the host, path and query, and points at the port of the TLS listener (the port is left out when it is 443):
+
+| Request method | Status |
+|---|---|
+| `GET` | `301 Moved Permanently` |
+| Any other method, including `HEAD` and `POST` | `308 Permanent Redirect`, which keeps the method and the body |
+
+A host that no HTTPS route covers gets `404`, not a redirect. If an HTTPS route has no `Host` matcher, for example ``PathPrefix(`/`)``, every host is redirected.
+
+Because a matching route on the plain listener wins over the redirect, you can keep some hosts on HTTP: attach their routes to the plain listener with `listeners: [web]` and `tls: off`. See [Serve several sites](/docs/guides/multiple-sites/#sites-on-plain-http-only).
+
+## Check the redirect
+
+```sh
+curl -si 'http://app.example.com/login?next=/' | head -2
+```
+
+```text
+HTTP/1.1 301 Moved Permanently
+location: https://app.example.com/login?next=/
+```
+
+```sh
+curl -si -X POST http://app.example.com/form | head -2
+```
+
+```text
+HTTP/1.1 308 Permanent Redirect
+location: https://app.example.com/form
+```
+
+## Turn the redirect off
+
+```yaml title="rdock.yaml (excerpt)"
+defaults:
+  redirect_http_to_https: false
+```
+
+Plain requests for HTTPS-only hosts then get `404`. To serve the same site on both HTTP and HTTPS, attach its route to both listeners:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    listeners: [web, websecure]
+```
+
+For a redirect with other rules (another host, a temporary code, a different port), use the `redirect` middleware; see [Redirects and rewrites](/docs/guides/redirects-and-rewrites/).
+
+## HSTS
+
+The `hsts` block of a `headers` middleware sends `Strict-Transport-Security` on HTTPS responses. It is never sent on plain HTTP responses, where browsers ignore it.
+
+| Setting | Effect | Default |
+|---|---|---|
+| `max_age` | How long browsers remember the policy, as a duration (`365d`, `6h`). `0s` tells browsers to forget it. | required |
+| `include_subdomains` | Apply the policy to every subdomain too. | `false` |
+| `preload` | Add `preload`, the request to be included in browser preload lists. | `false` |
+
+The configuration above produces:
+
+```text
+strict-transport-security: max-age=31536000; includeSubDomains
+```
+
+Check it:
+
+```sh
+curl -sI https://app.example.com/ | grep -i strict-transport-security
+```
+
+:::caution[HSTS is hard to undo]
+Once a browser has seen the header, it refuses plain HTTP for the host until `max_age` runs out, and certificate errors can no longer be clicked through. Start with a short `max_age` such as `5m`, raise it when HTTPS works for every name involved, and add `include_subdomains` only when every subdomain serves HTTPS. Inclusion in preload lists is very slow to reverse; set `preload` only if you mean it.
+:::
+
+The `headers` middleware can also set other security headers in the same object; see [Security headers](/docs/guides/security-headers/).
+
+## Related
+
+- [TLS certificates](/docs/guides/tls-certificates/)
+- [`defaults` reference](/docs/reference/configuration/defaults/)
+- [`middlewares` reference](/docs/reference/configuration/middlewares/)

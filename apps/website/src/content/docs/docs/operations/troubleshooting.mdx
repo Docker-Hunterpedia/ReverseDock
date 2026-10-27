@@ -1,0 +1,153 @@
+---
+title: Troubleshooting
+description: Find the cause of common ReverseDock problems by symptom, from the status code or log message you see.
+sidebar:
+  order: 2
+---
+
+Start with three sources of information:
+
+- **The response.** Every response from ReverseDock, including its error pages, carries `x-request-id`. Error pages are HTML, or JSON when the client sends `Accept: application/json`.
+- **The access log.** One JSON line per request with `request_id`, `status`, `route`, `service`, `upstream` and, when something failed, `error`. Search it for the request ID.
+- **The application log.** Start-up, reloads, listeners and backend lookups. With Docker both logs are in `docker logs`; with systemd in `journalctl -u rdock`.
+
+`rdock validate --strict /etc/rdock/rdock.yaml` and `rdock status` answer most configuration questions. For more detail, start rdock with `--log info,rdock_proxy=debug` (or `RDOCK_LOG=info,rdock_proxy=debug`).
+
+## 404 Not Found: no route
+
+The page says `404 Not Found` and the access log line has no `route` field. No route on that listener matched the request.
+
+- **The host does not match.** `Host` compares the host name without the port and ignores case. `curl http://localhost/` sends `Host: localhost`, not your domain; test with `curl -H 'Host: app.example.com' http://localhost/`.
+- **The route is on another listener.** Routes without `listeners` use `defaults.listeners`, which is `[websecure]` unless you change it. A plain-HTTP setup needs `defaults: { listeners: [web], tls: off }` or `listeners: [web]` on the route.
+- **The path does not match.** `Path` is exact; `PathPrefix` is a plain string prefix. Paths are normalised before matching (`//` and dot segments removed).
+- **The route is disabled** with `enabled: false`.
+- **A higher-priority route wins.** Routes are tried by `priority`, or by rule length when it is not set. The access log's `route` shows which one answered.
+
+Requests to `http://` for a host that only has an HTTPS route get a 301 or 308 redirect to `https://`, not a 404.
+
+## 400 Bad Request, 417 and 421
+
+ReverseDock answers 400 and logs one of these in `error`:
+
+| `error` in the access log | Cause | Fix |
+|---|---|---|
+| `HTTP/1.1 request without Host` | The client sent HTTP/1.1 without a `Host` header | Fix the client; HTTP/1.1 requires `Host` |
+| `invalid request path` | The path cannot be normalised | Fix the client's URL |
+
+Requests with bare line feeds instead of CRLF in the headers are refused with 400 before any route is looked at. An `Expect` header other than `100-continue` gets **417** (`unsupported Expect`).
+
+ReverseDock 0.1 does not send **421 Misdirected Request**. Routing uses the `Host` header (or `:authority` in HTTP/2), not the TLS server name. If a client reuses an HTTP/2 connection for another host, the request is routed by its own host: it reaches that host's route, or gets a 404 when there is none. If you see a 421, it comes from another proxy in front of ReverseDock or from the backend.
+
+## 502 Bad Gateway
+
+The route matched, but the backend could not be reached or failed. The access log has `route`, `service`, `upstream` and an `error` such as:
+
+```text
+Upstream ConnectRefused context: Fail to connect to addr: 127.0.0.1:3000, scheme: HTTP, ... Connection refused (os error 111)
+```
+
+- **Connection refused:** nothing listens on that address. Check the backend `address`, that the application listens on all interfaces rather than `127.0.0.1` inside its container, and that both containers share a Docker network.
+- **TLS errors to the backend:** with `scheme: https`, the backend certificate must be valid for the host name. Set `tls.server_name`, add `tls.ca_file` for a private CA, or, for testing only, `tls: { verify: false }` on the service.
+- **Wrong scheme:** a backend that speaks HTTPS or h2c needs `scheme: https` or `scheme: h2c`.
+- **`forward_auth`:** when the authentication service cannot be reached, the request fails closed with 502 (504 on timeout).
+
+## 503 Service Unavailable
+
+| Cause | How to recognise it | Fix |
+|---|---|---|
+| The backend's DNS name does not resolve | Application log: `cannot resolve backend` with the host and port | Check the name and the network. Names are resolved again every 10 seconds, so a container that starts after ReverseDock is picked up within that time; in Compose, `depends_on` avoids the gap |
+| The `maintenance` middleware | `Retry-After` header; `maintenance` in the route's middlewares | Remove the middleware, or add your network to its `allow` |
+
+## 504 Gateway Timeout
+
+The backend did not answer in time. The `error` field names the phase:
+
+```text
+Upstream ConnectTimedout context: timeout 5s connecting to server addr: 172.30.0.2:80, ...
+```
+
+- **`ConnectTimedout`:** no connection within `timeouts.connect` (5 seconds by default). Often a stopped container whose address no longer answers, or a firewall dropping packets.
+- **`ReadTimedout` or `WriteTimedout`:** the backend accepted the connection but sent or received nothing for `timeouts.read` or `timeouts.write` (1 minute each). These are per read or write, not totals. Raise them on the service, or on a single route, for slow endpoints:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  reports:
+    match: "Host(`app.example.com`) && PathPrefix(`/reports`)"
+    service: app
+    timeouts: { read: 5m }
+```
+
+See [Timeouts and limits](/docs/guides/timeouts-and-limits/).
+
+## 413, 414 and 431: request too large
+
+| Status | `error` | Limit | Default |
+|---|---|---|---|
+| 413 | `request body too large` | `security.limits.max_body_bytes` | no limit |
+| 414 | `request target too long` | `security.limits.max_uri_bytes` | `8KiB` |
+| 431 | `request headers too large` | `security.limits.max_header_bytes` | `64KiB` |
+| 431 | `too many request headers` | `security.limits.max_headers` | `100` |
+
+Raise the limit in `security.limits` if the requests are legitimate. Large cookies are the usual cause of 431. Chunked bodies are counted too, so a 413 can arrive after part of the upload was sent.
+
+## TLS handshake errors
+
+Clients report a handshake failure, for example curl's `tlsv1 alert access denied`, and `rdock_tls_handshake_errors_total` grows for the listener. With `rdock_proxy=debug` logging the application log shows `TLS handshake failed` with the reason.
+
+- **No certificate for the requested name.** The name the client sent (SNI) is not covered by any certificate, and there is no `defaults.certificate`. Add a certificate for the name, or set `defaults.certificate`. Clients that connect by IP address send no SNI and always need `defaults.certificate`.
+- **Protocol mismatch.** `policy: modern` accepts only TLS 1.3. Use `intermediate` (TLS 1.2 and 1.3) for older clients.
+- **Plain HTTP to a TLS port, or TLS to a plain port.** Check the URL scheme and port.
+
+Problems with the certificate files are found when the configuration is loaded, and the configuration is refused:
+
+| Message | Fix |
+|---|---|
+| `` `…` contains no PEM certificate `` | The file is not a PEM certificate chain |
+| `` `…` contains no PEM private key (PKCS#8, PKCS#1 or SEC1) `` | The key file is wrong or in another format |
+| `` the key in `…` cannot be used with this certificate `` | Key and certificate do not belong together |
+| `` cannot decrypt `…` `` | Wrong or missing `key_password` for an encrypted key |
+| `no certificate covers app.example.com; automatic certificates are not supported yet (planned for v0.3)` | An HTTPS route's host has no certificate. Add one, set `defaults.certificate`, or use `tls: off` on a plain listener |
+
+## Reload refused
+
+The application log shows `configuration rejected; the previous one stays in use`, followed by the errors. `rdock reload` prints:
+
+```text
+error: routes.whoami.service: service `whomai` does not exist
+    did you mean `whoami`?
+rejected: the configuration has errors; generation 2 stays in use
+```
+
+Nothing changed: the previous configuration keeps serving. Run `rdock validate --strict` on the file, fix what it reports, and save again. Other reasons you may see:
+
+- `cannot read /etc/rdock/rdock.yaml: No such file or directory`: in Docker, a single mounted file was replaced by an editor and the container still sees the deleted one. Mount the directory that contains it instead, and restart the container once.
+- A setting reported as `planned for vX.Y`: the configuration uses a feature this version does not have yet. `rdock validate` lists these as warnings; `rdock run` refuses them.
+- `cannot listen on …`: see the next section.
+
+If `rdock reload` itself fails:
+
+| Message | Cause |
+|---|---|
+| `cannot reach the admin API at 127.0.0.1:2080 (is rdock running?)` | rdock is not running, or its admin listener is elsewhere. Pass the same `--config`, or `--admin` |
+| `reading the admin token …/admin/token: No such file or directory` | Wrong `--data-dir`, or rdock never started with this data directory. With systemd use `sudo` |
+| `the admin token was refused` | The token differs from the running process, for example because `RDOCK_ADMIN_TOKEN` is set differently |
+
+## Port already in use
+
+At start:
+
+```text
+error: /etc/rdock/rdock.yaml cannot be used: cannot listen on :80 (listener `web`): Address already in use (os error 98)
+```
+
+On reload, the same message rejects the configuration and the previous listeners keep running. Another process holds the port: find it with `sudo ss -ltnp 'sport = :80'` and stop it, or choose another address. `Permission denied (os error 13)` instead means the process may not bind ports below 1024; see [systemd](/docs/install/systemd/) or [Binary](/docs/install/binary/).
+
+## Still stuck
+
+Ask in [GitHub Discussions](https://github.com/Docker-Hunterpedia/ReverseDock/discussions) with your ReverseDock version (`rdock version`), the output of `rdock validate`, and the access-log line of a failing request, with secrets removed. Report bugs with the bug report form on [GitHub Issues](https://github.com/Docker-Hunterpedia/ReverseDock/issues), and security problems as described in [Security](/docs/project/security/).
+
+## Related
+
+- [HTTP behaviour](/docs/reference/http-behaviour/)
+- [Logs and metrics](/docs/guides/logs-and-metrics/)
+- [FAQ](/docs/operations/faq/)

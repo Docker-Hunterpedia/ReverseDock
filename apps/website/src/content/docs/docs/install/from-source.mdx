@@ -1,0 +1,72 @@
+---
+title: Build from source
+description: Build the rdock binary or a container image from the ReverseDock repository.
+sidebar:
+  order: 5
+---
+
+Build from source to run an unreleased commit, to target a platform without a release archive, or to audit what you run.
+
+## What you need
+
+- **Rust through [rustup](https://rustup.rs).** The repository pins the toolchain in `rust-toolchain.toml` (currently Rust 1.99.1); rustup installs it the first time you run `cargo` in the repository. The minimum supported Rust version is 1.89 (`rust-version` in `Cargo.toml`).
+- **A C compiler and CMake.** Pingora builds zlib-ng with CMake, and ring and zstd need a C compiler.
+  - Debian or Ubuntu: `sudo apt install build-essential cmake`
+  - Alpine: `apk add musl-dev cmake make`
+  - macOS: `xcode-select --install && brew install cmake`
+- **git**.
+
+## Build the binary
+
+```sh
+git clone https://github.com/Docker-Hunterpedia/ReverseDock.git
+cd ReverseDock
+git checkout v0.1.0-alpha.3
+cargo build --release --locked -p rdock
+./target/release/rdock version
+```
+
+`--locked` builds with the exact dependency versions of `Cargo.lock`, as the release workflow does. Leave out the `git checkout` to build the latest `main`.
+
+`rdock version` prints the commit it was built from. Set `RDOCK_BUILD_COMMIT` to record your own value; without it, local builds report `dev`.
+
+Install it like a release binary:
+
+```sh
+sudo install -m 0755 target/release/rdock /usr/local/bin/rdock
+```
+
+## A static Linux binary
+
+The release archives are built for the musl targets. To do the same on Linux, install the musl tools (`sudo apt install musl-tools` on Debian or Ubuntu) and add the target:
+
+```sh
+rustup target add x86_64-unknown-linux-musl
+cargo build --release --locked -p rdock --target x86_64-unknown-linux-musl
+```
+
+The binary is in `target/x86_64-unknown-linux-musl/release/rdock`.
+
+## Build a container image
+
+The `Dockerfile` at the repository root compiles rdock on Alpine and copies it into a distroless, non-root image:
+
+```sh
+docker build -t rdock:dev .
+docker run --rm rdock:dev version
+```
+
+Use `rdock:dev` instead of `ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3` in the [Docker](/docs/install/docker/) and [Compose](/docs/install/compose/) instructions. Release images are built differently, from the signed release binaries, by `Dockerfile.release`.
+
+## Run the tests
+
+```sh
+cargo test -p rdock
+```
+
+The end-to-end suites in `crates/rdock/tests` start the real binary against test backends. Contributors use `just ci` for the full set of checks; see [Contributing](/docs/project/contributing/).
+
+## Related
+
+- [Binary](/docs/install/binary/)
+- [Verify a download](/docs/install/verify/)

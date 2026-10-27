@@ -1,0 +1,73 @@
+---
+title: FAQ
+description: Short answers to common questions about ReverseDock, its status and how it behaves.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+## Is ReverseDock ready for production?
+
+The current release, 0.1.0-alpha.3, is a pre-release. The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load) and fuzz targets, but the configuration format can still change between 0.x releases. If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
+
+## Is it really free?
+
+Yes. ReverseDock is Apache-2.0 licensed, with no paid tier, no enterprise edition and no account. Contributions are made under the Developer Certificate of Origin instead of a contributor licence agreement, so nobody can relicense the project.
+
+## Does it collect telemetry?
+
+No. The binary does not contact any service on its own. It connects only to the backends, files and addresses you configure.
+
+## Can it get certificates from Let's Encrypt automatically?
+
+Not yet. Automatic HTTPS with ACME is <Status planned="v0.3" />. Until then, provide certificates under `certificates`, for example ones you obtain with an ACME client, and ReverseDock reloads them when the files change. See [Your own TLS certificate](/docs/guides/tls-certificates/).
+
+## Does it read Docker labels?
+
+Not yet. The Docker provider, with `rdock.*` labels and compatibility with existing `traefik.*` labels, is <Status planned="v0.2" />. Today, routes are defined in `rdock.yaml`, and backends in Docker are reached by container name on a shared network.
+
+## Can I use my Traefik rules?
+
+Yes. Rules use the Traefik v3 grammar and the same default priority, so a rule from a Traefik router works unchanged in `match`. A few behaviours differ on purpose; see [Migrate from Traefik](/docs/migrate/from-traefik/).
+
+## Does a reload drop connections?
+
+No. A reload builds the new configuration completely, then switches to it at once. Requests in flight finish on the configuration they started with, and a configuration with errors is refused while the old one keeps serving. Listener changes apply without a restart. Upgrading the binary does need a restart; see [Upgrade](/docs/install/upgrade/).
+
+## What happens if the configuration file is broken when rdock starts?
+
+rdock starts with the last configuration it applied successfully, stored in `/var/lib/rdock/state/lkg.json`, and logs that it did. `rdock status` shows the origin as `last-known-good`. Without a stored copy, it exits with the errors.
+
+## Does it support HTTP/2, WebSocket and gRPC?
+
+Yes: HTTP/2 over TLS, h2c on plain listeners and to backends, WebSocket, server-sent events and gRPC with trailers. HTTP/3 is an experimental track for a later milestone. See [WebSockets, SSE and gRPC](/docs/guides/websockets-sse-grpc/).
+
+## Does it do health checks and retries?
+
+Not yet. Active and passive health checks, retries, sticky sessions and further load-balancing policies are <Status planned="v0.4" />. In 0.1 a service spreads requests over all its backends with weighted round-robin or random, and a failed request is not retried.
+
+## Can it proxy TCP or UDP?
+
+Not yet. TCP and UDP routing, SNI passthrough and the PROXY protocol are <Status planned="v0.6" />.
+
+## Is there a dashboard?
+
+Not yet. The dashboard and the REST API with history and rollback are <Status planned="v0.5" />. Today the admin listener offers `/healthz`, `/readyz`, `/metrics`, `/api/v1/status` and `/api/v1/config/reload`, used by `rdock status` and `rdock reload`.
+
+## Where does rdock keep its files?
+
+The configuration in `/etc/rdock/rdock.yaml` and state in `/var/lib/rdock`: the admin token in `admin/token`, the last-known-good copy and history in `state/`. See [Files and directories](/docs/reference/files/).
+
+## Can I write the configuration in JSON?
+
+Yes. A file with a `.json` extension is read as JSON; anything else is read as YAML. `rdock schema` prints the JSON Schema, which editors can use for completion.
+
+## How does it compare with NGINX, Traefik, Caddy and HAProxy?
+
+ReverseDock aims to combine Traefik's service discovery, Caddy's automatic HTTPS, NGINX's HTTP features and HAProxy's reliability in one free binary. Version 0.1 covers host and path routing with your own certificates; the rest arrives over the milestones on the [roadmap](/docs/project/roadmap/).
+
+## Related
+
+- [What is ReverseDock](/docs/start/what-is-reversedock/)
+- [Troubleshooting](/docs/operations/troubleshooting/)

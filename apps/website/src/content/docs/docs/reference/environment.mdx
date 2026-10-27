@@ -1,0 +1,102 @@
+---
+title: Environment variables
+description: Every RDOCK_* environment variable the rdock binary reads, which command uses it, and its default.
+sidebar:
+  order: 6
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `rdock` binary <Status since="v0.1" /> reads the variables below. Each one stands in for a
+command-line flag; when both are given, **the flag wins**. Everything else is configured in
+`rdock.yaml`. Full flag descriptions are in the [CLI reference](/docs/reference/cli/).
+
+## Variables
+
+| Variable | Flag | Used by | Default |
+|---|---|---|---|
+| `RDOCK_CONFIG` | `--config`, `-c` | `run`, `reload`, `status`, `healthcheck` | `/etc/rdock/rdock.yaml` |
+| `RDOCK_DATA_DIR` | `--data-dir` | `run`, `reload`, `status` | `/var/lib/rdock` |
+| `RDOCK_LOG` | `--log` | `run` | `info` |
+| `RDOCK_LOG_FORMAT` | `--log-format` | `run` | `auto` |
+| `RDOCK_ADMIN_TOKEN` | none | `run`, `reload`, `status` | the token file in the data directory |
+| `RDOCK_ADMIN` | `--admin` | `reload`, `status`, `healthcheck` | `admin.listener` from the configuration file |
+
+### `RDOCK_CONFIG`
+
+The configuration file. YAML, or JSON when the name ends in `.json`. `rdock reload`, `status`
+and `healthcheck` read it only to find the admin listener. `rdock validate` takes its files as
+arguments and ignores this variable.
+
+### `RDOCK_DATA_DIR`
+
+The directory for state: configuration history, the last-known-good copy and the admin token.
+`rdock run` creates it when it is missing. The other commands read the admin token from it. See
+[Files and directories](/docs/reference/files/). `rdock healthcheck` accepts the flag but needs
+no token.
+
+### `RDOCK_LOG`
+
+Filter for the application log, in the `RUST_LOG` syntax of the `tracing-subscriber` crate: a
+level (`error`, `warn`, `info`, `debug`, `trace`), optionally followed by per-module levels, for
+example `info,rdock_proxy=debug`. `RUST_LOG` itself is not read. This variable does not affect
+the access log, which is configured with `observability.access_log`.
+
+### `RDOCK_LOG_FORMAT`
+
+Format of the application log on standard error:
+
+- `auto`: JSON lines when standard error is not a terminal (containers, systemd), text
+  otherwise.
+- `json`: one JSON object per line.
+- `text`: human-readable lines.
+
+The systemd unit in `deploy/systemd/rdock.service` sets `RDOCK_LOG_FORMAT=json`.
+
+### `RDOCK_ADMIN_TOKEN`
+
+The bearer token of the admin API (`/api/v1/status` and `/api/v1/config/reload`). When it is set
+and not empty, `rdock run` uses it and does not create a token file, and `rdock reload` and
+`rdock status` send it. Set the same value for the proxy and for the commands that talk to it.
+
+When it is not set, `rdock run` reads `$RDOCK_DATA_DIR/admin/token`, creating it on first start,
+and the other commands read the same file. Pass the token as a secret of your platform, not in
+a file that is committed anywhere.
+
+### `RDOCK_ADMIN`
+
+The admin API address used by `rdock reload`, `rdock status` and `rdock healthcheck`, as
+`IP:port`, for example `127.0.0.1:2080`. When it is not set, the address comes from
+`admin.listener` in the configuration file, with `127.0.0.1` in place of an unspecified address;
+when the file cannot be read, `127.0.0.1:2080` is used.
+
+## Variables in the configuration
+
+String values in `rdock.yaml` can refer to any environment variable as `${NAME}` or
+`${env:NAME}`, and to a file as `${file:/path}`. A reference to a variable that is not set is an
+error, so a missing secret stops the configuration from loading instead of leaving a field
+empty. `$${` writes a literal `${`. See [Secrets](/docs/guides/secrets/).
+
+```yaml title="rdock.yaml (excerpt)"
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+    key_password: "${file:/run/secrets/key_password}"
+```
+
+## Build time
+
+`RDOCK_BUILD_COMMIT` is read when the binary is **compiled**, not when it runs. It sets the
+commit shown by `rdock version` and the `commit` label of `rdock_build_info`; without it,
+`GITHUB_SHA` is used, and otherwise `dev`. Only the first 12 characters are kept.
+
+```sh
+RDOCK_BUILD_COMMIT=$(git rev-parse HEAD) cargo build --release -p rdock
+```
+
+## Related
+
+- [CLI reference](/docs/reference/cli/)
+- [Files and directories](/docs/reference/files/)
+- [Secrets](/docs/guides/secrets/)

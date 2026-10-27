@@ -7,7 +7,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - **Never push to `main`.** It is protected by the "Protect main" ruleset. Every change goes through a branch and a pull request and is squash-merged. Do not merge PRs yourself or use `--admin`/bypass; maintainers merge.
 - **Branch names:** `type/short-topic`, e.g. `feat/docker-network-selection`, `fix/acme-ari-retry`, `docs/roadmap-typo`.
 - **Sign off every commit:** `git commit -s` (Developer Certificate of Origin). The `dco` check fails without a `Signed-off-by` line matching the commit author.
-- **PR titles are Conventional Commits:** `type(scope): summary`. Types: `feat`, `fix`, `docs`, `perf`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`, `security`; add `!` for breaking changes. Scopes are crate or area names without the `rdock-` prefix (`proxy`, `rules`, `config`, `tls`, `acme`, `balancer`, `middleware`, `docker`, `swarm`, `kubernetes`, `cloudflare`, `admin`, `dashboard`, `observability`, `adr`, `repo`). The `pr-title` check enforces this; the title becomes the commit on `main`.
+- **PR titles are Conventional Commits:** `type(scope): summary`. Types: `feat`, `fix`, `docs`, `perf`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`, `security`; add `!` for breaking changes. Scopes are crate or area names without the `rdock-` prefix (`proxy`, `rules`, `config`, `tls`, `acme`, `balancer`, `middleware`, `docker`, `swarm`, `kubernetes`, `cloudflare`, `admin`, `dashboard`, `website`, `observability`, `adr`, `repo`). The `pr-title` check enforces this; the title becomes the commit on `main`.
 - **Fill in the PR template:** link the issue (`Closes #123`) and the requirement ID from `docs/04-requirements.md` (e.g. `B-NET-04`). One topic per PR.
 - **Required checks:** `docs`, `dco`, `pr-title`, `rust`, `msrv`, `deny`, `docker`. Run `just ci` before pushing (it includes `python3 -I scripts/check-docs.py`); run `just schema` after changing `rdock-model`.
 - **No secrets** (tokens, keys, private hostnames, personal data) in code, docs, fixtures or logs. Security problems go through [SECURITY.md](SECURITY.md), never a public issue.
@@ -17,6 +17,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - Architecture, config-model, label-grammar, public-API and security-model changes need an ADR in `docs/decisions/` (copy `0000-template.md`). Accepted ADRs are only changed to mark them superseded.
 - Requirement IDs in `docs/04-requirements.md` are stable: never renumber or reuse one. Every ID is scheduled in `docs/07-roadmap.md` or listed there as unscheduled.
 - `docs/03-feature-matrix.md` is generated below its `<!-- GENERATED` marker by `scripts/xlsx2md.py` from the workbook in `docs/research/`. Never hand-edit the generated part.
+- User-facing behaviour changes update their page in `apps/website/src/content/docs/` in the same PR; run `pnpm gen` there after changing the schema or the CLI ([apps/website/README.md](apps/website/README.md)).
 - Facts about third-party projects (Pingora, Traefik, Let's Encrypt, Gateway API) must cite an official source and a date.
 
 ## Code conventions
@@ -39,7 +40,9 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/06-repo-layout.md](docs/06-repo-layout.md) | Repo tree, crate rules, Cargo features, CI, releases, testing, Graphify |
 | [docs/07-roadmap.md](docs/07-roadmap.md) | Milestones M0 → v1.0 with acceptance criteria |
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
-| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0016 |
+| [docs/09-website.md](docs/09-website.md) | Public website and docs plan (Astro + Starlight, `apps/website`) |
+| [apps/website/](apps/website/README.md) | The website: landing page, docs pages, generators and checks |
+| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0017 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) | How changes are proposed, reviewed and merged |

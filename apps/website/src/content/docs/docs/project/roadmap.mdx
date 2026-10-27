@@ -1,0 +1,57 @@
+---
+title: Roadmap
+description: ReverseDock's milestones from M0 to 1.0, what each one delivers, and which are done.
+sidebar:
+  order: 1
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock is planned in milestones, not dates. Each milestone ships a usable binary and has acceptance criteria that CI checks. Progress on each one is tracked in the [GitHub milestones](https://github.com/Docker-Hunterpedia/ReverseDock/milestones); the full plan with requirement IDs is [docs/07-roadmap.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/07-roadmap.md) in the repository.
+
+| Milestone | Theme | You can… | Status |
+|---|---|---|---|
+| M0 | Foundations | build, lint, test and release; the configuration model and schema exist | Done (0.1.0-alpha.2) |
+| v0.1 | Hello proxy | replace NGINX for host and path routing with your own certificates | <Status since="v0.1" /> 0.1.0-alpha.3 |
+| v0.2 | Docker-native | replace Traefik on a Compose box using your existing labels | <Status planned="v0.2" /> |
+| v0.3 | Automatic HTTPS | go from DNS to HTTPS with one label | <Status planned="v0.3" /> |
+| v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status planned="v0.4" /> |
+| v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
+| v0.6 | Swarm, L4, static | multi-node Docker, TCP and SNI passthrough, static sites | <Status planned="v0.6" /> |
+| v0.7 | Kubernetes | run it as a Gateway API controller | <Status planned="v0.7" /> |
+| v0.8 | Cache and extensibility | cache like NGINX, extend it with plugins | <Status planned="v0.8" /> |
+| v0.9 | Scale | several instances with a control plane, distributed limits, zero-downtime upgrades, HTTP/3 (experimental) | <Status planned="v0.9" /> |
+| v1.0 | Stable | stability guarantees, a security audit, conformance, the full docs site | <Status planned="v1.0" /> |
+
+## v0.1: Hello proxy <Status since="v0.1" />
+
+HTTP/1.1, HTTP/2, h2c, WebSocket, server-sent events and gRPC; routing with the Traefik v3 grammar; TLS with your own certificates; the middlewares `headers`, `redirect`, `rewrite`, `strip_prefix`, `add_prefix`, `replace_path`, `basic_auth`, `forward_auth`, `ip_allow`, `ip_deny`, `rate_limit`, `cors`, `compress`, `errors` and `maintenance`; reloads without dropped requests, history and last-known-good; Prometheus metrics; the official image, a Compose example and a systemd unit. See [What is ReverseDock](/docs/start/what-is-reversedock/) and the [changelog](/docs/project/changelog/).
+
+## v0.2: Docker-native <Status planned="v0.2" />
+
+The Docker provider: routes from `rdock.*` labels and compatibility with a documented subset of `traefik.*` labels, tested against real Compose files. A zero-configuration mode, `rdock migrate traefik` to turn labels into YAML, diagnostics for unsupported labels, and examples for Dokploy, Coolify and Portainer. Losing the Docker socket does not drop traffic.
+
+## v0.3: Automatic HTTPS <Status planned="v0.3" />
+
+ACME with HTTP-01, TLS-ALPN-01 and DNS-01, renewal guided by ARI, a local CA for development, Cloudflare integration (trusted IP ranges, `CF-Connecting-IP`, DNS-01, Tunnel example). The goal: a fresh VPS reaches valid HTTPS in under 60 seconds.
+
+## v0.4: Production reliability <Status planned="v0.4" />
+
+Load-balancing policies, active and passive health checks, retries with a retry budget, sticky sessions, traffic splits, mTLS, JWT, brotli and zstd, tracing, and the first published benchmarks against NGINX, Traefik, Caddy and HAProxy.
+
+## v0.5 to v1.0
+
+- **v0.5:** the embedded dashboard and the REST API with audit log, tokens, configuration editor, diff and rollback.
+- **v0.6:** Docker Swarm, TCP routing with SNI passthrough, the PROXY protocol, static files.
+- **v0.7:** Kubernetes Gateway API controller and Helm chart, tested with the upstream conformance suite.
+- **v0.8:** HTTP cache, plugins, API-gateway features, UDP.
+- **v0.9:** a control plane for several instances, distributed rate limits, zero-downtime binary upgrades, experimental HTTP/3.
+- **v1.0:** stability and deprecation guarantees, a third-party security audit, migration guides, benchmarks.
+
+## Out of scope for 1.0
+
+FastCGI, a forward-proxy mode, a mail proxy, eBPF experiments, and Nomad, Consul, key-value and ECS providers. They are recorded so they are not proposed again by accident; each would need its own design decision first.
+
+## Help shape it
+
+Open a feature request or a design proposal on [GitHub](https://github.com/Docker-Hunterpedia/ReverseDock/issues/new/choose), or comment on the issues of a milestone. See [Contributing](/docs/project/contributing/).

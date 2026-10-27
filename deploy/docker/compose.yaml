@@ -4,7 +4,9 @@
 #   curl -H 'Host: whoami.localhost' http://localhost/
 #   docker compose exec rdock rdock status     # admin API from inside the container
 #
-# rdock.yaml is mounted read-only and reloaded when it changes; state (history, the
+# The config directory (rdock.yaml, and certificates under config/certs) is mounted read-only
+# and reloaded when rdock.yaml changes. Mount the directory, not the single file: editors replace
+# files on save, and a single-file mount keeps pointing at the deleted copy. State (history, the
 # last-known-good copy and the admin token) lives in the `rdock-data` volume.
 name: reversedock
 
@@ -17,13 +19,16 @@ services:
       - "80:80"
       - "443:443"
     volumes:
-      - ./rdock.yaml:/etc/rdock/rdock.yaml:ro
+      - ./config:/etc/rdock:ro
       - rdock-data:/var/lib/rdock
     read_only: true
     cap_drop: [ALL]
     security_opt: ["no-new-privileges:true"]
     # Docker lets non-root processes bind ports below 1024 (net.ipv4.ip_unprivileged_port_start=0).
     stop_grace_period: 10s
+    # Start after the backend so its name resolves on the first request (names are re-resolved
+    # every 10 s afterwards).
+    depends_on: [whoami]
 
   whoami:
     image: traefik/whoami:v1.11

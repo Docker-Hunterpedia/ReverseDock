@@ -34,7 +34,7 @@ The workspace needs:
 - **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml` and installs itself. The minimum supported version is 1.89.
 - A **C compiler** and **CMake** for Pingora's native dependencies (`xcode-select --install && brew install cmake`, or `apt install build-essential cmake`).
 - **just**, **cargo-nextest**, **cargo-deny**, **actionlint** and **shellcheck** for the dev recipes (`brew install just cargo-nextest cargo-deny actionlint shellcheck`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just msrv` and `just docker` run the other two jobs.
-- **Node 24 + pnpm** for the dashboard in `apps/dashboard`.
+- **Node 24 + pnpm** (version in the root `package.json`) for the website in `apps/website` and, later, the dashboard. `just website` starts the docs locally; `just website-check` runs the `website` CI job. How to write pages: [apps/website/README.md](apps/website/README.md).
 - **Docker** for the image smoke test (`just docker`) and, later, the Pebble/toxiproxy/Docker-provider suites. The v0.1 end-to-end tests run with plain `cargo nextest`.
 - Optional: `cargo install cargo-fuzz` and a nightly toolchain to run the fuzz targets in `tests/fuzz`.
 - Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.

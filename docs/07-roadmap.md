@@ -73,4 +73,4 @@ F-WEB-04 (FastCGI), F-WEB-05 (forward-proxy mode), F-WEB-06 (mail proxy), H-PERF
 - **HTTP/3** (BoringSSL variant; depends on `tokio-quiche` maturity and the h3→h2c hop measurements).
 - **Cache** (depends on `pingora-cache` API stability; we pin and adapt).
 - **Benchmarks** (nightly job, results published per release).
-- **Docs site** (Starlight) from v0.3 onward.
+- **Website and docs** (Astro + Starlight, [09-website](09-website.md), [ADR-0017](decisions/0017-website-astro-starlight.md)): W0 launches before v0.2, and every later milestone ships with its docs (W1 with v0.2, W2 with v0.3, W3 from v0.5 to v1.0).

@@ -1,0 +1,142 @@
+---
+title: Protect a site with a password
+description: Put HTTP Basic authentication in front of a route with the basic_auth middleware, using argon2id or bcrypt password hashes.
+sidebar:
+  order: 14
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `basic_auth` middleware <Status since="v0.1" /> asks for a user name and password before a
+request reaches the backend. Use it for small internal tools. For single sign-on, use
+[forward authentication](/docs/guides/forward-auth/) instead.
+
+## Before you start
+
+- Serve the route over HTTPS. Basic authentication sends the password with every request,
+  encoded but not encrypted. See [TLS certificates](/docs/guides/tls-certificates/).
+- Have the `rdock` binary at hand to create password hashes. Plain-text passwords are never
+  accepted.
+
+## Create a password hash
+
+`rdock hash` reads the password from the first line of standard input, so it does not end up in
+your shell history or the process list, and prints an argon2id hash. With `--user` it prints a
+complete `user:hash` entry.
+
+```sh
+rdock hash --user alice
+```
+
+Type the password and press Enter. To hide it while you type, pipe it in, for example from a
+password manager's command-line tool. The output looks like this:
+
+```text
+alice:$argon2id$v=19$m=19456,t=2,p=1$Mk1XX0F08SxdcsXb41BuJw$Opsu4ymnvQTr81nzlePT6BVjjA0Ab+1l2TkBwqkJErQ
+```
+
+In Docker, run the same command in the image:
+`docker run --rm -i ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3 hash --user alice`.
+
+## Configure the middleware
+
+Keep the entries in a users file, one `user:hash` per line. Empty lines and lines starting with
+`#` are ignored.
+
+```text title="/etc/rdock/admin.htpasswd"
+# rdock hash --user alice
+alice:$argon2id$v=19$m=19456,t=2,p=1$Mk1XX0F08SxdcsXb41BuJw$Opsu4ymnvQTr81nzlePT6BVjjA0Ab+1l2TkBwqkJErQ
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  admin:
+    match: "Host(`admin.example.com`)"
+    service: admin
+    middlewares: [office-login]
+
+services:
+  admin:
+    backends: [{ address: "admin:8080" }]
+
+middlewares:
+  office-login:
+    type: basic_auth
+    users_file: /etc/rdock/admin.htpasswd
+    realm: Admin
+    remove_header: true
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `users` | none | `user:hash` entries written in the configuration. |
+| `users_file` | none | File with one `user:hash` entry per line. |
+| `realm` | `rdock` | Name browsers show in the login prompt. |
+| `remove_header` | `false` | Remove the `Authorization` header before forwarding, so the backend never sees the password. |
+
+Set `users`, `users_file` or both. When a user appears in both, the entry in `users` wins.
+ReverseDock watches the users file and reloads when it changes, so adding a user needs no
+restart.
+
+Inline entries look like this:
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  office-login:
+    type: basic_auth
+    users:
+      - "alice:$argon2id$v=19$m=19456,t=2,p=1$Mk1XX0F08SxdcsXb41BuJw$Opsu4ymnvQTr81nzlePT6BVjjA0Ab+1l2TkBwqkJErQ"
+```
+
+## Supported hashes
+
+| Format | Prefix | Status |
+|---|---|---|
+| argon2id | `$argon2id$` | Recommended. `rdock hash` creates these. |
+| bcrypt | `$2a$`, `$2b$`, `$2x$`, `$2y$` | Accepted. `htpasswd -B` creates these. |
+| Apache MD5 | `$apr1$` | Accepted with a warning. |
+| MD5-crypt | `$1$` | Accepted with a warning. |
+| SHA-1 | `{SHA}` | Accepted with a warning. |
+
+The weak formats are accepted so that files from `htpasswd` and Traefik keep working.
+`rdock validate` warns about each inline entry that uses one, with the hint to create an argon2id
+entry with `rdock hash --user <name>`. Under `--strict` that warning is an error. A plain-text
+password in `users` is an error; in a users file, an entry in an unknown format never matches.
+
+## How requests are checked
+
+- A request without valid credentials gets **401** with
+  `WWW-Authenticate: Basic realm="Admin", charset="UTF-8"`, and does not reach the backend.
+- argon2id and bcrypt are slow on purpose. ReverseDock checks them on a separate thread pool and
+  remembers a successful check for five minutes, so a browser that sends the credentials with
+  every request does not pay the cost each time.
+- The authenticated user name appears in the `user` field of the
+  [access log](/docs/guides/logs-and-metrics/). The `Authorization` header itself is redacted
+  from the log by default.
+
+## Check that it worked
+
+```sh
+rdock validate /etc/rdock/rdock.yaml
+curl -s -o /dev/null -w '%{http_code}\n' https://admin.example.com/
+curl -s -o /dev/null -w '%{http_code}\n' -u alice https://admin.example.com/
+```
+
+The first `curl` prints `401`. The second asks for alice's password and prints the backend's
+status, for example `200`.
+
+## Related
+
+- [Forward authentication](/docs/guides/forward-auth/)
+- [IP filtering](/docs/guides/ip-filtering/), to add a network check in front of the login
+- [`rdock hash`](/docs/reference/cli/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

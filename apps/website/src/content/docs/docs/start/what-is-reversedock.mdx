@@ -1,0 +1,78 @@
+---
+title: What is ReverseDock
+description: An open-source reverse proxy in Rust on Cloudflare Pingora, what it does today, and what comes next.
+sidebar:
+  order: 1
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock is an open-source reverse proxy written in Rust and built on Cloudflare Pingora. It runs as one binary, `rdock`, reads one configuration file, `rdock.yaml`, and sends HTTP traffic to your applications. It is licensed under Apache-2.0, with no paid tier, no account and no telemetry.
+
+The goal is one proxy for a laptop, a VPS, a Docker Swarm or a Kubernetes cluster: service discovery from Docker labels, automatic HTTPS, the HTTP features you expect from NGINX, and a dashboard you can edit. Those arrive milestone by milestone. This page says what works now and what is planned.
+
+## Who it is for
+
+| You run | You need first |
+|---|---|
+| A few containers on one machine: Compose, a home lab, a small VPS | Simple routing, HTTPS, few moving parts |
+| Dozens of services for a team in production | Reloads without dropped requests, limits, metrics, history and rollback |
+| A platform with Kubernetes and several proxy instances | Gateway API, shared state, published benchmarks |
+
+Every feature is designed so that the first group never pays in complexity for the last.
+
+## What works in 0.1.0-alpha.3 <Status since="v0.1" />
+
+The current release is a pre-release of milestone v0.1, "hello proxy". It replaces NGINX for host and path routing with certificates you provide.
+
+- **HTTP proxying:** HTTP/1.1, HTTP/2 over TLS, h2c, WebSocket, server-sent events and gRPC. Backends by IP address, DNS name or Unix socket, over HTTP, HTTPS or h2c, with weighted round-robin or random balancing.
+- **Routing** with the Traefik v3 rule grammar: `Host`, `HostRegexp`, `Path`, `PathPrefix`, `PathRegexp`, `Method`, `Header`, `Query`, `ClientIP`, with `&&`, `||`, `!` and priorities. See [Rules](/docs/reference/rules/).
+- **TLS** with your own certificates: SNI, wildcard and default certificates, encrypted keys, `modern` and `intermediate` policies, and reload when the files change.
+- **Middlewares:** `headers` (including HSTS), `redirect`, `rewrite`, `strip_prefix`, `add_prefix`, `replace_path`, `basic_auth`, `forward_auth`, `ip_allow`, `ip_deny`, `rate_limit`, `cors`, `compress` (gzip), `errors` and `maintenance`.
+- **Security defaults:** forwarded headers trusted only from `security.trusted_proxies`, header, target and body limits, and request-smuggling hardening.
+- **Operations:** reload on file change, `SIGHUP`, `rdock reload` or the admin API, without dropping requests. Listener changes apply without a restart. A history of applied configurations and a last-known-good copy that is used at start when the file is broken.
+- **Observability:** JSON access log, Prometheus metrics, `/healthz` and `/readyz` on the admin listener (`127.0.0.1:2080`).
+- **Packaging:** signed multi-arch images on GHCR, static Linux binaries, a macOS binary, a Compose example and a systemd unit.
+
+## What is planned
+
+Settings for these features are already part of the configuration model. `rdock validate` reports them as "planned for vX.Y" and `rdock run` refuses a configuration that uses them, so nothing is silently ignored.
+
+| Feature | Status |
+|---|---|
+| Docker provider and Traefik label compatibility | <Status planned="v0.2" /> |
+| Automatic HTTPS (ACME, DNS-01, Cloudflare) | <Status planned="v0.3" /> |
+| Health checks, retries, sticky sessions, more load-balancing policies, tracing | <Status planned="v0.4" /> |
+| Dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
+| Swarm, TCP and UDP routing, PROXY protocol, static files | <Status planned="v0.6" /> |
+| Kubernetes Gateway API controller | <Status planned="v0.7" /> |
+
+Until automatic HTTPS ships, every HTTPS route needs a certificate under `certificates` or a `defaults.certificate`. The full plan is on the [roadmap](/docs/project/roadmap/).
+
+## How it relates to Pingora
+
+Pingora is Cloudflare's "Rust framework to build fast, reliable and programmable networked systems", licensed under Apache-2.0 ([github.com/cloudflare/pingora](https://github.com/cloudflare/pingora), checked 2026-10-27). It is a library, not a proxy you can configure and run. ReverseDock uses Pingora 0.9 as its HTTP engine and adds what an operator needs around it: its own listeners and TLS (rustls), a configuration model and loader, routing, middlewares, reloads, the admin API and metrics. See [Architecture](/docs/concepts/architecture/).
+
+## How it relates to Traefik
+
+ReverseDock's model is a superset of Traefik's dynamic configuration: listeners correspond to entry points, and routes, services and middlewares keep their Traefik meaning. Rules use Traefik v3's grammar, including the default priority equal to the length of the rule ([Traefik rules and priority](https://doc.traefik.io/traefik/reference/routing-configuration/http/routing/rules-and-priority/), checked 2026-10-27), so a rule written for Traefik routes the same way here. Where ReverseDock behaves differently, the difference is deliberate and documented in [HTTP behaviour](/docs/reference/http-behaviour/) and [Migrate from Traefik](/docs/migrate/from-traefik/). Reading existing Traefik Docker labels is <Status planned="v0.2" />.
+
+## Principles
+
+These come from the project's vision and do not change between releases.
+
+1. **Single binary, no required dependencies.** No database, no Redis, no Node runtime.
+2. **The data plane never waits for the control plane.** If the admin API, a provider or the certificate authority is down, existing routes keep serving.
+3. **One internal model.** Every source of configuration translates into the same model.
+4. **Deterministic configuration.** Conflicts are rejected with a diagnostic, never silently overwritten. Every apply is atomic.
+5. **Secure by default.** The admin API listens on localhost; forwarded headers are trusted only from configured proxies; secrets stay out of logs.
+6. **Compatibility is tested, not claimed.**
+7. **Everything is observable** in the API, the CLI and Prometheus.
+8. **Honest performance.** No benchmark numbers without the hardware, TLS settings and request mix.
+9. **Free forever.** Apache-2.0 with the Developer Certificate of Origin, no open-core split.
+
+## Next steps
+
+- [Quickstart](/docs/start/quickstart/): a working proxy with Docker Compose in five minutes.
+- [Concepts](/docs/start/concepts/): listeners, routes, services, middlewares and certificates.
+- [Install](/docs/install/docker/): Docker, Compose, binary, systemd or from source.

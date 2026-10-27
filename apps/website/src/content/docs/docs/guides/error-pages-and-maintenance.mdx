@@ -1,0 +1,174 @@
+---
+title: Error pages and maintenance mode
+description: Replace error responses with your own pages using the errors middleware, take a site offline with the maintenance middleware, and know what the built-in error pages contain.
+sidebar:
+  order: 21
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock answers some requests itself: when no route matches, when a backend cannot be
+reached, when a middleware refuses a request. This page covers the built-in pages it sends,
+how to replace them and your backends' error pages with your own, and how to put a site into
+maintenance mode. Everything here is available <Status since="v0.1" />.
+
+## Built-in error pages
+
+When ReverseDock produces an error itself, for example a 404 for a request that matches no
+route, a 502 when the backend refuses the connection, or a 429 from a rate limit, it sends a
+small page with the status code, the reason phrase and the **request ID**. A user can quote the
+ID, and you find the request in the access log by its `request_id` field.
+
+The page is HTML, or JSON when the client's `Accept` header contains `application/json` and not
+`text/html`:
+
+```sh
+curl -s -H 'Accept: application/json' https://app.example.com/
+```
+
+```json
+{"error":"Bad Gateway","request_id":"01a17a3b-e5f9-7700-8651-b6fed966a045","status":502}
+```
+
+These responses carry `Cache-Control: no-store` and an `X-Request-ID` header with the same ID.
+A 503 that ReverseDock sends because a service has no available backend also has
+`Retry-After: 5`.
+
+## Your own error pages
+
+The `errors` middleware replaces the body of responses whose status is in `status`. The
+**status code stays the same**: a 503 is still a 503 for clients, monitors and search
+engines, only the page changes.
+
+It covers:
+
+- error responses from the backend, for example its 404 or 500 pages;
+- answers from middlewares listed after it in the route, for example a 403 from `ip_allow`;
+- the errors ReverseDock produces when it cannot get a response from the backend: 502 when the
+  connection fails, 504 on a timeout, 503 when the service has no backend.
+
+It does not cover requests that match no route (there is no route, so no middleware runs), or
+requests refused before routing, such as an oversized header (431).
+
+### Pages from a service
+
+The pages can come from a service, which gets a `GET` for `path`, with `{status}` replaced by
+the status code, and the client's `Host`:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [friendly-errors]
+
+services:
+  app:
+    backends: [{ address: "app:3000" }]
+  error-pages:
+    backends: [{ address: "error-pages:8080" }]
+
+middlewares:
+  friendly-errors:
+    type: errors
+    status: ["404", "500-599"]
+    service: error-pages
+    path: "/{status}.html"
+```
+
+The page's `Content-Type` comes from the service's answer. If the error-page service itself
+fails, the original response is sent unchanged and a warning is logged.
+
+### Pages from a file
+
+A static file is read when the configuration loads, and reloaded when the file changes:
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  friendly-errors:
+    type: errors
+    status: ["500-599"]
+    file: /etc/rdock/pages/error.html
+```
+
+The content type follows the file extension: `.json` is sent as `application/json`, `.txt` as
+`text/plain; charset=utf-8`, anything else as `text/html; charset=utf-8`. The same file is used
+for every status in the list, so write it without a specific code. Set `file` or `service`, not
+both; `path` is only used with `service`.
+
+When the page replaces a body, `Content-Length` is set for the new page and headers that
+described the old body (`Content-Encoding`, `ETag`, `Last-Modified`, `Content-Range`,
+`Accept-Ranges`) are removed.
+
+## Maintenance mode
+
+The `maintenance` middleware answers every request on its routes itself, so you can work on the
+backend without users seeing broken pages. Clients in `allow` still reach the backend, so you
+can test before you open the site again.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  shop:
+    match: "Host(`shop.example.com`)"
+    service: shop
+    middlewares: [shop-maintenance]
+
+services:
+  shop:
+    backends: [{ address: "shop:8080" }]
+
+middlewares:
+  shop-maintenance:
+    type: maintenance
+    enabled: true
+    retry_after: 30m
+    allow: [198.51.100.0/24]
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `enabled` | `true` | Turn maintenance mode on. Set `false` to pass requests through again. |
+| `status` | `503` | Status code of the answer; must be 4xx or 5xx. |
+| `file` | none | HTML page to send. Without it, the built-in page for `status` is sent. |
+| `retry_after` | none | Sent as `Retry-After` in seconds, for example `30m` becomes `1800`. |
+| `allow` | none | Client networks that still reach the backend, by [resolved client IP](/docs/guides/behind-a-proxy/). |
+
+Answers carry `Cache-Control: no-store`, so browsers and CDNs do not keep the maintenance page
+after you finish. Keep 503: it tells search engines and monitors the outage is temporary.
+
+To switch maintenance on and off, change `enabled` and save the file. ReverseDock reloads on
+its own; see [Reloads](/docs/guides/reloads/).
+
+## Check that it worked
+
+```sh
+curl -s -o /dev/null -D - https://shop.example.com/
+```
+
+From outside `allow` the answer starts with `HTTP/1.1 503 Service Unavailable` and includes
+`retry-after: 1800` and `Cache-Control: no-store`. From an allowed address you get the shop.
+
+## Related
+
+- [Logs and metrics](/docs/guides/logs-and-metrics/), to find a request by its ID
+- [Troubleshooting](/docs/operations/troubleshooting/)
+- [HTTP behaviour](/docs/reference/http-behaviour/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

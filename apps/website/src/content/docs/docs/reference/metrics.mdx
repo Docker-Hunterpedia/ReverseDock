@@ -1,0 +1,130 @@
+---
+title: Metrics
+description: Every Prometheus metric ReverseDock exports at /metrics on the admin listener, with its type and labels.
+sidebar:
+  order: 5
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock <Status since="v0.1" /> exports Prometheus metrics in the text format at
+**`GET /metrics`** on the admin listener (`127.0.0.1:2080` unless `admin.listener` says
+otherwise). The endpoint needs no token. Set `observability.metrics.prometheus: false` to turn
+it off; it then answers 404.
+
+```sh
+curl -s http://127.0.0.1:2080/metrics
+```
+
+Label values come from your configuration (listener, route, service and certificate names) or
+from small fixed sets, never from request data such as paths or hosts, so the number of series
+stays bounded.
+
+## HTTP
+
+### `rdock_http_requests_total`
+
+**Counter.** HTTP requests handled, counted when the response is finished.
+
+| Label | Values |
+|---|---|
+| `listener` | Listener name. |
+| `route` | Route name; empty when no route matched or the request was refused before routing. |
+| `service` | Service of the route; empty when there is no route. |
+| `method` | `GET`, `HEAD`, `POST`, `PUT`, `DELETE`, `PATCH`, `OPTIONS`, `CONNECT`, `TRACE`, or `OTHER` for any other method. |
+| `status_class` | `1xx`, `2xx`, `3xx`, `4xx` or `5xx`. A request whose client went away before any response was sent counts as `5xx`. |
+
+### `rdock_http_request_duration_seconds`
+
+**Histogram.** Time from the request headers to the end of the response, in seconds.
+
+| Label | Values |
+|---|---|
+| `listener` | Listener name. |
+| `route` | Route name, or empty. |
+
+Buckets: 0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30 seconds.
+
+### `rdock_upstream_errors_total`
+
+**Counter.** Failed attempts to connect to a backend.
+
+| Label | Values |
+|---|---|
+| `service` | Service name. |
+| `kind` | `connect` (refused or failed) or `timeout` (longer than the service's `timeouts.connect`). |
+
+Errors after the connection is open, such as a read timeout, show up as 502 or 504 in
+`rdock_http_requests_total` and in the access log.
+
+## Connections and TLS
+
+### `rdock_connections_open`
+
+**Gauge.** Client connections open now. Label: `listener`.
+
+### `rdock_connections_total`
+
+**Counter.** Client connections accepted. Label: `listener`.
+
+### `rdock_tls_handshake_errors_total`
+
+**Counter.** TLS handshakes that failed or did not finish within the listener's
+`timeouts.request_header`. Label: `listener`.
+
+### `rdock_cert_expiry_timestamp_seconds`
+
+**Gauge.** Expiry (`notAfter`) of each certificate in `certificates`, in seconds since the Unix
+epoch. Label: `name`, the key under `certificates`. Updated whenever a configuration is applied,
+including when certificate files change.
+
+## Configuration
+
+### `rdock_config_generation`
+
+**Gauge.** Generation number of the configuration in use. It starts at 1 and grows with each
+applied reload.
+
+### `rdock_config_reloads_total`
+
+**Counter.** Attempts to apply a configuration, including the first one at start. Label:
+`result`, which is `applied` or `rejected`. A rejected reload leaves the running configuration
+in place.
+
+## Build
+
+### `rdock_build_info`
+
+**Gauge**, always `1`. Labels: `version` (for example `0.1.0-alpha.3`) and `commit`.
+
+## When series appear
+
+Counters and gauges with labels appear after their first event: `rdock_tls_handshake_errors_total`
+is missing until a handshake fails, and `rdock_cert_expiry_timestamp_seconds` until a
+certificate is loaded. Use `or vector(0)` in queries that must always return a value.
+
+## Example queries
+
+```text
+# Requests per second by route
+sum by (route) (rate(rdock_http_requests_total[5m]))
+
+# Share of 5xx answers per service
+sum by (service) (rate(rdock_http_requests_total{status_class="5xx"}[5m]))
+  / sum by (service) (rate(rdock_http_requests_total[5m]))
+
+# 95th percentile latency per route
+histogram_quantile(0.95, sum by (le, route) (rate(rdock_http_request_duration_seconds_bucket[5m])))
+
+# Days until each certificate expires
+(rdock_cert_expiry_timestamp_seconds - time()) / 86400
+
+# Reloads that failed in the last hour
+increase(rdock_config_reloads_total{result="rejected"}[1h]) > 0
+```
+
+## Related
+
+- [Logs and metrics](/docs/guides/logs-and-metrics/)
+- [`observability` settings](/docs/reference/configuration/observability/)
+- [`admin` settings](/docs/reference/configuration/admin/)

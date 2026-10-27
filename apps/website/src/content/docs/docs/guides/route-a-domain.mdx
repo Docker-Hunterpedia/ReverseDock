@@ -1,0 +1,106 @@
+---
+title: Route a domain to an app
+description: Send every request for one host name to one application over HTTPS, with plain HTTP redirected.
+sidebar:
+  order: 1
+---
+
+import Status from '../../../../components/Status.astro';
+
+This guide puts one application, reachable at `10.0.0.5:3000`, behind `app.example.com`. ReverseDock terminates HTTPS on port 443 and redirects plain HTTP on port 80.
+
+## What you need
+
+- ReverseDock installed (see [Install with Docker](/docs/install/docker/) or [Install the binary](/docs/install/binary/)).
+- A DNS record for `app.example.com` that points at the machine running ReverseDock.
+- A certificate and private key in PEM format that cover `app.example.com`, for example a wildcard certificate for `*.example.com`. Automatic certificates from Let's Encrypt <Status planned="v0.3" /> are not available yet, so the certificate comes from you. See [TLS certificates](/docs/guides/tls-certificates/).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+```
+
+What each part does:
+
+- **`listeners`** opens two sockets. `web` speaks plain HTTP; `websecure` has a `tls` block, so it speaks HTTPS (HTTP/1.1 and HTTP/2).
+- **`certificates`** loads the certificate and key. ReverseDock picks it for every TLS handshake whose server name (SNI) it covers.
+- **`routes.app`** matches requests whose `Host` is `app.example.com`. The rule uses the [Traefik v3 rule grammar](/docs/reference/rules/). Host matching ignores case, the port and a trailing dot.
+- **`services.app`** is the pool of backends that answers. Here it has one.
+
+The route names no listeners, so it uses `defaults.listeners`, which is `[websecure]`. The `web` listener has no routes of its own; because `defaults.redirect_http_to_https` is `true`, it answers requests for `app.example.com` with a redirect to HTTPS. See [HTTPS redirect and HSTS](/docs/guides/https-redirect-and-hsts/).
+
+## Check and apply
+
+Validate the file before you start or reload ReverseDock:
+
+```sh
+rdock validate --strict /etc/rdock/rdock.yaml
+```
+
+```text
+/etc/rdock/rdock.yaml: valid
+```
+
+`--strict` turns warnings into errors. A warning such as `no certificate covers app.example.com` means the route asks for HTTPS but no certificate matches its host; `rdock run` refuses that configuration.
+
+Start ReverseDock with `rdock run --config /etc/rdock/rdock.yaml`, or, if it is already running, save the file: ReverseDock reloads when the file changes. See [Reload the configuration](/docs/guides/reloads/).
+
+## Check that it works
+
+Plain HTTP is redirected:
+
+```sh
+curl -si 'http://app.example.com/login?next=/' | head -2
+```
+
+```text
+HTTP/1.1 301 Moved Permanently
+location: https://app.example.com/login?next=/
+```
+
+HTTPS reaches the application:
+
+```sh
+curl -sI https://app.example.com/
+```
+
+The response comes from your application. ReverseDock adds an `x-request-id` header to it; the same ID appears in the [access log](/docs/guides/logs-and-metrics/) and is sent to the backend.
+
+A host that no route matches gets a `404 Not Found` page from ReverseDock that shows the request ID.
+
+## What the backend receives
+
+- The client's `Host` header, unchanged (set `pass_host_header: false` on the service to send the backend address instead).
+- `X-Forwarded-For`, `X-Forwarded-Proto`, `X-Forwarded-Host`, `X-Forwarded-Port` and `X-Real-IP`, written by ReverseDock. See [Run behind another proxy](/docs/guides/behind-a-proxy/).
+- The path in normalised form: `/a/./b/../c` arrives as `/a/c`. See [Route by path](/docs/guides/path-routing/).
+
+## If it does not work
+
+- **`curl` reports a certificate error.** The certificate does not cover the name, or the chain in `cert_file` is incomplete. Put the leaf certificate first, followed by the intermediates.
+- **`rdock run` stops with `cannot listen on …` for the `websecure` listener.** Another process holds the port, or the process may not bind ports below 1024. The [systemd unit](/docs/install/systemd/) and the [Docker image](/docs/install/docker/) handle the second case.
+- **`502 Bad Gateway`.** ReverseDock could not connect to `10.0.0.5:3000`. Check that the application listens on that address and that a firewall allows the connection. A backend that does not answer within the read timeout gives `504`; see [Timeouts and limits](/docs/guides/timeouts-and-limits/).
+
+More causes are listed in [Troubleshooting](/docs/operations/troubleshooting/).
+
+## Related
+
+- [Serve several sites](/docs/guides/multiple-sites/)
+- [`routes` reference](/docs/reference/configuration/routes/) and [`services` reference](/docs/reference/configuration/services/)
+- [Routing and priority](/docs/concepts/routing-and-priority/)

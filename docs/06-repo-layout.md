@@ -44,6 +44,7 @@ reversedock/
 │       ├── rdock-provider-kubernetes/
 │       └── rdock-provider-api/
 ├── apps/
+│   ├── website/                    # reversedock.dev: Astro + Starlight, landing + docs (09-website.md, ADR-0017)
 │   └── dashboard/                  # Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui (pnpm)
 │       ├── src/
 │       │   ├── app/                # router, layout shell, providers
@@ -71,7 +72,7 @@ reversedock/
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
 │   ├── conformance/gateway-api/    # upstream suite wiring
 │   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader; label parser later
-├── docs/                           # these documents; docs/site later (Astro Starlight → reversedock.dev)
+├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
 ├── scripts/                        # xlsx2md.py, schema-export, release helpers
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
 ├── CLAUDE.md                       # rules for AI assistants (AGENTS.md is a symlink to it); .claude/ stays local
@@ -139,6 +140,7 @@ reversedock/
 | Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly on dedicated runner; results committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
 | UI | Vitest, Playwright (light/dark, LTR/RTL, 400 px–1440 px) | `apps/dashboard` | every PR |
+| Website | generated-page freshness, `rdock validate --strict` on every config snippet, status badges vs `rdock`, link check, `astro check`, axe (WCAG 2.2 AA) | `apps/website` | PRs touching the site, schema, CLI or changelog |
 
 ## 6. Code graph tooling (Graphify)
 
