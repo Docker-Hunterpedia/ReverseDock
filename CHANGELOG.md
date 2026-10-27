@@ -5,6 +5,7 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 ## [Unreleased]
 
 ### Added
+- **The Docker provider** (`providers.docker`, ADR-0018): routes, services and middlewares from container labels, native `rdock.*` and a Traefik v3 subset (64 conformance fixtures in `tests/conformance/traefik-labels`). Containers are opt-in; replicas share a service; unhealthy containers leave the pool. Changes apply within about a second of the Docker event; if the Docker socket is lost, the last routes stay in service and the provider reconnects. Unix sockets and `tcp://` socket proxies; `rdock status` shows the provider's state. The `docker` cargo feature (on by default) builds it.
 - The public website and documentation in `apps/website` (Astro + Starlight, ADR-0017): a landing page and 69 pages of guides, install and migration guides (from Traefik and NGINX), concepts, operations and reference. The configuration and CLI reference are generated from the schema and the binary; every complete configuration in the docs passes `rdock validate --strict` in CI, and "planned for vX.Y" badges are checked against what `rdock` refuses.
 
 ### Changed

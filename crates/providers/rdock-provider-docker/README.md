@@ -9,4 +9,4 @@ Docker provider: container discovery through the Engine API, `rdock.*` labels an
   - Network: `rdock.network` / `traefik.docker.network` > `providers.docker.network` > the only network. Port: label > the only exposed port > a warning listing the ports.
   - Replicas with the same labels share one service. Containers whose health check is `starting` or `unhealthy` leave the pool, unless none is healthy (then all stay, with a warning).
   - Label values are literal: `${…}` is rejected, and labels cannot name files on the proxy's host.
-- **`watch`** (next, #18): the Engine API loop on `bollard`.
+- **`watch`**: the Engine API loop on `bollard` (no TLS features): list and inspect running containers, follow `container` and `network` events (bursts coalesced over 100 ms), list again every 60 s, and publish a snapshot when it changes. Socket loss keeps the last snapshot and reconnects with 1–30 s backoff. Read-only calls only, so a socket proxy with `CONTAINERS=1 NETWORKS=1` (events are on by default) is enough. Health comes from inspect, which also works with Podman's API.

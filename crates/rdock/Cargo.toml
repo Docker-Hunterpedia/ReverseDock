@@ -15,6 +15,11 @@ build = "build.rs"
 name = "rdock"
 path = "src/main.rs"
 
+[features]
+default = ["docker"]
+# The Docker provider (bollard). Off: a build that reads only files.
+docker = ["dep:rdock-provider-docker"]
+
 [dependencies]
 anyhow.workspace = true
 argon2.workspace = true
@@ -27,6 +32,7 @@ rdock-config.workspace = true
 rdock-middleware.workspace = true
 rdock-model.workspace = true
 rdock-observability.workspace = true
+rdock-provider-docker = { workspace = true, optional = true }
 rdock-proxy.workspace = true
 sd-notify.workspace = true
 serde.workspace = true

@@ -63,13 +63,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  file: { paths: [\"/etc/rdock/conf.d/*.yaml\"] }\n"
   },
   {
-    "path": "providers.docker",
-    "planned": "v0.2",
-    "what": "The Docker provider",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  docker: {}\n"
-  },
-  {
     "path": "providers.swarm",
     "planned": "v0.6",
     "what": "The Swarm provider",

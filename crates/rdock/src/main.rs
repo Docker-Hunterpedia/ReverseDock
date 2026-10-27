@@ -11,6 +11,7 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 mod ctl;
 mod engine;
 mod hash;
+mod providers;
 mod run;
 mod validate;
 mod watch;

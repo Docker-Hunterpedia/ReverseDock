@@ -117,6 +117,9 @@ jobs:
         run: just clippy
       - name: Tests (unit, integration, property, doc; includes schema freshness)
         run: just test
+        env:
+          # The runner's Docker daemon: the Docker provider end-to-end test (e2e_docker.rs).
+          RDOCK_DOCKER_TESTS: "1"
       - name: API docs build without warnings
         run: just doc
 
