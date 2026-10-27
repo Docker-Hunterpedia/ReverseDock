@@ -35,7 +35,7 @@ The backend is [`traefik/whoami`](https://github.com/traefik/whoami), a tiny ser
 
    services:
      rdock:
-       image: ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3
+       image: ghcr.io/docker-hunterpedia/rdock:0.2.0-alpha.1
        restart: unless-stopped
        depends_on: [whoami]
        ports:
@@ -144,7 +144,7 @@ docker compose exec rdock rdock status
 ```
 
 ```text
-rdock 0.1.0-alpha.3 (066f9c703c3b)
+rdock 0.2.0-alpha.1 (…)
 ready        true
 generation   1
 config       /etc/rdock/rdock.yaml (file)

@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The Docker provider <Status planned="v0.2" /> reads these labels from running containers. Label keys are case-insensitive. Values are taken literally: `${…}` is refused (except in regular-expression `replacement` labels, where `${1}` is a capture group), and labels cannot name files on the proxy's host. Every label the provider cannot use is reported with its exact name in the logs and in `rdock status`. The [Traefik conformance suite](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/tests/conformance/traefik-labels) pins the behaviour of each label below.
+The Docker provider <Status since="v0.2" /> reads these labels from running containers. Label keys are case-insensitive. Values are taken literally: `${…}` is refused (except in regular-expression `replacement` labels, where `${1}` is a capture group), and labels cannot name files on the proxy's host. Every label the provider cannot use is reported with its exact name in the logs and in `rdock status`. The [Traefik conformance suite](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/tests/conformance/traefik-labels) pins the behaviour of each label below.
 
 ## Container labels
 

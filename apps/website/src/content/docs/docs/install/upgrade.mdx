@@ -19,11 +19,11 @@ Run the new binary's `validate` against your current configuration before you sw
 
 ```sh
 # Binary: run the new rdock from where you unpacked it
-./rdock-0.1.0-alpha.3-x86_64-unknown-linux-musl/rdock validate --strict /etc/rdock/rdock.yaml
+./rdock-0.2.0-alpha.1-x86_64-unknown-linux-musl/rdock validate --strict /etc/rdock/rdock.yaml
 
 # Docker
 docker run --rm -v /etc/rdock:/etc/rdock:ro \
-  ghcr.io/docker-hunterpedia/rdock:0.1.0-alpha.3 validate --strict /etc/rdock/rdock.yaml
+  ghcr.io/docker-hunterpedia/rdock:0.2.0-alpha.1 validate --strict /etc/rdock/rdock.yaml
 ```
 
 Fix what it reports. Settings that the new version does not support yet are listed as "planned for vX.Y". `--strict` also fails on warnings; drop it to see them without failing.
@@ -41,7 +41,7 @@ docker compose exec rdock rdock version
 **systemd:** replace the binary and restart:
 
 ```sh
-sudo install -m 0755 rdock-0.1.0-alpha.3-x86_64-unknown-linux-musl/rdock /usr/local/bin/rdock
+sudo install -m 0755 rdock-0.2.0-alpha.1-x86_64-unknown-linux-musl/rdock /usr/local/bin/rdock
 sudo systemctl restart rdock
 rdock version
 ```

@@ -10,7 +10,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ReverseDock's configuration model is a superset of Traefik's dynamic configuration: entry points, routers, services and middlewares map onto listeners, routes, services and middlewares, and route rules use the Traefik v3 grammar unchanged. This page moves a configuration written for Traefik's **file provider** <Status since="v0.1" />.
 
-Traefik **Docker labels** are read by the Docker provider <Status planned="v0.2" />, and `rdock migrate traefik` turns labels or a dynamic configuration into YAML <Status planned="v0.2" />: see [Docker labels and `rdock migrate traefik`](#docker-labels-and-rdock-migrate-traefik) below.
+Traefik **Docker labels** are read by the Docker provider <Status since="v0.2" />, and `rdock migrate traefik` turns labels or a dynamic configuration into YAML <Status since="v0.2" />: see [Docker labels and `rdock migrate traefik`](#docker-labels-and-rdock-migrate-traefik) below.
 
 The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-10-27) and from the ReverseDock research of Traefik v3.7.16, recorded in [ADR-0014](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0014-http-semantics-v0-1.md).
 
@@ -36,8 +36,8 @@ The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-1
 | `entryPoints.<name>.http.redirections.entryPoint` | `defaults.redirect_http_to_https` (on by default) |
 | `entryPoints.<name>.transport.respondingTimeouts` | `listeners.<name>.timeouts` |
 | `name@file` references | `name` or `name@file` |
-| `providers.file.directory` | one `rdock.yaml`; extra files (`providers.file.paths`) <Status planned="v0.2" /> |
-| `providers.docker` and labels | `providers.docker` with `traefik_labels` <Status planned="v0.2" /> |
+| `providers.file.directory` | one `rdock.yaml`; extra files (`providers.file.paths`) <Status since="v0.2" /> |
+| `providers.docker` and labels | `providers.docker` with `traefik_labels` <Status since="v0.2" /> |
 | `certificatesResolvers` (ACME) | `acme` <Status planned="v0.3" /> |
 
 Middleware kinds:
@@ -389,7 +389,7 @@ See [Behind a proxy](/docs/guides/behind-a-proxy/) for how the client IP is reso
 
 ## Docker labels and `rdock migrate traefik`
 
-There are two ways to move a Docker setup with Traefik labels <Status planned="v0.2" />:
+There are two ways to move a Docker setup with Traefik labels <Status since="v0.2" />:
 
 - **Keep the labels.** Enable the Docker provider; `traefik.*` labels are read as they are, within the [supported subset](/docs/reference/docker-labels/#traefik-labels). Set `providers.docker.entrypoints` when your entry points are not called `web` and `websecure`. See [Docker containers and labels](/docs/guides/docker-labels/).
 

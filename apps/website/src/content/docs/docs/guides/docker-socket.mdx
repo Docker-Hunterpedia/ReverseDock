@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The Docker provider <Status planned="v0.2" /> only reads from the Docker Engine API: it lists and inspects containers and follows container and network events. It never creates, changes or stops anything. Still, whoever can talk to the Docker socket can usually do anything on the host, so give ReverseDock as little access as possible.
+The Docker provider <Status since="v0.2" /> only reads from the Docker Engine API: it lists and inspects containers and follows container and network events. It never creates, changes or stops anything. Still, whoever can talk to the Docker socket can usually do anything on the host, so give ReverseDock as little access as possible.
 
 ## Option 1: a read-only socket proxy (recommended)
 
