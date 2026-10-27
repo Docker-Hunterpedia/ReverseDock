@@ -102,13 +102,10 @@ fn client_ip_policy(config: &Config) -> ClientIpPolicy {
     ClientIpPolicy::new(trusted, config.security.client_ip_header)
 }
 
-/// Resolves `name` or `name@file`; other providers do not exist yet.
-fn local(reference: &str) -> Option<&str> {
-    match reference.split_once('@') {
-        None => Some(reference),
-        Some((name, "file")) => Some(name),
-        Some(_) => None,
-    }
+/// The key a reference names: `name@file` is the file's `name`; other providers' objects are
+/// merged under their `name@provider` key (ADR-0018).
+fn key(reference: &str) -> &str {
+    reference.strip_suffix("@file").unwrap_or(reference)
 }
 
 fn load_certificates(config: &Config, out: &mut Vec<Diagnostic>) -> Vec<LoadedCert> {
@@ -257,7 +254,7 @@ fn build_middlewares(
 ) -> HashMap<String, Arc<dyn Middleware>> {
     let client = env.client.clone();
     let lookup = |reference: &str| -> Option<Arc<dyn ServiceClient>> {
-        let service = services.get(local(reference)?)?;
+        let service = services.get(key(reference))?;
         Some(Arc::new(ServiceFetcher {
             service: service.clone(),
             client: client.clone(),
@@ -399,20 +396,15 @@ fn compile_route(
         }
     };
     let unavailable = |what: &str, reference: &str| {
-        Diagnostic::error(
-            &path,
-            format!(
-                "{what} `{reference}` is not available (only this file's objects exist in this version)"
-            ),
-        )
+        Diagnostic::error(&path, format!("{what} `{reference}` does not exist"))
     };
-    let Some(service) = local(&route.service).and_then(|n| services.get(n)) else {
+    let Some(service) = services.get(key(&route.service)) else {
         out.push(unavailable("service", &route.service));
         return None;
     };
     let mut chain = Vec::new();
     for reference in &route.middlewares {
-        let Some(m) = local(reference).and_then(|n| middlewares.get(n)) else {
+        let Some(m) = middlewares.get(key(reference)) else {
             out.push(unavailable("middleware", reference));
             return None;
         };

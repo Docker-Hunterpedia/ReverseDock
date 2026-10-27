@@ -1,5 +1,6 @@
 //! Applied configurations on disk: the last-known-good copy and a bounded history, both under
-//! `$RDOCK_DATA_DIR/state`. Entries hold the document as written (references unresolved).
+//! `$RDOCK_DATA_DIR/state`. Entries hold the document as written (references unresolved). The
+//! last snapshot of each provider is kept next to them (`providers/<name>.json`).
 
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -8,6 +9,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+
+use crate::merge::Snapshot;
 
 /// History entries kept by default.
 pub const HISTORY_LIMIT: usize = 50;
@@ -56,6 +59,28 @@ impl StateDir {
     /// The last-known-good configuration, if one was stored.
     pub fn load_lkg(&self) -> io::Result<Option<Value>> {
         match fs::read(self.lkg_path()) {
+            Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
+            Err(err) => Err(err),
+        }
+    }
+
+    fn snapshot_path(&self, provider: &str) -> PathBuf {
+        self.root.join("providers").join(format!("{provider}.json"))
+    }
+
+    /// Stores a provider's last applied snapshot, served at the next start until the provider
+    /// reports again (ADR-0018).
+    pub fn save_snapshot(&self, snapshot: &Snapshot) -> io::Result<()> {
+        write_atomic(
+            &self.snapshot_path(&snapshot.provider),
+            &serde_json::to_vec_pretty(snapshot)?,
+        )
+    }
+
+    /// The stored snapshot of `provider`, if any.
+    pub fn load_snapshot(&self, provider: &str) -> io::Result<Option<Snapshot>> {
+        match fs::read(self.snapshot_path(provider)) {
             Ok(bytes) => Ok(Some(serde_json::from_slice(&bytes)?)),
             Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(None),
             Err(err) => Err(err),
@@ -153,6 +178,20 @@ mod tests {
                 .mode();
             assert_eq!(mode & 0o777, 0o600);
         }
+    }
+
+    #[test]
+    fn stores_and_loads_provider_snapshots() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::new(dir.path());
+        assert_eq!(state.load_snapshot("docker").unwrap(), None);
+        let snapshot = Snapshot {
+            provider: "docker".to_owned(),
+            fragment: crate::merge::Fragment::default(),
+            diagnostics: vec![rdock_model::Diagnostic::warning("x", "y")],
+        };
+        state.save_snapshot(&snapshot).unwrap();
+        assert_eq!(state.load_snapshot("docker").unwrap(), Some(snapshot));
     }
 
     #[test]
