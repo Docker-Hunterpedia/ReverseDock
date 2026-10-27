@@ -10,7 +10,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ReverseDock's configuration model is a superset of Traefik's dynamic configuration: entry points, routers, services and middlewares map onto listeners, routes, services and middlewares, and route rules use the Traefik v3 grammar unchanged. This page moves a configuration written for Traefik's **file provider** <Status since="v0.1" />.
 
-Traefik **Docker labels** and the `rdock migrate traefik` command that turns labels into YAML are <Status planned="v0.2" />. Until then, write the labels' routers and services as a file configuration first, then follow this page.
+Traefik **Docker labels** are read by the Docker provider <Status planned="v0.2" />, and `rdock migrate traefik` turns labels or a dynamic configuration into YAML <Status planned="v0.2" />: see [Docker labels and `rdock migrate traefik`](#docker-labels-and-rdock-migrate-traefik) below.
 
 The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-10-27) and from the ReverseDock research of Traefik v3.7.16, recorded in [ADR-0014](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0014-http-semantics-v0-1.md).
 
@@ -386,6 +386,40 @@ services:
 ```
 
 See [Behind a proxy](/docs/guides/behind-a-proxy/) for how the client IP is resolved.
+
+## Docker labels and `rdock migrate traefik`
+
+There are two ways to move a Docker setup with Traefik labels <Status planned="v0.2" />:
+
+- **Keep the labels.** Enable the Docker provider; `traefik.*` labels are read as they are, within the [supported subset](/docs/reference/docker-labels/#traefik-labels). Set `providers.docker.entrypoints` when your entry points are not called `web` and `websecure`. See [Docker containers and labels](/docs/guides/docker-labels/).
+
+  ```yaml title="rdock.yaml"
+  listeners:
+    web: { address: ":80" }
+    websecure: { address: ":443", tls: {} }
+
+  certificates:
+    example:
+      cert_file: /etc/rdock/certs/example.pem
+      key_file: /etc/rdock/certs/example.key
+
+  providers:
+    docker:
+      network: proxy
+      entrypoints: { http: web, https: websecure }
+  ```
+
+- **Turn them into YAML.** `rdock migrate traefik` reads a Compose file, or a Traefik dynamic configuration, and prints routes, services and middlewares through the Docker provider's own translator. Everything it cannot carry over is listed at the top of the output.
+
+  ```sh
+  rdock migrate traefik compose.yaml -o conf.d/app.yaml
+  rdock migrate traefik /etc/traefik/dynamic/app.yml > conf.d/app.yaml
+  rdock validate rdock.yaml
+  ```
+
+  Compose service names become backend hosts (`api:8080`). A service without `expose`, `ports` or a port label gets port 80 with a note, because Traefik would use the port the image exposes, which the Compose file does not say. Traefik exposes containers by default; ReverseDock does not, so services without `traefik.enable` are skipped unless you pass `--expose-by-default`.
+
+The provider differs from Traefik on purpose in a few places (opt-in containers, no guessed port, no default rule): see [Differences from Traefik](/docs/reference/docker-labels/#differences-from-traefik).
 
 ## Differences and gotchas
 

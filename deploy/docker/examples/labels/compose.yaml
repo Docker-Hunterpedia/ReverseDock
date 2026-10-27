@@ -1,0 +1,47 @@
+# Routes from container labels. Start with:
+#   DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose up -d
+name: rdock-labels
+
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.2.0-alpha.1
+    restart: unless-stopped
+    ports: ["80:80"]
+    group_add: ["${DOCKER_GID:?set DOCKER_GID to the group of /var/run/docker.sock}"]
+    volumes:
+      - ./config:/etc/rdock:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [proxy]
+
+  # rdock.* shorthand: one route and one service.
+  whoami:
+    image: traefik/whoami:v1.11.0
+    labels:
+      rdock.enable: "true"
+      rdock.host: whoami.localhost
+      rdock.tls: "off"
+    networks: [proxy]
+
+  # Existing Traefik labels, read as they are.
+  api:
+    image: traefik/whoami:v1.11.0
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.api.rule: Host(`api.localhost`) && PathPrefix(`/api`)
+      traefik.http.routers.api.entrypoints: web
+      traefik.http.routers.api.middlewares: strip-api
+      traefik.http.middlewares.strip-api.stripprefix.prefixes: /api
+    networks: [proxy]
+    deploy:
+      replicas: 2
+
+networks:
+  proxy:
+    name: rdock-proxy
+
+volumes:
+  rdock-data:

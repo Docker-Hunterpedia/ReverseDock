@@ -25,7 +25,7 @@ Not yet. Automatic HTTPS with ACME is <Status planned="v0.3" />. Until then, pro
 
 ## Does it read Docker labels?
 
-Not yet. The Docker provider, with `rdock.*` labels and compatibility with existing `traefik.*` labels, is <Status planned="v0.2" />. Today, routes are defined in `rdock.yaml`, and backends in Docker are reached by container name on a shared network.
+Yes, from v0.2 <Status planned="v0.2" />: the Docker provider reads `rdock.*` labels and a documented subset of existing `traefik.*` labels, and `rdock migrate traefik` turns labels into YAML. See [Docker containers and labels](/docs/guides/docker-labels/). In v0.1, routes are defined in `rdock.yaml`, and backends in Docker are reached by container name on a shared network.
 
 ## Can I use my Traefik rules?
 

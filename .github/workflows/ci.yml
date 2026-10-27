@@ -169,6 +169,12 @@ jobs:
           docker run --rm rdock:ci version
           docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.quickstart.yaml
           docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml
+      - name: Docker provider examples (deploy/docker/examples)
+        run: |
+          for dir in deploy/docker/examples/*/; do
+            docker run --rm -v "$PWD/${dir}config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.yaml
+            DOCKER_GID=0 docker compose -f "${dir}compose.yaml" config --quiet
+          done
       - name: Run the image (read-only, no capabilities) and stop it gracefully
         run: |
           docker run -d --name rdock-smoke --read-only --cap-drop ALL \

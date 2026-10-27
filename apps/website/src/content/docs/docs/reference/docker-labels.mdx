@@ -1,0 +1,108 @@
+---
+title: Docker labels
+description: Every label the Docker provider reads, rdock.* and the supported traefik.* subset, with what each becomes and the deliberate differences from Traefik.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+The Docker provider <Status planned="v0.2" /> reads these labels from running containers. Label keys are case-insensitive. Values are taken literally: `${…}` is refused (except in regular-expression `replacement` labels, where `${1}` is a capture group), and labels cannot name files on the proxy's host. Every label the provider cannot use is reported with its exact name in the logs and in `rdock status`. The [Traefik conformance suite](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/tests/conformance/traefik-labels) pins the behaviour of each label below.
+
+## Container labels
+
+| Label | Meaning |
+|---|---|
+| `rdock.enable` | `true` or `false`. Containers are only read when `true`, unless `providers.docker.expose_by_default` is set. |
+| `rdock.network` | The network to reach the container on, when it is on several. |
+| `traefik.enable` | Same as `rdock.enable`, when `providers.docker.traefik_labels` is on (the default). `rdock.enable` wins when both are set. |
+| `traefik.docker.network` | Same as `rdock.network`. |
+
+## rdock.* shorthand
+
+One route and one service named after the Compose service and project (`<service>-<project>`), or the container name.
+
+| Label | Becomes |
+|---|---|
+| `rdock.host` | `match: Host(…) \|\| Host(…)` for each comma-separated name |
+| `rdock.path` | `&& PathPrefix(…)` |
+| `rdock.port` | The service's backend port |
+| `rdock.tls` | `tls: auto`, `tls: off`, or `tls: { dns_provider: <name> }` for `dns:<name>` |
+| `rdock.middlewares` | The route's middlewares, comma-separated |
+
+## rdock.* full form
+
+| Label | Becomes |
+|---|---|
+| `rdock.routes.<name>.<field>` | A field of [`routes.<name>`](/docs/reference/configuration/routes/): `match`, `service`, `priority`, `middlewares`, `listeners` (comma-separated), `tls`, `enabled`, `timeouts.*` |
+| `rdock.services.<name>.port` | The container port of the service's backend |
+| `rdock.services.<name>.<field>` | Any other field of [`services.<name>`](/docs/reference/configuration/services/) as a dotted path, such as `scheme` or `health.active.path`; not `backends` or `split` |
+| `rdock.middlewares.<name>.<field>` | A field of [`middlewares.<name>`](/docs/reference/configuration/middlewares/) as a dotted path, starting with `type`; not `users_file` or `file` |
+
+Values `true`/`false` and whole numbers become booleans and numbers where a field expects them; `[a, b]` is a list.
+
+## Traefik labels
+
+The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provider reference, checked 2026-10-28). Each becomes the field shown; anything else under `traefik.` is reported.
+
+### Routers: `traefik.http.routers.<name>.`
+
+| Setting | Becomes |
+|---|---|
+| `rule` | `match` (same grammar) |
+| `priority` | `priority` |
+| `service` | `service`; when unset, the container's only service, or a new one named after the container when it declares none |
+| `middlewares` | `middlewares` (`name@file` and `name@docker` kept) |
+| `entrypoints` | `listeners`, through `providers.docker.entrypoints` (unmapped names are used as listener names) |
+| `tls` | `true`: automatic HTTPS; `false`: `tls: off` |
+| `tls.certresolver` | automatic HTTPS from the default ACME account (any resolver name) |
+| `tls.domains[n].main`, `tls.domains[n].sans` | `tls.domains` |
+
+### Services: `traefik.http.services.<name>.loadbalancer.`
+
+| Setting | Becomes |
+|---|---|
+| `server.port` | the backend port |
+| `server.scheme` | `scheme` (`http`, `https`, `h2c`) |
+| `server.url` | an explicit backend address and scheme, instead of the container's |
+| `passhostheader` | `pass_host_header` |
+| `sticky.cookie` (`true`), `sticky.cookie.name`, `.secure`, `.httponly`, `.samesite`, `.maxage` | `sticky.cookie` |
+| `healthcheck.path`, `.interval`, `.timeout`, `.port` | `health.active` |
+| `serverstransport` | reported: not supported |
+
+### Middlewares: `traefik.http.middlewares.<name>.`
+
+| Traefik | ReverseDock `type` and fields |
+|---|---|
+| `headers.customrequestheaders.<H>`, `headers.customresponseheaders.<H>` | `headers` with `request.set`/`response.set`; an empty value becomes `remove` |
+| `headers.stsseconds`, `.stsincludesubdomains`, `.stspreload` | `headers` with `hsts` |
+| `headers.framedeny`, `.contenttypenosniff`, `.browserxssfilter` | `headers` with the matching response header |
+| `redirectscheme.scheme`, `.permanent`, `.port` | `redirect` |
+| `redirectregex.regex`, `.replacement`, `.permanent` | `redirect` |
+| `stripprefix.prefixes` | `strip_prefix` |
+| `addprefix.prefix` | `add_prefix` |
+| `replacepath.path` | `replace_path` |
+| `replacepathregex.regex`, `.replacement` | `rewrite` |
+| `basicauth.users`, `.realm`, `.removeheader` | `basic_auth` (`usersfile` is refused) |
+| `ratelimit.average`, `.burst`, `.period` | `rate_limit` |
+| `ipallowlist.sourcerange` | `ip_allow` |
+| `compress` (`true`), `compress.minresponsebodybytes` | `compress` |
+| `forwardauth.address`, `.trustforwardheader`, `.authresponseheaders`, `.authrequestheaders` | `forward_auth` |
+| `errors.status`, `.service`, `.query` | `errors` |
+| `retry.*` | reported: set `rdock.services.<name>.retries` instead |
+
+`traefik.tcp.*` and `traefik.udp.*` labels are reported as planned for v0.6.
+
+## Differences from Traefik
+
+Deliberate, and pinned by the conformance suite:
+
+| Traefik | ReverseDock |
+|---|---|
+| `exposedByDefault` is `true` | `expose_by_default` is `false`: containers opt in |
+| Several exposed ports and no port label: the lowest port | Reported; set a port label |
+| Containers without router labels get a router from `defaultRule` | No route until labels ask for one |
+| A router without `entrypoints` attaches to every entry point | It uses `defaults.listeners`, like a route in the file |
+| The `retry` middleware | Retries are a service setting |
+
+Two containers that declare the same router, service or middleware name differently are both reported and left out; identical declarations, such as replicas, are merged.

@@ -1,0 +1,84 @@
+---
+title: Dokploy, Coolify and Portainer
+description: Use ReverseDock's Docker provider with the labels and networks that Dokploy, Coolify and Portainer set up.
+sidebar:
+  order: 4
+---
+
+import Status from '../../../../components/Status.astro';
+
+These platforms deploy applications as Docker containers and describe their routing with Traefik labels. With `traefik_labels` on (the default), the Docker provider <Status planned="v0.2" /> reads those labels; what remains is joining the right network. The platform facts below come from each project's documentation, checked 2026-10-28.
+
+This is about reading the labels these platforms write. The platforms run and configure their own Traefik; replacing it inside the platform is up to each platform's own settings.
+
+## Dokploy
+
+Dokploy adds Traefik labels to Compose applications when you assign a domain, and attaches them to the `dokploy-network` network ([Dokploy domains](https://docs.dokploy.com/docs/core/docker-compose/domains)). Applications that are not Compose stacks get file configuration in Dokploy's Traefik instead of labels, so ReverseDock does not see them.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+providers:
+  docker:
+    network: dokploy-network
+```
+
+Put ReverseDock on `dokploy-network` (it is created by Dokploy; declare it `external: true` in ReverseDock's Compose file). Containers are only read with `traefik.enable=true`; if the labels Dokploy writes do not include it, set `expose_by_default: true`, which reads every container on the host, so check `rdock status` for what that adds.
+
+## Coolify
+
+Coolify writes router, middleware, service and port labels for each resource and marks its containers with `coolify.managed=true` ([Coolify and Traefik](https://coolify.io/docs/core/networking/proxy/traefik/overview)). Resources that are not Compose files use the `coolify` network; each Compose resource gets a network of its own that the proxy joins ([Networking in Coolify](https://next.coolify.io/docs/core/networking-in-coolify)).
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+providers:
+  docker:
+    network: coolify
+```
+
+Connect ReverseDock to `coolify`, and to each Compose resource's network you want routed (`docker network connect <network> rdock`). A container on several networks needs `traefik.docker.network` or `providers.docker.network` to choose; otherwise it is reported and not routed.
+
+## Portainer
+
+Portainer creates no shared network and adds no labels: you write the labels in the stack yourself ([Portainer and Traefik](https://docs.portainer.io/advanced/reverse-proxy/traefik)). Create a network once and use it in every stack:
+
+```sh
+docker network create proxy
+```
+
+```yaml title="stack.yaml"
+services:
+  app:
+    image: traefik/whoami:v1.11.0
+    labels:
+      rdock.enable: "true"
+      rdock.host: app.example.com
+      rdock.tls: "off"
+    networks: [proxy]
+
+networks:
+  proxy:
+    external: true
+```
+
+Deploy ReverseDock itself as a stack on the same network, with the setup from [Docker containers and labels](/docs/guides/docker-labels/). Portainer's Swarm stacks use `deploy.labels`, which the Swarm provider reads <Status planned="v0.6" />.
+
+## HTTPS
+
+These platforms obtain certificates through their own Traefik. ReverseDock's automatic certificates are <Status planned="v0.3" />; until then, routes from these labels need a certificate you provide, or `tls: off` on a plain listener as above.
+
+## Related
+
+- [Docker label reference](/docs/reference/docker-labels/)
+- [Docker socket access](/docs/guides/docker-socket/)

@@ -1,0 +1,62 @@
+---
+title: Split the configuration into files
+description: Keep each site's routes, services and middlewares in its own file with providers.file.paths, and add or change sites without a restart.
+sidebar:
+  order: 10
+---
+
+import Status from '../../../../components/Status.astro';
+
+`providers.file.paths` <Status planned="v0.2" /> adds the objects of more files to `rdock.yaml`: one file per site or team, generated files next to hand-written ones, and so on.
+
+## The main file
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+providers:
+  file:
+    paths: ["conf.d/*.yaml"]
+
+middlewares:
+  secure-headers:
+    type: headers
+    response:
+      set:
+        X-Content-Type-Options: nosniff
+```
+
+## A site's file
+
+```yaml title="conf.d/blog.yaml"
+routes:
+  blog:
+    match: "Host(`blog.example.com`)"
+    service: blog
+    middlewares: [secure-headers]
+
+services:
+  blog:
+    backends: [{ address: "blog:2368" }]
+```
+
+## Rules
+
+- A path is a file or a pattern; `*` and `?` may appear in the file name, not in directories. Relative paths start at the main file's directory.
+- Extra files may hold `routes`, `services`, `middlewares`, `tcp_routes`, `tcp_services` and `certificates`. Listeners, defaults and every other setting stay in the main file.
+- All files form one configuration: objects refer to each other by name across files, as `secure-headers` above.
+- A name defined in two files is an error that names both files, and the whole configuration is refused; the previous one keeps serving.
+- A missing file named exactly is an error. A pattern that matches nothing is not, so `conf.d/` can start empty.
+- Files whose names start with `.` match only patterns that start with `.`, so editors' temporary files are skipped.
+- Changes are applied like changes to the main file: on save, with `SIGHUP` or `rdock reload`. A file added to or removed from a pattern's directory counts as a change, even when the directory is created after ReverseDock starts. `providers.file.watch: false` turns watching off.
+- `rdock validate rdock.yaml` reads the extra files too.
+
+## Related
+
+- [Reloads](/docs/guides/reloads/)
+- [Configuration reference: providers](/docs/reference/configuration/providers/)
