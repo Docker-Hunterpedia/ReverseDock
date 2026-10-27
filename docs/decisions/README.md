@@ -22,3 +22,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0016](0016-config-references-and-secrets.md) | `${…}` references; secrets stay references; unknown keys are errors |
 | [0017](0017-website-astro-starlight.md) | The website and docs use Astro + Starlight in `apps/website`; generated reference, validated snippets, status badges |
 | [0018](0018-docker-provider-and-merge.md) | Docker provider: pure label translation, `name@provider` merge through the existing validator and compiler, per-object isolation, zero-config before ACME |
+| [0019](0019-zero-config-admin-address.md) | Zero-config mode keeps the default admin address `127.0.0.1:2080` (corrects ADR-0018) |

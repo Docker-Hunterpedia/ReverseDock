@@ -1,6 +1,6 @@
 # ADR-0018: The Docker provider, label translation and the provider merge
 
-- Status: accepted
+- Status: accepted; the zero-config admin address is superseded by [ADR-0019](0019-zero-config-admin-address.md)
 - Date: 2026-10-28
 
 ## Context
