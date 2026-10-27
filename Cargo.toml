@@ -44,6 +44,7 @@ rdock-limits = { path = "crates/rdock-limits" }
 rdock-middleware = { path = "crates/rdock-middleware" }
 rdock-model = { path = "crates/rdock-model" }
 rdock-observability = { path = "crates/rdock-observability" }
+rdock-provider-docker = { path = "crates/providers/rdock-provider-docker" }
 rdock-provider-file = { path = "crates/providers/rdock-provider-file" }
 rdock-proxy = { path = "crates/rdock-proxy" }
 rdock-rules = { path = "crates/rdock-rules" }

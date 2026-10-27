@@ -2790,6 +2790,13 @@ version = "0.1.0-alpha.3"
 [[package]]
 name = "rdock-provider-docker"
 version = "0.1.0-alpha.3"
+dependencies = [
+ "rdock-config",
+ "rdock-model",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+]
 
 [[package]]
 name = "rdock-provider-file"
