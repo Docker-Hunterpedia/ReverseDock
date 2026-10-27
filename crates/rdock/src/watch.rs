@@ -25,11 +25,28 @@ pub(crate) struct FileWatcher {
 /// macOS `/var` is a symlink to `/private/var`), the file name kept.
 fn absolute(path: &Path) -> PathBuf {
     let path = std::path::absolute(path).unwrap_or_else(|_| path.to_owned());
-    let canonical = path
-        .parent()
-        .zip(path.file_name())
-        .and_then(|(dir, name)| std::fs::canonicalize(dir).ok().map(|d| d.join(name)));
-    canonical.unwrap_or(path)
+    // Canonicalise the deepest directory that exists and keep the rest as written (a
+    // pattern's directory may not exist yet).
+    let mut existing = path.as_path();
+    let mut rest = Vec::new();
+    while let (Some(dir), Some(name)) = (existing.parent(), existing.file_name()) {
+        rest.push(name.to_owned());
+        if let Ok(canonical) = std::fs::canonicalize(dir) {
+            return rest.iter().rev().fold(canonical, |p, n| p.join(n));
+        }
+        existing = dir;
+    }
+    path
+}
+
+/// The directory to watch for `file`: its own, or for a pattern whose directory does not exist
+/// yet, the parent, so the directory's creation is seen.
+fn watch_dir(file: &Path) -> Option<PathBuf> {
+    let dir = file.parent()?;
+    if crate::engine::is_pattern(file) && !dir.is_dir() {
+        return dir.parent().map(Path::to_owned);
+    }
+    Some(dir.to_owned())
 }
 
 impl FileWatcher {
@@ -54,6 +71,11 @@ impl FileWatcher {
             });
             let relevant = content_events.flat_map(|e| e.paths.iter()).any(|path| {
                 files.contains(path)
+                    // Any change next to a pattern may add or remove a matching file.
+                    || files.iter().any(|f| {
+                        crate::engine::is_pattern(f)
+                            && (f.parent() == path.parent() || f.parent() == Some(path.as_path()))
+                    })
                     || path
                         .file_name()
                         .is_some_and(|n| n.to_string_lossy().starts_with(".."))
@@ -73,10 +95,7 @@ impl FileWatcher {
     /// Watches exactly `files` from now on.
     pub(crate) fn set_files(&mut self, files: &BTreeSet<PathBuf>) {
         let files: BTreeSet<PathBuf> = files.iter().map(|f| absolute(f)).collect();
-        let dirs: BTreeSet<PathBuf> = files
-            .iter()
-            .filter_map(|f| f.parent().map(Path::to_owned))
-            .collect();
+        let dirs: BTreeSet<PathBuf> = files.iter().filter_map(|f| watch_dir(f)).collect();
         for gone in self.dirs.difference(&dirs) {
             let _ = self.debouncer.unwatch(gone);
         }

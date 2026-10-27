@@ -8,9 +8,10 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use rdock_config::includes::{Included, expand, load_file_with_includes};
 use rdock_config::merge::{ObjectKey, Snapshot, assemble, is_provider_owned, owner, skipped};
 use rdock_config::state::{HISTORY_LIMIT, HistoryEntry, StateDir};
-use rdock_config::{Format, Loaded, System, load_file, load_str, load_value};
+use rdock_config::{Format, Loaded, System, load_str, load_value};
 use rdock_model::middleware::Middleware;
 use rdock_model::{Config, Diagnostic};
 use rdock_proxy::{DataPlane, Runtime};
@@ -98,6 +99,8 @@ pub(crate) struct Engine {
     watched: Mutex<BTreeSet<PathBuf>>,
     /// Hash of the watched files when the configuration was last applied.
     fingerprint: Mutex<Option<u64>>,
+    /// The extra files (`providers.file.paths`) of the last load.
+    included: Mutex<Included>,
     /// The latest snapshot of each provider, by provider name.
     snapshots: Mutex<BTreeMap<String, Snapshot>>,
     /// Why a provider cannot reach its source, while it cannot.
@@ -131,6 +134,7 @@ impl Engine {
             last: Mutex::new(None),
             watched: Mutex::new(BTreeSet::new()),
             fingerprint: Mutex::new(None),
+            included: Mutex::new(Included::default()),
             snapshots: Mutex::new(BTreeMap::new()),
             degraded: Mutex::new(BTreeMap::new()),
             started_at: SystemTime::now(),
@@ -261,7 +265,10 @@ impl Engine {
     /// stays in place.
     pub(crate) async fn reload(&self, trigger: &str) -> Report {
         let loaded = match &self.source {
-            Source::File(path) => load_file(path),
+            Source::File(path) => load_file_with_includes(path).map(|(loaded, included)| {
+                *self.included.lock().unwrap_or_else(PoisonError::into_inner) = included;
+                loaded
+            }),
             Source::ZeroConfig => load_str(zero_config::CONFIG, Format::Yaml),
         };
         let loaded = match loaded {
@@ -333,7 +340,15 @@ impl Engine {
             }
         }
         let files = match &self.source {
-            Source::File(path) => referenced_files(path, &file),
+            Source::File(path) => {
+                let mut files = referenced_files(path, &file);
+                if file.providers.file.as_ref().is_none_or(|f| f.watch) {
+                    let included = self.included.lock().unwrap_or_else(PoisonError::into_inner);
+                    files.extend(included.files.iter().cloned());
+                    files.extend(included.patterns.iter().cloned());
+                }
+                files
+            }
             Source::ZeroConfig => BTreeSet::new(),
         };
         *self
@@ -516,15 +531,31 @@ fn diff_names<T: PartialEq>(
     }
 }
 
-/// A hash of the contents of `files` (missing files count as empty).
+/// A hash of the contents of `files` (missing files count as empty). A pattern
+/// (`conf.d/*.yaml`) stands for the files it matches now, so adding or removing one counts.
 fn fingerprint(files: &BTreeSet<PathBuf>) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     for file in files {
         file.hash(&mut hasher);
-        std::fs::read(file).unwrap_or_default().hash(&mut hasher);
+        if is_pattern(file) {
+            for matched in expand(file).unwrap_or_default() {
+                matched.hash(&mut hasher);
+                std::fs::read(&matched)
+                    .unwrap_or_default()
+                    .hash(&mut hasher);
+            }
+        } else {
+            std::fs::read(file).unwrap_or_default().hash(&mut hasher);
+        }
     }
     hasher.finish()
+}
+
+/// Whether `path` is a pattern of `providers.file.paths` rather than a file.
+pub(crate) fn is_pattern(path: &Path) -> bool {
+    path.file_name()
+        .is_some_and(|n| n.to_string_lossy().contains(['*', '?']))
 }
 
 /// The configuration file and every file it refers to.

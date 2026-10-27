@@ -333,3 +333,42 @@ async fn one_file_change_reloads_once() {
         Some("after")
     );
 }
+
+#[tokio::test]
+async fn files_added_next_to_a_pattern_are_loaded() {
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let main = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nproviders:\n  file: {{ paths: [\"conf.d/*.yaml\"] }}\n"
+    );
+    let rdock = Rdock::start(RDOCK, &main);
+    assert_eq!(
+        client::http1(addr(port), get("app.example.com", "/"))
+            .await
+            .status,
+        404
+    );
+    let conf = rdock.config_path().parent().unwrap().join("conf.d");
+    std::fs::create_dir_all(&conf).unwrap();
+    std::fs::write(
+        conf.join("app.yaml"),
+        format!(
+            "routes:\n  app: {{ match: \"Host(`app.example.com`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+            backend.addr
+        ),
+    )
+    .unwrap();
+    let started = Instant::now();
+    while client::http1(addr(port), get("app.example.com", "/"))
+        .await
+        .status
+        != 200
+    {
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "the new file was not loaded\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
