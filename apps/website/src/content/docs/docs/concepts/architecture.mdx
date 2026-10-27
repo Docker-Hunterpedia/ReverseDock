@@ -53,7 +53,7 @@ The workspace has one binary and a set of library crates. Crates for later miles
 | `rdock-observability` | Application logs, the access log with redaction, Prometheus metrics |
 | `rdock-admin` | The admin listener: `/healthz`, `/readyz`, `/metrics`, `/api/v1/status`, `/api/v1/config/reload` |
 | `rdock-testkit` | Test backends, certificates and a client for the end-to-end suites |
-| `rdock-acme`, `rdock-cloudflare`, `rdock-migrate`, `providers/*` | Placeholders for automatic certificates <Status planned="v0.3" />, Cloudflare integration <Status planned="v0.3" />, `rdock migrate traefik` <Status planned="v0.2" /> and the Docker <Status planned="v0.2" />, Swarm <Status planned="v0.6" /> and Kubernetes <Status planned="v0.7" /> providers |
+| `rdock-acme`, `rdock-cloudflare`, `rdock-migrate`, `providers/*` | Placeholders for automatic certificates <Status planned="v0.3" />, Cloudflare integration <Status planned="v0.3" />, `rdock migrate traefik` <Status since="v0.2" /> and the Docker <Status since="v0.2" />, Swarm <Status planned="v0.6" /> and Kubernetes <Status planned="v0.7" /> providers |
 
 Dependencies point one way: `rdock` depends on `rdock-admin` and `rdock-proxy`; `rdock-proxy` depends on `rdock-config`, `rdock-model`, `rdock-rules`, `rdock-tls`, `rdock-middleware`, `rdock-balancer` and `rdock-observability`. Nothing in the data plane depends on `rdock-admin`.
 

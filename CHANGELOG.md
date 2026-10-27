@@ -4,6 +4,8 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.2.0-alpha.1] — v0.2 "Docker-native"
+
 ### Added
 - **Extra configuration files** (`providers.file.paths`): files or patterns such as `conf.d/*.yaml` (relative to the main file) add routes, services, middlewares, TCP objects and certificates to the main file. A name defined twice is an error naming both files; other sections belong in the main file. They are watched like the main file, and a file added next to a pattern is loaded without a restart. `rdock validate` reads them too.
 - **`rdock migrate traefik`** (F-MGMT-03): turns the Traefik labels of a Compose file, or a Traefik dynamic configuration, into routes, services and middlewares for `rdock.yaml`, through the same translator as the Docker provider. What cannot be migrated is listed at the top of the output. `--expose-by-default` follows Traefik's default for services without `traefik.enable`.

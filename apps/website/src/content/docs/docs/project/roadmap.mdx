@@ -13,7 +13,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 |---|---|---|---|
 | M0 | Foundations | build, lint, test and release; the configuration model and schema exist | Done (0.1.0-alpha.2) |
 | v0.1 | Hello proxy | replace NGINX for host and path routing with your own certificates | <Status since="v0.1" /> 0.1.0-alpha.3 |
-| v0.2 | Docker-native | replace Traefik on a Compose box using your existing labels | <Status planned="v0.2" /> |
+| v0.2 | Docker-native | replace Traefik on a Compose box using your existing labels | <Status since="v0.2" />  0.2.0-alpha.1 |
 | v0.3 | Automatic HTTPS | go from DNS to HTTPS with one label | <Status planned="v0.3" /> |
 | v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status planned="v0.4" /> |
 | v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
@@ -27,7 +27,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 
 HTTP/1.1, HTTP/2, h2c, WebSocket, server-sent events and gRPC; routing with the Traefik v3 grammar; TLS with your own certificates; the middlewares `headers`, `redirect`, `rewrite`, `strip_prefix`, `add_prefix`, `replace_path`, `basic_auth`, `forward_auth`, `ip_allow`, `ip_deny`, `rate_limit`, `cors`, `compress`, `errors` and `maintenance`; reloads without dropped requests, history and last-known-good; Prometheus metrics; the official image, a Compose example and a systemd unit. See [What is ReverseDock](/docs/start/what-is-reversedock/) and the [changelog](/docs/project/changelog/).
 
-## v0.2: Docker-native <Status planned="v0.2" />
+## v0.2: Docker-native <Status since="v0.2" />
 
 The Docker provider: routes from `rdock.*` labels and compatibility with a documented subset of `traefik.*` labels, tested against real Compose files. A zero-configuration mode, `rdock migrate traefik` to turn labels into YAML, diagnostics for unsupported labels, and examples for Dokploy, Coolify and Portainer. Losing the Docker socket does not drop traffic.
 
