@@ -31,9 +31,22 @@ impl Config {
     /// point at settings that work but are probably not intended or are risky.
     #[must_use]
     pub fn validate(&self) -> Vec<Diagnostic> {
+        self.validate_as(false)
+    }
+
+    /// Validates a configuration that already holds other providers' objects under
+    /// `name@provider` keys (ADR-0018): those keys are accepted, and references to them must
+    /// exist like references to this file's objects.
+    #[must_use]
+    pub fn validate_merged(&self) -> Vec<Diagnostic> {
+        self.validate_as(true)
+    }
+
+    fn validate_as(&self, merged: bool) -> Vec<Diagnostic> {
         let mut v = Validator {
             config: self,
             listeners: self.effective_listeners().into_owned(),
+            merged,
             out: Vec::new(),
         };
         v.check_version();
@@ -53,13 +66,10 @@ impl Config {
     }
 }
 
-/// The service name of a reference to an object in this file (`name` or `name@file`).
-fn local_name(reference: &str) -> Option<&str> {
-    match reference.split_once('@') {
-        None => Some(reference),
-        Some((name, "file")) => Some(name),
-        Some(_) => None,
-    }
+/// The key a reference names: `name@file` is the file's `name`; other references are keys as
+/// written (`name`, or `name@docker` in a merged configuration).
+fn reference_key(reference: &str) -> &str {
+    reference.strip_suffix("@file").unwrap_or(reference)
 }
 
 /// Password hash formats accepted by basic authentication.
@@ -110,6 +120,8 @@ fn protocol_name(protocol: ListenerProtocol) -> &'static str {
 struct Validator<'a> {
     config: &'a Config,
     listeners: BTreeMap<String, Listener>,
+    /// Other providers' objects are present as `name@provider` keys.
+    merged: bool,
     out: Vec<Diagnostic>,
 }
 
@@ -126,7 +138,15 @@ impl Validator<'_> {
         self.push(Diagnostic::warning(path, message));
     }
 
-    fn check_name(&mut self, section: &str, name: &str) {
+    fn check_name(&mut self, section: &str, key: &str) {
+        let name = match key.split_once('@') {
+            Some((name, provider))
+                if self.merged && provider != "file" && PROVIDERS.contains(&provider) =>
+            {
+                name
+            }
+            _ => key,
+        };
         let valid = !name.is_empty()
             && name.len() <= MAX_NAME_LEN
             && name.starts_with(|c: char| c.is_ascii_alphanumeric())
@@ -135,7 +155,7 @@ impl Validator<'_> {
                 .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
         if !valid {
             self.push(
-                Diagnostic::error(path_key(section, name), format!("invalid name `{name}`")).with_hint(
+                Diagnostic::error(path_key(section, key), format!("invalid name `{name}`")).with_hint(
                     "names start with a letter or digit and use letters, digits, `-`, `_` or `.` \
                      (at most 63 characters; `@` is reserved for provider references)",
                 ),
@@ -167,7 +187,11 @@ impl Validator<'_> {
             );
             return;
         }
-        if provider.is_some_and(|p| p != "file") || known.contains_key(name) {
+        let other_provider = provider.is_some_and(|p| p != "file");
+        if other_provider && !self.merged {
+            return;
+        }
+        if known.contains_key(reference_key(reference)) {
             return;
         }
         let hint = match closest_match(name, known.keys().map(String::as_str)) {
@@ -678,7 +702,7 @@ impl Validator<'_> {
                 let targets = service
                     .split
                     .iter()
-                    .filter_map(|target| local_name(&target.service))
+                    .map(|target| reference_key(&target.service))
                     .filter(|target| services.contains_key(*target))
                     .collect();
                 (name.as_str(), targets)

@@ -7,6 +7,7 @@ use rdock_model::{Config, Diagnostic, closest_match, path_index, path_key};
 use serde_json::Value;
 
 pub mod interpolate;
+pub mod merge;
 pub mod state;
 
 pub use interpolate::{Lookup, ReferenceError, System};

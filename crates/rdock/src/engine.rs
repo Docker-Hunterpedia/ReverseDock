@@ -1,18 +1,19 @@
 //! The configuration engine of `rdock run`: load → validate → compile → apply, with the
 //! last-known-good fallback and the on-disk history (architecture §5).
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
+use rdock_config::merge::{ObjectKey, Snapshot, assemble, is_provider_owned, owner, skipped};
 use rdock_config::state::{HISTORY_LIMIT, HistoryEntry, StateDir};
 use rdock_config::{Loaded, System, load_file, load_value};
 use rdock_model::middleware::Middleware;
 use rdock_model::{Config, Diagnostic};
-use rdock_proxy::DataPlane;
+use rdock_proxy::{DataPlane, Runtime};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -70,7 +71,10 @@ struct Applied {
     origin: Origin,
 }
 
-/// The engine shared by signal handlers, the file watcher and the admin API.
+/// Rounds of "leave out the provider objects that fail to compile, try again".
+const COMPILE_ROUNDS: usize = 4;
+
+/// The engine shared by signal handlers, the file watcher, providers and the admin API.
 pub(crate) struct Engine {
     config_path: PathBuf,
     state: StateDir,
@@ -82,6 +86,8 @@ pub(crate) struct Engine {
     watched: Mutex<BTreeSet<PathBuf>>,
     /// Hash of the watched files when the configuration was last applied.
     fingerprint: Mutex<Option<u64>>,
+    /// The latest snapshot of each provider, by provider name.
+    snapshots: Mutex<BTreeMap<String, Snapshot>>,
     started_at: SystemTime,
 }
 
@@ -111,6 +117,7 @@ impl Engine {
             last: Mutex::new(None),
             watched: Mutex::new(BTreeSet::new()),
             fingerprint: Mutex::new(None),
+            snapshots: Mutex::new(BTreeMap::new()),
             started_at: SystemTime::now(),
         }
     }
@@ -142,6 +149,15 @@ impl Engine {
             .map_or(Duration::from_secs(8), |c| {
                 c.lifecycle.drain_timeout.as_std()
             })
+    }
+
+    fn current_snapshots(&self) -> Vec<Snapshot> {
+        self.snapshots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .cloned()
+            .collect()
     }
 
     /// First load. Falls back to the last-known-good copy when the file cannot be used.
@@ -219,21 +235,20 @@ impl Engine {
     async fn apply(&self, loaded: Loaded, trigger: &str, origin: Origin) -> Report {
         let mut applied = self.applied.lock().await;
         let Loaded {
-            config,
+            config: file,
             source,
             mut diagnostics,
         } = loaded;
-        let compiled = self.plane.compile(&config);
-        diagnostics.extend(compiled.diagnostics);
-        let Some(runtime) = compiled.runtime else {
-            drop(applied);
-            return self
-                .rejected(
-                    trigger,
-                    Some("the configuration cannot be compiled".to_owned()),
-                    diagnostics,
-                )
-                .await;
+        let snapshots = self.current_snapshots();
+        for snapshot in &snapshots {
+            diagnostics.extend(snapshot.diagnostics.iter().cloned());
+        }
+        let (config, runtime) = match self.merge_and_compile(&file, &snapshots, &mut diagnostics) {
+            Ok(compiled) => compiled,
+            Err(error) => {
+                drop(applied);
+                return self.rejected(trigger, Some(error), diagnostics).await;
+            }
         };
         let generation = runtime.generation;
         let drain = config.lifecycle.drain_timeout.as_std();
@@ -260,7 +275,12 @@ impl Engine {
         {
             tracing::warn!(error = %err, "cannot write the last-known-good configuration");
         }
-        let files = referenced_files(&self.config_path, &config);
+        for snapshot in &snapshots {
+            if let Err(err) = self.state.save_snapshot(snapshot) {
+                tracing::warn!(provider = %snapshot.provider, error = %err, "cannot store the provider snapshot");
+            }
+        }
+        let files = referenced_files(&self.config_path, &file);
         *self
             .fingerprint
             .lock()
@@ -292,6 +312,50 @@ impl Engine {
         };
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
         report
+    }
+
+    /// Merges the providers' objects into the file configuration and compiles it. Provider
+    /// objects that fail validation or compilation are left out with a warning; errors in the
+    /// file's own objects reject the whole configuration, as without providers.
+    fn merge_and_compile(
+        &self,
+        file: &Config,
+        snapshots: &[Snapshot],
+        out: &mut Vec<Diagnostic>,
+    ) -> Result<(Config, Runtime), String> {
+        let snapshots: Vec<&Snapshot> = snapshots.iter().collect();
+        let mut excluded: BTreeSet<ObjectKey> = BTreeSet::new();
+        let mut left_out = Vec::new();
+        for _ in 0..COMPILE_ROUNDS {
+            let merged = assemble(file, &snapshots, &excluded);
+            if !merged.errors.is_empty() {
+                out.extend(merged.errors);
+                return Err("the configuration has errors".to_owned());
+            }
+            let compiled = self.plane.compile(&merged.config);
+            let (failed, findings): (Vec<Diagnostic>, Vec<Diagnostic>) =
+                compiled.diagnostics.into_iter().partition(|d| {
+                    d.is_error() && owner(&d.path).is_some_and(|(_, key)| is_provider_owned(&key))
+                });
+            if failed.is_empty() {
+                out.extend(left_out);
+                out.extend(merged.skipped);
+                out.extend(findings);
+                return compiled
+                    .runtime
+                    .map(|runtime| (merged.config, runtime))
+                    .ok_or_else(|| "the configuration cannot be compiled".to_owned());
+            }
+            for error in &failed {
+                if let Some(key) = owner(&error.path)
+                    && excluded.insert(key.clone())
+                {
+                    left_out.push(skipped(key.0, &key.1, error));
+                }
+            }
+        }
+        out.extend(left_out);
+        Err("provider objects keep failing to compile".to_owned())
     }
 
     async fn rejected(
@@ -426,6 +490,31 @@ fn referenced_files(config_path: &Path, config: &Config) -> BTreeSet<PathBuf> {
     files
 }
 
+impl Engine {
+    /// Object counts and diagnostics of each provider's latest snapshot.
+    fn provider_status(&self) -> Value {
+        let snapshots = self
+            .snapshots
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner);
+        snapshots
+            .iter()
+            .map(|(name, s)| {
+                (
+                    name.clone(),
+                    serde_json::json!({
+                        "routes": s.fragment.routes.len(),
+                        "services": s.fragment.services.len(),
+                        "middlewares": s.fragment.middlewares.len(),
+                        "diagnostics": s.diagnostics,
+                    }),
+                )
+            })
+            .collect::<serde_json::Map<_, _>>()
+            .into()
+    }
+}
+
 #[async_trait]
 impl rdock_admin::Control for Engine {
     fn ready(&self) -> bool {
@@ -457,6 +546,7 @@ impl rdock_admin::Control for Engine {
             "config_file": file,
             "origin": origin,
             "listeners": self.plane.listeners().await,
+            "providers": self.provider_status(),
             "last_reload": last,
         })
     }

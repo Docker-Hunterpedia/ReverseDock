@@ -8,6 +8,7 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 - The public website and documentation in `apps/website` (Astro + Starlight, ADR-0017): a landing page and 69 pages of guides, install and migration guides (from Traefik and NGINX), concepts, operations and reference. The configuration and CLI reference are generated from the schema and the binary; every complete configuration in the docs passes `rdock validate --strict` in CI, and "planned for vX.Y" badges are checked against what `rdock` refuses.
 
 ### Changed
+- A file route that refers to another provider's object (`name@docker`) that does not exist is left out with a warning; the rest of the configuration applies (ADR-0018). The error for a missing service or middleware now reads "`x` does not exist".
 - New logo, "Berth": a container moored in an amber dock bay. It replaces the two-arrow mark in the README banner, the website and docs header (with a dark-theme version), and the favicon; the website gains the full web icon set and a manifest. Master files and usage rules are in `docs/assets/logo/`.
 
 ### Fixed
