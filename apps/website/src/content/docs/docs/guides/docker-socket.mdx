@@ -1,0 +1,109 @@
+---
+title: Docker socket access
+description: Give ReverseDock read access to Docker with the socket's group or a read-only socket proxy, and use Podman's Docker-compatible socket.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+The Docker provider <Status planned="v0.2" /> only reads from the Docker Engine API: it lists and inspects containers and follows container and network events. It never creates, changes or stops anything. Still, whoever can talk to the Docker socket can usually do anything on the host, so give ReverseDock as little access as possible.
+
+## Option 1: a read-only socket proxy (recommended)
+
+A socket proxy sits between ReverseDock and the socket and allows only the read calls the provider makes. This setup uses LinuxServer's [socket-proxy](https://github.com/linuxserver/docker-socket-proxy), a drop-in replacement for Tecnativa's; in both, `EVENTS` is on and `POST` is off by default, and `CONTAINERS` and `NETWORKS` must be turned on (project documentation, checked 2026-10-28).
+
+```yaml title="compose.yaml"
+services:
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:3.4.6
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      NETWORKS: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs: [/run]
+    networks: [docker-api]
+
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.2.0-alpha.1
+    restart: unless-stopped
+    depends_on: [socket-proxy]
+    ports: ["80:80"]
+    volumes:
+      - ./config:/etc/rdock:ro
+      - rdock-data:/var/lib/rdock
+    networks: [docker-api, proxy]
+
+networks:
+  docker-api:
+    internal: true
+  proxy:
+    name: proxy
+
+volumes:
+  rdock-data:
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+providers:
+  docker:
+    endpoint: tcp://socket-proxy:2375
+    network: proxy
+```
+
+The `docker-api` network is internal, so only ReverseDock reaches the proxy, and nothing on it reaches the internet.
+
+## Option 2: the socket's group
+
+Mount the socket read-only and add ReverseDock's user to the group that owns it. The group number differs between hosts:
+
+```sh
+stat -c %g /var/run/docker.sock
+```
+
+```yaml title="compose.yaml (rdock service)"
+group_add: ["${DOCKER_GID}"]
+volumes:
+  - /var/run/docker.sock:/var/run/docker.sock:ro
+```
+
+Start with `DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose up -d`. A read-only mount does not make the API read-only; only a proxy does.
+
+## Endpoints
+
+| `providers.docker.endpoint` | Use |
+|---|---|
+| `unix:///var/run/docker.sock` (default) | The local Docker socket. |
+| `tcp://host:2375` or `http://host:2375` | A socket proxy, or Docker on another host over a private network. |
+| `https://…` | Not supported yet; put a socket proxy next to the remote Docker instead. |
+
+## Podman
+
+Podman serves a Docker-compatible API (Podman documentation, checked 2026-10-28):
+
+| Podman | Socket |
+|---|---|
+| Rootful | `unix:///run/podman/podman.sock` |
+| Rootless | `unix://$XDG_RUNTIME_DIR/podman/podman.sock`, usually `/run/user/<uid>/podman/podman.sock` |
+
+Enable it with `systemctl enable --now podman.socket` (add `--user` for rootless) and set `providers.docker.endpoint` to it. Health checks are read from each container's details, which Podman provides.
+
+## Rootless Docker
+
+Rootless Docker's socket is at `$XDG_RUNTIME_DIR/docker.sock`. Containers there sit behind a user-space network, so ReverseDock must run in the same rootless Docker and share a network with the containers it routes; it cannot reach them from the host.
+
+## Related
+
+- [Docker containers and labels](/docs/guides/docker-labels/)
+- [Security model](/docs/concepts/security-model/)

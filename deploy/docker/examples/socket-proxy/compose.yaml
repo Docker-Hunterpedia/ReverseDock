@@ -1,0 +1,47 @@
+# Routes from container labels through a read-only socket proxy. Start with:
+#   docker compose up -d
+name: rdock-socket-proxy
+
+services:
+  socket-proxy:
+    image: lscr.io/linuxserver/socket-proxy:3.4.6
+    restart: unless-stopped
+    environment:
+      CONTAINERS: "1"
+      NETWORKS: "1"
+      POST: "0"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    read_only: true
+    tmpfs: [/run]
+    networks: [docker-api]
+
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.2.0-alpha.1
+    restart: unless-stopped
+    depends_on: [socket-proxy]
+    ports: ["80:80"]
+    volumes:
+      - ./config:/etc/rdock:ro
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [docker-api, proxy]
+
+  whoami:
+    image: traefik/whoami:v1.11.0
+    labels:
+      rdock.enable: "true"
+      rdock.host: whoami.localhost
+      rdock.tls: "off"
+    networks: [proxy]
+
+networks:
+  docker-api:
+    internal: true
+  proxy:
+    name: rdock-proxy
+
+volumes:
+  rdock-data:

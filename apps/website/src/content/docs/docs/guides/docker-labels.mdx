@@ -1,0 +1,130 @@
+---
+title: Docker containers and labels
+description: Route Docker containers from their labels, with ReverseDock's own rdock.* labels or existing traefik.* labels, and keep traffic flowing when containers and Docker come and go.
+sidebar:
+  order: 2
+---
+
+import Status from '../../../../components/Status.astro';
+
+The Docker provider <Status planned="v0.2" /> reads the labels of running containers and turns them into routes, services and middlewares. Start a container with the right labels and it is routed within about a second; stop it and its route goes away. Labels can be ReverseDock's own `rdock.*` labels or the `traefik.*` labels you already have ([label reference](/docs/reference/docker-labels/)).
+
+## What you need
+
+- Docker Engine (or Podman's Docker-compatible socket) on the same host.
+- Read access to the Docker socket for ReverseDock. The image runs as an unprivileged user, so it needs either the socket's group or a socket proxy: see [Docker socket access](/docs/guides/docker-socket/).
+- ReverseDock and the containers it routes on a shared Docker network.
+
+## A first setup
+
+```yaml title="compose.yaml"
+name: shop
+
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.2.0-alpha.1
+    restart: unless-stopped
+    ports: ["80:80"]
+    group_add: ["${DOCKER_GID:?set DOCKER_GID to the group of /var/run/docker.sock}"]
+    volumes:
+      - ./config:/etc/rdock:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - rdock-data:/var/lib/rdock
+    networks: [proxy]
+
+  web:
+    image: traefik/whoami:v1.11.0
+    labels:
+      rdock.enable: "true"
+      rdock.host: shop.example.com
+      rdock.tls: "off"
+    networks: [proxy]
+
+networks:
+  proxy:
+    name: proxy
+
+volumes:
+  rdock-data:
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+providers:
+  docker:
+    network: proxy
+```
+
+```sh
+DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose up -d
+curl -s -H 'Host: shop.example.com' http://127.0.0.1/ | head -3
+```
+
+`rdock status` lists the provider, whether it is connected, how many routes it contributes and every label it could not use.
+
+Without any configuration file, `rdock run` starts in **zero-config mode**, which is the `rdock.yaml` above without the `network` line: plain HTTP on `:80`, routes from labels. It needs the Docker socket at `/var/run/docker.sock`.
+
+## Labels
+
+Containers are **opt-in**: only containers with `rdock.enable=true` (or `traefik.enable=true`) are read, unless `providers.docker.expose_by_default` is `true`.
+
+The shorthand makes one route and one service, named after the Compose service and project (`web-shop` above) or the container:
+
+| Label | Meaning |
+|---|---|
+| `rdock.host` | Host names, separated by commas. |
+| `rdock.path` | A path prefix (`PathPrefix`). |
+| `rdock.port` | The container port to send traffic to. |
+| `rdock.tls` | `auto`, `off`, or `dns:<provider>` for DNS-01. |
+| `rdock.middlewares` | Middlewares, separated by commas: the container's own or the file's (`secure-headers@file`). |
+
+The full form describes any number of objects with the same fields as `rdock.yaml`; a value in brackets is a list:
+
+```yaml title="compose.yaml (labels)"
+labels:
+  rdock.enable: "true"
+  rdock.routes.api.match: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+  rdock.routes.api.service: api
+  rdock.routes.api.middlewares: strip-v1
+  rdock.services.api.port: "4000"
+  rdock.services.api.scheme: h2c
+  rdock.middlewares.strip-v1.type: strip_prefix
+  rdock.middlewares.strip-v1.prefixes: "[/v1]"
+```
+
+Existing `traefik.*` labels work as they are, within the [supported subset](/docs/reference/docker-labels/#traefik-labels). Labels outside it are reported in the logs and in `rdock status`, never ignored silently.
+
+Label values are taken literally. `${…}` references are refused in labels, and labels cannot name files on the proxy's host, so a container cannot read ReverseDock's secrets or files.
+
+## Which address and port
+
+- **Network:** the one named by `rdock.network` or `traefik.docker.network` on the container, else `providers.docker.network`, else the container's only network. A container on several networks with none chosen is reported and not routed. Compose prefixes network names with the project unless the network has a `name:`, as `proxy` does above.
+- **Port:** the label (`rdock.port`, `rdock.services.<name>.port` or `traefik.http.services.<name>.loadbalancer.server.port`), else the container's only exposed port. Several exposed ports and no label are reported, not guessed.
+- **Host network:** containers with `network_mode: host` are reached at `providers.docker.host_address` (`127.0.0.1`) and need a port label.
+
+## Replicas, health checks and stopping
+
+- Containers with the same labels, such as replicas from `docker compose up --scale web=3`, share one service and are balanced.
+- A container whose Docker `HEALTHCHECK` reports `starting` or `unhealthy` leaves its pool until it is healthy. When no container of a service is healthy, all of them stay in the pool and a warning says so, rather than the route disappearing.
+- When Docker starts stopping a container, it leaves its pool at once: new requests go to the other replicas while its open requests finish.
+
+## When Docker goes away
+
+If the Docker socket stops answering, the last routes stay in service, the provider shows as `degraded` in `rdock status`, and it reconnects every 1 to 30 seconds. After a restart, ReverseDock serves the routes it last saw until Docker answers again.
+
+## HTTPS
+
+Routes from labels follow `defaults.tls` like routes in the file. Until automatic certificates arrive <Status planned="v0.3" />, a label route that asks for HTTPS needs a certificate under `certificates` that covers its host, or `defaults.certificate`; otherwise that route is left out with a warning and everything else still applies. The example above uses `tls: off` on a plain HTTP listener.
+
+## Related
+
+- [Docker label reference](/docs/reference/docker-labels/)
+- [Docker socket access](/docs/guides/docker-socket/), including socket proxies and Podman
+- [Dokploy, Coolify and Portainer](/docs/guides/platforms/)
+- [Migrate from Traefik](/docs/migrate/from-traefik/), with `rdock migrate traefik`
