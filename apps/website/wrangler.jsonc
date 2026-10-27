@@ -8,5 +8,7 @@
     "directory": "./dist",
     "not_found_handling": "404-page",
     "html_handling": "auto-trailing-slash"
-  }
+  },
+  // Branches other than main get preview URLs through `npx wrangler preview`, which needs this block.
+  "previews": {}
 }
