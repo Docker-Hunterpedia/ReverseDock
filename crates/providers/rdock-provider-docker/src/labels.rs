@@ -40,6 +40,8 @@ pub struct Container {
     pub exposed_ports: BTreeSet<u16>,
     /// Result of the container's Docker health check.
     pub health: Health,
+    /// Docker is stopping or pausing the container: it should get no new requests.
+    pub stopping: bool,
 }
 
 /// Docker health check status.
@@ -303,7 +305,10 @@ impl<'a> Scope<'a> {
                 IpAddr::V6(v6) => format!("[{v6}]"),
                 IpAddr::V4(v4) => v4.to_string(),
             };
-            (format!("{host}:{port}"), self.container.health.serves())
+            (
+                format!("{host}:{port}"),
+                self.container.health.serves() && !self.container.stopping,
+            )
         };
         let mut tree = draft.tree;
         if let Err(err) = tree.set(
