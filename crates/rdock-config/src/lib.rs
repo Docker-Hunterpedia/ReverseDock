@@ -6,6 +6,7 @@ use rdock_model::interpolation::{FieldKind, field_kind};
 use rdock_model::{Config, Diagnostic, closest_match, path_index, path_key};
 use serde_json::Value;
 
+pub mod includes;
 pub mod interpolate;
 pub mod merge;
 pub mod state;
@@ -140,7 +141,7 @@ pub fn load_value(source: Value, lookup: &dyn Lookup) -> Result<Loaded, LoadErro
     })
 }
 
-fn parse(text: &str, format: Format) -> Result<Value, LoadError> {
+pub(crate) fn parse(text: &str, format: Format) -> Result<Value, LoadError> {
     match format {
         Format::Json => serde_json::from_str(text).map_err(|err| LoadError::Syntax {
             message: format!("invalid JSON: {err}"),

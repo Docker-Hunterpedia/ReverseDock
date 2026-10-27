@@ -102,13 +102,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
         }
     }
     let providers = &config.providers;
-    if providers.file.as_ref().is_some_and(|f| !f.paths.is_empty()) {
-        gate.unsupported(
-            "providers.file.paths",
-            "additional configuration files",
-            "v0.2",
-        );
-    }
     if providers.swarm.is_some() {
         gate.unsupported("providers.swarm", "the Swarm provider", "v0.6");
     }

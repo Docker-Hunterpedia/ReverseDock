@@ -4,7 +4,8 @@ use std::path::Path;
 use std::process::ExitCode;
 use std::sync::Arc;
 
-use rdock_config::{LoadError, Loaded, load_file};
+use rdock_config::includes::load_file_with_includes;
+use rdock_config::{LoadError, Loaded};
 use rdock_model::{Diagnostic, Severity};
 use rdock_proxy::{CompileEnv, Mode, compile};
 use serde::Serialize;
@@ -40,7 +41,7 @@ pub(crate) fn validate(args: &ValidateArgs) -> anyhow::Result<ExitCode> {
 
 /// Load, validation and compile diagnostics of one file.
 pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
-    match load_file(file) {
+    match load_file_with_includes(file).map(|(loaded, _)| loaded) {
         Ok(Loaded {
             config,
             mut diagnostics,
