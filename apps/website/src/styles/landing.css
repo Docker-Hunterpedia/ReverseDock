@@ -64,6 +64,10 @@ code, .mono { font-family: var(--rd-font-mono); }
 .nav { height: 64px; display: flex; align-items: center; gap: 32px; }
 .brand { display: flex; align-items: center; gap: 10px; color: var(--rd-text); font-weight: 650; font-size: 17px; letter-spacing: -0.01em; }
 .brand:hover { text-decoration: none; }
+/* The logo's box is ink on light and amber on dark, where an ink box would disappear. */
+.logo-dark { display: none; }
+:root[data-theme="dark"] .logo-light { display: none; }
+:root[data-theme="dark"] .logo-dark { display: block; }
 .navlinks { display: flex; gap: 24px; flex: 1 1 auto; }
 .navlinks a, .navlink-gh { color: var(--rd-text-2); font-size: 15px; font-weight: 500; }
 .navlinks a:hover, .navlink-gh:hover { color: var(--rd-text); text-decoration: none; }

@@ -2,6 +2,7 @@
 import '@reversedock/harbor-tokens/tokens.css';
 import '../styles/landing.css';
 import Logo from '../assets/logo.svg';
+import LogoDark from '../assets/logo-dark.svg';
 import release from '../data/release.json';
 import { compare, features, guides, installs, pillars, trust } from '../data/landing';
 
@@ -18,7 +19,10 @@ const description = "Route, secure and observe your services on a laptop, a VPS 
   <title>{title}</title>
   <meta name="description" content={description} />
   <link rel="canonical" href={new URL('/', Astro.site)} />
+  <link rel="icon" href="/favicon.ico" sizes="48x48" />
   <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png" />
+  <link rel="manifest" href="/site.webmanifest" />
   <meta property="og:title" content={title} />
   <meta property="og:description" content={description} />
   <meta property="og:type" content="website" />
@@ -40,7 +44,7 @@ const description = "Route, secure and observe your services on a laptop, a VPS 
   <header class="topbar">
     <nav class="wrap nav" aria-label="Main">
       <a class="brand" href="/" aria-label="ReverseDock home">
-        <img src={Logo.src} width="28" height="28" alt="" />
+        <img class="logo-light" src={Logo.src} width="28" height="28" alt="" /><img class="logo-dark" src={LogoDark.src} width="28" height="28" alt="" />
         <span>ReverseDock</span>
       </a>
       <div class="navlinks">
@@ -263,7 +267,7 @@ const description = "Route, secure and observe your services on a laptop, a VPS 
   <footer class="footer">
     <div class="wrap footer-in">
       <div class="footer-brand">
-        <span class="brand"><img src={Logo.src} width="24" height="24" alt="" /><span>ReverseDock</span></span>
+        <span class="brand"><img class="logo-light" src={Logo.src} width="24" height="24" alt="" /><img class="logo-dark" src={LogoDark.src} width="24" height="24" alt="" /><span>ReverseDock</span></span>
         <span class="muted small">Apache-2.0. Built on Cloudflare Pingora. Not affiliated with Cloudflare or Traefik Labs.</span>
         <span class="muted small">Developed by <a href="https://oday-bakkour.com/">Oday Bakkour</a></span>
       </div>

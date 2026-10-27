@@ -19,7 +19,8 @@ export default defineConfig({
     starlight({
       title: 'ReverseDock',
       description: 'One reverse proxy for a laptop, a VPS, a Docker Swarm, or a Kubernetes cluster.',
-      logo: { src: './src/assets/logo.svg' },
+      // The box is ink on light and amber on dark, where an ink box would disappear.
+      logo: { light: './src/assets/logo.svg', dark: './src/assets/logo-dark.svg' },
       favicon: '/favicon.svg',
       social: [{ icon: 'github', label: 'GitHub', href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/apps/website/` },
@@ -28,6 +29,9 @@ export default defineConfig({
       expressiveCode: { defaultProps: { wrap: true, preserveIndent: true } },
       customCss: ['@reversedock/harbor-tokens/tokens.css', './src/styles/starlight.css'],
       head: [
+        { tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '48x48' } },
+        { tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
+        { tag: 'link', attrs: { rel: 'manifest', href: '/site.webmanifest' } },
         { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },
         { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' } },
         {
