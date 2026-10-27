@@ -104,6 +104,13 @@ fn provider_state(rdock: &Rdock) -> Option<String> {
         .map(str::to_owned)
 }
 
+/// How many routes the Docker provider's snapshot holds.
+fn provider_routes(rdock: &Rdock) -> Option<u64> {
+    let (_, body) = rdock.get_admin("/api/v1/status")?;
+    let status: serde_json::Value = serde_json::from_str(&body).ok()?;
+    status["providers"]["docker"]["routes"].as_u64()
+}
+
 async fn wait_for_provider(rdock: &Rdock, state: &str, limit: Duration) {
     let start = Instant::now();
     while start.elapsed() < limit {
@@ -182,9 +189,21 @@ async fn docker_containers_are_routed_and_socket_loss_keeps_traffic() {
     let mut forwarder = SocketForwarder::start(&socket);
     wait_for_provider(&rdock, "connected", Duration::from_secs(40)).await;
     docker(&["stop", "-t", "1", &name]);
-    let removed = wait_for(addr, &host, 404, Duration::from_secs(5)).await;
+    // Measured on the provider, not with requests: a request sent just before the route goes
+    // still waits out the connect timeout to the stopped container.
+    let start = Instant::now();
+    while provider_routes(&rdock) != Some(0) {
+        assert!(
+            start.elapsed() < Duration::from_secs(5),
+            "the route was not removed: {}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let removed = start.elapsed();
     eprintln!("route removed {removed:?} after the container stopped");
-    assert!(removed < Duration::from_secs(2), "took {removed:?}");
+    assert!(removed < Duration::from_secs(1), "took {removed:?}");
+    wait_for(addr, &host, 404, Duration::from_secs(10)).await;
 
     forwarder.cut();
     rdock.stop(Duration::from_secs(10));
