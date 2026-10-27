@@ -168,6 +168,8 @@ thead .us { font-weight: 700; }
 .tab { height: 44px; padding: 0 16px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--rd-text-2); font: 500 14px/1 var(--rd-font-sans); cursor: pointer; }
 .tab[aria-selected='true'] { color: var(--rd-text); border-bottom-color: var(--rd-accent); }
 .panel { padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+/* `display: flex` would otherwise show the panels the tabs hide. */
+.panel[hidden] { display: none; }
 .panel pre { border-radius: var(--rd-radius-md); }
 .panel-foot { display: flex; justify-content: space-between; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 14px; }
 
