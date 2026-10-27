@@ -81,22 +81,35 @@ function prose(text = ''): string {
     .replace(/\n(?!\n)/g, ' ');
 }
 
-function field(lines: string[], path: string, s: Schema, required: boolean, level: number) {
-  const status = statusFor(path);
-  const badge = status && !status.value ? ` <Status planned="${status.planned}" />` : '';
-  lines.push(`${'#'.repeat(level)} \`${path}\`${badge}`, '');
+/** `**Type:** … · **Required** · **Default:** …` for one field. */
+function factsLine(s: Schema, required: boolean): string {
   const facts = [`**Type:** ${typeLabel(s)}`];
   if (required) facts.push('**Required**');
   const def = defaultLabel(s.default ?? resolve(s).default);
   if (def) facts.push(`**Default:** ${def}`);
-  lines.push(facts.join(' · '), '');
+  return facts.join(' · ');
+}
+
+/** One bullet per allowed value when the field is an enumeration. */
+function valueLines(s: Schema): string[] {
+  const variants = withoutNull(s);
+  const r = resolve(variants.find((v) => isObject(v) || isMap(v) || consts(v).length > 0) ?? variants[0]);
+  return consts(r).map((c) => `- \`${c.const}\`: ${prose(c.description ?? '')}`);
+}
+
+/** The aside for a value (not a key) that `rdock` refuses until a later release. */
+function plannedValueNote(status: Status): string[] {
+  return [`:::note[Planned for ${status.planned}]`, `${prose(status.what)}: accepted by \`rdock validate\` with a warning, refused by \`rdock run\` until ${status.planned}.`, ':::'];
+}
+
+function field(lines: string[], path: string, s: Schema, required: boolean, level: number) {
+  const status = statusFor(path);
+  const badge = status && !status.value ? ` <Status planned="${status.planned}" />` : '';
+  lines.push(`${'#'.repeat(level)} \`${path}\`${badge}`, '', factsLine(s, required), '');
   if (s.description) lines.push(prose(s.description), '');
-  const r = resolve(withoutNull(s).find((v) => isObject(v) || isMap(v) || consts(v).length > 0) ?? withoutNull(s)[0]);
-  const values = consts(r);
-  if (values.length > 0) {
-    lines.push(...values.map((c) => `- \`${c.const}\`: ${prose(c.description ?? '')}`), '');
-  }
-  if (status?.value) lines.push(`:::note[Planned for ${status.planned}]`, `${prose(status.what)}: accepted by \`rdock validate\` with a warning, refused by \`rdock run\` until ${status.planned}.`, ':::', '');
+  const values = valueLines(s);
+  if (values.length > 0) lines.push(...values, '');
+  if (status?.value) lines.push(...plannedValueNote(status), '');
 }
 
 function walk(lines: string[], path: string, s: Schema, level: number) {
