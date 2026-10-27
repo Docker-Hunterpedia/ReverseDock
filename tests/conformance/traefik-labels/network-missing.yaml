@@ -1,0 +1,16 @@
+description: "A named network the container is not on is a warning."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.docker.network: "proxy"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  diagnostics:
+    - "docker.app: the container is not on network `proxy`"

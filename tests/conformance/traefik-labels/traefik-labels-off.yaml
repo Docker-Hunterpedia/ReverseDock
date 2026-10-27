@@ -1,0 +1,13 @@
+description: "With traefik_labels off, traefik.* labels are not read."
+settings:
+  traefik_labels: false
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect: {}

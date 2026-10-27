@@ -1,0 +1,19 @@
+description: "sticky.cookie=true enables cookie affinity with a default name."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.services.app.loadbalancer.sticky.cookie: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      sticky:
+        cookie:
+          name: "rdock_sticky"

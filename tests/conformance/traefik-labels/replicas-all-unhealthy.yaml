@@ -1,0 +1,23 @@
+description: "When no replica is healthy all stay (fail open) with a warning."
+containers:
+  - name: "demo-app-1"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      com.docker.compose.service: "app"
+      com.docker.compose.project: "demo"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 8080
+    health: "unhealthy"
+expect:
+  routes:
+    app: {}
+  services:
+    app-demo:
+      backends:
+        - address: "172.18.0.2:8080"
+          weight: 1
+  diagnostics:
+    - "services.app-demo: no container of service `app-demo` is healthy (demo-app-1)"

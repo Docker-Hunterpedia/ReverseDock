@@ -1,0 +1,24 @@
+description: "Native and Traefik labels on one container combine."
+containers:
+  - name: "app"
+    labels:
+      rdock.enable: "true"
+      rdock.middlewares.limit.type: "rate_limit"
+      rdock.middlewares.limit.average: "10"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "limit"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      middlewares:
+        - "limit"
+  services:
+    app: {}
+  middlewares:
+    limit:
+      type: "rate_limit"
+      average: 10

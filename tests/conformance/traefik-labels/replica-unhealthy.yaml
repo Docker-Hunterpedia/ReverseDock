@@ -1,0 +1,32 @@
+description: "An unhealthy replica leaves the pool."
+containers:
+  - name: "demo-app-1"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      com.docker.compose.service: "app"
+      com.docker.compose.project: "demo"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 8080
+    health: "healthy"
+  - name: "demo-app-2"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      com.docker.compose.service: "app"
+      com.docker.compose.project: "demo"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 8080
+    health: "unhealthy"
+expect:
+  routes:
+    app: {}
+  services:
+    app-demo:
+      backends:
+        - address: "172.18.0.2:8080"
+          weight: 1

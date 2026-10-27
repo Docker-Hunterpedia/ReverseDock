@@ -1,0 +1,16 @@
+description: "Several networks and no choice: warning, no service."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      internal: "10.0.1.5"
+      proxy: "10.0.2.5"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  diagnostics:
+    - "docker.app: the container is on several networks (internal, proxy)"

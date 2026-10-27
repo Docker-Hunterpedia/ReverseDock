@@ -1,0 +1,13 @@
+description: "An enable value other than true or false is a warning and hides the container."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "yes"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  diagnostics:
+    - "traefik.enable\"]: `yes` is not `true` or `false`"

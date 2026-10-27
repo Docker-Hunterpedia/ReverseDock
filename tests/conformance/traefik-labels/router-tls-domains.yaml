@@ -1,0 +1,24 @@
+description: "tls.domains main and sans become the certificate names."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.tls.certresolver: "le"
+      "traefik.http.routers.app.tls.domains[0].main": "example.com"
+      "traefik.http.routers.app.tls.domains[0].sans": "*.example.com,www.example.com"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app:
+      tls:
+        auto: true
+        domains:
+          - "example.com"
+          - "*.example.com"
+          - "www.example.com"
+  services:
+    app: {}

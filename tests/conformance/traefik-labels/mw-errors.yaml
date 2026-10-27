@@ -1,0 +1,25 @@
+description: "errors with a service and query path."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.err.errors.status: "500-599"
+      traefik.http.middlewares.err.errors.service: "app"
+      traefik.http.middlewares.err.errors.query: "/{status}.html"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    err:
+      type: "errors"
+      status:
+        - "500-599"
+      service: "app"
+      path: "/{status}.html"

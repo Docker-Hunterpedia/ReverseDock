@@ -1,0 +1,23 @@
+description: "Two routers share the container's only service."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.public.rule: "Host(`app.example.com`)"
+      traefik.http.routers.admin.rule: "Host(`admin.example.com`)"
+      traefik.http.services.app.loadbalancer.server.port: "3000"
+    networks:
+      web: "172.18.0.5"
+    ports:
+      - 3000
+expect:
+  routes:
+    admin:
+      service: "app"
+    public:
+      service: "app"
+  services:
+    app:
+      backends:
+        - address: "172.18.0.5:3000"
+          weight: 1

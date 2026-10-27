@@ -1,0 +1,33 @@
+description: "Replicas with the same labels share one service."
+containers:
+  - name: "demo-app-1"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      com.docker.compose.service: "app"
+      com.docker.compose.project: "demo"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 8080
+  - name: "demo-app-2"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      com.docker.compose.service: "app"
+      com.docker.compose.project: "demo"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 8080
+expect:
+  routes:
+    app:
+      service: "app-demo"
+  services:
+    app-demo:
+      backends:
+        - address: "172.18.0.2:8080"
+          weight: 1
+        - address: "172.18.0.3:8080"
+          weight: 1

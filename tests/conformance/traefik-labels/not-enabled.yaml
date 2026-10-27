@@ -1,0 +1,10 @@
+description: "Containers are opt-in: no enable label, nothing exposed."
+containers:
+  - name: "db"
+    labels:
+      traefik.http.routers.db.rule: "Host(`db.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 5432
+expect: {}

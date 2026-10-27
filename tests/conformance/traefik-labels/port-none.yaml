@@ -1,0 +1,14 @@
+description: "No exposed port and no port label: warning, no service."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports: []
+expect:
+  routes:
+    app: {}
+  diagnostics:
+    - "docker.app: service `app`: the container exposes no port"

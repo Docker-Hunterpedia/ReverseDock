@@ -1,0 +1,26 @@
+description: "forwardauth address and header lists."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.fa.forwardauth.address: "http://auth:4181/verify"
+      traefik.http.middlewares.fa.forwardauth.trustforwardheader: "true"
+      traefik.http.middlewares.fa.forwardauth.authresponseheaders: "X-User,X-Email"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    fa:
+      type: "forward_auth"
+      address: "http://auth:4181/verify"
+      trust_forward_header: true
+      copy_headers:
+        - "X-User"
+        - "X-Email"

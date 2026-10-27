@@ -1,0 +1,25 @@
+description: "Sticky cookie name, flags and SameSite map one to one."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.services.app.loadbalancer.sticky.cookie.name: "srv"
+      traefik.http.services.app.loadbalancer.sticky.cookie.secure: "true"
+      traefik.http.services.app.loadbalancer.sticky.cookie.httponly: "true"
+      traefik.http.services.app.loadbalancer.sticky.cookie.samesite: "Strict"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      sticky:
+        cookie:
+          name: "srv"
+          secure: true
+          http_only: true
+          same_site: "strict"

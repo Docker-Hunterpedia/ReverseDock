@@ -1,0 +1,29 @@
+description: "framedeny, contenttypenosniff and HSTS settings."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.sec.headers.framedeny: "true"
+      traefik.http.middlewares.sec.headers.contenttypenosniff: "true"
+      traefik.http.middlewares.sec.headers.stsseconds: "31536000"
+      traefik.http.middlewares.sec.headers.stsincludesubdomains: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    sec:
+      type: "headers"
+      response:
+        set:
+          X-Frame-Options: "DENY"
+          X-Content-Type-Options: "nosniff"
+      hsts:
+        max_age: "365d"
+        include_subdomains: true

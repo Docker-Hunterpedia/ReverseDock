@@ -1,0 +1,18 @@
+description: "usersfile would read a file on the proxy's host and is rejected."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.auth.basicauth.usersfile: "/etc/passwd"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "usersfile\"]: `usersfile` cannot be set from labels"

@@ -1,0 +1,28 @@
+description: "Two containers declaring the same router differently: both are ignored."
+containers:
+  - name: "a"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.same.rule: "Host(`a.example.com`)"
+      traefik.http.routers.same.service: "a"
+      traefik.http.services.a.loadbalancer.server.port: "80"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+  - name: "b"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.same.rule: "Host(`b.example.com`)"
+      traefik.http.routers.same.service: "b"
+      traefik.http.services.b.loadbalancer.server.port: "80"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 80
+expect:
+  services:
+    a: {}
+    b: {}
+  diagnostics:
+    - "docker.b: route `same` is declared differently by another container"

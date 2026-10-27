@@ -1,0 +1,22 @@
+description: "ipallowlist sourcerange."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.ip.ipallowlist.sourcerange: "127.0.0.1/32, 192.168.1.0/24"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    ip:
+      type: "ip_allow"
+      cidrs:
+        - "127.0.0.1/32"
+        - "192.168.1.0/24"

@@ -1,0 +1,20 @@
+description: "server.scheme sets the backend protocol."
+containers:
+  - name: "grpc"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.grpc.rule: "Host(`grpc.example.com`)"
+      traefik.http.services.grpc.loadbalancer.server.scheme: "h2c"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 50051
+expect:
+  routes:
+    grpc: {}
+  services:
+    grpc:
+      scheme: "h2c"
+      backends:
+        - address: "172.18.0.2:50051"
+          weight: 1

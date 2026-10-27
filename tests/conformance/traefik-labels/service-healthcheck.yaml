@@ -1,0 +1,23 @@
+description: "healthcheck.* become active health checks."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.services.app.loadbalancer.healthcheck.path: "/health"
+      traefik.http.services.app.loadbalancer.healthcheck.interval: "10s"
+      traefik.http.services.app.loadbalancer.healthcheck.timeout: "3s"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      health:
+        active:
+          path: "/health"
+          interval: "10s"
+          timeout: "3s"

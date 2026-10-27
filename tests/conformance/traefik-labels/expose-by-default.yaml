@@ -1,0 +1,16 @@
+description: "expose_by_default exposes containers without an enable label."
+settings:
+  expose_by_default: true
+containers:
+  - name: "app"
+    labels:
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
