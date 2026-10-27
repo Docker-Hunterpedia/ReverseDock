@@ -1,6 +1,1 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512" role="img" aria-label="ReverseDock mark: two opposing arrows on an amber square">
-  <rect x="0" y="0" width="512" height="512" rx="112" fill="#F58F0A"/>
-  <rect x="0" y="0" width="512" height="256" rx="112" fill="#FFFFFF" opacity="0.08"/>
-  <path d="M136 206 H340 M290 150 L346 206 L290 262" fill="none" stroke="#1C1917" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-  <path d="M376 306 H172 M222 250 L166 306 L222 362" fill="none" stroke="#1C1917" stroke-width="40" stroke-linecap="round" stroke-linejoin="round"/>
-</svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="24 24 208 208" width="512" height="512" role="img" aria-label="ReverseDock logo: a container moored in an amber dock bay"><path fill="#F58F0A" d="M72 24H184A48 48 0 0 1 232 72V88H134A6 6 0 0 0 128 94V162A6 6 0 0 0 134 168H232V184A48 48 0 0 1 184 232H72A48 48 0 0 1 24 184V72A48 48 0 0 1 72 24Z"/><path fill="#1C1917" d="M152 108H196A4 4 0 0 1 200 112V144A4 4 0 0 1 196 148H152A4 4 0 0 1 148 144V112A4 4 0 0 1 152 108Z"/></svg>

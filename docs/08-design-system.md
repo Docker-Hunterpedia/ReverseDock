@@ -131,7 +131,7 @@ Vite · React 19 · TypeScript · Tailwind v4 (tokens as CSS variables) · shadc
 
 ## 8. Visual reference
 
-- **Logo mark:** [`assets/logo.svg`](assets/logo.svg) (amber `#F58F0A` rounded square, radius 22 %, ink `#1C1917` opposing arrows) · PNG 512 in `assets/logo.png`.
+- **Logo (Berth):** a container moored in a dock bay. An amber `#F58F0A` rounded tile (radius 23 %) with a bay cut into its right side and an ink `#1C1917` box inside it; on dark backgrounds the box is amber. Wordmark: Inter Display SemiBold, outlined. [`assets/logo.svg`](assets/logo.svg) is the cropped symbol (PNG 512 in `assets/logo.png`); every version, the small-size cut and the usage rules are in [`assets/logo/`](assets/logo/README.md).
 - **README banner / social preview (2:1):** [`assets/banner.html`](assets/banner.html) is the source; `scripts/render-assets.sh` renders `assets/banner.png` (2560×1280) with headless Chrome. Editable canvas: https://claude.ai/artifact/Kg8V5vPCPyYbokXwYEH8iu
 
 An interactive mock of the Overview and Routes pages lives in [`design/dashboard-mock.html`](design/dashboard-mock.html) (published at https://claude.ai/artifact/Svy4mzFgfqoWie4aGmHrxB). Use it as the reference when implementing M-ADM-03 / F-UI.
