@@ -42,6 +42,9 @@ pub struct Container {
     pub health: Health,
     /// Docker is stopping or pausing the container: it should get no new requests.
     pub stopping: bool,
+    /// A DNS name to reach the container by when it has no network address, such as the
+    /// Compose service name in `rdock migrate traefik`.
+    pub dns_name: Option<String>,
 }
 
 /// Docker health check status.
@@ -301,9 +304,12 @@ impl<'a> Scope<'a> {
             (address, true)
         } else {
             let port = self.port(name, draft.port)?;
-            let host = match self.address()? {
-                IpAddr::V6(v6) => format!("[{v6}]"),
-                IpAddr::V4(v4) => v4.to_string(),
+            let host = match &self.container.dns_name {
+                Some(name) if self.container.networks.is_empty() => name.clone(),
+                _ => match self.address()? {
+                    IpAddr::V6(v6) => format!("[{v6}]"),
+                    IpAddr::V4(v4) => v4.to_string(),
+                },
             };
             (
                 format!("{host}:{port}"),

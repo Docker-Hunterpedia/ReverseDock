@@ -42,6 +42,7 @@ rdock-balancer = { path = "crates/rdock-balancer" }
 rdock-config = { path = "crates/rdock-config" }
 rdock-limits = { path = "crates/rdock-limits" }
 rdock-middleware = { path = "crates/rdock-middleware" }
+rdock-migrate = { path = "crates/rdock-migrate" }
 rdock-model = { path = "crates/rdock-model" }
 rdock-observability = { path = "crates/rdock-observability" }
 rdock-provider-docker = { path = "crates/providers/rdock-provider-docker" }
