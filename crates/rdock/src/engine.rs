@@ -10,7 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use async_trait::async_trait;
 use rdock_config::merge::{ObjectKey, Snapshot, assemble, is_provider_owned, owner, skipped};
 use rdock_config::state::{HISTORY_LIMIT, HistoryEntry, StateDir};
-use rdock_config::{Loaded, System, load_file, load_value};
+use rdock_config::{Format, Loaded, System, load_file, load_str, load_value};
 use rdock_model::middleware::Middleware;
 use rdock_model::{Config, Diagnostic};
 use rdock_proxy::{DataPlane, Runtime};
@@ -18,6 +18,7 @@ use serde::Serialize;
 use serde_json::Value;
 
 use crate::validate::load_error;
+use crate::zero_config::{self, Source};
 
 /// Where the applied configuration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -87,7 +88,7 @@ const COMPILE_ROUNDS: usize = 4;
 
 /// The engine shared by signal handlers, the file watcher, providers and the admin API.
 pub(crate) struct Engine {
-    config_path: PathBuf,
+    source: Source,
     state: StateDir,
     plane: Arc<DataPlane>,
     applied: tokio::sync::Mutex<Applied>,
@@ -115,9 +116,9 @@ fn unix_ms() -> u64 {
 }
 
 impl Engine {
-    pub(crate) fn new(config_path: PathBuf, data_dir: &Path, plane: Arc<DataPlane>) -> Self {
+    pub(crate) fn new(source: Source, data_dir: &Path, plane: Arc<DataPlane>) -> Self {
         Self {
-            config_path,
+            source,
             state: StateDir::new(data_dir),
             plane,
             applied: tokio::sync::Mutex::new(Applied {
@@ -222,7 +223,7 @@ impl Engine {
             }
         };
         tracing::error!(
-            file = %self.config_path.display(),
+            file = %self.source.describe(),
             "the configuration file cannot be used; serving the last-known-good configuration"
         );
         for d in &report.diagnostics {
@@ -259,7 +260,11 @@ impl Engine {
     /// Loads the configuration file and applies it; on any problem the running configuration
     /// stays in place.
     pub(crate) async fn reload(&self, trigger: &str) -> Report {
-        let loaded = match load_file(&self.config_path) {
+        let loaded = match &self.source {
+            Source::File(path) => load_file(path),
+            Source::ZeroConfig => load_str(zero_config::CONFIG, Format::Yaml),
+        };
+        let loaded = match loaded {
             Ok(loaded) => loaded,
             Err(err) => {
                 return self
@@ -327,7 +332,10 @@ impl Engine {
                 tracing::warn!(provider = %snapshot.provider, error = %err, "cannot store the provider snapshot");
             }
         }
-        let files = referenced_files(&self.config_path, &file);
+        let files = match &self.source {
+            Source::File(path) => referenced_files(path, &file),
+            Source::ZeroConfig => BTreeSet::new(),
+        };
         *self
             .fingerprint
             .lock()
@@ -580,7 +588,7 @@ impl rdock_admin::Control for Engine {
     async fn status(&self) -> Value {
         let (origin, file) = {
             let applied = self.applied.lock().await;
-            (applied.origin, self.config_path.display().to_string())
+            (applied.origin, self.source.describe())
         };
         let last = self
             .last

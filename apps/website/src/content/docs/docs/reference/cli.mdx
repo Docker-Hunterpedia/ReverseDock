@@ -39,10 +39,9 @@ Usage: rdock run [OPTIONS]
 
 Options:
   -c, --config <CONFIG>
-          Configuration file
+          Configuration file [default: /etc/rdock/rdock.yaml]. Without one, rdock runs in zero-config mode: HTTP on :80, routes from Docker labels
           
           [env: RDOCK_CONFIG=]
-          [default: /etc/rdock/rdock.yaml]
 
       --data-dir <DATA_DIR>
           Directory for state (configuration history, last-known-good copy, admin token)
