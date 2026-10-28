@@ -9,7 +9,7 @@ use instant_acme::{
 };
 use std::sync::Arc;
 
-use rcgen::{CertificateParams, CustomExtension, KeyPair};
+use rcgen::{CertificateParams, CustomExtension, DistinguishedName, DnType, KeyPair};
 use rdock_tls::Challenges;
 use tracing::warn;
 
@@ -134,7 +134,7 @@ pub async fn issue(
     drop(answers);
     validated?;
     let key = KeyPair::generate()?;
-    let csr = CertificateParams::new(spec.names.to_vec())?.serialize_request(&key)?;
+    let csr = csr_params(spec.names)?.serialize_request(&key)?;
     order.finalize_csr(csr.der()).await?;
     let chain_pem = order
         .poll_certificate(&RetryPolicy::new().timeout(SIGNING_TIMEOUT))
@@ -226,8 +226,9 @@ async fn validate(
     }
 }
 
-/// Creates the order. If the CA says the replaced certificate was already replaced (by an
-/// earlier order of ours that did not finish), the order is created without `replaces`.
+/// Creates the order. `replaces` (RFC 9773) only earns a renewal its rate-limit exemption, so
+/// when the CA refuses an order because of it (`alreadyReplaced`, or a CA that cannot match the
+/// replaced certificate), the order is created again without it. Rate limits are not retried.
 async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, IssueError> {
     let identifiers: Vec<Identifier> = spec.names.iter().map(|n| identifier(n)).collect();
     let plain = || {
@@ -241,16 +242,33 @@ async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, Issu
         return Ok(account.new_order(&plain()).await?);
     };
     match account.new_order(&plain().replaces(replaces.clone())).await {
-        Err(instant_acme::Error::Api(problem))
-            if problem
-                .r#type
-                .as_deref()
-                .is_some_and(|t| t.ends_with(":alreadyReplaced")) =>
-        {
+        Err(instant_acme::Error::Api(problem)) if !is_rate_limit(&problem) => {
+            warn!(problem = %problem, "the CA refused the renewal order with `replaces`; ordering without it");
             Ok(account.new_order(&plain()).await?)
         }
         other => Ok(other?),
     }
+}
+
+fn is_rate_limit(problem: &instant_acme::Problem) -> bool {
+    problem
+        .r#type
+        .as_deref()
+        .is_some_and(|t| t.ends_with(":rateLimited"))
+}
+
+/// The signing request for `names`. rcgen fills the subject with a placeholder common name,
+/// which Let's Encrypt refuses ("rejectedIdentifier"); the subject names the first name
+/// instead, or stays empty when that name is longer than a common name may be (64 bytes).
+fn csr_params(names: &[String]) -> Result<CertificateParams, IssueError> {
+    let mut params = CertificateParams::new(names.to_vec())?;
+    params.distinguished_name = DistinguishedName::new();
+    if let Some(first) = names.first().filter(|n| n.len() <= 64) {
+        params
+            .distinguished_name
+            .push(DnType::CommonName, first.clone());
+    }
+    Ok(params)
 }
 
 /// The self-signed TLS-ALPN-01 certificate for `name` (RFC 8737): one name and the critical
@@ -315,6 +333,23 @@ async fn failure_detail(order: &mut instant_acme::Order) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn signing_requests_name_the_certificate_not_a_placeholder() {
+        let names = vec!["app.example.com".to_owned(), "*.example.com".to_owned()];
+        let params = csr_params(&names).unwrap();
+        let subject: Vec<_> = params.distinguished_name.iter().collect();
+        assert_eq!(subject.len(), 1);
+        assert_eq!(
+            params.distinguished_name.get(&DnType::CommonName),
+            Some(&rcgen::DnValue::Utf8String("app.example.com".to_owned()))
+        );
+        let long = vec![format!("{}.example.com", "a".repeat(60))];
+        assert_eq!(
+            csr_params(&long).unwrap().distinguished_name.iter().count(),
+            0
+        );
+    }
 
     #[test]
     fn identifiers_distinguish_addresses() {

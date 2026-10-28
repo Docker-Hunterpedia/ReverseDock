@@ -5,6 +5,8 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 ## [Unreleased]
 
 ### Fixed
+- A renewal no longer fails when the CA refuses its `replaces` field (RFC 9773) for any reason other than rate limits; it is ordered again without it, as was already done for `alreadyReplaced`.
+- **Certificates from Let's Encrypt were refused at the last step** (`rejectedIdentifier`): the signing request carried a placeholder common name from the certificate library. It now names the first host (or is empty for names longer than 64 bytes). Pebble, the test CA, ignores the subject, so the end-to-end tests did not see it; found by a real DNS-01 order against Let's Encrypt staging, which then issued a wildcard certificate, renewed by ARI.
 - `sudo rdock trust` created the local CA as root, so `rdock run` as your user could not read its keys; the files it creates now belong to the user who ran `sudo`. Removing a root that is not installed (`rdock trust --uninstall` twice) is no longer an error.
 
 ## [0.3.0-alpha.1] — v0.3 "Automatic HTTPS"
