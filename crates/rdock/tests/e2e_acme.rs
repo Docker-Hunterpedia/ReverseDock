@@ -1,5 +1,5 @@
 //! End-to-end against Pebble, Let's Encrypt's test CA (v0.3 acceptance, ADR-0020): a route
-//! with `tls: auto` gets a certificate through HTTP-01 and serves it, and a restart reuses the
+//! with `tls: auto` gets a certificate through HTTP-01 or TLS-ALPN-01 and serves it, and a restart reuses the
 //! stored certificate instead of ordering again.
 //!
 //! Needs Docker (Pebble runs in containers and reaches `rdock` on the host) and
@@ -30,6 +30,54 @@ fn enabled() -> bool {
     on
 }
 
+/// A client that accepts any certificate, to probe what the server offers.
+fn insecure_client() -> Arc<rustls::ClientConfig> {
+    #[derive(Debug)]
+    struct AcceptAll;
+    impl rustls::client::danger::ServerCertVerifier for AcceptAll {
+        fn verify_server_cert(
+            &self,
+            _: &CertificateDer<'_>,
+            _: &[CertificateDer<'_>],
+            _: &rustls_pki_types::ServerName<'_>,
+            _: &[u8],
+            _: rustls_pki_types::UnixTime,
+        ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+            Ok(rustls::client::danger::ServerCertVerified::assertion())
+        }
+        fn verify_tls12_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn verify_tls13_signature(
+            &self,
+            _: &[u8],
+            _: &CertificateDer<'_>,
+            _: &rustls::DigitallySignedStruct,
+        ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+            Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+        }
+        fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+            rustls::crypto::ring::default_provider()
+                .signature_verification_algorithms
+                .supported_schemes()
+        }
+    }
+    let config = rustls::ClientConfig::builder_with_provider(Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()
+    .unwrap()
+    .dangerous()
+    .with_custom_certificate_verifier(Arc::new(AcceptAll))
+    .with_no_client_auth();
+    Arc::new(config)
+}
+
 /// A client trusting only the CA that Pebble issues from.
 fn client_config(root_pem: &str) -> Arc<rustls::ClientConfig> {
     let mut roots = rustls::RootCertStore::empty();
@@ -47,26 +95,54 @@ fn client_config(root_pem: &str) -> Arc<rustls::ClientConfig> {
     Arc::new(config)
 }
 
-/// The leaf certificate served for `HOST`, once a verified handshake succeeds.
+/// The leaf certificate served for `host`, once a verified handshake succeeds.
 async fn wait_for_certificate(
     addr: SocketAddr,
+    host: &str,
     config: &Arc<rustls::ClientConfig>,
-    limit: Duration,
     rdock: &Rdock,
 ) -> Vec<u8> {
+    let limit = Duration::from_secs(60);
     let started = Instant::now();
     loop {
-        if let Ok(stream) = client::tls_connect(addr, HOST, config.clone()).await {
+        if let Ok(stream) = client::tls_connect(addr, host, config.clone()).await {
             let leaf = stream.get_ref().1.peer_certificates().unwrap()[0].clone();
             return leaf.as_ref().to_vec();
         }
         assert!(
             started.elapsed() < limit,
-            "no valid certificate for {HOST} within {limit:?}\n{}",
+            "no valid certificate for {host} within {limit:?}\n{}",
             rdock.log()
         );
         tokio::time::sleep(Duration::from_millis(250)).await;
     }
+}
+
+/// A configuration ordering a certificate for `host` from `pebble` with only `challenge`.
+fn config(
+    pebble: &Pebble,
+    ports: (u16, u16),
+    challenge: &str,
+    host: &str,
+    backend: SocketAddr,
+) -> String {
+    let (http_port, tls_port) = ports;
+    format!(
+        r#"listeners:
+  web: {{ address: "0.0.0.0:{http_port}" }}
+  websecure: {{ address: "0.0.0.0:{tls_port}", tls: {{}} }}
+acme:
+  ca: "{directory}"
+  ca_root: "{root}"
+  challenges: [{challenge}]
+routes:
+  app: {{ match: "Host(`{host}`)", service: app }}
+services:
+  app: {{ backends: [{{ address: "{backend}" }}] }}
+"#,
+        directory = pebble.directory,
+        root = pebble.endpoint_root().display(),
+    )
 }
 
 #[tokio::test]
@@ -75,31 +151,16 @@ async fn issues_through_http01_serves_and_reuses_after_restart() {
         return;
     }
     let backend = Backend::start("app").await;
-    let http_port = free_port();
-    let tls_port = free_port();
-    let pebble = Pebble::start(http_port);
-    let config = format!(
-        r#"listeners:
-  web: {{ address: "0.0.0.0:{http_port}" }}
-  websecure: {{ address: "127.0.0.1:{tls_port}", tls: {{}} }}
-acme:
-  ca: "{directory}"
-  ca_root: "{root}"
-  challenges: [http-01]
-routes:
-  app: {{ match: "Host(`{HOST}`)", service: app }}
-services:
-  app: {{ backends: [{{ address: "{backend}" }}] }}
-"#,
-        directory = pebble.directory,
-        root = pebble.endpoint_root().display(),
-        backend = backend.addr,
+    let ports = (free_port(), free_port());
+    let pebble = Pebble::start(ports.0, ports.1);
+    let mut rdock = Rdock::start(
+        RDOCK,
+        &config(&pebble, ports, "http-01", HOST, backend.addr),
     );
-    let mut rdock = Rdock::start(RDOCK, &config);
-    let https: SocketAddr = format!("127.0.0.1:{tls_port}").parse().unwrap();
+    let https: SocketAddr = format!("127.0.0.1:{}", ports.1).parse().unwrap();
     let trust = client_config(&pebble.issuing_root());
 
-    let issued = wait_for_certificate(https, &trust, Duration::from_secs(60), &rdock).await;
+    let issued = wait_for_certificate(https, HOST, &trust, &rdock).await;
     let reply = client::tls(https, HOST, trust.clone(), get(HOST, "/")).await;
     assert_eq!(reply.status, 200, "{}", rdock.log());
     assert_eq!(backend.requests(), 1);
@@ -109,9 +170,39 @@ services:
     }
 
     rdock.restart().unwrap();
-    let reused = wait_for_certificate(https, &trust, Duration::from_secs(5), &rdock).await;
+    let reused = wait_for_certificate(https, HOST, &trust, &rdock).await;
     assert_eq!(
         reused, issued,
         "the stored certificate is served after a restart"
+    );
+}
+
+#[tokio::test]
+async fn issues_through_tls_alpn01_and_hides_validation_certificates() {
+    if !enabled() {
+        return;
+    }
+    let host = "alpn.example.com";
+    let backend = Backend::start("app").await;
+    let ports = (free_port(), free_port());
+    let pebble = Pebble::start(ports.0, ports.1);
+    let rdock = Rdock::start(
+        RDOCK,
+        &config(&pebble, ports, "tls-alpn-01", host, backend.addr),
+    );
+    let https: SocketAddr = format!("127.0.0.1:{}", ports.1).parse().unwrap();
+    let trust = client_config(&pebble.issuing_root());
+
+    wait_for_certificate(https, host, &trust, &rdock).await;
+    let reply = client::tls(https, host, trust.clone(), get(host, "/")).await;
+    assert_eq!(reply.status, 200, "{}", rdock.log());
+
+    // A client offering only acme-tls/1 outside a validation gets no certificate at all.
+    let mut probe = (*insecure_client()).clone();
+    probe.alpn_protocols = vec![b"acme-tls/1".to_vec()];
+    let refused = client::tls_connect(https, host, Arc::new(probe)).await;
+    assert!(
+        refused.is_err(),
+        "a validation handshake without a challenge must fail"
     );
 }

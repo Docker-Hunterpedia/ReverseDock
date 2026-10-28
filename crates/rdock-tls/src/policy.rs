@@ -6,8 +6,9 @@ use rdock_model::config::TlsPolicy;
 use rustls::server::ResolvesServerCert;
 use rustls::{ServerConfig, SupportedProtocolVersion};
 
-/// ALPN protocols offered on TLS listeners, in order of preference.
-pub const ALPN: [&[u8]; 2] = [b"h2", b"http/1.1"];
+/// ALPN protocols offered on TLS listeners, in order of preference. `acme-tls/1` is only
+/// chosen by TLS-ALPN-01 validation handshakes, which offer nothing else.
+pub const ALPN: [&[u8]; 3] = [b"h2", b"http/1.1", crate::challenge::ACME_TLS_ALPN];
 
 /// Why a server configuration could not be built.
 #[derive(Debug, thiserror::Error)]

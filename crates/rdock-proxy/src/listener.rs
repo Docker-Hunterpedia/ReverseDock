@@ -259,10 +259,14 @@ async fn serve(
                 return;
             }
         };
-        let h2 = matches!(
-            pingora::protocols::Ssl::selected_alpn_proto(&tls),
-            Some(pingora::protocols::ALPN::H2)
-        );
+        let alpn = pingora::protocols::Ssl::selected_alpn_proto(&tls);
+        if let Some(pingora::protocols::ALPN::Custom(custom)) = &alpn
+            && custom.protocol() == rdock_tls::challenge::ACME_TLS_ALPN
+        {
+            // A TLS-ALPN-01 validation: the handshake was the answer; no HTTP follows.
+            return;
+        }
+        let h2 = matches!(alpn, Some(pingora::protocols::ALPN::H2));
         ConnStream::new(Box::new(tls) as Stream, None, !h2, header_timeout)
     } else {
         let Ok(Some(first)) = tokio::time::timeout(header_timeout, read_preface(&mut l4)).await

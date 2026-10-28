@@ -8,6 +8,7 @@ use rustls::server::{ClientHello, ResolvesServerCert};
 use rustls::sign::CertifiedKey;
 
 use crate::cert::LoadedCert;
+use crate::challenge::{ACME_TLS_ALPN, Challenges};
 
 /// Certificates indexed by the names they cover.
 #[derive(Debug, Default)]
@@ -88,10 +89,14 @@ impl CertIndex {
 /// A rustls certificate resolver that can be updated while listeners keep running. It serves
 /// the configured certificates first, then automatically issued ones, then the configured
 /// default.
+///
+/// A handshake that offers only the `acme-tls/1` protocol is a TLS-ALPN-01 validation: it gets
+/// the validation certificate for its name, or none.
 #[derive(Debug, Default)]
 pub struct SniResolver {
     index: ArcSwap<CertIndex>,
     managed: ArcSwap<CertIndex>,
+    challenges: Arc<Challenges>,
 }
 
 impl SniResolver {
@@ -101,7 +106,14 @@ impl SniResolver {
         Self {
             index: ArcSwap::from_pointee(index),
             managed: ArcSwap::default(),
+            challenges: Arc::default(),
         }
+    }
+
+    /// The challenge answers this resolver serves, shared with the HTTP listeners.
+    #[must_use]
+    pub fn challenges(&self) -> Arc<Challenges> {
+        self.challenges.clone()
     }
 
     /// Replaces the automatically issued certificates; new handshakes use them immediately.
@@ -129,6 +141,13 @@ impl SniResolver {
 
 impl ResolvesServerCert for SniResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        if client_hello.alpn().is_some_and(|mut offered| {
+            offered.next() == Some(ACME_TLS_ALPN) && offered.next().is_none()
+        }) {
+            return client_hello
+                .server_name()
+                .and_then(|name| self.challenges.tls_alpn01(name));
+        }
         let index = self.index.load();
         let Some(name) = client_hello.server_name() else {
             return index.lookup(None);

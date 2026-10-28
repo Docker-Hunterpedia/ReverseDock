@@ -98,13 +98,14 @@ impl DataPlane {
     /// A data plane with no listeners. `empty` is served until the first `apply`.
     #[must_use]
     pub fn new(metrics: Metrics, empty: Runtime) -> Self {
+        let resolver = Arc::new(SniResolver::new(CertIndex::default()));
         Self {
             shared: Arc::new(Shared {
                 runtime: ArcSwap::from_pointee(empty),
                 metrics,
-                challenges: Arc::default(),
+                challenges: resolver.challenges(),
             }),
-            resolver: Arc::new(SniResolver::new(CertIndex::default())),
+            resolver,
             dns: Arc::new(Dns::default()),
             client: Arc::new(HttpClient::default()),
             state: Mutex::new(State {
