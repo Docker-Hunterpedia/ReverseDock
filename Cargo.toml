@@ -82,6 +82,7 @@ rustls = { version = "0.23.46", default-features = false, features = ["logging",
 rustls-pki-types = { version = "1.15.1", features = ["std"] }
 pkcs8 = { version = "0.11.0", features = ["encryption", "pem", "std"] }
 x509-parser = "0.18.1"
+time = { version = "0.3.55", default-features = false, features = ["std"] }
 
 # Middlewares
 argon2 = "0.6.0"

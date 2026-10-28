@@ -21,6 +21,7 @@ Commands:
   status       Show the state of the running proxy
   healthcheck  Exit 0 when the running proxy is ready (for container health checks)
   hash         Create an argon2id password hash for `basic_auth` (reads the password from stdin)
+  trust        Install the local CA's root (for localhost and private names) into the system trust stores, or remove it with --uninstall
   migrate      Turn another proxy's configuration into rdock.yaml
   schema       Print the JSON Schema of rdock.yaml
   version      Print version and build information
@@ -45,7 +46,7 @@ Options:
           [env: RDOCK_CONFIG=]
 
       --data-dir <DATA_DIR>
-          Directory for state (configuration history, last-known-good copy, admin token)
+          Directory for state (configuration history, last-known-good copy, admin token, certificates and the local CA)
           
           [env: RDOCK_DATA_DIR=]
           [default: /var/lib/rdock]
@@ -151,6 +152,20 @@ Options:
       --user <USER>  Print a complete `user:hash` entry for `basic_auth.users`
   -h, --help         Print help
   -V, --version      Print version
+```
+
+## `rdock trust`
+
+```text
+Install the local CA's root (for localhost and private names) into the system trust stores, or remove it with --uninstall
+
+Usage: rdock trust [OPTIONS]
+
+Options:
+      --uninstall            Remove the root from the trust stores instead of installing it
+      --data-dir <DATA_DIR>  Data directory holding the local CA (`pki/`); the CA is created there when missing [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+  -h, --help                 Print help
+  -V, --version              Print version
 ```
 
 ## `rdock migrate`

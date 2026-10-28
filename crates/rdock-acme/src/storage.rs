@@ -174,7 +174,8 @@ fn file_name(text: &str) -> String {
         .collect()
 }
 
-fn create_dir(dir: &Path) -> io::Result<()> {
+/// Creates `dir` and its parents, readable only by the owner.
+pub(crate) fn create_dir(dir: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
     builder.recursive(true);
     #[cfg(unix)]
@@ -183,7 +184,18 @@ fn create_dir(dir: &Path) -> io::Result<()> {
 }
 
 /// Writes `bytes` to `path` readable only by the owner, replacing the file atomically.
-fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic(path, bytes, 0o600)
+}
+
+/// Writes `bytes` to `path` readable by everyone (certificates, which are public), replacing
+/// the file atomically.
+pub(crate) fn write_public(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    write_atomic(path, bytes, 0o644)
+}
+
+#[cfg_attr(not(unix), allow(unused_variables))]
+fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("path has no parent directory"))?;
@@ -194,7 +206,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let mut options = OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
     let mut file = options.open(&tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;

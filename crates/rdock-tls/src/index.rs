@@ -87,8 +87,9 @@ impl CertIndex {
 }
 
 /// A rustls certificate resolver that can be updated while listeners keep running. It serves
-/// the configured certificates first, then automatically issued ones, then the configured
-/// default.
+/// the configured certificates first, then ACME-issued ones, then local-CA ones, then the
+/// configured default. The ACME manager and the local CA each replace only their own index, so
+/// neither clobbers the other.
 ///
 /// A handshake that offers only the `acme-tls/1` protocol is a TLS-ALPN-01 validation: it gets
 /// the validation certificate for its name, or none.
@@ -96,6 +97,7 @@ impl CertIndex {
 pub struct SniResolver {
     index: ArcSwap<CertIndex>,
     managed: ArcSwap<CertIndex>,
+    local: ArcSwap<CertIndex>,
     challenges: Arc<Challenges>,
 }
 
@@ -106,6 +108,7 @@ impl SniResolver {
         Self {
             index: ArcSwap::from_pointee(index),
             managed: ArcSwap::default(),
+            local: ArcSwap::default(),
             challenges: Arc::default(),
         }
     }
@@ -116,15 +119,24 @@ impl SniResolver {
         self.challenges.clone()
     }
 
-    /// Replaces the automatically issued certificates; new handshakes use them immediately.
+    /// Replaces the ACME-issued certificates; new handshakes use them immediately.
     pub fn swap_managed(&self, index: impl Into<Arc<CertIndex>>) {
         self.managed.store(index.into());
     }
 
-    /// Whether a configured or automatically issued certificate covers `name`.
+    /// Replaces the certificates of the local CA; new handshakes use them immediately. The
+    /// index's default is served to clients that send no server name (they asked for an IP
+    /// address) when no `defaults.certificate` is configured.
+    pub fn swap_local(&self, index: impl Into<Arc<CertIndex>>) {
+        self.local.store(index.into());
+    }
+
+    /// Whether a configured, ACME-issued or local-CA certificate covers `name`.
     #[must_use]
     pub fn covers(&self, name: &str) -> bool {
-        self.index.load().covers(name) || self.managed.load().covers(name)
+        self.index.load().covers(name)
+            || self.managed.load().covers(name)
+            || self.local.load().covers(name)
     }
 
     /// Replaces the configured certificates; new handshakes use them immediately.
@@ -137,6 +149,24 @@ impl SniResolver {
     pub fn index(&self) -> Arc<CertIndex> {
         self.index.load_full()
     }
+
+    /// The certificate served for `server_name`: configured, then ACME-issued, then local-CA,
+    /// then the configured default. Without a server name: the configured default, then the
+    /// local CA's default.
+    #[must_use]
+    pub fn lookup(&self, server_name: Option<&str>) -> Option<Arc<CertifiedKey>> {
+        let index = self.index.load();
+        let Some(name) = server_name else {
+            return index
+                .lookup(None)
+                .or_else(|| self.local.load().lookup(None));
+        };
+        index
+            .get(name)
+            .or_else(|| self.managed.load().get(name))
+            .or_else(|| self.local.load().get(name))
+            .or_else(|| index.lookup(None))
+    }
 }
 
 impl ResolvesServerCert for SniResolver {
@@ -148,13 +178,6 @@ impl ResolvesServerCert for SniResolver {
                 .server_name()
                 .and_then(|name| self.challenges.tls_alpn01(name));
         }
-        let index = self.index.load();
-        let Some(name) = client_hello.server_name() else {
-            return index.lookup(None);
-        };
-        index
-            .get(name)
-            .or_else(|| self.managed.load().get(name))
-            .or_else(|| index.lookup(None))
+        self.lookup(client_hello.server_name())
     }
 }

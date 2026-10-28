@@ -1,0 +1,90 @@
+---
+title: HTTPS for localhost and private names
+description: Serve app.localhost, .internal and .home.arpa names and private addresses over trusted HTTPS with ReverseDock's local certificate authority and rdock trust.
+sidebar:
+  order: 5
+---
+
+import Status from '../../../../components/Status.astro';
+
+Public certificate authorities such as Let's Encrypt do not issue certificates for `localhost` or for names that only exist on your network. ReverseDock gives those names a certificate from its own **local certificate authority** <Status since="v0.3" />, created on first use. `rdock trust` makes your machine trust it.
+
+## Which names get a local certificate
+
+A route with `tls: auto` (the default on a TLS listener) gets a local certificate for each of its hosts that no configured certificate covers and that is one of:
+
+- `localhost` and any name under it, such as `app.localhost`
+- names under `.local`, `.internal`, `.home.arpa`, `.test`, `.example` and `.invalid`
+- loopback, private and link-local addresses: `127.0.0.0/8`, `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `169.254.0.0/16`, `::1`, `fc00::/7`, `fe80::/10`
+
+Every other host gets its certificate from ACME, as in [TLS certificates](/docs/guides/tls-certificates/). With `acme: false` no certificates are issued automatically, local ones included.
+
+## The configuration
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":8443", tls: {} }
+
+routes:
+  app:
+    match: "Host(`app.localhost`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "127.0.0.1:3000" }]
+```
+
+Start ReverseDock, then trust the local CA once:
+
+```sh
+rdock run --config rdock.yaml --data-dir ~/.local/share/rdock
+sudo rdock trust --data-dir ~/.local/share/rdock
+```
+
+`https://app.localhost:8443` now opens without a warning. If a name does not resolve on your system, add it to `/etc/hosts` (for example `127.0.0.1 app.localhost`) or to your local DNS.
+
+Use the same data directory for `rdock run` and `rdock trust`, and keep it owned by the user ReverseDock runs as. `rdock trust` creates the CA there if `rdock run` has not yet.
+
+## What `rdock trust` changes
+
+`rdock trust` installs the CA's root certificate, `<data dir>/pki/root.pem`, into the system trust store by calling the platform's own tool. It never runs on its own: `rdock run` does not touch trust stores.
+
+| Platform | What it runs |
+|---|---|
+| macOS | `security add-trusted-cert -d -r trustRoot -k /Library/Keychains/System.keychain` |
+| Debian, Ubuntu, Alpine | copies the root to `/usr/local/share/ca-certificates/`, then `update-ca-certificates` |
+| Fedora, RHEL | copies the root to `/etc/pki/ca-trust/source/anchors/`, then `update-ca-trust extract` |
+| Arch | copies the root to `/etc/ca-certificates/trust-source/anchors/`, then `trust extract-compat` |
+| Linux browsers (NSS) | `certutil -A -d sql:$HOME/.pki/nssdb …` when `certutil` and that database exist |
+| Windows | prints the `certutil -addstore -f ROOT …` command to run in an administrator prompt |
+
+Changing the system store needs administrator rights, hence `sudo`. Restart browsers that were open. A browser or tool with its own certificate store needs `root.pem` imported there.
+
+`rdock trust --uninstall` removes the root from the same places.
+
+## How the CA is built
+
+The CA lives in `<data dir>/pki/`, a directory only its owner can read; the keys are written with mode `0600`.
+
+- **Root:** ECDSA P-256, valid for 10 years, named `ReverseDock Local CA <year>`. Its **name constraints** permit only the names and address ranges listed above, so certificates it leads to are rejected for any public name, even if its key leaked. The root key is used only to sign intermediates.
+- **Intermediate:** valid for 30 days, signs the certificates; replaced when 10 days are left.
+- **Certificates:** one per name, valid for 7 days, renewed when a third of that is left. They are kept in memory and served without a reload; ReverseDock sends the certificate and the intermediate.
+
+Clients that connect to an address send no server name. They get the configured `defaults.certificate` or, without one, a local certificate for an address.
+
+## Single-label names
+
+A name without a dot, such as `nas`, cannot be expressed in name constraints, so it gets no local certificate. `rdock validate` says so:
+
+```text
+warning: routes.nas.tls: no certificate authority, not even the local one, can certify the single-label name nas
+    use `nas.internal` or `nas.home.arpa`, add a certificate under `certificates`, or use `tls: off` on a plain listener
+```
+
+Rename the host to `nas.internal` or `nas.home.arpa`, which are reserved for private networks.
+
+## Related
+
+- [TLS certificates](/docs/guides/tls-certificates/)
+- [CLI reference](/docs/reference/cli/)

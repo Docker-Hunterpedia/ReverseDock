@@ -10,7 +10,7 @@ pub use cert::{CertError, LoadedCert, load_certificate};
 pub use challenge::Challenges;
 pub use index::{CertIndex, SniResolver};
 pub use policy::{ALPN, PolicyError, server_config};
-pub use request::{CertRequest, is_private_name};
+pub use request::{CertRequest, PRIVATE_SUFFIXES, is_local_ca_name, is_private_name};
 
 #[cfg(test)]
 mod tests;

@@ -141,3 +141,36 @@ fn policies_build_and_resolver_swaps() {
         assert!(config.ticketer.enabled());
     }
 }
+
+#[test]
+fn resolver_prefers_configured_then_acme_then_local() {
+    let dir = tempfile::tempdir().unwrap();
+    let load = |name: &str, hosts: &[&str]| {
+        let (c, k, _) = self_signed(dir.path(), name, hosts);
+        load_certificate(name, &c, &k, None).unwrap()
+    };
+    let configured = load("configured", &["a.localhost"]);
+    let acme = load("acme", &["a.localhost", "b.localhost"]);
+    let local = load("local", &["a.localhost", "b.localhost", "c.localhost"]);
+    let ip = load("127.0.0.1", &["127.0.0.1"]);
+    let resolver = SniResolver::new(CertIndex::build(std::slice::from_ref(&configured), None));
+    resolver.swap_managed(CertIndex::build(std::slice::from_ref(&acme), None));
+    resolver.swap_local(CertIndex::build(
+        &[local.clone(), ip.clone()],
+        Some("127.0.0.1"),
+    ));
+    let served = |name: Option<&str>| resolver.lookup(name).unwrap();
+    assert!(Arc::ptr_eq(&served(Some("a.localhost")), &configured.key));
+    assert!(Arc::ptr_eq(&served(Some("b.localhost")), &acme.key));
+    assert!(Arc::ptr_eq(&served(Some("c.localhost")), &local.key));
+    assert!(
+        Arc::ptr_eq(&served(None), &ip.key),
+        "no SNI: the local default"
+    );
+    assert!(resolver.covers("c.localhost"));
+    resolver.swap_managed(CertIndex::default());
+    assert!(
+        Arc::ptr_eq(&served(Some("b.localhost")), &local.key),
+        "replacing the ACME index leaves the local one alone"
+    );
+}

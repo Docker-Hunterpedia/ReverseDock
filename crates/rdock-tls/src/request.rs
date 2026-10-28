@@ -12,8 +12,9 @@ pub struct CertRequest {
 }
 
 /// Suffixes no public certificate authority issues for (RFC 2606, RFC 6761, RFC 6762,
-/// RFC 8375, and `.internal` from ICANN's 2024 reservation).
-const PRIVATE_SUFFIXES: &[&str] = &[
+/// RFC 8375, and `.internal` from ICANN's 2024 reservation). The local CA's name constraints
+/// permit exactly these names and their subdomains.
+pub const PRIVATE_SUFFIXES: &[&str] = &[
     "localhost",
     "local",
     "internal",
@@ -41,15 +42,34 @@ pub fn is_private_name(host: &str) -> bool {
         };
     }
     let name = host.strip_prefix("*.").unwrap_or(host).to_ascii_lowercase();
-    !name.contains('.')
-        || PRIVATE_SUFFIXES
-            .iter()
-            .any(|suffix| name == *suffix || name.ends_with(&format!(".{suffix}")))
+    !name.contains('.') || has_private_suffix(&name)
+}
+
+/// Whether `host`, a name for which [`is_private_name`] holds, is one the local CA can certify.
+/// Single-label names such as `nas` are not: name constraints cannot express them, so a root
+/// permitting them would permit every single-label name, including top-level domains.
+#[must_use]
+pub fn is_local_ca_name(host: &str) -> bool {
+    let host = host.trim_end_matches('.');
+    let literal = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    if literal.parse::<IpAddr>().is_ok() {
+        return is_private_name(literal);
+    }
+    has_private_suffix(&host.strip_prefix("*.").unwrap_or(host).to_ascii_lowercase())
+}
+
+fn has_private_suffix(name: &str) -> bool {
+    PRIVATE_SUFFIXES
+        .iter()
+        .any(|suffix| name == *suffix || name.ends_with(&format!(".{suffix}")))
 }
 
 #[cfg(test)]
 mod tests {
-    use super::is_private_name;
+    use super::{is_local_ca_name, is_private_name};
 
     #[test]
     fn recognises_names_public_cas_refuse() {
@@ -78,6 +98,23 @@ mod tests {
             "localhost.dev",
         ] {
             assert!(!is_private_name(public), "{public}");
+            assert!(!is_local_ca_name(public), "{public}");
+        }
+    }
+
+    #[test]
+    fn the_local_ca_takes_every_private_name_but_single_labels() {
+        for name in [
+            "localhost",
+            "app.localhost",
+            "db.internal",
+            "127.0.0.1",
+            "[::1]",
+        ] {
+            assert!(is_local_ca_name(name), "{name}");
+        }
+        for name in ["nas", "printer", "*.nas"] {
+            assert!(!is_local_ca_name(name), "{name}");
         }
     }
 }
