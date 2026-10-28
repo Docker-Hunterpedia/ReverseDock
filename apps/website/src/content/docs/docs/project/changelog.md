@@ -9,6 +9,8 @@ sidebar:
 
 ## [Unreleased]
 
+## [0.3.0-alpha.2] — v0.3 "Automatic HTTPS"
+
 ### Fixed
 - A renewal no longer fails when the CA refuses its `replaces` field (RFC 9773) for any reason other than rate limits; it is ordered again without it, as was already done for `alreadyReplaced`.
 - **Certificates from Let's Encrypt were refused at the last step** (`rejectedIdentifier`): the signing request carried a placeholder common name from the certificate library. It now names the first host (or is empty for names longer than 64 bytes). Pebble, the test CA, ignores the subject, so the end-to-end tests did not see it; found by a real DNS-01 order against Let's Encrypt staging, which then issued a wildcard certificate, renewed by ARI.
