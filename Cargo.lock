@@ -2902,6 +2902,8 @@ dependencies = [
  "rdock-config",
  "rdock-model",
  "rdock-tls",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "tempfile",

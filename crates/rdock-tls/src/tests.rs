@@ -136,7 +136,7 @@ fn policies_build_and_resolver_swaps() {
         let config = server_config(policy, resolver.clone()).unwrap();
         assert_eq!(
             config.alpn_protocols,
-            vec![b"h2".to_vec(), b"http/1.1".to_vec()]
+            vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"acme-tls/1".to_vec()]
         );
         assert!(config.ticketer.enabled());
     }

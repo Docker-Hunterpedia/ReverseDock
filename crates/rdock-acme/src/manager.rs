@@ -9,7 +9,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use instant_acme::{Account, ExternalAccountKey, NewAccount};
+use instant_acme::{Account, ChallengeType, ExternalAccountKey, NewAccount};
 use rdock_model::acme::{Acme, AcmeProfile, Challenge};
 use rdock_tls::{CertIndex, CertRequest, Challenges, LoadedCert, SniResolver};
 use tokio::sync::{Semaphore, watch};
@@ -17,7 +17,7 @@ use tokio::task::JoinSet;
 use tracing::{info, warn};
 
 use crate::directory::directory_url;
-use crate::issue::issue;
+use crate::issue::{OrderSpec, issue};
 use crate::storage::{CertMeta, Storage, StorageLock};
 
 /// Orders running at once against one CA.
@@ -38,6 +38,23 @@ pub struct Plan {
     pub requests: Vec<CertRequest>,
     /// Whether a plain-HTTP listener can answer HTTP-01 challenges.
     pub http01: bool,
+    /// Whether a TLS listener can answer TLS-ALPN-01 challenges.
+    pub tls_alpn01: bool,
+}
+
+impl Plan {
+    /// The challenge types that can work, in the configured order of preference.
+    fn challenge_types(&self) -> Vec<ChallengeType> {
+        self.acme
+            .challenges
+            .iter()
+            .filter_map(|c| match c {
+                Challenge::Http01 if self.http01 => Some(ChallengeType::Http01),
+                Challenge::TlsAlpn01 if self.tls_alpn01 => Some(ChallengeType::TlsAlpn01),
+                _ => None,
+            })
+            .collect()
+    }
 }
 
 /// Handle to the manager task.
@@ -208,9 +225,10 @@ impl Worker {
     }
 
     async fn issue_all(&mut self, plan: &Plan, storage: &Storage, due: Vec<CertRequest>) {
-        if !plan.http01 || !plan.acme.challenges.contains(&Challenge::Http01) {
+        let types = plan.challenge_types();
+        if types.is_empty() {
             for request in &due {
-                warn!(names = ?request.names, "no usable ACME challenge: HTTP-01 needs a plain-HTTP listener and `http-01` in acme.challenges");
+                warn!(names = ?request.names, "no usable ACME challenge: http-01 needs a plain-HTTP listener, tls-alpn-01 a TLS listener, each listed in acme.challenges");
                 self.failed(&request.names);
             }
             return;
@@ -230,6 +248,8 @@ impl Worker {
         let limit = Arc::new(Semaphore::new(MAX_CONCURRENT_ORDERS));
         let mut orders = JoinSet::new();
         for request in due {
+            let failures = self.certs.get(&request.names).map_or(0, |s| s.failures);
+            let types = rotated(&types, failures);
             let (account, challenges, limit, profile) = (
                 account.clone(),
                 self.challenges.clone(),
@@ -238,7 +258,12 @@ impl Worker {
             );
             orders.spawn(async move {
                 let _permit = limit.acquire_owned().await;
-                let result = issue(&account, &request.names, profile.as_deref(), &challenges).await;
+                let spec = OrderSpec {
+                    names: &request.names,
+                    profile: profile.as_deref(),
+                    challenge_types: &types,
+                };
+                let result = issue(&account, spec, &challenges).await;
                 (request, result)
             });
         }
@@ -396,6 +421,16 @@ fn load_stored(storage: &Storage, names: &[String]) -> Option<LoadedCert> {
     }
 }
 
+/// After a failure the next attempt starts with the next challenge type (ADR-0020).
+fn rotated(types: &[ChallengeType], failures: u32) -> Vec<ChallengeType> {
+    let mut types = types.to_vec();
+    if !types.is_empty() {
+        let shift = usize::try_from(failures).unwrap_or(0) % types.len();
+        types.rotate_left(shift);
+    }
+    types
+}
+
 /// Exponential backoff with up to 10 % jitter: 1 minute, 2, 4, … at most 24 hours.
 fn backoff(failures: u32) -> Duration {
     let exponent = failures.saturating_sub(1).min(16);
@@ -416,6 +451,18 @@ fn unix_now() -> i64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn each_failure_moves_to_the_next_challenge() {
+        let types = [ChallengeType::Http01, ChallengeType::TlsAlpn01];
+        assert_eq!(rotated(&types, 0), types);
+        assert_eq!(
+            rotated(&types, 1),
+            [ChallengeType::TlsAlpn01, ChallengeType::Http01]
+        );
+        assert_eq!(rotated(&types, 2), types);
+        assert_eq!(rotated(&[], 3), []);
+    }
 
     #[test]
     fn backoff_doubles_up_to_a_day() {

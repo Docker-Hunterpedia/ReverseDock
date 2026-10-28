@@ -122,6 +122,7 @@ fn acme_plan(config: &Config, runtime: &Runtime) -> rdock_acme::Plan {
         },
         acme: acme.map(std::borrow::Cow::into_owned).unwrap_or_default(),
         http01: runtime.listeners.values().any(|l| l.tls.is_none()),
+        tls_alpn01: runtime.listeners.values().any(|l| l.tls.is_some()),
     }
 }
 

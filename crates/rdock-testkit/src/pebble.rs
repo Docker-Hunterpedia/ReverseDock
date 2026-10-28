@@ -3,6 +3,7 @@
 
 use std::path::PathBuf;
 use std::process::Command;
+use std::sync::atomic::{AtomicU32, Ordering};
 use std::time::{Duration, Instant};
 
 use tempfile::TempDir;
@@ -60,9 +61,15 @@ fn host_address() -> String {
 }
 
 impl Pebble {
-    /// Starts Pebble validating HTTP-01 on the host's `http_port`.
-    pub fn start(http_port: u16) -> Self {
-        let id = std::process::id();
+    /// Starts Pebble validating HTTP-01 on the host's `http_port` and TLS-ALPN-01 on its
+    /// `tls_port`.
+    pub fn start(http_port: u16, tls_port: u16) -> Self {
+        static STARTED: AtomicU32 = AtomicU32::new(0);
+        let id = format!(
+            "{}-{}",
+            std::process::id(),
+            STARTED.fetch_add(1, Ordering::SeqCst)
+        );
         let network = format!("rdock-pebble-{id}");
         let dns = format!("rdock-challtestsrv-{id}");
         let ca = format!("rdock-pebble-ca-{id}");
@@ -75,7 +82,7 @@ impl Pebble {
             "certificate": "test/certs/localhost/cert.pem",
             "privateKey": "test/certs/localhost/key.pem",
             "httpPort": http_port,
-            "tlsPort": 5001,
+            "tlsPort": tls_port,
             "ocspResponderURL": "",
             "externalAccountBindingRequired": false,
             "keyAlgorithm": "ecdsa",
