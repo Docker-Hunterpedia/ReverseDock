@@ -326,6 +326,23 @@ impl Engine {
         self.apply(loaded, trigger, Origin::File).await
     }
 
+    /// Hands the applied configuration to the tasks that work beside the data plane.
+    fn update_background(
+        &self,
+        config: &Config,
+        acme_plan: rdock_acme::Plan,
+        local_names: Vec<String>,
+    ) {
+        self.acme.update(acme_plan);
+        self.cloudflare.set_enabled(
+            config
+                .security
+                .trusted_proxies
+                .contains(&TrustedProxy::Cloudflare),
+        );
+        self.local_ca.update(local_names);
+    }
+
     async fn apply(&self, loaded: Loaded, trigger: &str, origin: Origin) -> Report {
         let mut applied = self.applied.lock().await;
         let Loaded {
@@ -354,14 +371,7 @@ impl Engine {
                 .rejected(trigger, Some(err.to_string()), diagnostics)
                 .await;
         }
-        self.acme.update(acme_plan);
-        self.cloudflare.set_enabled(
-            config
-                .security
-                .trusted_proxies
-                .contains(&TrustedProxy::Cloudflare),
-        );
-        self.local_ca.update(local_names);
+        self.update_background(&config, acme_plan, local_names);
         let summary = summarize(applied.config.as_ref(), &config);
         if applied.source.as_ref() != Some(&source) {
             let entry = HistoryEntry {
