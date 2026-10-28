@@ -12,6 +12,10 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - **Required checks:** `docs`, `dco`, `pr-title`, `rust`, `msrv`, `deny`, `docker`. Run `just ci` before pushing (it includes `python3 -I scripts/check-docs.py`); run `just schema` after changing `rdock-model`.
 - **No secrets** (tokens, keys, private hostnames, personal data) in code, docs, fixtures or logs. Security problems go through [SECURITY.md](SECURITY.md), never a public issue.
 
+## Design rule
+
+- **Every option, safe by default** ([vision](docs/01-vision.md) principle 10). When a capability can be offered safely, offer all its options (for example every ACME challenge type and DNS provider) instead of picking one for the user. Defaults follow current best practice and are documented with a dated source; unsafe combinations are refused with a diagnostic, never silently allowed.
+
 ## Documentation rules
 
 - Architecture, config-model, label-grammar, public-API and security-model changes need an ADR in `docs/decisions/` (copy `0000-template.md`). Accepted ADRs are only changed to mark them superseded.
