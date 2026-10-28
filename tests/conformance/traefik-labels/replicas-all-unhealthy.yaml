@@ -19,5 +19,6 @@ expect:
       backends:
         - address: "172.18.0.2:8080"
           weight: 1
+          backup: false
   diagnostics:
     - "services.app-demo: no container of service `app-demo` is healthy (demo-app-1)"

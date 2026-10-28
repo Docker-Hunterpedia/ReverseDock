@@ -7,6 +7,7 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 ### Added
 - **Balancing policies** (M-LB-01, M-LB-02, ADR-0022): `least_requests` and `least_conn` (fewest requests in flight relative to the weight), `p2c` (power of two choices), and consistent hashing of the client IP, a header or a cookie (`ip_hash`, `header_hash`, `cookie_hash`) on a ketama-style ring that every instance computes the same way. Per-backend state is shared across reloads.
 - **Sticky sessions** (M-LB-03): `sticky.cookie` pins a client to a backend with an HMAC-SHA256-signed cookie that never contains the backend address; `Secure`, `HttpOnly` and `SameSite=Lax` by default; the key comes from `secret` or `$RDOCK_DATA_DIR/sticky.key`, and `previous_secrets` keeps cookies valid across a key rotation.
+- **Health checks** (M-LB-04, M-LB-05, M-LB-07…09, M-L4-05): active probes in the background over HTTP (status, body, method, host, headers), TCP or the gRPC health protocol, with jitter and streak thresholds; passive ejection after `failures` within `window` (connection errors, resets, timeouts and 502/503/504 by default), doubling ejection times up to 5 minutes, a single trial request before a backend returns, and at most `max_ejection_percent` of a pool ejected. When every backend is down the pool fails open by default (`when_all_down`). `slow_start`, `backup` backends, `max_requests` and `max_connections_per_backend`. Metrics `rdock_backend_up` and `rdock_backend_ejections_total`.
 
 ## [0.3.0-alpha.2] — v0.3 "Automatic HTTPS"
 

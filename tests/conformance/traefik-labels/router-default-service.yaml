@@ -17,3 +17,4 @@ expect:
       backends:
         - address: "172.18.0.4:2368"
           weight: 1
+          backup: false

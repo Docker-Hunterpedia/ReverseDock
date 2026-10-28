@@ -14,13 +14,14 @@ use pingora::modules::http::HttpModules;
 use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 use pingora::{Error, ErrorSource, ErrorType};
+use rdock_balancer::Ejection;
 use rdock_middleware::{Context as MwContext, Flow, Middleware, Reply};
 use rdock_observability::{AccessRecord, Metrics, rfc3339};
 
 use crate::errorpage;
 use crate::forwarded::{self, Forwarding};
 use crate::router::{Facts, normalize_host};
-use crate::runtime::{Candidate, ListenerRuntime, RouteRuntime, Runtime};
+use crate::runtime::{Candidate, ListenerRuntime, Member, RouteRuntime, Runtime, ServiceRuntime};
 use crate::upstream;
 
 /// State shared by every listener.
@@ -42,6 +43,52 @@ pub struct RdockProxy {
 }
 
 impl RdockProxy {
+    /// Feeds the outcome of an attempt to passive health.
+    fn report(&self, service: &ServiceRuntime, member: Option<&Arc<Member>>, ok: bool) {
+        let (Some(passive), Some(member)) = (&service.health.passive, member) else {
+            return;
+        };
+        let now = Instant::now();
+        let metrics = &self.shared.metrics;
+        if ok {
+            if member.state.success(now) {
+                tracing::info!(service = %service.name, backend = %member.id, "backend recovered");
+                metrics
+                    .backend_up
+                    .with_label_values(&[&*service.name, &member.id])
+                    .set(1);
+            }
+            return;
+        }
+        match service
+            .pool
+            .failure(&member.state, passive.policy, passive.max_percent, now)
+        {
+            Ejection::Ejected(time) => {
+                tracing::warn!(
+                    service = %service.name,
+                    backend = %member.id,
+                    seconds = time.as_secs(),
+                    "backend ejected after repeated failures"
+                );
+                metrics
+                    .backend_ejections
+                    .with_label_values(&[&*service.name, &member.id])
+                    .inc();
+                metrics
+                    .backend_up
+                    .with_label_values(&[&*service.name, &member.id])
+                    .set(0);
+            }
+            Ejection::Refused => tracing::warn!(
+                service = %service.name,
+                backend = %member.id,
+                "backend keeps failing, but max_ejection_percent of the pool is already ejected"
+            ),
+            Ejection::None => {}
+        }
+    }
+
     /// The proxy for listener `listener`.
     #[must_use]
     pub fn new(listener: Arc<str>, shared: Arc<Shared>) -> Self {
@@ -66,6 +113,7 @@ pub struct RequestCtx {
     route: Option<Arc<RouteRuntime>>,
     mw: Option<MwContext>,
     upstream: Option<Candidate>,
+    member: Option<Arc<Member>>,
     in_flight: Option<rdock_balancer::InFlight>,
     set_cookie: Option<String>,
     body_bytes: u64,
@@ -211,6 +259,7 @@ impl ProxyHttp for RdockProxy {
             route: None,
             mw: None,
             upstream: None,
+            member: None,
             in_flight: None,
             set_cookie: None,
             body_bytes: 0,
@@ -389,6 +438,16 @@ impl ProxyHttp for RdockProxy {
             .route
             .clone()
             .ok_or_else(|| status_error(404, "no route"))?;
+        // The first attempt of a request counts against the pool's limit; retries of a request
+        // already in flight do not.
+        if ctx.in_flight.is_none()
+            && route
+                .service
+                .max_requests
+                .is_some_and(|max| route.service.pool.in_flight() >= max)
+        {
+            return Err(status_error(503, "the service is at max_requests"));
+        }
         let key = upstream::RequestKey {
             request: Some(session.req_header()),
             client_ip: ctx.client_ip,
@@ -398,6 +457,7 @@ impl ProxyHttp for RdockProxy {
         let peer = upstream::peer(&route.service, &selected.member.candidate, &route.timeouts)?;
         ctx.in_flight = Some(selected.member.state.begin());
         ctx.upstream = Some(selected.member.candidate.clone());
+        ctx.member = Some(selected.member);
         ctx.set_cookie = selected.set_cookie;
         Ok(Box::new(peer))
     }
@@ -427,9 +487,19 @@ impl ProxyHttp for RdockProxy {
         &self,
         _session: &mut Session,
         upstream_response: &mut ResponseHeader,
-        _ctx: &mut RequestCtx,
+        ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
         strip_response_hop_by_hop(upstream_response);
+        let status = upstream_response.status.as_u16();
+        if let Some(route) = &ctx.route {
+            let failed = route
+                .service
+                .health
+                .passive
+                .as_ref()
+                .is_some_and(|p| p.statuses.contains(&status));
+            self.report(&route.service, ctx.member.as_ref(), !failed);
+        }
         Ok(())
     }
 
@@ -507,6 +577,7 @@ impl ProxyHttp for RdockProxy {
                 .upstream_errors
                 .with_label_values(&[&*route.service.name, kind])
                 .inc();
+            self.report(&route.service, ctx.member.as_ref(), false);
         }
         e
     }
@@ -516,9 +587,17 @@ impl ProxyHttp for RdockProxy {
         peer: &HttpPeer,
         session: &mut Session,
         e: Box<Error>,
-        _ctx: &mut RequestCtx,
+        ctx: &mut RequestCtx,
         client_reused: bool,
     ) -> Box<Error> {
+        // A reset or timeout before the response headers counts against the backend; a failure
+        // on a reused pooled connection is the pool's, not the backend's.
+        if session.response_written().is_none()
+            && !client_reused
+            && let Some(route) = &ctx.route
+        {
+            self.report(&route.service, ctx.member.as_ref(), false);
+        }
         let mut e = e.more_context(format!("Peer: {peer}"));
         // Retry only an idempotent request whose body can be replayed, only when the failure was
         // a reused connection closing under us, and never once the client saw a response.
@@ -650,7 +729,10 @@ impl ProxyHttp for RdockProxy {
 }
 
 /// `Host` for a backend: its configured name, with the port unless it is the scheme's default.
-fn backend_authority(scheme: rdock_model::service::Scheme, candidate: &Candidate) -> String {
+pub(crate) fn backend_authority(
+    scheme: rdock_model::service::Scheme,
+    candidate: &Candidate,
+) -> String {
     use rdock_model::service::Scheme;
     match candidate {
         Candidate::Tcp { host, addr } => {

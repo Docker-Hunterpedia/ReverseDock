@@ -3,11 +3,13 @@
 use std::sync::Mutex;
 
 mod hashring;
+mod health;
 mod state;
 mod sticky;
 
 pub use hashring::HashRing;
-pub use state::{BackendState, InFlight, Pool, Registry};
+pub use health::{Availability, BreakerState, EjectPolicy, MAX_EJECTION, ProbePolicy};
+pub use state::{BackendState, Ejection, InFlight, Pool, Registry};
 pub use sticky::{Match as StickyMatch, StickyKeys};
 
 /// One backend the balancer may pick.

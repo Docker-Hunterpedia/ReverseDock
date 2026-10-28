@@ -25,6 +25,12 @@ Backend servers.
 
 `host:port`, `[ipv6]:port` or `unix:///path.sock`.
 
+### `tcp_services.<name>.backends[].backup`
+
+**Type:** `boolean` · **Default:** `false`
+
+Only used when no primary backend is available.
+
 ### `tcp_services.<name>.backends[].weight`
 
 **Type:** `integer` · **Default:** `1`

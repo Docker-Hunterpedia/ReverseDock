@@ -40,6 +40,12 @@ pub struct Service {
     /// Forward the client's `Host` header (otherwise the backend address is used).
     #[serde(default = "crate::defaults::yes")]
     pub pass_host_header: bool,
+    /// Requests in flight across the pool; more are answered `503` (circuit breaker).
+    #[serde(default)]
+    pub max_requests: Option<u32>,
+    /// Requests in flight to one backend; a backend at the limit gets no more until one ends.
+    #[serde(default)]
+    pub max_connections_per_backend: Option<u32>,
 }
 
 /// One backend server.
@@ -50,6 +56,9 @@ pub struct Backend {
     /// Relative share of traffic.
     #[serde(default = "one")]
     pub weight: u32,
+    /// Only used when no primary backend is available.
+    #[serde(default)]
+    pub backup: bool,
 }
 
 const fn one() -> u32 {
@@ -120,14 +129,54 @@ pub struct Health {
     pub active: Option<ActiveHealth>,
     /// Ejection based on observed failures.
     pub passive: Option<PassiveHealth>,
+    /// What happens when no backend is healthy.
+    pub when_all_down: WhenAllDown,
+    /// A backend that becomes healthy ramps up its weight over this time.
+    pub slow_start: Option<Duration>,
 }
 
-/// Periodic HTTP probes.
+/// Behaviour when every backend is unhealthy.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WhenAllDown {
+    /// Send to every backend anyway: a broken health check must not cause an outage.
+    #[default]
+    FailOpen,
+    /// Answer `503`.
+    FailClosed,
+}
+
+/// How a probe checks a backend.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HealthMode {
+    /// An HTTP request with the service's scheme.
+    #[default]
+    Http,
+    /// A TCP (or Unix socket) connection.
+    Tcp,
+    /// The gRPC health protocol (`grpc.health.v1.Health/Check`); healthy when `SERVING`.
+    Grpc,
+}
+
+/// Periodic probes.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ActiveHealth {
-    /// Path to request.
+    /// Probe type.
+    pub mode: HealthMode,
+    /// Path to request (HTTP).
     pub path: String,
+    /// Method (HTTP).
+    pub method: HealthMethod,
+    /// `Host` of the probe (HTTP); the backend address when unset.
+    pub hostname: Option<String>,
+    /// Extra request headers (HTTP).
+    pub headers: std::collections::BTreeMap<String, String>,
+    /// Text the response body must contain (HTTP).
+    pub expected_body: Option<String>,
+    /// gRPC service name to check; empty checks the whole server.
+    pub grpc_service: String,
     /// Time between probes.
     pub interval: Duration,
     /// Probe timeout.
@@ -145,7 +194,13 @@ pub struct ActiveHealth {
 impl Default for ActiveHealth {
     fn default() -> Self {
         Self {
+            mode: HealthMode::Http,
             path: "/".to_owned(),
+            method: HealthMethod::Get,
+            hostname: None,
+            headers: std::collections::BTreeMap::new(),
+            expected_body: None,
+            grpc_service: String::new(),
             interval: Duration::from_secs(10),
             timeout: Duration::from_secs(2),
             healthy: 2,
@@ -156,6 +211,17 @@ impl Default for ActiveHealth {
     }
 }
 
+/// Probe methods.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "UPPERCASE")]
+pub enum HealthMethod {
+    /// `GET`.
+    #[default]
+    Get,
+    /// `HEAD`.
+    Head,
+}
+
 /// Ejection of backends that keep failing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
@@ -164,8 +230,13 @@ pub struct PassiveHealth {
     pub failures: u32,
     /// Sliding window for counting failures.
     pub window: Duration,
-    /// How long an ejected backend stays out before it is tried again.
+    /// How long an ejected backend stays out before one request tries it again; doubled for
+    /// each ejection in a row, up to 5 minutes.
     pub ejection: Duration,
+    /// Answers that count as failures, besides connection errors, resets and timeouts.
+    pub statuses: Vec<u16>,
+    /// Largest share of the pool ejected at once, in percent.
+    pub max_ejection_percent: u32,
 }
 
 impl Default for PassiveHealth {
@@ -174,6 +245,8 @@ impl Default for PassiveHealth {
             failures: 5,
             window: Duration::from_secs(30),
             ejection: Duration::from_secs(30),
+            statuses: vec![502, 503, 504],
+            max_ejection_percent: 50,
         }
     }
 }

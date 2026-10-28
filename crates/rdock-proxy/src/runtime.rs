@@ -39,6 +39,8 @@ pub struct Runtime {
     pub local_cert_names: Vec<String>,
     /// Expiry of each certificate (name, Unix seconds), for metrics.
     pub cert_expiry: Vec<(String, i64)>,
+    /// Every service, for health checks.
+    pub services: BTreeMap<String, Arc<ServiceRuntime>>,
 }
 
 impl Runtime {
@@ -58,6 +60,7 @@ impl Runtime {
             cert_requests: Vec::new(),
             local_cert_names: Vec::new(),
             cert_expiry: Vec::new(),
+            services: BTreeMap::new(),
         }
     }
 }
@@ -123,6 +126,12 @@ pub struct ServiceRuntime {
     pub sticky: Option<StickyRuntime>,
     /// Per-backend state, shared with other generations.
     pub pool: Arc<Pool>,
+    /// Health checks and ejection.
+    pub health: HealthRuntime,
+    /// Requests in flight across the pool before new ones get `503`.
+    pub max_requests: Option<u32>,
+    /// Requests in flight to one backend before it gets no more.
+    pub max_per_backend: Option<u32>,
     /// Backend addresses with their state, rebuilt when DNS changes an address list.
     pub(crate) members: ArcSwapOption<Members>,
     /// Upstream timeouts.
@@ -181,6 +190,61 @@ pub struct BackendRuntime {
     pub endpoint: Endpoint,
     /// Relative weight.
     pub weight: u32,
+    /// Used only when no primary backend is available.
+    pub backup: bool,
+}
+
+/// Health settings, compiled.
+#[derive(Debug, Clone, Default)]
+pub struct HealthRuntime {
+    /// Periodic probes.
+    pub active: Option<ActiveCheck>,
+    /// Ejection after observed failures.
+    pub passive: Option<PassiveCheck>,
+    /// Send to every backend when none is available.
+    pub fail_open: bool,
+    /// Weight ramp after recovery.
+    pub slow_start: Option<std::time::Duration>,
+}
+
+/// Periodic probes of every backend.
+#[derive(Debug, Clone)]
+pub struct ActiveCheck {
+    /// Probe type.
+    pub mode: rdock_model::service::HealthMode,
+    /// HTTP method.
+    pub method: http::Method,
+    /// Path (HTTP).
+    pub path: String,
+    /// `Host` header (HTTP), when not the backend address.
+    pub hostname: Option<String>,
+    /// Extra headers (HTTP).
+    pub headers: Vec<(http::HeaderName, http::HeaderValue)>,
+    /// Accepted status range (HTTP).
+    pub expected_status: (u16, u16),
+    /// Text the body must contain (HTTP).
+    pub expected_body: Option<String>,
+    /// gRPC service name.
+    pub grpc_service: String,
+    /// Port to probe instead of the backend's.
+    pub port: Option<u16>,
+    /// Time between probes.
+    pub interval: std::time::Duration,
+    /// Probe timeout.
+    pub timeout: std::time::Duration,
+    /// Streaks.
+    pub policy: rdock_balancer::ProbePolicy,
+}
+
+/// Passive health, compiled.
+#[derive(Debug, Clone)]
+pub struct PassiveCheck {
+    /// Ejection thresholds.
+    pub policy: rdock_balancer::EjectPolicy,
+    /// Answers that count as failures.
+    pub statuses: Vec<u16>,
+    /// Largest ejected share, in percent.
+    pub max_percent: u32,
 }
 
 /// The request value that hash policies hash.
@@ -216,6 +280,8 @@ pub struct Member {
     pub id: String,
     /// Relative weight.
     pub weight: u32,
+    /// Used only when no primary backend is available.
+    pub backup: bool,
     /// State shared across generations.
     pub state: Arc<BackendState>,
     /// The sticky cookie value naming this backend, when the service is sticky.
@@ -286,6 +352,7 @@ impl ServiceRuntime {
                     candidate,
                     id,
                     weight: backend.weight,
+                    backup: backend.backup,
                 }));
             }
         }

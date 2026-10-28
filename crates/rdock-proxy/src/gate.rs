@@ -91,9 +91,6 @@ fn check_service(gate: &mut Gate<'_>, path: &str, service: &rdock_model::service
     if !service.split.is_empty() {
         gate.unsupported(format!("{path}.split"), "weighted traffic splits", "v0.4");
     }
-    if service.health.is_some() {
-        gate.unsupported(format!("{path}.health"), "health checks", "v0.4");
-    }
     if service.retries.is_some() {
         gate.unsupported(format!("{path}.retries"), "retries", "v0.4");
     }
@@ -125,7 +122,7 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n    health: { active: { path: / } }\n";
+        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n    retries: { attempts: 1 }\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
@@ -134,7 +131,7 @@ mod tests {
                 == "OpenTelemetry tracing: not supported in this version (planned for v0.4)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert!(run.iter().any(|d| d.path == "services.s.health"));
+        assert!(run.iter().any(|d| d.path == "services.s.retries"));
     }
 
     #[test]

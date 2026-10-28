@@ -5,6 +5,7 @@ mod conn;
 mod errorpage;
 pub mod forwarded;
 pub mod gate;
+mod health;
 pub mod listener;
 mod proxy;
 pub mod router;

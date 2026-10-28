@@ -23,6 +23,12 @@ Backend servers. Set this or `split`.
 
 `host:port`, `[ipv6]:port` or `unix:///path.sock`.
 
+### `services.<name>.backends[].backup`
+
+**Type:** `boolean` · **Default:** `false`
+
+Only used when no primary backend is available.
+
 ### `services.<name>.backends[].weight`
 
 **Type:** `integer` · **Default:** `1`
@@ -41,11 +47,29 @@ Active and passive health checks.
 
 Periodic probes.
 
+#### `services.<name>.health.active.expected_body`
+
+**Type:** `string`
+
+Text the response body must contain (HTTP).
+
 #### `services.<name>.health.active.expected_status`
 
 **Type:** `string` · **Default:** `200-399`
 
 Accepted status codes, e.g. `200` or `200-399`.
+
+#### `services.<name>.health.active.grpc_service`
+
+**Type:** `string` · **Default:** ``
+
+gRPC service name to check; empty checks the whole server.
+
+#### `services.<name>.health.active.headers`
+
+**Type:** map of names to `string`
+
+Extra request headers (HTTP).
 
 #### `services.<name>.health.active.healthy`
 
@@ -53,17 +77,42 @@ Accepted status codes, e.g. `200` or `200-399`.
 
 Consecutive successes before a backend is healthy.
 
+#### `services.<name>.health.active.hostname`
+
+**Type:** `string`
+
+`Host` of the probe (HTTP); the backend address when unset.
+
 #### `services.<name>.health.active.interval`
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
 
 Time between probes.
 
+#### `services.<name>.health.active.method`
+
+**Type:** `GET` · `HEAD` · **Default:** `GET`
+
+Method (HTTP).
+
+- `GET`: `GET`.
+- `HEAD`: `HEAD`.
+
+#### `services.<name>.health.active.mode`
+
+**Type:** `http` · `tcp` · `grpc` · **Default:** `http`
+
+Probe type.
+
+- `http`: An HTTP request with the service's scheme.
+- `tcp`: A TCP (or Unix socket) connection.
+- `grpc`: The gRPC health protocol (`grpc.health.v1.Health/Check`); healthy when `SERVING`.
+
 #### `services.<name>.health.active.path`
 
 **Type:** `string` · **Default:** `/`
 
-Path to request.
+Path to request (HTTP).
 
 #### `services.<name>.health.active.port`
 
@@ -93,7 +142,7 @@ Ejection based on observed failures.
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
 
-How long an ejected backend stays out before it is tried again.
+How long an ejected backend stays out before one request tries it again; doubled for each ejection in a row, up to 5 minutes.
 
 #### `services.<name>.health.passive.failures`
 
@@ -101,11 +150,38 @@ How long an ejected backend stays out before it is tried again.
 
 Failures within `window` that eject a backend.
 
+#### `services.<name>.health.passive.max_ejection_percent`
+
+**Type:** `integer` · **Default:** `50`
+
+Largest share of the pool ejected at once, in percent.
+
+#### `services.<name>.health.passive.statuses`
+
+**Type:** list of `integer` · **Default:** `[502,503,504]`
+
+Answers that count as failures, besides connection errors, resets and timeouts.
+
 #### `services.<name>.health.passive.window`
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
 
 Sliding window for counting failures.
+
+### `services.<name>.health.slow_start`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+A backend that becomes healthy ramps up its weight over this time.
+
+### `services.<name>.health.when_all_down`
+
+**Type:** `fail_open` · `fail_closed` · **Default:** `fail_open`
+
+What happens when no backend is healthy.
+
+- `fail_open`: Send to every backend anyway: a broken health check must not cause an outage.
+- `fail_closed`: Answer `503`.
 
 ## `services.<name>.load_balancer`
 
@@ -137,6 +213,18 @@ Selection policy.
 :::note[Planned for v0.4]
 Policies other than `round_robin` and `random`: accepted by `rdock validate` with a warning, refused by `rdock run` until v0.4.
 :::
+
+## `services.<name>.max_connections_per_backend`
+
+**Type:** `integer`
+
+Requests in flight to one backend; a backend at the limit gets no more until one ends.
+
+## `services.<name>.max_requests`
+
+**Type:** `integer`
+
+Requests in flight across the pool; more are answered `503` (circuit breaker).
 
 ## `services.<name>.pass_host_header`
 

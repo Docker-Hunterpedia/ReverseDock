@@ -8,13 +8,13 @@
 use std::collections::HashMap;
 use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingora::http::RequestHeader;
 use pingora::upstreams::peer::HttpPeer;
-use rdock_balancer::Choice;
+use rdock_balancer::{Availability, Choice};
 use rdock_middleware::{FetchError, Fetched, HttpClient, ServiceClient};
 use rdock_model::route::RouteTimeouts;
 use rdock_model::service::Scheme;
@@ -114,25 +114,33 @@ pub struct RequestKey<'a> {
 }
 
 /// Picks a backend of `service` for a request.
+///
+/// Backends that are unhealthy, ejected, paused or at `max_connections_per_backend` are left
+/// out. Backups are used only when no primary is left. With `when_all_down: fail_open`, an
+/// empty pool falls back to every backend (ADR-0022).
 #[must_use]
 pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected> {
     let members = service.members();
+    let now = Instant::now();
+    let pool = eligible(service, &members, now);
     if let (Some(sticky), Some(request)) = (&service.sticky, key.request)
-        && let Some(found) = sticky_member(sticky, &members, request)
+        && let Some(found) = sticky_member(sticky, &pool, request)
     {
+        claim_trial(&found.member, now);
         return Some(found);
     }
-    let choices: Vec<Choice<'_>> = members
+    let choices: Vec<Choice<'_>> = pool
         .iter()
         .map(|m| Choice {
             id: &m.id,
-            weight: m.weight,
+            weight: m.state.weight(m.weight, service.health.slow_start, now),
             in_flight: m.state.in_flight(),
         })
         .collect();
     let hash = hash_input(&service.hash_on, key);
     let index = service.balancer.pick(&choices, hash.as_deref())?;
-    let member = members.get(index)?.clone();
+    let member = pool.get(index)?.clone();
+    claim_trial(&member, now);
     let set_cookie = service.sticky.as_ref().and_then(|sticky| {
         member
             .sticky
@@ -140,6 +148,45 @@ pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected>
             .map(|token| format!("{}={token}{}", sticky.name, sticky.attributes))
     });
     Some(Selected { member, set_cookie })
+}
+
+/// The backends a request may go to now.
+fn eligible(service: &ServiceRuntime, members: &[Arc<Member>], now: Instant) -> Vec<Arc<Member>> {
+    let has_room = |m: &Member| {
+        service
+            .max_per_backend
+            .is_none_or(|max| m.state.in_flight() < max)
+    };
+    let candidates = members.iter().filter(|m| m.weight > 0 && has_room(m));
+    let up: Vec<&Arc<Member>> = candidates
+        .clone()
+        .filter(|m| m.state.availability(now) != Availability::Down)
+        .collect();
+    let primaries: Vec<Arc<Member>> = up
+        .iter()
+        .filter(|m| !m.backup)
+        .map(|m| (*m).clone())
+        .collect();
+    if !primaries.is_empty() {
+        return primaries;
+    }
+    let backups: Vec<Arc<Member>> = up.iter().map(|m| (*m).clone()).collect();
+    if !backups.is_empty() || !service.health.fail_open {
+        return backups;
+    }
+    let all: Vec<Arc<Member>> = candidates.clone().filter(|m| !m.backup).cloned().collect();
+    if all.is_empty() {
+        candidates.cloned().collect()
+    } else {
+        all
+    }
+}
+
+/// A request sent to a half-open backend is its trial.
+fn claim_trial(member: &Member, now: Instant) {
+    if member.state.availability(now) == Availability::Trial {
+        member.state.start_trial(now);
+    }
 }
 
 /// The backend a valid sticky cookie names, if it is still in the pool.

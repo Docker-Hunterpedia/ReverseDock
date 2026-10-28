@@ -3254,6 +3254,7 @@ dependencies = [
  "arc-swap",
  "async-trait",
  "bytes",
+ "fastrand",
  "http",
  "ipnet",
  "pingora",
