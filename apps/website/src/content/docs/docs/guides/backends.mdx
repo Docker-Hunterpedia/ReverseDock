@@ -60,8 +60,11 @@ services:
 | IPv6 and port | `[2001:db8::5]:3000` | Brackets are required. |
 | DNS name and port | `app-3.internal:3000`, `app:3000` | Container names on a Docker network work too. |
 | Unix socket | `unix:///run/docs/http.sock` | The path must be absolute. |
+| SRV record <Status since="v0.4" /> | `srv://_http._tcp.api.example.com` | Every target of the record, with its port. |
 
-**DNS names** are resolved when a configuration is applied and again every 10 seconds, so a container that restarts with a new IP address is picked up without a reload. A lookup that fails or takes longer than 2 seconds keeps the previous addresses and logs `cannot resolve backend` or `backend lookup timed out`. When a name resolves to several addresses, each address is a backend with the weight of the entry. A name that has never resolved leaves the service without backends, and its requests get `503`.
+**DNS names** are resolved when a configuration is applied and again when their records expire: the TTL is honoured, kept between 1 second and 5 minutes <Status since="v0.4" />. Names that DNS does not know but the system does (`/etc/hosts`, some container networks) are looked up through the system and refreshed every 10 seconds. A container that restarts with a new IP address is picked up without a reload. A lookup that fails or takes longer than 2 seconds keeps the previous addresses, logs `cannot resolve backend`, and is tried again after 5 seconds. When a name resolves to several addresses, each address is a backend with the weight of the entry. A name that has never resolved leaves the service without backends, and its requests get `503`.
+
+**SRV records** (Consul, Kubernetes headless services, many service registries) list targets with a priority, a weight and a port. ReverseDock uses the targets of the lowest priority; higher priorities are kept as [backups](#health-checks) for when no lower one is available ([RFC 2782](https://www.rfc-editor.org/rfc/rfc2782.html)). Each target's weight is the entry's `weight` times its SRV weight (a weight of 0 counts as 1). Target names are resolved like any DNS name.
 
 **Unix sockets** need ReverseDock to have permission to open the socket file. In a container, mount the socket's directory into the ReverseDock container.
 

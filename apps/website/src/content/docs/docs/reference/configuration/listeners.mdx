@@ -17,6 +17,12 @@ Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`,
 
 Address to bind, e.g. `:443` or `127.0.0.1:8080`.
 
+## `listeners.<name>.ping`
+
+**Type:** `string`
+
+A path answered `200 OK` for any host before routing, for load-balancer health monitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.
+
 ## `listeners.<name>.protocol`
 
 **Type:** `http` · `https` · `tcp` · `udp`

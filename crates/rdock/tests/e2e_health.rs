@@ -199,3 +199,28 @@ async fn max_requests_answers_503_when_the_pool_is_full() {
     assert_eq!(slow.await.unwrap().status, 200);
     assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
 }
+
+#[tokio::test]
+async fn the_ping_path_answers_for_any_host_before_routing() {
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}", ping: /rdock/ping }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "Host(`app.test`)", service: app }}
+services:
+  app: {{ backends: [{{ address: "127.0.0.1:1" }}] }}
+"#
+    );
+    let _rdock = Rdock::start(RDOCK, &config);
+    for host in ["app.test", "anything.example", "203.0.113.9"] {
+        let reply = client::http1(addr(port), get(host, "/rdock/ping")).await;
+        assert_eq!(reply.status, 200, "{host}");
+        assert_eq!(reply.text(), "OK\n");
+        assert_eq!(reply.header("cache-control"), Some("no-store"));
+    }
+    let routed = client::http1(addr(port), get("app.test", "/other")).await;
+    assert_eq!(routed.status, 502, "other paths are routed as usual");
+}

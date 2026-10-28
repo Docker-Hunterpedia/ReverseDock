@@ -45,6 +45,20 @@ services:
 
 `trusted_proxies: [cloudflare]` makes the client IP come from `CF-Connecting-IP` for connections from Cloudflare's edge, with the ranges kept current automatically; see [Behind a proxy](/docs/guides/behind-a-proxy/#cloudflare). To accept only Cloudflare's connections, turn on Authenticated Origin Pulls and set `tls.client_auth: { mode: required, cloudflare: true }` on the listener <Status since="v0.4" />; see [Client certificates](/docs/guides/client-certificates/#cloudflare-authenticated-origin-pulls).
 
+## Cloudflare Load Balancing
+
+Cloudflare's load-balancer monitors probe each origin with `GET` and a `Cloudflare-Traffic-Manager` User-Agent, using the monitor's or the endpoint's `Host` ([monitors](https://developers.cloudflare.com/load-balancing/monitors/), checked 2026-10-29). Give the listener a ping path <Status since="v0.4" />, which answers `200 OK` for any host before routing, and point the monitor at it:
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls: {}
+    ping: /rdock/ping
+```
+
+The ping answers as long as ReverseDock accepts requests on that listener. To make the monitor follow your application instead, point it at a health route of the application.
+
 ## Cloudflare Tunnel
 
 `cloudflared` connects out to Cloudflare and forwards requests to ReverseDock inside your Docker network, so the server needs no inbound ports ([Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)). Cloudflare terminates HTTPS with its own edge certificate; between `cloudflared` and ReverseDock the traffic stays on the Docker network, so ReverseDock listens on plain HTTP.

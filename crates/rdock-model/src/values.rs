@@ -424,6 +424,9 @@ pub enum BackendAddress {
     },
     /// A Unix domain socket.
     Unix(PathBuf),
+    /// Every target of an SRV record (`srv://_service._proto.example.com`), with its priority,
+    /// weight and port.
+    Srv(String),
 }
 
 impl FromStr for BackendAddress {
@@ -436,6 +439,15 @@ impl FromStr for BackendAddress {
             } else {
                 Err(ValueError::new(format!(
                     "unix socket path in `{s}` must be absolute, e.g. `unix:///run/app.sock`"
+                )))
+            };
+        }
+        if let Some(name) = s.strip_prefix("srv://") {
+            return if is_host_name(name.trim_end_matches('.')) && name.split('.').count() >= 3 {
+                Ok(Self::Srv(name.trim_end_matches('.').to_owned()))
+            } else {
+                Err(ValueError::new(format!(
+                    "invalid SRV name in `{s}`: use `srv://_service._proto.example.com`"
                 )))
             };
         }
@@ -497,18 +509,19 @@ impl fmt::Display for BackendAddress {
             Self::Tcp { host, port } if host.contains(':') => write!(f, "[{host}]:{port}"),
             Self::Tcp { host, port } => write!(f, "{host}:{port}"),
             Self::Unix(path) => write!(f, "unix://{}", path.display()),
+            Self::Srv(name) => write!(f, "srv://{name}"),
         }
     }
 }
 
 string_serde!(
     BackendAddress,
-    "a backend address such as `app:3000` or `unix:///run/app.sock`"
+    "a backend address such as `app:3000`, `unix:///run/app.sock` or `srv://_http._tcp.api.example.com`"
 );
 schema!(BackendAddress, "BackendAddress", {
     "type": "string",
-    "description": "Backend address: `host:port`, `[ipv6]:port` or `unix:///absolute/path.sock`.",
-    "examples": ["app:3000", "10.0.0.5:8080", "unix:///run/app.sock"]
+    "description": "Backend address: `host:port`, `[ipv6]:port`, `unix:///absolute/path.sock` or `srv://_service._proto.example.com`.",
+    "examples": ["app:3000", "10.0.0.5:8080", "unix:///run/app.sock", "srv://_http._tcp.api.example.com"]
 });
 
 // ---------------------------------------------------------------------------------------------

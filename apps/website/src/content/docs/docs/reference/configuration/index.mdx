@@ -40,9 +40,9 @@ The `acme` section: `false` turns automatic certificates off, `true` or settings
 
 ### BackendAddress
 
-Backend address: `host:port`, `[ipv6]:port` or `unix:///absolute/path.sock`.
+Backend address: `host:port`, `[ipv6]:port`, `unix:///absolute/path.sock` or `srv://_service._proto.example.com`.
 
-Examples: `app:3000`, `10.0.0.5:8080`, `unix:///run/app.sock`
+Examples: `app:3000`, `10.0.0.5:8080`, `unix:///run/app.sock`, `srv://_http._tcp.api.example.com`
 
 ### ByteSize
 

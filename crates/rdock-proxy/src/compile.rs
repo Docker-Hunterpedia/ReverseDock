@@ -311,6 +311,10 @@ fn compile_service(
                     }
                 }
                 BackendAddress::Unix(path) => Endpoint::Unix(path.clone()),
+                BackendAddress::Srv(name) => Endpoint::Srv {
+                    name: name.clone(),
+                    targets: dns.srv_cell(name),
+                },
             },
             weight: b.weight,
             backup: b.backup,
@@ -714,6 +718,7 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         address: listener.address,
         tls,
         timeouts: listener.timeouts,
+        ping: listener.ping.clone(),
         routes: Vec::new(),
         https_redirect: None,
     })

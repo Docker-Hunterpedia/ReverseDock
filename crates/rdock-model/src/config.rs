@@ -157,6 +157,10 @@ pub struct Listener {
     /// Client-side timeouts.
     #[serde(default)]
     pub timeouts: ListenerTimeouts,
+    /// A path answered `200 OK` for any host before routing, for load-balancer health
+    /// monitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.
+    #[serde(default)]
+    pub ping: Option<String>,
 }
 
 impl Listener {
@@ -169,6 +173,7 @@ impl Listener {
             tls: None,
             proxy_protocol: None,
             timeouts: ListenerTimeouts::default(),
+            ping: None,
         }
     }
 

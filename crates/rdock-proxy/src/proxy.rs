@@ -331,6 +331,33 @@ impl RdockProxy {
         self.shared.challenges.http01_answer(req.uri.path())
     }
 
+    /// Answers rdock gives itself before routing: ACME HTTP-01 challenges on plain listeners,
+    /// and the listener's `ping` path for load-balancer monitors (W-CF-07).
+    fn built_in_answer(&self, listener: &ListenerRuntime, req: &RequestHeader) -> Option<Reply> {
+        let text = |body: Bytes| Reply {
+            status: 200,
+            headers: vec![
+                (
+                    http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/plain"),
+                ),
+                (
+                    http::header::CACHE_CONTROL,
+                    HeaderValue::from_static("no-store"),
+                ),
+            ],
+            body: Some(body),
+        };
+        if listener.tls.is_none()
+            && let Some(answer) = self.http01_answer(req)
+        {
+            return Some(text(Bytes::copy_from_slice(answer.as_bytes())));
+        }
+        let probe = req.method == http::Method::GET || req.method == http::Method::HEAD;
+        (probe && listener.ping.as_deref() == Some(req.uri.path()))
+            .then(|| text(Bytes::from_static(b"OK\n")))
+    }
+
     fn listener<'a>(&self, runtime: &'a Runtime) -> Option<&'a ListenerRuntime> {
         runtime.listeners.get(&*self.listener)
     }
@@ -528,17 +555,7 @@ impl ProxyHttp for RdockProxy {
         let Some(listener) = self.listener(&runtime) else {
             return Err(status_error(503, "listener is not configured"));
         };
-        if listener.tls.is_none()
-            && let Some(answer) = self.http01_answer(session.req_header())
-        {
-            let reply = Reply {
-                status: 200,
-                headers: vec![(
-                    http::header::CONTENT_TYPE,
-                    HeaderValue::from_static("text/plain"),
-                )],
-                body: Some(Bytes::copy_from_slice(answer.as_bytes())),
-            };
+        if let Some(reply) = self.built_in_answer(listener, session.req_header()) {
             self.reply(session, ctx, reply, &[]).await?;
             return Ok(true);
         }
