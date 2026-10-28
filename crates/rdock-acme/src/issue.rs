@@ -11,6 +11,9 @@ use std::sync::Arc;
 
 use rcgen::{CertificateParams, CustomExtension, KeyPair};
 use rdock_tls::Challenges;
+use tracing::warn;
+
+use crate::dns::{DnsError, DnsSolver, Lookup, challenge_name, wait_until_visible};
 use rustls::sign::CertifiedKey;
 use rustls_pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 
@@ -43,6 +46,9 @@ pub enum IssueError {
     /// Key or CSR generation failed.
     #[error("cannot create the key or signing request: {0}")]
     Csr(#[from] rcgen::Error),
+    /// The DNS provider failed.
+    #[error("DNS provider: {0}")]
+    Dns(#[from] DnsError),
     /// The TLS-ALPN-01 validation certificate could not be built.
     #[error("cannot build the TLS-ALPN-01 certificate: {0}")]
     ValidationCert(String),
@@ -59,13 +65,42 @@ pub struct OrderSpec<'a> {
     pub challenge_types: &'a [ChallengeType],
     /// The certificate this order replaces (RFC 9773 `replaces`).
     pub replaces: Option<&'a CertificateIdentifier<'static>>,
+    /// How to answer DNS-01, when the request names a DNS provider.
+    pub dns: Option<&'a DnsChallenge>,
 }
 
-/// Removes the challenge answers when the order ends, whatever the outcome.
+/// A DNS provider and how to check that its records are visible.
+#[derive(Debug, Clone)]
+pub struct DnsChallenge {
+    /// Publishes and removes the TXT records.
+    pub solver: Arc<dyn DnsSolver>,
+    /// Where to look for the record before validation.
+    pub lookup: Lookup,
+    /// How long to wait for the record to appear.
+    pub timeout: Duration,
+}
+
+/// Removes the challenge answers when the order ends, whatever the outcome. DNS records need
+/// an async call and are removed by [`Answers::remove_dns`].
 struct Answers<'a> {
     challenges: &'a Challenges,
     tokens: Vec<String>,
     names: Vec<String>,
+    /// `(fqdn, value)` of published TXT records.
+    dns: Vec<(String, String)>,
+    /// Names whose authorization uses DNS-01.
+    dns_names: Vec<String>,
+}
+
+impl Answers<'_> {
+    async fn remove_dns(&mut self, dns: Option<&DnsChallenge>) {
+        let Some(dns) = dns else { return };
+        for (fqdn, value) in self.dns.drain(..) {
+            if let Err(e) = dns.solver.cleanup(&fqdn, &value).await {
+                warn!(fqdn = %fqdn, error = %e, "cannot remove the DNS-01 record");
+            }
+        }
+    }
 }
 
 impl Drop for Answers<'_> {
@@ -91,7 +126,31 @@ pub async fn issue(
         challenges,
         tokens: Vec::new(),
         names: Vec::new(),
+        dns: Vec::new(),
+        dns_names: Vec::new(),
     };
+    let validated = validate(&mut order, spec, &mut answers).await;
+    answers.remove_dns(spec.dns).await;
+    drop(answers);
+    validated?;
+    let key = KeyPair::generate()?;
+    let csr = CertificateParams::new(spec.names.to_vec())?.serialize_request(&key)?;
+    order.finalize_csr(csr.der()).await?;
+    let chain_pem = order
+        .poll_certificate(&RetryPolicy::new().timeout(SIGNING_TIMEOUT))
+        .await?;
+    Ok(Issued {
+        chain_pem,
+        key_pem: key.serialize_pem(),
+    })
+}
+
+/// Publishes an answer for every pending authorization, tells the CA to validate, and waits.
+async fn validate(
+    order: &mut Order,
+    spec: OrderSpec<'_>,
+    answers: &mut Answers<'_>,
+) -> Result<(), IssueError> {
     let mut authorizations = order.authorizations();
     while let Some(authorization) = authorizations.next().await {
         let mut authorization = authorization?;
@@ -103,7 +162,7 @@ pub async fn issue(
         let offered = spec
             .challenge_types
             .iter()
-            .filter(|t| !(is_ip && **t == ChallengeType::TlsAlpn01))
+            .filter(|t| !(is_ip && **t != ChallengeType::Http01))
             .find(|t| authorization.challenges.iter().any(|c| c.r#type == **t))
             .cloned()
             .ok_or_else(|| IssueError::NoChallenge(name.clone()))?;
@@ -111,34 +170,60 @@ pub async fn issue(
             .challenge(offered.clone())
             .ok_or_else(|| IssueError::NoChallenge(name.clone()))?;
         let key_authorization = challenge.key_authorization();
-        if offered == ChallengeType::TlsAlpn01 {
-            let certificate = validation_certificate(&name, key_authorization.digest().as_ref())?;
-            challenges.add_tls_alpn01(&name, &certificate);
-            answers.names.push(name);
-        } else {
-            let token = challenge.token.clone();
-            challenges.add_http01(&token, key_authorization.as_str());
-            answers.tokens.push(token);
+        match offered {
+            ChallengeType::Dns01 => {
+                let dns = spec
+                    .dns
+                    .ok_or_else(|| IssueError::NoChallenge(name.clone()))?;
+                let (fqdn, value) = (challenge_name(&name), key_authorization.dns_value());
+                dns.solver.present(&fqdn, &value).await?;
+                answers.dns.push((fqdn, value));
+                answers.dns_names.push(name);
+                // Validation is requested once the record is visible, below.
+                continue;
+            }
+            ChallengeType::TlsAlpn01 => {
+                let certificate =
+                    validation_certificate(&name, key_authorization.digest().as_ref())?;
+                answers.challenges.add_tls_alpn01(&name, &certificate);
+                answers.names.push(name);
+            }
+            _ => {
+                let token = challenge.token.clone();
+                answers
+                    .challenges
+                    .add_http01(&token, key_authorization.as_str());
+                answers.tokens.push(token);
+            }
         }
         challenge.set_ready().await?;
+    }
+    if let Some(dns) = spec.dns.filter(|_| !answers.dns.is_empty()) {
+        for (fqdn, value) in &answers.dns {
+            wait_until_visible(fqdn, value, &dns.lookup, dns.timeout).await;
+        }
+        let mut authorizations = order.authorizations();
+        while let Some(authorization) = authorizations.next().await {
+            let mut authorization = authorization?;
+            let name = authorization.identifier().to_string();
+            if authorization.status == AuthorizationStatus::Valid
+                || !answers.dns_names.contains(&name)
+            {
+                continue;
+            }
+            if let Some(mut challenge) = authorization.challenge(ChallengeType::Dns01) {
+                challenge.set_ready().await?;
+            }
+        }
     }
     let status = order
         .poll_ready(&RetryPolicy::new().timeout(VALIDATION_TIMEOUT))
         .await?;
-    drop(answers);
-    if status != OrderStatus::Ready {
-        return Err(IssueError::Invalid(failure_detail(&mut order).await));
+    if status == OrderStatus::Ready {
+        Ok(())
+    } else {
+        Err(IssueError::Invalid(failure_detail(order).await))
     }
-    let key = KeyPair::generate()?;
-    let csr = CertificateParams::new(spec.names.to_vec())?.serialize_request(&key)?;
-    order.finalize_csr(csr.der()).await?;
-    let chain_pem = order
-        .poll_certificate(&RetryPolicy::new().timeout(SIGNING_TIMEOUT))
-        .await?;
-    Ok(Issued {
-        chain_pem,
-        key_pem: key.serialize_pem(),
-    })
 }
 
 /// Creates the order. If the CA says the replaced certificate was already replaced (by an

@@ -253,6 +253,26 @@ fn checks_exec_and_webhook_dns_providers() {
 }
 
 #[test]
+fn checks_dns_resolvers_and_propagation_timeout() {
+    let config = with(
+        app(),
+        json!({ "acme": { "dns_resolvers": ["1.1.1.1", "[2606:4700::1111]:53", "ns1.example.com"], "dns_propagation_timeout": "0s" } }),
+    );
+    let found = errors(config);
+    assert!(has(&found, "acme.dns_resolvers[2]", "not an IP address"));
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p == "acme.dns_resolvers[0]" || p == "acme.dns_resolvers[1]")
+    );
+    assert!(has(
+        &found,
+        "acme.dns_propagation_timeout",
+        "longer than zero"
+    ));
+}
+
+#[test]
 fn public_ip_addresses_need_shortlived_certificates() {
     let ip = with(
         app(),

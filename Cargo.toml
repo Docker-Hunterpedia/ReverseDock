@@ -71,7 +71,7 @@ url = "2.5.8"
 pingora = { version = "0.9.0", default-features = false, features = ["proxy", "rustls"] }
 # Pingora 0.9.0 panics on every accepted connection with tokio >= 1.54 (zero-capacity BufStream,
 # tokio#8494); 1.53.3 has no open advisory. Keep this cap until Pingora ships a fix.
-tokio = { version = ">=1.53.3, <1.54", features = ["fs", "io-util", "macros", "net", "rt-multi-thread", "signal", "sync", "time"] }
+tokio = { version = ">=1.53.3, <1.54", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 arc-swap = "1.9.3"
 async-trait = "0.1.92"
 bytes = "1.12.1"
@@ -117,6 +117,8 @@ hyper-rustls = { version = "0.27.10", default-features = false, features = ["htt
 jsonschema = { version = "0.60.1", default-features = false }
 predicates = "3.1.4"
 proptest = "1.12.0"
+# DNS-01 propagation checks (ADR-0020); no DNSSEC or encrypted transports needed.
+hickory-resolver = { version = "0.26.3", default-features = false, features = ["system-config", "tokio"] }
 # ring only (ADR-0013); the default features would pull in aws-lc-rs (ADR-0020).
 instant-acme = { version = "0.8.5", default-features = false, features = ["ring", "hyper-rustls", "time", "x509-parser"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }

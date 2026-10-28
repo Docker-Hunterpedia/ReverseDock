@@ -2,11 +2,9 @@
 //! reported instead of ignored: `rdock validate` warns, `rdock run` refuses to start, so nothing
 //! silently behaves differently from what the configuration says.
 
-use rdock_model::acme::AcmeSetting;
 use rdock_model::config::{Config, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::middleware::{CompressAlgorithm, Middleware};
-use rdock_model::route::RouteTls;
 use rdock_model::service::LbPolicy;
 
 /// Why compilation runs.
@@ -38,11 +36,6 @@ impl Gate<'_> {
 /// Reports every setting this version cannot honour.
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
-    if let Some(AcmeSetting::Settings(acme)) = &config.acme
-        && acme.dns_provider.is_some()
-    {
-        gate.unsupported("acme.dns_provider", "DNS-01 certificates", "v0.3");
-    }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
         if matches!(
@@ -64,18 +57,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     }
     if !config.tcp_services.is_empty() {
         gate.unsupported("tcp_services", "TCP services", "v0.6");
-    }
-    for (name, route) in &config.routes {
-        if let Some(RouteTls::Options(options)) = &route.tls {
-            let path = format!("{}.tls", path_key("routes", name));
-            if options.dns_provider.is_some() {
-                gate.unsupported(
-                    format!("{path}.dns_provider"),
-                    "DNS-01 certificates",
-                    "v0.3",
-                );
-            }
-        }
     }
     for (name, service) in &config.services {
         check_service(&mut gate, &path_key("services", name), service);
@@ -158,17 +139,16 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "acme: { email: a@example.com, dns_provider: cf, dns_providers: { cf: { type: cloudflare, api_token: \"${file:/run/secrets/cf}\" } } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n    health: { active: { path: / } }\n";
+        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n    health: { active: { path: / } }\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
-        assert_eq!(
-            validate[0].message,
-            "DNS-01 certificates: not supported in this version (planned for v0.3)"
-        );
+        assert!(validate.iter().any(|d| d.path == "observability.tracing"
+            && d.message
+                == "OpenTelemetry tracing: not supported in this version (planned for v0.4)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert_eq!(run[1].path, "services.s.health");
+        assert!(run.iter().any(|d| d.path == "services.s.health"));
     }
 
     #[test]

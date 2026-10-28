@@ -1073,6 +1073,20 @@ impl Validator<'_> {
                 .with_hint("add it under `acme.dns_providers`"),
             );
         }
+        for (i, resolver) in acme.dns_resolvers.iter().enumerate() {
+            if crate::acme::parse_resolver(resolver).is_none() {
+                self.error(
+                    path_index("acme.dns_resolvers", i),
+                    format!("`{resolver}` is not an IP address or `ip:port`"),
+                );
+            }
+        }
+        if acme.dns_propagation_timeout.is_zero() {
+            self.error(
+                "acme.dns_propagation_timeout",
+                "the timeout must be longer than zero",
+            );
+        }
         for (name, provider) in &acme.dns_providers {
             self.check_name("acme.dns_providers", name);
             self.check_dns_provider(&path_key("acme.dns_providers", name), provider);

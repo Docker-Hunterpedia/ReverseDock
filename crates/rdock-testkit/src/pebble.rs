@@ -22,6 +22,10 @@ pub struct Pebble {
     /// ACME directory URL, reachable from the host.
     pub directory: String,
     management: u16,
+    /// Port of the test DNS server on the host (UDP and TCP).
+    pub dns_port: u16,
+    /// Port of the test DNS server's management API on the host (`/set-txt`, `/clear-txt`).
+    pub dns_management: u16,
 }
 
 impl Drop for Pebble {
@@ -77,6 +81,8 @@ impl Pebble {
         let ca = format!("rdock-pebble-ca-{id}");
         let acme = crate::free_port();
         let management = crate::free_port();
+        let dns_port = crate::free_port();
+        let dns_management = crate::free_port();
         let dir = tempfile::tempdir().unwrap();
         let config = serde_json::json!({ "pebble": {
             "listenAddress": "0.0.0.0:14000",
@@ -103,6 +109,8 @@ impl Pebble {
             dir,
             directory: format!("https://localhost:{acme}/dir"),
             management,
+            dns_port,
+            dns_management,
         };
         docker(&[
             "run",
@@ -111,6 +119,12 @@ impl Pebble {
             &dns,
             "--network",
             &network,
+            "-p",
+            &format!("{dns_port}:8053/udp"),
+            "-p",
+            &format!("{dns_port}:8053/tcp"),
+            "-p",
+            &format!("{dns_management}:8055"),
             CHALLTESTSRV,
             "-defaultIPv4",
             &host,

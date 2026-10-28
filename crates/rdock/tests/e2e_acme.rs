@@ -297,3 +297,64 @@ async fn failures_show_in_metrics_and_status() {
         "{cert}"
     );
 }
+
+/// A DNS hook for `exec`: `present|cleanup <fqdn> <value>` against Pebble's test DNS server.
+const DNS_HOOK: &str = r#"#!/bin/sh
+case "$1" in
+  present) path=set-txt; body="{\"host\":\"$2.\",\"value\":\"$3\"}" ;;
+  cleanup) path=clear-txt; body="{\"host\":\"$2.\"}" ;;
+esac
+exec curl -sf -X POST -d "$body" "http://127.0.0.1:$DNS_MANAGEMENT/$path"
+"#;
+
+#[cfg(unix)]
+#[tokio::test]
+async fn issues_a_wildcard_through_dns01_with_an_exec_hook() {
+    if !enabled() {
+        return;
+    }
+    let backend = Backend::start("app").await;
+    let (http_port, tls_port) = (free_port(), free_port());
+    let pebble = Pebble::start(http_port, tls_port);
+    let dir = tempfile::tempdir().unwrap();
+    let hook = dir.path().join("dns-hook.sh");
+    let script = DNS_HOOK.replace("$DNS_MANAGEMENT", &pebble.dns_management.to_string());
+    std::fs::write(&hook, script).unwrap();
+    std::fs::set_permissions(&hook, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let config = format!(
+        r#"listeners:
+  web: {{ address: "0.0.0.0:{http_port}" }}
+  websecure: {{ address: "0.0.0.0:{tls_port}", tls: {{}} }}
+acme:
+  ca: "{directory}"
+  ca_root: "{root}"
+  dns_resolvers: ["127.0.0.1:{dns}"]
+  dns_providers:
+    hook: {{ type: exec, command: "{hook}" }}
+routes:
+  app:
+    match: "Host(`a.wild.example.com`)"
+    service: app
+    tls: {{ domains: ["*.wild.example.com"], dns_provider: hook }}
+services:
+  app: {{ backends: [{{ address: "{backend}" }}] }}
+"#,
+        directory = pebble.directory,
+        root = pebble.endpoint_root().display(),
+        dns = pebble.dns_port,
+        hook = hook.display(),
+        backend = backend.addr,
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let https: SocketAddr = format!("127.0.0.1:{tls_port}").parse().unwrap();
+    let trust = client_config(&pebble.issuing_root());
+    wait_for_certificate(https, "a.wild.example.com", &trust, &rdock).await;
+    let other = client::tls_connect(https, "b.wild.example.com", trust.clone()).await;
+    assert!(other.is_ok(), "the wildcard covers b.wild.example.com");
+    assert!(
+        rdock
+            .data_dir()
+            .join("acme/certs/_.wild.example.com/cert.pem")
+            .exists()
+    );
+}
