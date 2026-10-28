@@ -30,6 +30,15 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
         RateLimitKey::Cookie(name) => cookie(req, name)
             .map(|v| v.as_bytes().to_vec())
             .unwrap_or_default(),
+        RateLimitKey::Claim(name) => cx
+            .claims
+            .as_ref()
+            .and_then(|c| c.get(name))
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone().into_bytes(),
+                other => other.to_string().into_bytes(),
+            })
+            .unwrap_or_default(),
     }
 }
 

@@ -19,6 +19,7 @@ libfuzzer-sys = "0.4.13"
 pingora-core = { version = "0.9.0", default-features = false }
 pingora-http = "0.9.0"
 rdock-config = { path = "../../crates/rdock-config" }
+rdock-middleware = { path = "../../crates/rdock-middleware" }
 rdock-rules = { path = "../../crates/rdock-rules" }
 tokio = { version = ">=1.53.3, <1.54", features = ["io-util", "rt", "time"] }
 
@@ -32,6 +33,13 @@ bench = false
 [[bin]]
 name = "rules_parser"
 path = "fuzz_targets/rules_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "jwt_verify"
+path = "fuzz_targets/jwt_verify.rs"
 test = false
 doc = false
 bench = false

@@ -454,6 +454,88 @@ HTML page to serve.
 
 Status code returned.
 
+## `type: jwt`
+
+Verify JSON Web Tokens (JWS) and pass their claims on.
+
+### `middlewares.<name>.algorithms`
+
+**Type:** list of `RS256` · `RS384` · `RS512` · `PS256` · `PS384` · `PS512` · `ES256` · `ES384` · `EdDSA` · `HS256` · `HS384` · `HS512` · **Default:** `["RS256","ES256","EdDSA"]`
+
+Algorithms accepted. `none` does not exist here.
+
+### `middlewares.<name>.audiences`
+
+**Type:** list of `string` · **Required**
+
+Accepted `aud` values (one must match); `[any]` accepts every audience.
+
+### `middlewares.<name>.claims_to_headers`
+
+**Type:** map of names to `string`
+
+Request headers set from claims (`claim: header`). Client-sent copies are removed first.
+
+### `middlewares.<name>.forward_token`
+
+**Type:** `boolean` · **Default:** `true`
+
+Keep the token in the request to the backend.
+
+### `middlewares.<name>.hmac_secret`
+
+**Type:** `string`
+
+Shared secret for HS256/HS384/HS512 tokens, as a `${file:…}` or `${env:…}` reference.
+
+### `middlewares.<name>.issuer`
+
+**Type:** `string` · **Required**
+
+Required `iss`; `any` accepts every issuer.
+
+### `middlewares.<name>.jwks_file`
+
+**Type:** `string`
+
+A JSON Web Key Set file, read on every reload.
+
+### `middlewares.<name>.jwks_url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl)
+
+URL of a JSON Web Key Set, fetched in the background and cached for 10 minutes.
+
+### `middlewares.<name>.leeway`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
+
+Clock skew allowed for `exp` and `nbf`.
+
+### `middlewares.<name>.token`
+
+**Type:** object · **Default:** `{"cookie":null,"header":null,"query":null}`
+
+Where the token is read from; `Authorization: Bearer` when empty.
+
+#### `middlewares.<name>.token.cookie`
+
+**Type:** `string`
+
+A cookie.
+
+#### `middlewares.<name>.token.header`
+
+**Type:** `string`
+
+A header; `Authorization` values must start with `Bearer `.
+
+#### `middlewares.<name>.token.query`
+
+**Type:** `string`
+
+A query parameter (tokens in URLs end up in logs; prefer a header).
+
 ## `type: client_cert`
 
 Demand a verified client certificate, check its names and pass its identity on.

@@ -158,3 +158,10 @@ mod tests {
         super::config_loader(b"\xff\xfe");
     }
 }
+
+/// Verifies arbitrary text as a JWT against fixed keys; only refusals are expected.
+pub fn jwt_verify(data: &[u8]) {
+    if let Ok(text) = std::str::from_utf8(data) {
+        rdock_middleware::fuzz_jwt(text);
+    }
+}

@@ -46,11 +46,139 @@ pub enum Middleware {
     Errors(ErrorsConfig),
     /// Maintenance mode.
     Maintenance(MaintenanceConfig),
+    /// Verify JSON Web Tokens (JWS) and pass their claims on.
+    Jwt(JwtConfig),
     /// Demand a verified client certificate, check its names and pass its identity on.
     ClientCert(ClientCertConfig),
     /// Translate gRPC-Web from browsers into gRPC for the backend (binary
     /// `application/grpc-web`; the service needs `scheme: h2c` or `https`).
     GrpcWeb(GrpcWebConfig),
+}
+
+/// JWT validation (RFC 7519, RFC 8725).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct JwtConfig {
+    /// URL of a JSON Web Key Set, fetched in the background and cached for 10 minutes.
+    #[serde(default)]
+    pub jwks_url: Option<HttpUrl>,
+    /// A JSON Web Key Set file, read on every reload.
+    #[serde(default)]
+    pub jwks_file: Option<PathBuf>,
+    /// Shared secret for HS256/HS384/HS512 tokens, as a `${file:…}` or `${env:…}` reference.
+    #[serde(default)]
+    pub hmac_secret: Option<String>,
+    /// Required `iss`; `any` accepts every issuer.
+    pub issuer: String,
+    /// Accepted `aud` values (one must match); `[any]` accepts every audience.
+    pub audiences: Vec<String>,
+    /// Algorithms accepted. `none` does not exist here.
+    #[serde(default = "default_jwt_algorithms")]
+    pub algorithms: Vec<JwtAlgorithm>,
+    /// Clock skew allowed for `exp` and `nbf`.
+    #[serde(default = "sixty_seconds")]
+    pub leeway: Duration,
+    /// Where the token is read from; `Authorization: Bearer` when empty.
+    #[serde(default)]
+    pub token: TokenSource,
+    /// Request headers set from claims (`claim: header`). Client-sent copies are removed first.
+    #[serde(default)]
+    pub claims_to_headers: BTreeMap<String, String>,
+    /// Keep the token in the request to the backend.
+    #[serde(default = "crate::defaults::yes")]
+    pub forward_token: bool,
+}
+
+fn default_jwt_algorithms() -> Vec<JwtAlgorithm> {
+    vec![
+        JwtAlgorithm::Rs256,
+        JwtAlgorithm::Es256,
+        JwtAlgorithm::EdDsa,
+    ]
+}
+
+const fn sixty_seconds() -> Duration {
+    Duration::from_secs(60)
+}
+
+/// JWS algorithms (RFC 7518, RFC 8037).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+pub enum JwtAlgorithm {
+    /// RSASSA-PKCS1-v1_5 with SHA-256.
+    #[serde(rename = "RS256")]
+    Rs256,
+    /// RSASSA-PKCS1-v1_5 with SHA-384.
+    #[serde(rename = "RS384")]
+    Rs384,
+    /// RSASSA-PKCS1-v1_5 with SHA-512.
+    #[serde(rename = "RS512")]
+    Rs512,
+    /// RSASSA-PSS with SHA-256.
+    #[serde(rename = "PS256")]
+    Ps256,
+    /// RSASSA-PSS with SHA-384.
+    #[serde(rename = "PS384")]
+    Ps384,
+    /// RSASSA-PSS with SHA-512.
+    #[serde(rename = "PS512")]
+    Ps512,
+    /// ECDSA P-256 with SHA-256.
+    #[serde(rename = "ES256")]
+    Es256,
+    /// ECDSA P-384 with SHA-384.
+    #[serde(rename = "ES384")]
+    Es384,
+    /// Ed25519.
+    #[serde(rename = "EdDSA")]
+    EdDsa,
+    /// HMAC with SHA-256 (needs `hmac_secret`).
+    #[serde(rename = "HS256")]
+    Hs256,
+    /// HMAC with SHA-384.
+    #[serde(rename = "HS384")]
+    Hs384,
+    /// HMAC with SHA-512.
+    #[serde(rename = "HS512")]
+    Hs512,
+}
+
+impl JwtAlgorithm {
+    /// The `alg` value.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rs256 => "RS256",
+            Self::Rs384 => "RS384",
+            Self::Rs512 => "RS512",
+            Self::Ps256 => "PS256",
+            Self::Ps384 => "PS384",
+            Self::Ps512 => "PS512",
+            Self::Es256 => "ES256",
+            Self::Es384 => "ES384",
+            Self::EdDsa => "EdDSA",
+            Self::Hs256 => "HS256",
+            Self::Hs384 => "HS384",
+            Self::Hs512 => "HS512",
+        }
+    }
+
+    /// Whether this is an HMAC algorithm.
+    #[must_use]
+    pub fn is_hmac(self) -> bool {
+        matches!(self, Self::Hs256 | Self::Hs384 | Self::Hs512)
+    }
+}
+
+/// Where a JWT is read from. The first one present wins: header, cookie, query parameter.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TokenSource {
+    /// A header; `Authorization` values must start with `Bearer `.
+    pub header: Option<String>,
+    /// A cookie.
+    pub cookie: Option<String>,
+    /// A query parameter (tokens in URLs end up in logs; prefer a header).
+    pub query: Option<String>,
 }
 
 /// Client certificate checks of a route.

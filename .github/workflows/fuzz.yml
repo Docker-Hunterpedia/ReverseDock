@@ -32,7 +32,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [h1_framing, rules_parser, config_loader]
+        target: [h1_framing, rules_parser, config_loader, jwt_verify]
     env:
       SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'pull_request' && '120') || '600' }}
     steps:

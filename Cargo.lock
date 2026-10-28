@@ -3020,6 +3020,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
+ "base64 0.23.1",
  "brotli",
  "bytes",
  "clap",
@@ -3043,6 +3044,7 @@ dependencies = [
  "rdock-provider-docker",
  "rdock-proxy",
  "rdock-testkit",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "sd-notify",
@@ -3159,6 +3161,7 @@ dependencies = [
 name = "rdock-middleware"
 version = "0.3.0-alpha.2"
 dependencies = [
+ "arc-swap",
  "argon2",
  "async-trait",
  "base64 0.23.1",
@@ -3169,10 +3172,14 @@ dependencies = [
  "http",
  "md-5",
  "pingora",
+ "rdock-config",
  "rdock-limits",
  "rdock-model",
  "rdock-rules",
  "regex",
+ "ring",
+ "serde",
+ "serde_json",
  "sha1",
  "subtle",
  "tempfile",

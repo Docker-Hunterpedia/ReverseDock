@@ -1,0 +1,84 @@
+---
+title: JWT authentication
+description: Verify JSON Web Tokens from an identity provider with the jwt middleware, with keys from a JWKS URL, a file or a shared secret, and pass claims to backends.
+sidebar:
+  order: 6
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `jwt` middleware <Status since="v0.4" /> lets a request through only with a valid JSON Web Token, signed by your identity provider (Auth0, Keycloak, Entra ID, Cognito, Authentik, Zitadel…). The backend then receives verified claims instead of checking tokens itself.
+
+## The configuration
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [auth]
+middlewares:
+  auth:
+    type: jwt
+    jwks_url: https://idp.example.com/.well-known/jwks.json
+    issuer: https://idp.example.com/
+    audiences: [api]
+    claims_to_headers:
+      sub: X-User-Id
+      tenant: X-Tenant
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `jwks_url` | | The provider's key set (`https://`, or `http://` on loopback). Fetched in the background, cached for 10 minutes. |
+| `jwks_file` | | A key set file, read on every reload. |
+| `hmac_secret` | | For `HS256`/`HS384`/`HS512`: a `${file:…}` or `${env:…}` reference, at least 32 bytes. |
+| `issuer` | required | The `iss` a token must have; `any` turns the check off (with a warning). |
+| `audiences` | required | One must be in the token's `aud`; `[any]` turns the check off (with a warning). |
+| `algorithms` | `[RS256, ES256, EdDSA]` | Accepted algorithms. Also `RS384`, `RS512`, `PS256`, `PS384`, `PS512`, `ES384`, `HS256`, `HS384`, `HS512`. |
+| `leeway` | `60s` | Clock skew allowed for `exp` and `nbf`. |
+| `token` | `Authorization: Bearer` | Where the token is: `{ header: X-Token }`, `{ cookie: session }` or `{ query: access_token }`; the first present wins. |
+| `claims_to_headers` | | Request headers set from claims. Arrays are joined with `,`. |
+| `forward_token` | `true` | Keep the token header for the backend. |
+
+## What is checked
+
+ReverseDock follows the JWT best practices of [RFC 8725](https://www.rfc-editor.org/rfc/rfc8725.html) (checked 2026-10-29):
+
+- **The configuration picks the algorithms, never the token.** Each key verifies one algorithm only: the JWK's `alg`, or for keys without one, `RS256` for RSA, `ES256` for P-256, `ES384` for P-384 and `EdDSA` for Ed25519. `alg: none` does not exist, and an RSA public key can never be used as an HMAC secret.
+- **The signature** (RS, PS, ES, EdDSA or HS), with the key named by `kid`.
+- **`exp` is required**; `exp` and `nbf` are checked with `leeway`.
+- **`iss` and `aud`**, unless set to `any`.
+- Tokens with `crit` extensions are refused; `jku`, `x5u` and embedded keys are ignored, so a token can never bring its own key.
+
+A request without a token gets `401` with `WWW-Authenticate: Bearer`; a token that fails any check gets `401` with `error="invalid_token"`. The reason is in the debug log, never in the answer.
+
+Copies of the `claims_to_headers` headers sent by the client are removed before the check, so a backend can trust them. The `sub` claim appears as `user` in the access log.
+
+## Key rotation
+
+Keys from `jwks_url` are fetched again every 10 minutes (as Envoy's `jwt_authn` does), and at once, at most every 30 seconds, when a token names a `kid` the set does not have, so a new signing key is picked up quickly ([OpenID Connect Core §10.1.1](https://openid.net/specs/openid-connect-core-1_0.html#RotateSigKeys), checked 2026-10-29). A failed fetch keeps the keys already known and is retried after 30 seconds. Only the first requests after a start or reload wait for the first fetch, for at most 5 seconds; requests never wait for a refresh.
+
+## Limits by claim
+
+A `rate_limit` or `in_flight` middleware placed after `jwt` can count by a claim, so each user or tenant gets its own budget:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [auth, per-tenant]
+middlewares:
+  per-tenant:
+    type: rate_limit
+    key: "claim:tenant"
+    average: 100
+    period: 1s
+```
+
+## Related
+
+- [Forward auth](/docs/guides/forward-auth/) — when a login flow (OIDC) is needed rather than token checks
+- [Rate limiting](/docs/guides/rate-limiting/)
+- [Client certificates (mTLS)](/docs/guides/client-certificates/)
