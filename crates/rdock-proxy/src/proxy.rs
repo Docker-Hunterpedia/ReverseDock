@@ -80,6 +80,28 @@ pub struct RdockProxy {
 }
 
 impl RdockProxy {
+    /// Per-backend answer counts and time to response headers (M-OBS-02). Label values come
+    /// from the configuration and resolved addresses, so their number stays bounded.
+    fn observe_backend(&self, service: &ServiceRuntime, ctx: &RequestCtx, status: u16) {
+        let metrics = &self.shared.metrics;
+        if let Some(member) = &ctx.member {
+            metrics
+                .backend_requests
+                .with_label_values(&[
+                    &*service.name,
+                    &member.id,
+                    rdock_observability::status_class(status),
+                ])
+                .inc();
+        }
+        if let Some(started) = ctx.attempt_started {
+            metrics
+                .upstream_duration
+                .with_label_values(&[&*service.name])
+                .observe(started.elapsed().as_secs_f64());
+        }
+    }
+
     /// Feeds the outcome of an attempt to passive health.
     fn report(&self, service: &ServiceRuntime, member: Option<&Arc<Member>>, ok: bool) {
         let (Some(passive), Some(member)) = (&service.health.passive, member) else {
@@ -269,6 +291,10 @@ pub struct RequestCtx {
     grpc_web: Option<GrpcWebCtx>,
     /// Counted against `security.limits.max_in_flight`.
     slot: Option<InFlightSlot>,
+    /// OpenTelemetry spans of this request.
+    trace: Option<crate::trace::Trace>,
+    /// When the current upstream attempt started.
+    attempt_started: Option<Instant>,
     mw: Option<MwContext>,
     upstream: Option<Candidate>,
     member: Option<Arc<Member>>,
@@ -415,6 +441,8 @@ impl ProxyHttp for RdockProxy {
             mirror: None,
             grpc_web: None,
             slot: None,
+            trace: None,
+            attempt_started: None,
             mw: None,
             upstream: None,
             member: None,
@@ -467,6 +495,15 @@ impl ProxyHttp for RdockProxy {
             .or_else(|| req.uri.authority().map(|a| a.as_str().to_owned()))
             .unwrap_or_default();
         ctx.host = normalize_host(rdock_middleware_host(&ctx.authority));
+        if let Some(tracer) = &ctx.runtime.tracer {
+            ctx.trace = Some(crate::trace::Trace::start(
+                tracer,
+                req,
+                ctx.tls,
+                session.is_http2(),
+                &ctx.host,
+            ));
+        }
         req.uri.path().clone_into(&mut ctx.path);
         ctx.query_len = req.uri.query().map_or(0, str::len);
         let peer = ctx.peer.unwrap_or(IpAddr::from([0, 0, 0, 0]));
@@ -562,6 +599,9 @@ impl ProxyHttp for RdockProxy {
         session
             .req_header_mut()
             .insert_header("x-request-id", &*ctx.request_id)?;
+        if let Some(trace) = &ctx.trace {
+            trace.route(session.req_header().method.as_str(), &route.name, client_ip);
+        }
         start_route(session, ctx, &route)?;
         ctx.route = Some(route.clone());
         let mut cx = MwContext::new(
@@ -640,6 +680,13 @@ impl ProxyHttp for RdockProxy {
         ctx.upstream = Some(selected.member.candidate.clone());
         ctx.member = Some(selected.member);
         ctx.set_cookie = selected.set_cookie;
+        ctx.attempt_started = Some(Instant::now());
+        if let Some(trace) = ctx.trace.as_mut()
+            && let Some(candidate) = &ctx.upstream
+        {
+            let host = backend_authority(service.scheme, candidate);
+            trace.attempt(session.req_header(), candidate, &host, ctx.retries);
+        }
         Ok(Box::new(peer))
     }
 
@@ -661,6 +708,9 @@ impl ProxyHttp for RdockProxy {
                 backend_authority(service.scheme, candidate),
             )?;
         }
+        if let Some(trace) = &ctx.trace {
+            trace.inject(upstream_request);
+        }
         Ok(())
     }
 
@@ -672,9 +722,13 @@ impl ProxyHttp for RdockProxy {
     ) -> pingora::Result<()> {
         strip_response_hop_by_hop(upstream_response);
         let status = upstream_response.status.as_u16();
+        if let Some(trace) = ctx.trace.as_mut() {
+            trace.response(status);
+        }
         let Some(service) = ctx.service.clone() else {
             return Ok(());
         };
+        self.observe_backend(&service, ctx, status);
         let failed = service
             .health
             .passive
@@ -807,6 +861,9 @@ impl ProxyHttp for RdockProxy {
                 .upstream_errors
                 .with_label_values(&[&*service.name, kind])
                 .inc();
+            if let Some(trace) = ctx.trace.as_mut() {
+                trace.failed(kind);
+            }
             self.report(service, ctx.member.as_ref(), false);
         }
         let mut e = e;
@@ -834,6 +891,9 @@ impl ProxyHttp for RdockProxy {
             && let Some(service) = &ctx.service
         {
             self.report(service, ctx.member.as_ref(), false);
+        }
+        if let Some(trace) = ctx.trace.as_mut() {
+            trace.failed(e.etype().as_str());
         }
         let mut e = e.more_context(format!("Peer: {peer}"));
         if std::mem::take(&mut ctx.status_retry) {
@@ -927,6 +987,9 @@ impl ProxyHttp for RdockProxy {
         let status = session
             .response_written()
             .map_or_else(|| e.map_or(0, error_status), |r| r.status.as_u16());
+        if let Some(mut trace) = ctx.trace.take() {
+            trace.finish(status);
+        }
         let route = ctx.route.as_ref();
         let route_name = route.map_or("", |r| &*r.name);
         let service = ctx.service.clone();

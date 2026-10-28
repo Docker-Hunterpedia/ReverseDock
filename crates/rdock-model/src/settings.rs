@@ -110,13 +110,16 @@ pub struct Alerts {
 }
 
 /// Access log settings.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct AccessLog {
     /// Output format.
     pub format: LogFormat,
     /// Header names whose values are replaced by `***`.
     pub redact: Vec<String>,
+    /// Share of successful requests (status below 400) that are logged, from 0 to 1. Errors
+    /// and failed requests are always logged.
+    pub sample: f64,
 }
 
 impl Default for AccessLog {
@@ -131,6 +134,7 @@ impl Default for AccessLog {
             ]
             .map(str::to_owned)
             .to_vec(),
+            sample: 1.0,
         }
     }
 }

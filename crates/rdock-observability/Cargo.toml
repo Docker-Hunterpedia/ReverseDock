@@ -11,6 +11,19 @@ homepage.workspace = true
 publish.workspace = true
 
 [dependencies]
+async-trait.workspace = true
+bytes.workspace = true
+fastrand.workspace = true
+http.workspace = true
+http-body-util.workspace = true
+hyper-rustls.workspace = true
+hyper-util.workspace = true
+opentelemetry.workspace = true
+opentelemetry-http.workspace = true
+opentelemetry-otlp.workspace = true
+opentelemetry_sdk.workspace = true
+tokio.workspace = true
+url.workspace = true
 prometheus.workspace = true
 rdock-model.workspace = true
 serde.workspace = true

@@ -27,12 +27,9 @@ fn validates_the_examples() {
     ]);
     assert!(output.status.success(), "{}", stdout(&output));
     let text = stdout(&output);
+    // Every setting of the full example is implemented, so it validates without warnings.
     assert!(
-        text.contains("examples/config/rdock.full.yaml: valid, "),
-        "{text}"
-    );
-    assert!(
-        text.contains("warning: observability.tracing: OpenTelemetry tracing: not supported in this version (planned for v0.4)"),
+        text.contains("examples/config/rdock.full.yaml: valid\n"),
         "{text}"
     );
     let quickstart = rdock(&[

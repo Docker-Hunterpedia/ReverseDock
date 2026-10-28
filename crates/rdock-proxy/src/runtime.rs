@@ -41,6 +41,8 @@ pub struct Runtime {
     pub cert_expiry: Vec<(String, i64)>,
     /// Every service, for health checks.
     pub services: BTreeMap<String, Arc<ServiceRuntime>>,
+    /// OpenTelemetry tracer, when `observability.tracing` is set.
+    pub tracer: Option<Arc<rdock_observability::Tracer>>,
 }
 
 impl Runtime {
@@ -55,12 +57,14 @@ impl Runtime {
             access_log: Arc::new(AccessLog::new(&rdock_model::settings::AccessLog {
                 format: rdock_model::settings::LogFormat::Off,
                 redact: Vec::new(),
+                sample: 1.0,
             })),
             certificates: Arc::new(rdock_tls::CertIndex::default()),
             cert_requests: Vec::new(),
             local_cert_names: Vec::new(),
             cert_expiry: Vec::new(),
             services: BTreeMap::new(),
+            tracer: None,
         }
     }
 }

@@ -40,12 +40,5 @@
     "what": "The Kubernetes provider",
     "value": false,
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  kubernetes: {}\n"
-  },
-  {
-    "path": "observability.tracing",
-    "planned": "v0.4",
-    "what": "OpenTelemetry tracing",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nobservability:\n  tracing: { otlp: \"http://tempo:4318\" }\n"
   }
 ]
