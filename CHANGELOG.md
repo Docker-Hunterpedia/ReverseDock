@@ -4,6 +4,10 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Added
+- **Balancing policies** (M-LB-01, M-LB-02, ADR-0022): `least_requests` and `least_conn` (fewest requests in flight relative to the weight), `p2c` (power of two choices), and consistent hashing of the client IP, a header or a cookie (`ip_hash`, `header_hash`, `cookie_hash`) on a ketama-style ring that every instance computes the same way. Per-backend state is shared across reloads.
+- **Sticky sessions** (M-LB-03): `sticky.cookie` pins a client to a backend with an HMAC-SHA256-signed cookie that never contains the backend address; `Secure`, `HttpOnly` and `SameSite=Lax` by default; the key comes from `secret` or `$RDOCK_DATA_DIR/sticky.key`, and `previous_secrets` keeps cookies valid across a key rotation.
+
 ## [0.3.0-alpha.2] — v0.3 "Automatic HTTPS"
 
 ### Fixed

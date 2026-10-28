@@ -62,6 +62,32 @@ pub(crate) fn admin_token(data_dir: &Path, create: bool) -> anyhow::Result<Strin
     }
 }
 
+/// The key that signs sticky cookies of services without their own secret:
+/// `$RDOCK_DATA_DIR/sticky.key` (hex, created on first start, readable by the owner only), so
+/// cookies stay valid across restarts.
+fn sticky_key(data_dir: &Path) -> anyhow::Result<Vec<u8>> {
+    use std::fmt::Write;
+    let path = data_dir.join("sticky.key");
+    match std::fs::read_to_string(&path) {
+        Ok(text) if text.trim().len() >= 32 => Ok(text.trim().as_bytes().to_vec()),
+        Ok(_) => anyhow::bail!("the sticky-cookie key {} is too short", path.display()),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let key = rdock_proxy::random_key()
+                .iter()
+                .fold(String::new(), |mut hex, b| {
+                    let _ = write!(hex, "{b:02x}");
+                    hex
+                });
+            rdock_config::state::write_atomic(&path, format!("{key}\n").as_bytes())
+                .with_context(|| format!("writing the sticky-cookie key {}", path.display()))?;
+            Ok(key.into_bytes())
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("reading the sticky-cookie key {}", path.display()))
+        }
+    }
+}
+
 pub(crate) fn token_path(data_dir: &Path) -> PathBuf {
     data_dir.join("admin").join("token")
 }
@@ -106,7 +132,9 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
-    let plane = Arc::new(DataPlane::new(metrics, Runtime::empty()));
+    let plane = Arc::new(
+        DataPlane::new(metrics, Runtime::empty()).with_sticky_key(sticky_key(&args.data_dir)?),
+    );
     let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
 
     tracing::info!(version = VERSION, commit = COMMIT, config = %source.describe(), "starting rdock");

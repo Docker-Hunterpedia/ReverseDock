@@ -15,4 +15,4 @@ pub mod upstream;
 pub use compile::{CompileEnv, Compiled, compile};
 pub use gate::Mode;
 pub use runtime::Runtime;
-pub use server::{ApplyError, DataPlane, ListenerStatus};
+pub use server::{ApplyError, DataPlane, ListenerStatus, random_key};

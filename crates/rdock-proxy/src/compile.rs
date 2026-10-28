@@ -7,13 +7,13 @@ use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
-use rdock_balancer::{Balancer, RoundRobin};
+use arc_swap::{ArcSwap, ArcSwapOption};
+use rdock_balancer::{Balancer, HashRing, Registry, RoundRobin, StickyKeys};
 use rdock_middleware::{BuildEnv, HttpClient, Middleware, ServiceClient};
 use rdock_model::config::{Config, Listener, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::route::{MatchSpec, Route, RouteTls, TlsMode};
-use rdock_model::service::{LbPolicy, Service};
+use rdock_model::service::{LbPolicy, SameSite, Service, Sticky};
 use rdock_model::values::{BackendAddress, TrustedProxy};
 use rdock_observability::AccessLog;
 use rdock_rules::Expr;
@@ -23,8 +23,8 @@ use crate::forwarded::{ClientIpPolicy, CloudflareRanges};
 use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
-    BackendRuntime, Endpoint, HttpsRedirect, ListenerRuntime, RouteRuntime, Runtime,
-    ServiceRuntime, UpstreamTls,
+    BackendRuntime, Endpoint, HashOn, HttpsRedirect, ListenerRuntime, RouteRuntime, Runtime,
+    ServiceRuntime, StickyRuntime, UpstreamTls,
 };
 use crate::upstream::{Dns, ServiceFetcher};
 
@@ -42,6 +42,10 @@ pub struct CompileEnv<'a> {
     pub previous: Option<&'a Runtime>,
     /// Cloudflare's edge ranges, trusted when `trusted_proxies` contains `cloudflare`.
     pub cloudflare: &'a CloudflareRanges,
+    /// Per-backend state shared across generations.
+    pub backends: &'a Registry,
+    /// Signs sticky cookies of services without their own `secret`.
+    pub sticky_key: &'a [u8],
 }
 
 /// The result of compilation.
@@ -62,7 +66,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &certs,
         config.defaults.certificate.as_deref(),
     ));
-    let services = compile_services(config, env.dns, &mut out);
+    let services = compile_services(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
     let mut auto_tls = AutoTls {
         certs: &index,
@@ -166,13 +170,13 @@ fn load_certificates(config: &Config, out: &mut Vec<Diagnostic>) -> Vec<LoadedCe
 
 fn compile_services(
     config: &Config,
-    dns: &Dns,
+    env: &CompileEnv<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> HashMap<String, Arc<ServiceRuntime>> {
     let mut services = HashMap::new();
     for (name, service) in &config.services {
         let path = path_key("services", name);
-        match compile_service(name, service, dns) {
+        match compile_service(name, service, env) {
             Ok(runtime) => {
                 services.insert(name.clone(), Arc::new(runtime));
             }
@@ -182,7 +186,12 @@ fn compile_services(
     services
 }
 
-fn compile_service(name: &str, service: &Service, dns: &Dns) -> Result<ServiceRuntime, String> {
+fn compile_service(
+    name: &str,
+    service: &Service,
+    env: &CompileEnv<'_>,
+) -> Result<ServiceRuntime, String> {
+    let dns = env.dns;
     let backends = service
         .backends
         .iter()
@@ -223,10 +232,14 @@ fn compile_service(name: &str, service: &Service, dns: &Dns) -> Result<ServiceRu
         name: Arc::from(name),
         scheme: service.scheme,
         backends,
-        balancer: match service.load_balancer.policy {
-            LbPolicy::Random => Balancer::Random,
-            _ => Balancer::RoundRobin(RoundRobin::default()),
+        balancer: balancer(service.load_balancer.policy),
+        hash_on: hash_on(service),
+        sticky: match &service.sticky {
+            Some(sticky) => Some(compile_sticky(sticky, env.sticky_key)?),
+            None => None,
         },
+        pool: env.backends.pool(name),
+        members: ArcSwapOption::empty(),
         timeouts: service.timeouts,
         tls: UpstreamTls {
             verify,
@@ -235,6 +248,69 @@ fn compile_service(name: &str, service: &Service, dns: &Dns) -> Result<ServiceRu
             group_key: hasher.finish(),
         },
         pass_host_header: service.pass_host_header,
+    })
+}
+
+fn balancer(policy: LbPolicy) -> Balancer {
+    match policy {
+        LbPolicy::RoundRobin => Balancer::RoundRobin(RoundRobin::default()),
+        LbPolicy::Random => Balancer::Random,
+        LbPolicy::LeastConn | LbPolicy::LeastRequests => Balancer::LeastRequests,
+        LbPolicy::P2c => Balancer::P2c,
+        LbPolicy::IpHash | LbPolicy::HeaderHash | LbPolicy::CookieHash => {
+            Balancer::Hash(Box::<HashRing>::default())
+        }
+    }
+}
+
+fn hash_on(service: &Service) -> HashOn {
+    let name = service.load_balancer.hash_on.as_deref();
+    match service.load_balancer.policy {
+        LbPolicy::IpHash => HashOn::ClientIp,
+        LbPolicy::HeaderHash => name
+            .and_then(|n| http::HeaderName::try_from(n).ok())
+            .map_or(HashOn::Nothing, HashOn::Header),
+        LbPolicy::CookieHash => name.map_or(HashOn::Nothing, |n| HashOn::Cookie(n.to_owned())),
+        _ => HashOn::Nothing,
+    }
+}
+
+fn compile_sticky(sticky: &Sticky, default_key: &[u8]) -> Result<StickyRuntime, String> {
+    let resolve = |reference: &str| {
+        rdock_config::interpolate::expand(reference, &rdock_config::System)
+            .map(std::borrow::Cow::into_owned)
+            .map_err(|e| format!("sticky.cookie: {e}"))
+    };
+    let cookie = &sticky.cookie;
+    let current = match &cookie.secret {
+        Some(reference) => resolve(reference)?.into_bytes(),
+        None => default_key.to_vec(),
+    };
+    let previous = cookie
+        .previous_secrets
+        .iter()
+        .map(|r| resolve(r).map(String::into_bytes))
+        .collect::<Result<Vec<_>, _>>()?;
+    let previous: Vec<&[u8]> = previous.iter().map(Vec::as_slice).collect();
+    let mut attributes = format!("; Path={}", cookie.path);
+    if let Some(max_age) = cookie.max_age {
+        attributes = format!("{attributes}; Max-Age={}", max_age.as_std().as_secs());
+    }
+    if cookie.secure {
+        attributes.push_str("; Secure");
+    }
+    if cookie.http_only {
+        attributes.push_str("; HttpOnly");
+    }
+    attributes.push_str(match cookie.same_site {
+        SameSite::Lax => "; SameSite=Lax",
+        SameSite::Strict => "; SameSite=Strict",
+        SameSite::None => "; SameSite=None",
+    });
+    Ok(StickyRuntime {
+        name: cookie.name.clone(),
+        keys: StickyKeys::new(&current, &previous),
+        attributes,
     })
 }
 

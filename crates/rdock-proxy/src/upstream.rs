@@ -6,7 +6,7 @@
 //! lookup keeps the previous addresses.
 
 use std::collections::HashMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, SocketAddr};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
 use std::time::Duration;
 
@@ -14,11 +14,12 @@ use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use pingora::http::RequestHeader;
 use pingora::upstreams::peer::HttpPeer;
+use rdock_balancer::Choice;
 use rdock_middleware::{FetchError, Fetched, HttpClient, ServiceClient};
 use rdock_model::route::RouteTimeouts;
 use rdock_model::service::Scheme;
 
-use crate::runtime::{Candidate, ServiceRuntime};
+use crate::runtime::{Candidate, HashOn, Member, ServiceRuntime, StickyRuntime};
 
 /// How often DNS names of backends are resolved again.
 pub const DNS_REFRESH: Duration = Duration::from_secs(10);
@@ -93,13 +94,103 @@ async fn resolve_all(cells: Vec<((String, u16), Arc<Cell>)>) {
     while tasks.join_next().await.is_some() {}
 }
 
-/// Picks a backend address of `service`.
+/// The backend chosen for a request.
+#[derive(Debug)]
+pub struct Selected {
+    /// The backend.
+    pub member: Arc<Member>,
+    /// `Set-Cookie` value to send, when the sticky cookie is missing, stale or names a backend
+    /// that is gone.
+    pub set_cookie: Option<String>,
+}
+
+/// What a request contributes to backend selection.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct RequestKey<'a> {
+    /// The request.
+    pub request: Option<&'a RequestHeader>,
+    /// The client address.
+    pub client_ip: Option<IpAddr>,
+}
+
+/// Picks a backend of `service` for a request.
 #[must_use]
-pub fn select(service: &ServiceRuntime) -> Option<Candidate> {
-    let candidates = service.candidates();
-    let weights: Vec<u32> = candidates.iter().map(|(_, w)| *w).collect();
-    let index = service.balancer.pick(&weights)?;
-    candidates.into_iter().nth(index).map(|(c, _)| c)
+pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected> {
+    let members = service.members();
+    if let (Some(sticky), Some(request)) = (&service.sticky, key.request)
+        && let Some(found) = sticky_member(sticky, &members, request)
+    {
+        return Some(found);
+    }
+    let choices: Vec<Choice<'_>> = members
+        .iter()
+        .map(|m| Choice {
+            id: &m.id,
+            weight: m.weight,
+            in_flight: m.state.in_flight(),
+        })
+        .collect();
+    let hash = hash_input(&service.hash_on, key);
+    let index = service.balancer.pick(&choices, hash.as_deref())?;
+    let member = members.get(index)?.clone();
+    let set_cookie = service.sticky.as_ref().and_then(|sticky| {
+        member
+            .sticky
+            .as_ref()
+            .map(|token| format!("{}={token}{}", sticky.name, sticky.attributes))
+    });
+    Some(Selected { member, set_cookie })
+}
+
+/// The backend a valid sticky cookie names, if it is still in the pool.
+fn sticky_member(
+    sticky: &StickyRuntime,
+    members: &[Arc<Member>],
+    request: &RequestHeader,
+) -> Option<Selected> {
+    let value = cookie(request, &sticky.name)?;
+    let live = || members.iter().filter(|m| m.weight > 0);
+    if let Some(member) = live().find(|m| m.sticky.as_deref() == Some(value)) {
+        return Some(Selected {
+            member: member.clone(),
+            set_cookie: None,
+        });
+    }
+    // Cookies from before a key rotation name the right backend but get a fresh value.
+    let member = live().find(|m| sticky.keys.matches(value, &m.id).is_some())?;
+    Some(Selected {
+        member: member.clone(),
+        set_cookie: member
+            .sticky
+            .as_ref()
+            .map(|token| format!("{}={token}{}", sticky.name, sticky.attributes)),
+    })
+}
+
+fn hash_input(on: &HashOn, key: RequestKey<'_>) -> Option<Vec<u8>> {
+    match on {
+        HashOn::Nothing => None,
+        HashOn::ClientIp => key.client_ip.map(|ip| ip.to_string().into_bytes()),
+        HashOn::Header(name) => key
+            .request?
+            .headers
+            .get(name)
+            .map(|v| v.as_bytes().to_vec()),
+        HashOn::Cookie(name) => cookie(key.request?, name).map(|v| v.as_bytes().to_vec()),
+    }
+}
+
+/// The value of cookie `name` in the request's `Cookie` headers.
+fn cookie<'a>(request: &'a RequestHeader, name: &str) -> Option<&'a str> {
+    request
+        .headers
+        .get_all(http::header::COOKIE)
+        .iter()
+        .filter_map(|v| v.to_str().ok())
+        .flat_map(|v| v.split(';'))
+        .filter_map(|pair| pair.trim().split_once('='))
+        .find(|(n, _)| *n == name)
+        .map(|(_, v)| v.trim_matches('"'))
 }
 
 /// The Pingora peer for one attempt.
@@ -163,11 +254,16 @@ pub struct ServiceFetcher {
 #[async_trait]
 impl ServiceClient for ServiceFetcher {
     async fn send(&self, req: RequestHeader) -> Result<Fetched, FetchError> {
-        let candidate = select(&self.service).ok_or_else(|| {
+        let selected = select(&self.service, RequestKey::default()).ok_or_else(|| {
             FetchError::Connect(format!("service `{}` has no backend", self.service.name))
         })?;
-        let peer = peer(&self.service, &candidate, &RouteTimeouts::default())
-            .map_err(|e| FetchError::Connect(e.to_string()))?;
+        let _in_flight = selected.member.state.begin();
+        let peer = peer(
+            &self.service,
+            &selected.member.candidate,
+            &RouteTimeouts::default(),
+        )
+        .map_err(|e| FetchError::Connect(e.to_string()))?;
         self.client
             .send(&peer, req, self.service.timeouts.read.as_std(), 1024 * 1024)
             .await

@@ -24,6 +24,8 @@ const SECRETS: &[&[&str]] = &[
     &["acme", "dns_providers", "*", "token"],
     &["observability", "alerts", "webhook", "token"],
     &["certificates", "*", "key_password"],
+    &["services", "*", "sticky", "cookie", "secret"],
+    &["services", "*", "sticky", "cookie", "previous_secrets", "*"],
 ];
 
 /// Locations taken literally.

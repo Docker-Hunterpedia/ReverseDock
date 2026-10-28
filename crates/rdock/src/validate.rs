@@ -50,6 +50,7 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
             if !diagnostics.iter().any(Diagnostic::is_error) {
                 let dns = rdock_proxy::upstream::Dns::default();
                 let cloudflare = rdock_proxy::forwarded::CloudflareRanges::default();
+                let backends = rdock_balancer::Registry::default();
                 let compiled = compile(
                     &config,
                     &CompileEnv {
@@ -59,6 +60,8 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
                         client: Arc::new(rdock_middleware::HttpClient::default()),
                         previous: None,
                         cloudflare: &cloudflare,
+                        backends: &backends,
+                        sticky_key: b"validate",
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);

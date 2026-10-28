@@ -1017,12 +1017,12 @@
           "const": "random"
         },
         {
-          "description": "Fewest open connections.",
+          "description": "Fewest requests in flight relative to the weight (an HTTP/1.1 request holds one\nconnection, so this is also the least-connections policy).",
           "type": "string",
           "const": "least_conn"
         },
         {
-          "description": "Fewest in-flight requests.",
+          "description": "Fewest requests in flight relative to the weight.",
           "type": "string",
           "const": "least_requests"
         },
@@ -1032,7 +1032,7 @@
           "const": "p2c"
         },
         {
-          "description": "Consistent hash of the client IP.",
+          "description": "Consistent hash of the client IP (Traefik's `hrw`).",
           "type": "string",
           "const": "ip_hash"
         },
@@ -2593,10 +2593,31 @@
           "description": "Cookie name.",
           "type": "string"
         },
+        "path": {
+          "description": "`Path` attribute.",
+          "type": "string",
+          "default": "/"
+        },
+        "previous_secrets": {
+          "description": "Keys of earlier rotations: cookies signed with them stay valid and are replaced.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "same_site": {
           "description": "`SameSite` attribute.",
           "$ref": "#/$defs/SameSite",
           "default": "lax"
+        },
+        "secret": {
+          "description": "Key that signs the cookie, as a `${file:…}` or `${env:…}` reference. Without it, a key is\ngenerated once and kept in `$RDOCK_DATA_DIR/sticky.key`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "secure": {
           "description": "Send only over HTTPS.",

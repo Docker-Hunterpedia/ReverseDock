@@ -12,6 +12,8 @@ publish.workspace = true
 
 [dependencies]
 fastrand.workspace = true
+ring.workspace = true
+subtle.workspace = true
 
 [lints]
 workspace = true

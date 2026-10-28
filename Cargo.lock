@@ -3032,6 +3032,7 @@ dependencies = [
  "notify-debouncer-full",
  "rdock-acme",
  "rdock-admin",
+ "rdock-balancer",
  "rdock-cloudflare",
  "rdock-config",
  "rdock-middleware",
@@ -3102,6 +3103,8 @@ name = "rdock-balancer"
 version = "0.3.0-alpha.2"
 dependencies = [
  "fastrand",
+ "ring",
+ "subtle",
 ]
 
 [[package]]
@@ -3262,6 +3265,7 @@ dependencies = [
  "rdock-rules",
  "rdock-tls",
  "regex",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde",

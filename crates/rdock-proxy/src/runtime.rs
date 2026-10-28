@@ -5,8 +5,8 @@ use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
 
-use arc_swap::ArcSwap;
-use rdock_balancer::Balancer;
+use arc_swap::{ArcSwap, ArcSwapOption};
+use rdock_balancer::{BackendState, Balancer, Pool, StickyKeys};
 use rdock_middleware::Middleware;
 use rdock_model::config::{ListenerTimeouts, TlsPolicy};
 use rdock_model::route::RouteTimeouts;
@@ -117,6 +117,14 @@ pub struct ServiceRuntime {
     pub backends: Vec<BackendRuntime>,
     /// Backend selection.
     pub balancer: Balancer,
+    /// What hash policies hash.
+    pub hash_on: HashOn,
+    /// Session affinity.
+    pub sticky: Option<StickyRuntime>,
+    /// Per-backend state, shared with other generations.
+    pub pool: Arc<Pool>,
+    /// Backend addresses with their state, rebuilt when DNS changes an address list.
+    pub(crate) members: ArcSwapOption<Members>,
     /// Upstream timeouts.
     pub timeouts: Timeouts,
     /// TLS to the backends.
@@ -175,28 +183,115 @@ pub struct BackendRuntime {
     pub weight: u32,
 }
 
+/// The request value that hash policies hash.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum HashOn {
+    /// No hashing (the policy is not a hash policy).
+    Nothing,
+    /// The client IP.
+    ClientIp,
+    /// A request header.
+    Header(http::HeaderName),
+    /// A cookie.
+    Cookie(String),
+}
+
+/// Sticky-session settings, compiled.
+#[derive(Debug)]
+pub struct StickyRuntime {
+    /// Cookie name.
+    pub name: String,
+    /// Signing keys.
+    pub keys: StickyKeys,
+    /// `; Path=…; Secure; …`, appended to `name=value` in `Set-Cookie`.
+    pub attributes: String,
+}
+
+/// One backend address that can be picked, with its shared state.
+#[derive(Debug)]
+pub struct Member {
+    /// Where to connect.
+    pub candidate: Candidate,
+    /// Identity: the resolved address, or `unix:` and the socket path.
+    pub id: String,
+    /// Relative weight.
+    pub weight: u32,
+    /// State shared across generations.
+    pub state: Arc<BackendState>,
+    /// The sticky cookie value naming this backend, when the service is sticky.
+    pub sticky: Option<String>,
+}
+
+/// The member list and the DNS address lists it was built from.
+#[derive(Debug)]
+pub(crate) struct Members {
+    sources: Vec<Arc<Vec<SocketAddr>>>,
+    list: Arc<[Arc<Member>]>,
+}
+
 impl ServiceRuntime {
-    /// Weighted candidates: every resolved address of every backend, with the backend's weight.
+    /// Every resolved address of every backend, with the backend's weight and shared state.
     #[must_use]
-    pub fn candidates(&self) -> Vec<(Candidate, u32)> {
-        let mut out = Vec::new();
+    pub fn members(&self) -> Arc<[Arc<Member>]> {
+        let sources: Vec<Arc<Vec<SocketAddr>>> = self
+            .backends
+            .iter()
+            .filter_map(|b| match &b.endpoint {
+                Endpoint::Tcp { addrs, .. } => Some(addrs.load_full()),
+                Endpoint::Unix(_) => None,
+            })
+            .collect();
+        if let Some(cached) = self.members.load().as_ref()
+            && cached.sources.len() == sources.len()
+            && cached
+                .sources
+                .iter()
+                .zip(&sources)
+                .all(|(a, b)| Arc::ptr_eq(a, b))
+        {
+            return cached.list.clone();
+        }
+        let list = self.build_members(&sources);
+        self.members.store(Some(Arc::new(Members {
+            sources,
+            list: list.clone(),
+        })));
+        list
+    }
+
+    fn build_members(&self, sources: &[Arc<Vec<SocketAddr>>]) -> Arc<[Arc<Member>]> {
+        let mut resolved = sources.iter();
+        let mut list = Vec::new();
         for backend in &self.backends {
-            match &backend.endpoint {
-                Endpoint::Tcp { host, addrs, .. } => {
-                    for addr in addrs.load().iter() {
-                        out.push((
-                            Candidate::Tcp {
+            let candidates: Vec<Candidate> = match &backend.endpoint {
+                Endpoint::Tcp { host, .. } => resolved
+                    .next()
+                    .map(|addrs| {
+                        addrs
+                            .iter()
+                            .map(|addr| Candidate::Tcp {
                                 host: host.clone(),
                                 addr: *addr,
-                            },
-                            backend.weight,
-                        ));
-                    }
-                }
-                Endpoint::Unix(path) => out.push((Candidate::Unix(path.clone()), backend.weight)),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                Endpoint::Unix(path) => vec![Candidate::Unix(path.clone())],
+            };
+            for candidate in candidates {
+                let id = candidate.to_string();
+                list.push(Arc::new(Member {
+                    state: self.pool.state(&id),
+                    sticky: self.sticky.as_ref().map(|s| s.keys.token(&id)),
+                    candidate,
+                    id,
+                    weight: backend.weight,
+                }));
             }
         }
-        out
+        self.pool
+            .retain(&list.iter().map(|m| m.id.as_str()).collect());
+        list.into()
     }
 }
 

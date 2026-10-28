@@ -28,6 +28,7 @@ clap = { workspace = true, features = ["env"] }
 notify.workspace = true
 notify-debouncer-full.workspace = true
 rdock-acme.workspace = true
+rdock-balancer.workspace = true
 rdock-admin.workspace = true
 rdock-cloudflare.workspace = true
 rdock-config.workspace = true
