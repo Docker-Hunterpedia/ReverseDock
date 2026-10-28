@@ -267,6 +267,15 @@ impl Validator<'_> {
             ] {
                 self.check_not_zero(&format!("{path}.timeouts.{field}"), value.is_zero());
             }
+            if let Some(auth) = listener.tls.as_ref().and_then(|t| t.client_auth.as_ref())
+                && auth.ca_files.is_empty()
+                && !auth.cloudflare
+            {
+                self.error(
+                    format!("{path}.tls.client_auth"),
+                    "list `ca_files` or set `cloudflare: true`: certificates are always verified",
+                );
+            }
             let protocol = listener.effective_protocol();
             if listener.tls.is_some()
                 && matches!(protocol, ListenerProtocol::Http | ListenerProtocol::Udp)
@@ -902,6 +911,22 @@ impl Validator<'_> {
                     }
                 }
                 Middleware::GrpcWeb(_) => {}
+                Middleware::ClientCert(c) => {
+                    for (i, pattern) in c.allow.iter().enumerate() {
+                        if pattern.trim().is_empty() {
+                            self.error(
+                                path_index(&format!("{path}.allow"), i),
+                                "a pattern is empty",
+                            );
+                        }
+                    }
+                    if !c.required && !c.allow.is_empty() {
+                        self.warning(
+                            format!("{path}.allow"),
+                            "`allow` is checked only when a certificate is sent, because `required` is false",
+                        );
+                    }
+                }
                 Middleware::InFlight(f) => {
                     if f.amount == 0 {
                         self.error(format!("{path}.amount"), "must be at least 1");

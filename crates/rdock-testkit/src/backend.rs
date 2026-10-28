@@ -53,6 +53,44 @@ impl Backend {
         Self::start_with(name, None).await
     }
 
+    /// A TLS backend offering h2 and HTTP/1.1 that requires a client certificate signed by
+    /// `client_ca_pem`.
+    pub async fn start_mtls(
+        name: &str,
+        cert_pem: &str,
+        key_pem: &str,
+        client_ca_pem: &str,
+    ) -> Self {
+        use rustls_pki_types::pem::PemObject;
+        let mut roots = rustls::RootCertStore::empty();
+        for der in rustls_pki_types::CertificateDer::pem_slice_iter(client_ca_pem.as_bytes()) {
+            roots.add(der.unwrap()).unwrap();
+        }
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let verifier = rustls::server::WebPkiClientVerifier::builder_with_provider(
+            Arc::new(roots),
+            provider.clone(),
+        )
+        .build()
+        .unwrap();
+        let certs = rustls_pki_types::CertificateDer::pem_slice_iter(cert_pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let key = rustls_pki_types::PrivateKeyDer::from_pem_slice(key_pem.as_bytes()).unwrap();
+        let mut config = rustls::ServerConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .unwrap()
+            .with_client_cert_verifier(verifier)
+            .with_single_cert(certs, key)
+            .unwrap();
+        config.alpn_protocols = vec![b"h2".to_vec(), b"http/1.1".to_vec()];
+        Self::start_with(
+            name,
+            Some(tokio_rustls::TlsAcceptor::from(Arc::new(config))),
+        )
+        .await
+    }
+
     /// A TLS backend offering h2 and HTTP/1.1.
     pub async fn start_tls(name: &str, cert_pem: &str, key_pem: &str) -> Self {
         use rustls_pki_types::pem::PemObject;

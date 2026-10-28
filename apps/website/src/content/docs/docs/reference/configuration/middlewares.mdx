@@ -454,6 +454,32 @@ HTML page to serve.
 
 Status code returned.
 
+## `type: client_cert`
+
+Demand a verified client certificate, check its names and pass its identity on.
+
+### `middlewares.<name>.allow`
+
+**Type:** list of `string`
+
+Names a certificate must have one of: its common name or a DNS, URI or email SAN. `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+
+### `middlewares.<name>.forward`
+
+**Type:** `none` · `traefik` · `xfcc` · **Default:** `none`
+
+Headers that pass the identity to the backend.
+
+- `none`: Not passed on.
+- `traefik`: Traefik's `X-Forwarded-Tls-Client-Cert` (the certificate) and `X-Forwarded-Tls-Client-Cert-Info` (its fields).
+- `xfcc`: Envoy's `X-Forwarded-Client-Cert`.
+
+### `middlewares.<name>.required`
+
+**Type:** `boolean` · **Default:** `true`
+
+Answer `403` to requests without a verified client certificate.
+
 ## `type: grpc_web`
 
 Translate gRPC-Web from browsers into gRPC for the backend (binary `application/grpc-web`; the service needs `scheme: h2c` or `https`).

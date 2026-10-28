@@ -13,6 +13,7 @@ use rdock_model::middleware::Middleware as Config;
 
 mod auth;
 pub mod client;
+mod client_cert;
 mod compress;
 mod cors;
 mod errors;
@@ -27,6 +28,7 @@ mod ratelimit;
 mod redirect;
 
 pub use client::{FetchError, Fetched, HttpClient};
+pub use client_cert::{ClientIdentity, IDENTITY_HEADERS};
 pub use compress::Encoder;
 pub use limits::Throttle;
 
@@ -49,6 +51,8 @@ pub struct Context {
     pub compression: Option<Encoder>,
     /// Body that replaces the upstream body (custom error pages).
     pub replace_body: Option<Bytes>,
+    /// The verified client certificate of the connection, if any.
+    pub client_cert: Option<Arc<ClientIdentity>>,
     /// Slots taken by `in_flight`, freed when the request ends.
     pub admitted: Vec<rdock_limits::Admitted>,
     /// Response byte limit set by `bandwidth`.
@@ -77,6 +81,7 @@ impl Context {
             user: None,
             compression: None,
             replace_body: None,
+            client_cert: None,
             admitted: Vec::new(),
             throttle: None,
             encoding: None,
@@ -220,6 +225,7 @@ pub fn build(
         Config::IpDeny(c) => Arc::new(ip::IpFilter::deny(c)),
         Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c)),
         Config::InFlight(c) => Arc::new(limits::InFlight::new(c)),
+        Config::ClientCert(c) => Arc::new(client_cert::ClientCert::new(c)),
         Config::Bandwidth(c) => Arc::new(limits::Bandwidth::new(c)),
         Config::Cors(c) => Arc::new(cors::Cors::new(c)?),
         Config::Compress(c) => Arc::new(compress::Compress::new(c)),

@@ -43,7 +43,7 @@ services:
       - address: "app:3000"
 ```
 
-`trusted_proxies: [cloudflare]` makes the client IP come from `CF-Connecting-IP` for connections from Cloudflare's edge, with the ranges kept current automatically; see [Behind a proxy](/docs/guides/behind-a-proxy/#cloudflare). Checking that requests really come from Cloudflare with client certificates (Authenticated Origin Pulls) needs mutual TLS, planned for v0.4.
+`trusted_proxies: [cloudflare]` makes the client IP come from `CF-Connecting-IP` for connections from Cloudflare's edge, with the ranges kept current automatically; see [Behind a proxy](/docs/guides/behind-a-proxy/#cloudflare). To accept only Cloudflare's connections, turn on Authenticated Origin Pulls and set `tls.client_auth: { mode: required, cloudflare: true }` on the listener <Status since="v0.4" />; see [Client certificates](/docs/guides/client-certificates/#cloudflare-authenticated-origin-pulls).
 
 ## Cloudflare Tunnel
 

@@ -9,7 +9,6 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use rdock_middleware::HttpClient;
 use rdock_model::Config;
-use rdock_model::config::TlsPolicy;
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::{CertIndex, SniResolver};
@@ -20,7 +19,7 @@ use crate::forwarded::CloudflareRanges;
 use crate::gate::Mode;
 use crate::listener::{self, Running, Settings};
 use crate::proxy::Shared;
-use crate::runtime::Runtime;
+use crate::runtime::{ListenerTls, Runtime};
 use crate::upstream::{DNS_REFRESH, Dns};
 
 /// Why a configuration could not be applied. Nothing changed when this is returned.
@@ -61,7 +60,7 @@ pub struct ListenerStatus {
 }
 
 struct State {
-    running: BTreeMap<String, (Running, Option<TlsPolicy>)>,
+    running: BTreeMap<String, (Running, Option<ListenerTls>)>,
 }
 
 /// Sockets and acceptors made ready before a configuration is published.
@@ -75,7 +74,7 @@ struct Prepared {
 struct Wanted {
     name: String,
     address: ListenAddress,
-    tls: Option<TlsPolicy>,
+    tls: Option<ListenerTls>,
     timeouts: rdock_model::config::ListenerTimeouts,
 }
 
@@ -203,11 +202,11 @@ impl DataPlane {
         for (name, listener) in &runtime.listeners {
             let running = state.running.get(name);
             let same_address = running.is_some_and(|(r, _)| r.address == listener.address);
-            if let Some(policy) = listener.tls
-                && !(same_address && running.is_some_and(|(_, p)| *p == Some(policy)))
+            if let Some(tls) = &listener.tls
+                && !(same_address && running.is_some_and(|(_, p)| p.as_ref() == Some(tls)))
             {
                 let acceptor =
-                    listener::acceptor(policy, self.resolver.clone()).map_err(|message| {
+                    listener::acceptor(tls, self.resolver.clone()).map_err(|message| {
                         ApplyError::Tls {
                             name: name.clone(),
                             message,
@@ -245,7 +244,7 @@ impl DataPlane {
             .map(|(name, l)| Wanted {
                 name: name.clone(),
                 address: l.address,
-                tls: l.tls,
+                tls: l.tls.clone(),
                 timeouts: l.timeouts,
             })
             .collect();
@@ -283,7 +282,7 @@ impl DataPlane {
             }
         }
         for w in wanted {
-            let tls = match (w.tls, prepared.acceptors.remove(&w.name)) {
+            let tls = match (&w.tls, prepared.acceptors.remove(&w.name)) {
                 (Some(_), Some(new)) => Some(new),
                 (Some(_), None) => state
                     .running
@@ -351,7 +350,9 @@ impl DataPlane {
             .map(|(name, (running, policy))| ListenerStatus {
                 name: name.clone(),
                 address: running.address.to_string(),
-                tls: policy.map(|p| format!("{p:?}").to_ascii_lowercase()),
+                tls: policy
+                    .as_ref()
+                    .map(|t| format!("{:?}", t.policy).to_ascii_lowercase()),
                 routes: runtime.listeners.get(name).map_or(0, |l| l.routes.len()),
             })
             .collect()

@@ -97,7 +97,7 @@ services:
 Anyone who can intercept the traffic between ReverseDock and the backend can read and change it. `rdock validate` warns about it. Prefer `ca_file` with the CA that signed the backend's certificate.
 :::
 
-A backend whose certificate fails verification gets no request, and the client receives `502`. Client certificates to backends (`tls.cert_file`, `tls.key_file`) <Status planned="v0.4" /> are accepted by `rdock validate` with a warning and refused by `rdock run`.
+A backend whose certificate fails verification gets no request, and the client receives `502`. Client certificates to backends (`tls.cert_file`, `tls.key_file`) <Status since="v0.4" /> are presented when a backend asks for one; see [Client certificates](/docs/guides/client-certificates/#present-a-certificate-to-backends).
 
 ## Weights and balancing
 

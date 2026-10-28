@@ -74,6 +74,33 @@ impl TestCa {
         }
     }
 
+    /// A rustls client configuration trusting this CA, offering `alpn` and presenting the
+    /// client certificate `client`.
+    pub fn client_config_with_cert(
+        &self,
+        alpn: &[&[u8]],
+        client: &Issued,
+    ) -> std::sync::Arc<rustls::ClientConfig> {
+        use rustls_pki_types::pem::PemObject;
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(self.der()).unwrap();
+        let chain = rustls_pki_types::CertificateDer::pem_slice_iter(client.cert_pem.as_bytes())
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap();
+        let key =
+            rustls_pki_types::PrivateKeyDer::from_pem_slice(client.key_pem.as_bytes()).unwrap();
+        let mut config = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+            rustls::crypto::ring::default_provider(),
+        ))
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_client_auth_cert(chain, key)
+        .unwrap();
+        config.alpn_protocols = alpn.iter().map(|p| p.to_vec()).collect();
+        std::sync::Arc::new(config)
+    }
+
     /// A rustls client configuration trusting this CA, offering `alpn`.
     pub fn client_config(&self, alpn: &[&[u8]]) -> std::sync::Arc<rustls::ClientConfig> {
         let mut roots = rustls::RootCertStore::empty();

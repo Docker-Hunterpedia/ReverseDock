@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use rdock_model::config::TlsPolicy;
 use rustls::server::ResolvesServerCert;
+use rustls::server::danger::ClientCertVerifier;
 use rustls::{ServerConfig, SupportedProtocolVersion};
 
 /// ALPN protocols offered on TLS listeners, in order of preference. `acme-tls/1` is only
@@ -21,16 +22,20 @@ pub struct PolicyError(#[from] rustls::Error);
 pub fn server_config(
     policy: TlsPolicy,
     resolver: Arc<dyn ResolvesServerCert>,
+    client_auth: Option<Arc<dyn ClientCertVerifier>>,
 ) -> Result<Arc<ServerConfig>, PolicyError> {
     let versions: &[&SupportedProtocolVersion] = match policy {
         TlsPolicy::Modern => &[&rustls::version::TLS13],
         TlsPolicy::Intermediate => &[&rustls::version::TLS13, &rustls::version::TLS12],
     };
-    let mut config =
+    let builder =
         ServerConfig::builder_with_provider(Arc::new(rustls::crypto::ring::default_provider()))
-            .with_protocol_versions(versions)?
-            .with_no_client_auth()
-            .with_cert_resolver(resolver);
+            .with_protocol_versions(versions)?;
+    let builder = match client_auth {
+        Some(verifier) => builder.with_client_cert_verifier(verifier),
+        None => builder.with_no_client_auth(),
+    };
+    let mut config = builder.with_cert_resolver(resolver);
     config.alpn_protocols = ALPN.iter().map(|p| p.to_vec()).collect();
     config.ticketer = rustls::crypto::ring::Ticketer::new()?;
     Ok(Arc::new(config))

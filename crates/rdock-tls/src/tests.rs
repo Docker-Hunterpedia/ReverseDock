@@ -133,7 +133,7 @@ fn policies_build_and_resolver_swaps() {
     resolver.swap(CertIndex::build(&certs, None));
     assert!(resolver.index().covers("a.test"));
     for policy in [TlsPolicy::Modern, TlsPolicy::Intermediate] {
-        let config = server_config(policy, resolver.clone()).unwrap();
+        let config = server_config(policy, resolver.clone(), None).unwrap();
         assert_eq!(
             config.alpn_protocols,
             vec![b"h2".to_vec(), b"http/1.1".to_vec(), b"acme-tls/1".to_vec()]
