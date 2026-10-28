@@ -102,6 +102,21 @@ impl Drop for InFlight {
 pub struct Pool {
     backends: RwLock<HashMap<String, Arc<BackendState>>>,
     in_flight: Arc<AtomicU32>,
+    retries: Arc<AtomicU32>,
+}
+
+/// Retries in flight that are always allowed, whatever the budget (Envoy's
+/// `min_retry_concurrency`).
+pub const MIN_RETRIES: u32 = 3;
+
+/// One retry in flight; dropping it returns it to the budget.
+#[derive(Debug)]
+pub struct RetryPermit(Arc<AtomicU32>);
+
+impl Drop for RetryPermit {
+    fn drop(&mut self) {
+        self.0.fetch_sub(1, Ordering::Relaxed);
+    }
 }
 
 impl Pool {
@@ -131,6 +146,28 @@ impl Pool {
     /// Requests in flight to any backend of the pool.
     pub fn in_flight(&self) -> u32 {
         self.in_flight.load(Ordering::Relaxed)
+    }
+
+    /// A permit for one more retry, while retries in flight stay within `percent` of the
+    /// requests in flight (or below [`MIN_RETRIES`]).
+    pub fn try_retry(&self, percent: u32) -> Option<RetryPermit> {
+        let allowed =
+            (u64::from(self.in_flight()) * u64::from(percent) / 100).max(u64::from(MIN_RETRIES));
+        let mut current = self.retries.load(Ordering::Relaxed);
+        loop {
+            if u64::from(current) >= allowed {
+                return None;
+            }
+            match self.retries.compare_exchange_weak(
+                current,
+                current + 1,
+                Ordering::AcqRel,
+                Ordering::Relaxed,
+            ) {
+                Ok(_) => return Some(RetryPermit(self.retries.clone())),
+                Err(now) => current = now,
+            }
+        }
     }
 
     /// Forgets backends not in `live` (addresses that left DNS or the configuration).
@@ -228,6 +265,23 @@ mod tests {
         let _keep = pool.state("b");
         pool.retain(&HashSet::from(["b"]));
         assert!(!Arc::ptr_eq(&old, &pool.state("a")));
+    }
+
+    #[test]
+    fn the_retry_budget_scales_with_traffic() {
+        let pool = Pool::default();
+        let permits: Vec<_> = (0..5).filter_map(|_| pool.try_retry(20)).collect();
+        assert_eq!(
+            permits.len(),
+            MIN_RETRIES as usize,
+            "at least three when idle"
+        );
+        let state = pool.state("a");
+        let busy: Vec<_> = (0..50).map(|_| state.begin()).collect();
+        let more: Vec<_> = (0..20).filter_map(|_| pool.try_retry(20)).collect();
+        assert_eq!(permits.len() + more.len(), 10, "20 % of 50 in flight");
+        drop((permits, more, busy));
+        assert!(pool.try_retry(0).is_some(), "permits return to the budget");
     }
 
     #[test]

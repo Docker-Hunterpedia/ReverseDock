@@ -228,11 +228,11 @@ Requests in flight across the pool; more are answered `503` (circuit breaker).
 
 Forward the client's `Host` header (otherwise the backend address is used).
 
-## `services.<name>.retries` <Status planned="v0.4" />
+## `services.<name>.retries`
 
 **Type:** object
 
-Retries of failed requests (transport failures only, see ADR-0010).
+Retries of failed requests (ADR-0010, ADR-0015, ADR-0022).
 
 ### `services.<name>.retries.attempts`
 
@@ -244,11 +244,11 @@ Additional attempts after the first.
 
 **Type:** `integer` · **Default:** `20`
 
-Maximum share of retries relative to requests, in percent, to avoid retry storms.
+Retries in flight may be at most this share of the requests in flight, in percent (at least 3 are always allowed), so retries cannot overload a failing pool.
 
 ### `services.<name>.retries.on`
 
-**Type:** list of `connect` · `reset` · `timeout` · **Default:** `["connect"]`
+**Type:** list of `connect` · `reset` · `timeout` · `502` · `503` · `504` · **Default:** `["connect"]`
 
 Failures that are retried.
 

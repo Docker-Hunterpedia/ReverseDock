@@ -250,6 +250,7 @@ fn compile_service(
         pool: env.backends.pool(name),
         members: ArcSwapOption::empty(),
         health: compile_health(service.health.as_ref())?,
+        retries: service.retries.clone().filter(|r| r.attempts > 0),
         max_requests: service.max_requests,
         max_per_backend: service.max_connections_per_backend,
         timeouts: service.timeouts,

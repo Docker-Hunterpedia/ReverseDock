@@ -192,7 +192,33 @@ services:
 
 The metric `rdock_backend_up{service, backend}` is 1 while a backend takes traffic and 0 while it is out; `rdock_backend_ejections_total` counts ejections. Transitions are logged.
 
-Retries and weighted `split` between services <Status planned="v0.4" /> are coming in the next steps of v0.4. See the [roadmap](/docs/project/roadmap/).
+## Retries <Status since="v0.4" />
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
+    retries:
+      attempts: 2              # extra attempts after the first, at most 10
+      on: [connect, "503"]     # connect, reset, timeout, "502", "503", "504"
+      budget_percent: 20
+```
+
+A failed attempt is sent again, to another backend when there is one:
+
+- **`connect`** (default): the connection could not be opened. Nothing reached the backend, so this is retried for every method.
+- **`reset`**, **`timeout`**: the connection broke, or no answer came within `timeouts.read`, before the response headers.
+- **`"502"`, `"503"`, `"504"`**: the backend answered with that status. On the last attempt, its answer goes to the client as it is.
+
+Except for `connect`, only idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `OPTIONS`, `TRACE`) are retried, unless `retry_non_idempotent: true`, which can repeat side effects such as a payment. Nothing is retried once the client has received any part of a response, or when the request body is larger than 64 KiB (the buffer that replays it). Traefik's retry middleware follows the same rules ([Traefik](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/retry/), checked 2026-10-29).
+
+**The retry budget** keeps retries from piling onto a pool that is already failing: retries in flight may be at most `budget_percent` of the service's requests in flight, with 3 always allowed. These are Envoy's defaults ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto), checked 2026-10-29). Retries wait a random 0–25 ms before the first retry, doubling up to 250 ms.
+
+**`Retry-After`:** a backend that answers `503` with `Retry-After` gets no requests for that long (at most 60 seconds) while other backends are available. `429` is passed to the client, because it usually limits one client, not the backend.
+
+Metrics: `rdock_retries_total{service, reason}` and `rdock_retry_budget_exhausted_total{service}`.
+
+Weighted `split` between services <Status planned="v0.4" /> is coming next. See the [roadmap](/docs/project/roadmap/).
 
 ## The `Host` header
 

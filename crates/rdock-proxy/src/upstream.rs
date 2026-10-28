@@ -111,6 +111,8 @@ pub struct RequestKey<'a> {
     pub request: Option<&'a RequestHeader>,
     /// The client address.
     pub client_ip: Option<IpAddr>,
+    /// Backends this request already tried; others are preferred.
+    pub tried: &'a [String],
 }
 
 /// Picks a backend of `service` for a request.
@@ -122,7 +124,10 @@ pub struct RequestKey<'a> {
 pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected> {
     let members = service.members();
     let now = Instant::now();
-    let pool = eligible(service, &members, now);
+    let mut pool = eligible(service, &members, now);
+    if pool.iter().any(|m| !key.tried.contains(&m.id)) {
+        pool.retain(|m| !key.tried.contains(&m.id));
+    }
     if let (Some(sticky), Some(request)) = (&service.sticky, key.request)
         && let Some(found) = sticky_member(sticky, &pool, request)
     {

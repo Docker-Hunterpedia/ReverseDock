@@ -16,6 +16,7 @@ async-trait.workspace = true
 bytes.workspace = true
 fastrand.workspace = true
 http.workspace = true
+httpdate.workspace = true
 ring.workspace = true
 ipnet.workspace = true
 pingora.workspace = true

@@ -92,6 +92,8 @@ fastrand = "2.5.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
 subtle = "2.6.1"
+# `Retry-After` dates (already built for hyper).
+httpdate = "1.0.3"
 # HMAC for sticky cookies and JWT signatures; already built for rustls (ADR-0013).
 ring = "0.17.14"
 uuid = { version = "1.29.0", features = ["v7"] }

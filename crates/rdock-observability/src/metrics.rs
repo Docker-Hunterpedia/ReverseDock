@@ -42,6 +42,10 @@ pub struct Metrics {
     pub backend_up: IntGaugeVec,
     /// Backend ejections by passive health, by service and address.
     pub backend_ejections: IntCounterVec,
+    /// Retries by service and reason (`connect`, `reset`, `timeout`, `502` …).
+    pub retries: IntCounterVec,
+    /// Retries not made because the service's retry budget was used up.
+    pub retry_budget_exhausted: IntCounterVec,
 }
 
 /// Creates `metric` and registers it in `registry`.
@@ -164,6 +168,18 @@ impl Metrics {
             "Backends ejected after repeated failures.",
             &["service", "backend"],
         )?;
+        let retries = counters(
+            &registry,
+            "rdock_retries_total",
+            "Requests sent again to a backend after a failure.",
+            &["service", "reason"],
+        )?;
+        let retry_budget_exhausted = counters(
+            &registry,
+            "rdock_retry_budget_exhausted_total",
+            "Retries refused because the retry budget was used up.",
+            &["service"],
+        )?;
         let build_info = gauges(
             &registry,
             "rdock_build_info",
@@ -186,6 +202,8 @@ impl Metrics {
             acme_orders,
             backend_up,
             backend_ejections,
+            retries,
+            retry_budget_exhausted,
         })
     }
 
