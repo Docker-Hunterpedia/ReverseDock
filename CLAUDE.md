@@ -1,6 +1,6 @@
 # ReverseDock — rules for AI assistants
 
-ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) are implemented; v0.2 adds the Docker provider. Read [docs/README.md](docs/README.md) before proposing changes.
+ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) and v0.2 (the Docker provider, Traefik labels, zero-config, `rdock migrate traefik`) are implemented; v0.3 adds automatic HTTPS (ADR-0020). Read [docs/README.md](docs/README.md) before proposing changes.
 
 ## Working rules
 
@@ -42,7 +42,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
 | [docs/09-website.md](docs/09-website.md) | Public website and docs plan (Astro + Starlight, `apps/website`) |
 | [apps/website/](apps/website/README.md) | The website: landing page, docs pages, generators and checks |
-| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0019 |
+| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0020 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) | How changes are proposed, reviewed and merged |
