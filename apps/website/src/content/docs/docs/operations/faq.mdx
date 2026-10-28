@@ -9,7 +9,7 @@ import Status from '../../../../components/Status.astro';
 
 ## Is ReverseDock ready for production?
 
-The current release, 0.2.0-alpha.1, is a pre-release. The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load) and fuzz targets, but the configuration format can still change between 0.x releases. If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
+The current release, 0.3.0-alpha.1, is a pre-release. The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load) and fuzz targets, but the configuration format can still change between 0.x releases. If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
 
 ## Is it really free?
 
@@ -21,7 +21,7 @@ No. The binary does not contact any service on its own. It connects only to the 
 
 ## Can it get certificates from Let's Encrypt automatically?
 
-Not yet. Automatic HTTPS with ACME is <Status planned="v0.3" />. Until then, provide certificates under `certificates`, for example ones you obtain with an ACME client, and ReverseDock reloads them when the files change. See [Your own TLS certificate](/docs/guides/tls-certificates/).
+Not yet. Automatic HTTPS with ACME is <Status since="v0.3" />. Until then, provide certificates under `certificates`, for example ones you obtain with an ACME client, and ReverseDock reloads them when the files change. See [Your own TLS certificate](/docs/guides/tls-certificates/).
 
 ## Does it read Docker labels?
 

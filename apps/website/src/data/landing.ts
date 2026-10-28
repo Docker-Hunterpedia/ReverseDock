@@ -9,13 +9,13 @@ export const pillars: { eyebrow: string; badge: string; kind: Kind; title: strin
   { eyebrow: 'Engine', badge: 'shipped', kind: 'shipped', title: 'Rust on Pingora', body: 'The HTTP engine Cloudflare runs at its edge, with our own listeners on top. HTTP/1.1, HTTP/2, h2c, WebSocket, SSE and gRPC.' },
   { eyebrow: 'Operations', badge: 'shipped', kind: 'shipped', title: 'Reloads that drop nothing', body: 'Edit the file, send SIGHUP or call the API. A broken config is refused and the last good one keeps serving.' },
   { eyebrow: 'Docker', badge: 'shipped', kind: 'shipped', title: 'Labels on your containers', body: 'Route containers from rdock.* labels, with the common Traefik labels understood as they are.' },
-  { eyebrow: 'TLS', badge: 'v0.3', kind: 'next', title: 'Automatic HTTPS', body: "Certificates from Let's Encrypt, renewed on schedule, including wildcards through DNS-01." },
+  { eyebrow: 'TLS', badge: 'shipped', kind: 'shipped', title: 'Automatic HTTPS', body: "Certificates from Let's Encrypt, renewed on schedule, including wildcards through DNS-01." },
 ];
 
 export const guides: { title: string; badge: string; kind: Kind; body: string; href: string }[] = [
   { title: 'From Traefik', badge: 'guide', kind: 'shipped', body: 'Rules carry over; routers and services map one to one.', href: '/docs/migrate/from-traefik/' },
   { title: 'From NGINX', badge: 'guide', kind: 'shipped', body: 'server and location blocks to hosts, paths and middlewares.', href: '/docs/migrate/from-nginx/' },
-  { title: 'From Caddy', badge: 'planned', kind: 'planned', body: 'Caddyfile sites to routes, with the HTTPS caveats until v0.3.', href: '/docs/project/roadmap/' },
+  { title: 'From Caddy', badge: 'planned', kind: 'planned', body: 'Caddyfile sites to routes, automatic HTTPS included.', href: '/docs/project/roadmap/' },
   { title: 'From Nginx Proxy Manager', badge: 'planned', kind: 'planned', body: 'Proxy hosts from the UI to one versioned YAML file.', href: '/docs/project/roadmap/' },
 ];
 
@@ -28,8 +28,8 @@ export const features: { title: string; status: string; kind: Kind; body: string
   { title: 'Last-known-good', status: 'v0.1', kind: 'shipped', body: 'Config history on disk; a broken file at boot falls back to the last one that worked.' },
   { title: 'Docker labels', status: 'v0.2', kind: 'shipped', body: 'Opt-in per container, network selection, live on container events.' },
   { title: 'rdock migrate traefik', status: 'v0.2', kind: 'shipped', body: 'Turns Traefik labels into rdock.yaml and lists what does not carry over.' },
-  { title: 'Automatic HTTPS', status: 'v0.3', kind: 'next', body: 'ACME HTTP-01, TLS-ALPN-01 and DNS-01, with ARI renewals.' },
-  { title: 'Health checks and retries', status: 'v0.4', kind: 'planned', body: 'Active and passive checks, more balancing policies, retry budgets.' },
+  { title: 'Automatic HTTPS', status: 'v0.3', kind: 'shipped', body: 'ACME HTTP-01, TLS-ALPN-01 and DNS-01, with ARI renewals.' },
+  { title: 'Health checks and retries', status: 'v0.4', kind: 'next', body: 'Active and passive checks, more balancing policies, retry budgets.' },
   { title: 'Dashboard', status: 'v0.5', kind: 'planned', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
   { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'planned', body: 'A Gateway API controller, checked with the upstream conformance tests.' },
 ];
@@ -39,7 +39,7 @@ export const compare = [
   { row: 'License', rd: 'Apache-2.0', traefik: 'MIT', caddy: 'Apache-2.0', nginx: 'BSD-2-Clause' },
   { row: 'Traefik rule syntax', rd: 'Yes', traefik: 'Yes', caddy: 'No', nginx: 'No' },
   { row: 'Docker labels', rd: 'Yes', traefik: 'Yes', caddy: 'With a plugin', nginx: 'No' },
-  { row: 'Automatic HTTPS', rd: 'v0.3', traefik: 'Yes', caddy: 'Yes', nginx: 'With certbot' },
+  { row: 'Automatic HTTPS', rd: 'Yes, ARI-aware', traefik: 'Yes', caddy: 'Yes', nginx: 'With certbot' },
   { row: 'Reload without dropping requests', rd: 'Yes', traefik: 'Yes', caddy: 'Yes', nginx: 'Yes' },
 ];
 

@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock serves HTTPS with certificates you provide as PEM files <Status since="v0.1" />. Hosts no configured certificate covers get one automatically <Status planned="v0.3" />; see [Automatic HTTPS](/docs/guides/automatic-https/). A configured certificate always wins over an automatic one.
+ReverseDock serves HTTPS with certificates you provide as PEM files <Status since="v0.1" />. Hosts no configured certificate covers get one automatically <Status since="v0.3" />; see [Automatic HTTPS](/docs/guides/automatic-https/). A configured certificate always wins over an automatic one.
 
 ## What you need
 
@@ -135,7 +135,7 @@ groups:
 
 See [Logs and metrics](/docs/guides/logs-and-metrics/).
 
-## Automatic certificates <Status planned="v0.3" />
+## Automatic certificates <Status since="v0.3" />
 
 Let's Encrypt or any ACME CA, with HTTP-01, TLS-ALPN-01 or DNS-01, renewed through ARI: see [Automatic HTTPS](/docs/guides/automatic-https/) and [Wildcards and DNS-01](/docs/guides/dns-challenge/). With `acme: false`, every HTTPS host needs a certificate from this page.
 

@@ -54,7 +54,7 @@ Reading from the right matters: a client can put anything at the left of `X-Forw
 | `auto` (default) | `CF-Connecting-IP` when the connection comes straight from Cloudflare (`cloudflare` in `trusted_proxies`), otherwise `X-Forwarded-For`, as above |
 | `x-forwarded-for` | `X-Forwarded-For`, as above |
 | `x-real-ip` | `X-Real-IP` sent by the proxy |
-| `cf-connecting-ip` <Status planned="v0.3" /> | `CF-Connecting-IP` sent by the proxy; needs `cloudflare` in `trusted_proxies` |
+| `cf-connecting-ip` <Status since="v0.3" /> | `CF-Connecting-IP` sent by the proxy; needs `cloudflare` in `trusted_proxies` |
 
 When the header is missing or is not an IP address, `x-real-ip` and `cf-connecting-ip` use the address of the connection, and `auto` falls back to `X-Forwarded-For`.
 
@@ -96,7 +96,7 @@ Its access log line shows the address you connected from, not `203.0.113.99`.
 
 ## Cloudflare
 
-The value `cloudflare` in `trusted_proxies` <Status planned="v0.3" /> trusts Cloudflare's edge without a list of networks to maintain:
+The value `cloudflare` in `trusted_proxies` <Status since="v0.3" /> trusts Cloudflare's edge without a list of networks to maintain:
 
 ```yaml title="rdock.yaml (excerpt)"
 security:
