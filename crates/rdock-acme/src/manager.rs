@@ -302,7 +302,7 @@ impl Worker {
             self.services
                 .metrics
                 .acme_orders
-                .with_label_values(&[&ca, outcome])
+                .with_label_values(&[ca.as_str(), outcome])
                 .inc();
             match result {
                 Ok(issued) => {
