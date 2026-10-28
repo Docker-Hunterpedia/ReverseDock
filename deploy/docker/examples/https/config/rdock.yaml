@@ -1,0 +1,13 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+# Remove `staging: true` once the staging certificate is served: browsers do not trust it, but its
+# rate limits are much higher while you set things up.
+acme:
+  staging: true
+
+providers:
+  docker:
+    network: rdock-proxy

@@ -1,0 +1,69 @@
+---
+title: Wildcards and DNS-01
+description: Get wildcard certificates, or certificates for hosts the CA cannot reach, through DNS-01 with Cloudflare, your own script or a webhook.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+DNS-01 <Status planned="v0.3" /> proves control of a name with a TXT record at `_acme-challenge.<name>`. It is the only way to get a **wildcard** certificate, and it works for hosts the CA cannot reach: behind a firewall, on a private network, or behind a Cloudflare Tunnel. It cannot validate IP addresses.
+
+## Choose a provider
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    cf:
+      type: cloudflare
+      api_token: "${file:/run/secrets/cf_token}"
+    script:
+      type: exec
+      command: /usr/local/bin/dns-hook
+      args: ["--zone", "example.com"]
+    hook:
+      type: webhook
+      url: https://dns-api.example.com/acme
+      token: "${file:/run/secrets/dns_hook_token}"
+```
+
+| Type | How it works |
+|---|---|
+| `cloudflare` | The Cloudflare API with a token limited to **Zone → DNS → Edit** for the zone. The zone is looked up from the name, which also needs Zone → Zone → Read, unless you set `zone_id`. |
+| `exec` | Runs `command args… present <fqdn> <value>` and later `cleanup <fqdn> <value>`, directly, never through a shell. `command` must be an absolute path; `timeout` defaults to 30 seconds. A non-zero exit fails the attempt. |
+| `webhook` | `POST`s `{"action": "present" \| "cleanup", "name": "<fqdn>", "value": "<value>"}` to an `https://` URL with an optional bearer token. Any 2xx answer is success. |
+
+Write tokens as `${file:…}` or `${env:…}` references: ReverseDock keeps them out of its configuration history and logs.
+
+## Use it
+
+For one route, with the names on the certificate:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  tenants:
+    match: "HostRegexp(`^[a-z0-9-]+\\.example\\.com$`)"
+    service: tenants
+    tls:
+      domains: ["*.example.com", "example.com"]
+      dns_provider: cf
+```
+
+For every route, set `acme.dns_provider: cf`; all certificates are then validated with DNS-01. On a container: `rdock.tls=dns:cf`.
+
+## Propagation
+
+After creating the record, ReverseDock looks it up at the zone's authoritative nameservers until it is visible, for up to `acme.dns_propagation_timeout` (2 minutes), and only then asks the CA to validate. If your nameservers are not reachable from the server, list resolvers that are:
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_resolvers: ["1.1.1.1", "8.8.8.8:53"]
+```
+
+A CNAME from `_acme-challenge.example.com` to a zone you control elsewhere works: create the record in the target zone from your hook. Records are removed after each validation, successful or not.
+
+## Related
+
+- [Automatic HTTPS](/docs/guides/automatic-https/)
+- [Behind Cloudflare](/docs/guides/cloudflare/)
+- [`acme` reference](/docs/reference/configuration/acme/)

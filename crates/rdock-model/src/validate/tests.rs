@@ -446,7 +446,7 @@ fn flags_risky_security_and_admin_settings() {
     assert!(has(
         &as_pairs,
         "security.client_ip_header",
-        "needs `cloudflare`"
+        "needs trusted_proxies"
     ));
     assert!(has(
         &as_pairs,

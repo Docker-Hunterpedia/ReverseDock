@@ -83,7 +83,7 @@ certificates:
     key_file: /etc/rdock/certs/example.key
 ```
 
-Automatic certificates from Let's Encrypt are planned for v0.3. Until then, every host of an HTTPS route needs a certificate that covers it. See [Your own TLS certificate](/docs/guides/tls-certificates/).
+From v0.3, every host of an HTTPS route that no configured certificate covers gets one automatically: from Let's Encrypt or another ACME CA, or from the local CA for private names. See [Automatic HTTPS](/docs/guides/automatic-https/) and [Your own TLS certificate](/docs/guides/tls-certificates/).
 
 ### Defaults
 

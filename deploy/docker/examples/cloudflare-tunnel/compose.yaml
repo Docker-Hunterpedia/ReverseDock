@@ -1,0 +1,38 @@
+# Behind a Cloudflare Tunnel: no inbound ports. Create a tunnel in the Cloudflare dashboard with a
+# public hostname pointing at http://rdock:80, then start with:
+#   TUNNEL_TOKEN=<token from the dashboard> docker compose up -d
+name: rdock-tunnel
+
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks: [edge]
+
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.1
+    restart: unless-stopped
+    volumes:
+      - ./config:/etc/rdock:ro
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [edge]
+
+  app:
+    image: traefik/whoami:v1.11.0
+    networks: [edge]
+
+networks:
+  edge:
+    name: rdock-edge
+    ipam:
+      config:
+        - subnet: 172.30.0.0/24
+
+volumes:
+  rdock-data:

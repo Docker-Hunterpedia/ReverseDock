@@ -1,0 +1,99 @@
+---
+title: Behind Cloudflare
+description: Run ReverseDock behind Cloudflare's proxy with Full (strict) encryption, real client IPs and automatic or Origin CA certificates, or behind a Cloudflare Tunnel with no open ports.
+sidebar:
+  order: 8
+---
+
+import Status from '../../../../components/Status.astro';
+
+Two common setups put Cloudflare in front of ReverseDock <Status planned="v0.3" />: **proxied DNS records** (orange cloud), where Cloudflare connects to your server's public address, and a **Cloudflare Tunnel**, where a `cloudflared` container dials out to Cloudflare and no port is open at all. Facts about Cloudflare below come from its documentation, checked 2026-10-28.
+
+## Proxied records with Full (strict)
+
+Set the zone's SSL/TLS encryption mode to **Full (strict)**: Cloudflare then connects to ReverseDock over HTTPS and checks its certificate. Either certificate works:
+
+- **Automatic certificates.** HTTP-01 and TLS-ALPN-01 requests from the CA pass through Cloudflare's proxy to the origin, so the [defaults](/docs/guides/automatic-https/) work. DNS-01 with the [`cloudflare` provider](/docs/guides/dns-challenge/) works too, and is the way to get a wildcard.
+- **An Origin CA certificate.** Cloudflare issues it for your zone, valid up to 15 years; only Cloudflare trusts it, so it only works while the records stay proxied ([Origin CA](https://developers.cloudflare.com/ssl/origin-configuration/origin-ca/)). Load it like any [certificate you provide](/docs/guides/tls-certificates/), and set `acme: false` if every host is covered by it.
+
+```yaml title="rdock.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+security:
+  trusted_proxies: [cloudflare]
+
+acme:
+  dns_provider: cf
+  dns_providers:
+    cf:
+      type: cloudflare
+      api_token: "${file:/run/secrets/cf_token}"
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:3000"
+```
+
+`trusted_proxies: [cloudflare]` makes the client IP come from `CF-Connecting-IP` for connections from Cloudflare's edge, with the ranges kept current automatically; see [Behind a proxy](/docs/guides/behind-a-proxy/#cloudflare). Checking that requests really come from Cloudflare with client certificates (Authenticated Origin Pulls) needs mutual TLS, planned for v0.4.
+
+## Cloudflare Tunnel
+
+`cloudflared` connects out to Cloudflare and forwards requests to ReverseDock inside your Docker network, so the server needs no inbound ports ([Cloudflare Tunnel](https://developers.cloudflare.com/cloudflare-one/networks/connectors/cloudflare-tunnel/)). Cloudflare terminates HTTPS with its own edge certificate; between `cloudflared` and ReverseDock the traffic stays on the Docker network, so ReverseDock listens on plain HTTP.
+
+```yaml title="compose.yaml"
+services:
+  cloudflared:
+    image: cloudflare/cloudflared:2026.10.0
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${TUNNEL_TOKEN:-}
+    networks: [edge]
+
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.1
+    volumes:
+      - ./config:/etc/rdock:ro
+      - rdock-data:/var/lib/rdock
+    networks: [edge]
+```
+
+```yaml title="config/rdock.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+security:
+  trusted_proxies: ["172.16.0.0/12"]
+  client_ip_header: cf-connecting-ip
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:3000"
+```
+
+In the Cloudflare dashboard, add a public hostname for the tunnel with the service `http://rdock:80`. `cloudflared` passes Cloudflare's `CF-Connecting-IP` header on; trusting the Docker network range makes ReverseDock use it. The complete example is in [`deploy/docker/examples/cloudflare-tunnel`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/deploy/docker/examples/cloudflare-tunnel).
+
+## Related
+
+- [Automatic HTTPS](/docs/guides/automatic-https/)
+- [Wildcards and DNS-01](/docs/guides/dns-challenge/)
+- [Behind a proxy](/docs/guides/behind-a-proxy/)
