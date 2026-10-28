@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::acme::Acme;
+use crate::acme::{Acme, AcmeSetting};
 use crate::middleware::Middleware;
 use crate::providers::Providers;
 use crate::route::{Route, TcpRoute, TlsMode};
@@ -32,9 +32,9 @@ pub struct Config {
     pub listeners: BTreeMap<String, Listener>,
     /// Defaults applied to routes that do not set a value.
     pub defaults: Defaults,
-    /// Automatic certificates (ACME). Let's Encrypt with HTTP-01 and TLS-ALPN-01 is used when
-    /// omitted.
-    pub acme: Option<Acme>,
+    /// Automatic certificates (ACME). On by default with Let's Encrypt, HTTP-01 and TLS-ALPN-01;
+    /// `false` turns it off.
+    pub acme: Option<AcmeSetting>,
     /// HTTP routes: which requests go to which service, through which middlewares.
     pub routes: BTreeMap<String, Route>,
     /// Backend pools that routes send traffic to.
@@ -60,6 +60,17 @@ pub struct Config {
 }
 
 impl Config {
+    /// The ACME settings in effect: the defaults when `acme` is omitted or `true`, none when it
+    /// is `false`.
+    #[must_use]
+    pub fn effective_acme(&self) -> Option<Cow<'_, Acme>> {
+        match &self.acme {
+            None | Some(AcmeSetting::Enabled(true)) => Some(Cow::Owned(Acme::default())),
+            Some(AcmeSetting::Enabled(false)) => None,
+            Some(AcmeSetting::Settings(acme)) => Some(Cow::Borrowed(&**acme)),
+        }
+    }
+
     /// The listeners in effect: the configured ones, or `web` (`:80`) and `websecure`
     /// (`:443`, TLS) when none are configured.
     #[must_use]

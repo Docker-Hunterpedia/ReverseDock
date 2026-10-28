@@ -16,7 +16,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 
 ## Sections
 
-- [`acme`](/docs/reference/configuration/acme/): Automatic certificates (ACME). Let's Encrypt with HTTP-01 and TLS-ALPN-01 is used when
+- [`acme`](/docs/reference/configuration/acme/): Automatic certificates (ACME). On by default with Let's Encrypt, HTTP-01 and TLS-ALPN-01;
 - [`admin`](/docs/reference/configuration/admin/): Admin API and dashboard.
 - [`certificates`](/docs/reference/configuration/certificates/): Certificates you provide yourself.
 - [`defaults`](/docs/reference/configuration/defaults/): Defaults applied to routes that do not set a value.
@@ -33,6 +33,10 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`version`](/docs/reference/configuration/version/): Configuration format version. Only `1` exists; omit it to use the latest.
 
 ## Value types
+
+### AcmeSetting
+
+The `acme` section: `false` turns automatic certificates off, `true` or settings keep them on.
 
 ### BackendAddress
 

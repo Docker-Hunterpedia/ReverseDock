@@ -3,6 +3,7 @@
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+use crate::acme::Webhook;
 use crate::values::{ByteSize, Duration, HttpUrl, ListenAddress, TrustedProxy};
 
 /// Client IP trust and request limits.
@@ -90,6 +91,17 @@ pub struct Observability {
     pub metrics: Metrics,
     /// Distributed tracing.
     pub tracing: Option<Tracing>,
+    /// Where certificate alerts (renewal failures, near expiry) are sent besides the log,
+    /// the metrics and `rdock status`.
+    pub alerts: Alerts,
+}
+
+/// Alert delivery.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Alerts {
+    /// Receives each alert as a JSON `POST`.
+    pub webhook: Option<Webhook>,
 }
 
 /// Access log settings.

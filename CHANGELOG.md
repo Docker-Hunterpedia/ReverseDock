@@ -4,6 +4,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Added
+- Configuration for automatic HTTPS (ADR-0020): `acme: false` turns automatic certificates off; `acme.dns_provider` names a default DNS provider for every route; DNS providers `exec` (a program run without a shell) and `webhook` (JSON to an `https://` endpoint) next to `cloudflare`, which gains `zone_id`; `observability.alerts.webhook` for certificate alerts. Webhooks must use `https://` (plain `http://` only for localhost), exec commands must be absolute paths, and tokens should be `${file:…}` references. Public IP-address hosts are flagged unless `acme.profile: shortlived`, and DNS-01 for an IP address is refused. Issuance itself arrives with the following v0.3 changes; until then `rdock run` still refuses `acme` settings and webhooks with "planned for v0.3".
+
 ## [0.2.0-alpha.1] — v0.2 "Docker-native"
 
 ### Added

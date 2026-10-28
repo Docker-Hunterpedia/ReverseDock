@@ -21,6 +21,8 @@ pub enum FieldKind {
 const SECRETS: &[&[&str]] = &[
     &["acme", "dns_providers", "*", "api_token"],
     &["acme", "eab", "hmac_key"],
+    &["acme", "dns_providers", "*", "token"],
+    &["observability", "alerts", "webhook", "token"],
     &["certificates", "*", "key_password"],
 ];
 
