@@ -43,6 +43,7 @@ Every feature is designed so the first audience never pays (in complexity) for t
 7. **Everything is observable.** Every state (route, backend, certificate, provider) is visible in the dashboard, the API, the CLI and Prometheus.
 8. **Honest performance.** Published, reproducible benchmark scripts and results. No numbers without hardware, TLS and request-mix details.
 9. **Free forever.** Apache-2.0, DCO instead of a CLA (nobody can relicense it), no open-core split, no "enterprise" edition.
+10. **Every option, safe by default.** When an option can be offered safely, offer it rather than choosing for the user: all ACME challenges, every DNS host, both label dialects. The default is the safe, best-practice choice; risky combinations are refused with a diagnostic that says why, never silently allowed.
 
 ## 5. Non-goals (through 1.0)
 

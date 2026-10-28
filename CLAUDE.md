@@ -1,6 +1,6 @@
 # ReverseDock — rules for AI assistants
 
-ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) are implemented; v0.2 adds the Docker provider. Read [docs/README.md](docs/README.md) before proposing changes.
+ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) and v0.2 (the Docker provider, Traefik labels, zero-config, `rdock migrate traefik`) are implemented; v0.3 adds automatic HTTPS (ADR-0020). Read [docs/README.md](docs/README.md) before proposing changes.
 
 ## Working rules
 
@@ -11,6 +11,10 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - **Fill in the PR template:** link the issue (`Closes #123`) and the requirement ID from `docs/04-requirements.md` (e.g. `B-NET-04`). One topic per PR.
 - **Required checks:** `docs`, `dco`, `pr-title`, `rust`, `msrv`, `deny`, `docker`. Run `just ci` before pushing (it includes `python3 -I scripts/check-docs.py`); run `just schema` after changing `rdock-model`.
 - **No secrets** (tokens, keys, private hostnames, personal data) in code, docs, fixtures or logs. Security problems go through [SECURITY.md](SECURITY.md), never a public issue.
+
+## Design rule
+
+- **Every option, safe by default** ([vision](docs/01-vision.md) principle 10). When a capability can be offered safely, offer all its options (for example every ACME challenge type and DNS provider) instead of picking one for the user. Defaults follow current best practice and are documented with a dated source; unsafe combinations are refused with a diagnostic, never silently allowed.
 
 ## Documentation rules
 
@@ -42,7 +46,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
 | [docs/09-website.md](docs/09-website.md) | Public website and docs plan (Astro + Starlight, `apps/website`) |
 | [apps/website/](apps/website/README.md) | The website: landing page, docs pages, generators and checks |
-| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0019 |
+| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0020 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) | How changes are proposed, reviewed and merged |

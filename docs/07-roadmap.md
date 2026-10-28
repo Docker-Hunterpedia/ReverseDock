@@ -34,7 +34,8 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 **Done when:** `tests/conformance/traefik-labels` (≥ 40 Compose fixtures) produce the expected routing tables; container start/stop/health events reflected within 1 s; Docker socket loss does not drop traffic.
 
 ## v0.3 — Automatic HTTPS (P0 TLS)
-**Scope:** B-TLS-02…08/12/13, W-CF-01…05, W-DNS-01, W-PLAT-04 (Tunnel example), ACME HTTP-01/TLS-ALPN-01/DNS-01, ARI scheduler, profiles, storage, alerts, local CA (`rdock trust`), HSTS, http→https defaults, Cloudflare IP sync + `CF-Connecting-IP`, Origin CA guidance, Tunnel example. Docs site (F-MGMT-05) starts here as an out-of-band track.
+**Status:** planned. Design: [ADR-0020](decisions/0020-automatic-https.md); research: [v0.3 automatic HTTPS](research/v0.3-automatic-https.md). Plan and issues: the [v0.3 milestone](https://github.com/Docker-Hunterpedia/ReverseDock/milestone/4). Order: configuration model → issuance (HTTP-01) → TLS-ALPN-01 → renewal and alerts → DNS-01 with Cloudflare → local CA → Cloudflare client IP → HTTPS by default and zero-config → docs and release. W-CF-08 (Authenticated Origin Pulls) stays in v0.4 with mTLS.
+**Scope:** B-TLS-02…08/12/13, W-CF-01…05, W-DNS-01, W-DNS-02 (moved from v0.6), W-PLAT-04 (Tunnel example), ACME HTTP-01/TLS-ALPN-01/DNS-01, ARI scheduler, profiles, storage, alerts, local CA (`rdock trust`), HSTS, http→https defaults, Cloudflare IP sync + `CF-Connecting-IP`, Origin CA guidance, Tunnel example. Docs site (F-MGMT-05) starts here as an out-of-band track.
 **Done when:** e2e against Pebble: issue, renew via ARI, recover from CA outage, wildcard via mocked DNS-01; fresh-VPS scenario script reaches valid HTTPS < 60 s; cert metrics and alerts fire in tests.
 
 ## v0.4 — Production reliability (P1 traffic)
@@ -46,7 +47,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 **Done when:** Playwright suite covers all pages in light/dark/LTR/RTL at 400–1440 px; API conformance tests against OpenAPI; admin never on request path (verified by killing the admin task under load — H-ENG-04); security review checklist for the admin surface complete.
 
 ## v0.6 — Swarm, L4, static (P1 breadth)
-**Scope:** W-SWM-01…03, M-L4-01…03, F-WEB-01, W-DNS-02, W-DNS-03, Traefik `tcp.*` label subset, PROXY protocol, SNI passthrough, static files with SPA fallback.
+**Scope:** W-SWM-01…03, M-L4-01…03, F-WEB-01, W-DNS-03, Traefik `tcp.*` label subset, PROXY protocol, SNI passthrough, static files with SPA fallback.
 **Done when:** 3-node Swarm e2e (scale up/down, rolling update without 5xx); passthrough of a TLS database connection; static-file suite (ranges, conditionals, traversal attempts); every DNS adapter has a mocked-API test.
 
 ## v0.7 — Kubernetes (P2)
