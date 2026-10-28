@@ -2,6 +2,7 @@
 //! reported instead of ignored: `rdock validate` warns, `rdock run` refuses to start, so nothing
 //! silently behaves differently from what the configuration says.
 
+use rdock_model::acme::AcmeSetting;
 use rdock_model::config::{Config, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::middleware::{CompressAlgorithm, Middleware};
@@ -39,8 +40,12 @@ impl Gate<'_> {
 /// Reports every setting this version cannot honour.
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
-    if config.acme.is_some() {
+    // `acme: false` only states what this version already does.
+    if !matches!(config.acme, None | Some(AcmeSetting::Enabled(false))) {
         gate.unsupported("acme", "automatic certificates (ACME)", "v0.3");
+    }
+    if config.observability.alerts.webhook.is_some() {
+        gate.unsupported("observability.alerts.webhook", "alert webhooks", "v0.3");
     }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
@@ -192,5 +197,7 @@ mod tests {
     fn plain_configurations_pass() {
         let yaml = "listeners:\n  web: { address: \":8080\" }\nroutes:\n  r: { match: \"PathPrefix(`/`)\", service: s, listeners: [web], tls: off }\nservices:\n  s: { backends: [{ address: \"s:1\" }] }\n";
         assert_eq!(diagnostics(yaml, Mode::Run), Vec::new());
+        let acme_off = format!("acme: false\n{yaml}");
+        assert_eq!(diagnostics(&acme_off, Mode::Run), Vec::new());
     }
 }

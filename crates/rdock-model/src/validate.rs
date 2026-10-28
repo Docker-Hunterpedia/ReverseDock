@@ -1,11 +1,12 @@
 //! Semantic validation: references, rules, listeners and risky settings.
 
 use std::collections::{BTreeMap, BTreeSet, HashSet};
+use std::net::IpAddr;
 
 use rdock_rules::{Context, Expr, check_host};
 use regex::RegexBuilder;
 
-use crate::acme::{Challenge, DnsProvider, KnownCa};
+use crate::acme::{AcmeProfile, Challenge, DnsProvider, KnownCa, Webhook};
 use crate::config::{Config, Listener, ListenerProtocol};
 use crate::diagnostics::{Diagnostic, path_index, path_key};
 use crate::middleware::{
@@ -425,8 +426,7 @@ impl Validator<'_> {
             if let Some(provider) = &options.dns_provider {
                 let defined = self
                     .config
-                    .acme
-                    .as_ref()
+                    .effective_acme()
                     .is_some_and(|a| a.dns_providers.contains_key(provider));
                 if !defined {
                     self.push(
@@ -487,7 +487,12 @@ impl Validator<'_> {
                     .with_hint("add Host(`app.example.com`) to the match, list names in tls.domains, or set `tls: off`"),
             );
         }
-        let has_dns = options.is_some_and(|o| o.dns_provider.is_some());
+        let acme = self.config.effective_acme();
+        let has_dns = options.is_some_and(|o| o.dns_provider.is_some())
+            || acme.as_ref().is_some_and(|a| a.dns_provider.is_some());
+        if let Some(acme) = &acme {
+            self.check_ip_hosts(&tls_path, &hosts, acme.profile, has_dns);
+        }
         if let Some(wildcard) = hosts.iter().find(|h| h.starts_with("*."))
             && !has_dns
         {
@@ -1032,7 +1037,11 @@ impl Validator<'_> {
     }
 
     fn check_acme(&mut self) {
-        let Some(acme) = &self.config.acme else {
+        let config = self.config;
+        if let Some(webhook) = &config.observability.alerts.webhook {
+            self.check_webhook("observability.alerts.webhook", webhook, "alert_token");
+        }
+        let Some(acme) = config.effective_acme() else {
             return;
         };
         if let Some(email) = &acme.email
@@ -1053,14 +1062,20 @@ impl Validator<'_> {
                 "dns-01 is enabled but no DNS provider is defined",
             );
         }
+        if let Some(name) = &acme.dns_provider
+            && !acme.dns_providers.contains_key(name)
+        {
+            self.push(
+                Diagnostic::error(
+                    "acme.dns_provider",
+                    format!("DNS provider `{name}` is not defined"),
+                )
+                .with_hint("add it under `acme.dns_providers`"),
+            );
+        }
         for (name, provider) in &acme.dns_providers {
-            let path = path_key("acme.dns_providers", name);
             self.check_name("acme.dns_providers", name);
-            match provider {
-                DnsProvider::Cloudflare { api_token } => {
-                    self.check_secret(&format!("{path}.api_token"), api_token, "cf_token");
-                }
-            }
+            self.check_dns_provider(&path_key("acme.dns_providers", name), provider);
         }
         if let Some(eab) = &acme.eab {
             if eab.key_id.is_empty() {
@@ -1079,6 +1094,90 @@ impl Validator<'_> {
                     "this certificate authority requires external account binding",
                 )
                 .with_hint("add `eab: { key_id, hmac_key }` from the CA's dashboard"),
+            );
+        }
+    }
+
+    fn check_dns_provider(&mut self, path: &str, provider: &DnsProvider) {
+        match provider {
+            DnsProvider::Cloudflare { api_token, zone_id } => {
+                self.check_secret(&format!("{path}.api_token"), api_token, "cf_token");
+                if zone_id.as_deref().is_some_and(str::is_empty) {
+                    self.error(format!("{path}.zone_id"), "zone_id is empty");
+                }
+            }
+            DnsProvider::Exec {
+                command, timeout, ..
+            } => {
+                if !command.is_absolute() {
+                    self.push(
+                        Diagnostic::error(
+                            format!("{path}.command"),
+                            format!("`{}` is not an absolute path", command.display()),
+                        )
+                        .with_hint(
+                            "programs are run without a shell or PATH lookup; write the full path",
+                        ),
+                    );
+                }
+                if timeout.is_zero() {
+                    self.error(
+                        format!("{path}.timeout"),
+                        "the timeout must be longer than zero",
+                    );
+                }
+            }
+            DnsProvider::Webhook(webhook) => self.check_webhook(path, webhook, "dns_webhook_token"),
+        }
+    }
+
+    fn check_webhook(&mut self, path: &str, webhook: &Webhook, token_file: &str) {
+        if !webhook.url.is_https_or_loopback() {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.url"),
+                    format!("`{}` is not encrypted", webhook.url),
+                )
+                .with_hint("use an https:// URL; http:// is allowed only for localhost"),
+            );
+        }
+        if let Some(token) = &webhook.token {
+            self.check_secret(&format!("{path}.token"), token, token_file);
+        }
+        if webhook.timeout.is_zero() {
+            self.error(
+                format!("{path}.timeout"),
+                "the timeout must be longer than zero",
+            );
+        }
+    }
+
+    /// Public IP addresses need short-lived certificates and an HTTP or TLS challenge.
+    fn check_ip_hosts(
+        &mut self,
+        tls_path: &str,
+        hosts: &[&str],
+        profile: Option<AcmeProfile>,
+        dns: bool,
+    ) {
+        let Some(ip) = hosts.iter().find_map(|h| public_ip(h)) else {
+            return;
+        };
+        if dns {
+            self.push(
+                Diagnostic::error(
+                    tls_path,
+                    format!("DNS-01 cannot validate the IP address `{ip}`"),
+                )
+                .with_hint("use http-01 or tls-alpn-01 for IP addresses, or a manual certificate"),
+            );
+        } else if profile != Some(AcmeProfile::Shortlived) {
+            self.push(
+                Diagnostic::warning(
+                    tls_path,
+                    format!("an automatic certificate for the IP address `{ip}` needs `acme.profile: shortlived`"),
+                )
+                .with_hint("set `acme.profile: shortlived`, or provide a certificate under `certificates`"),
             );
         }
     }
@@ -1235,6 +1334,20 @@ impl Validator<'_> {
             }
         }
     }
+}
+
+/// The address, when `host` is an IP address a public CA can certify (not loopback or private).
+fn public_ip(host: &str) -> Option<IpAddr> {
+    let literal = host
+        .strip_prefix('[')
+        .and_then(|h| h.strip_suffix(']'))
+        .unwrap_or(host);
+    let ip: IpAddr = literal.parse().ok()?;
+    let local = match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_private() || v4.is_link_local(),
+        IpAddr::V6(v6) => v6.is_loopback() || v6.is_unique_local() || v6.is_unicast_link_local(),
+    };
+    (!local).then_some(ip)
 }
 
 #[cfg(test)]

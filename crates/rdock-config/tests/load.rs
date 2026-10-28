@@ -84,8 +84,11 @@ acme:
         panic!("redirect")
     };
     assert_eq!(redirect.replacement.as_deref(), Some("https://www.${1}"));
-    let acme = loaded.config.acme.as_ref().unwrap();
-    let rdock_model::acme::DnsProvider::Cloudflare { api_token } = &acme.dns_providers["cf"];
+    let acme = loaded.config.effective_acme().unwrap();
+    let rdock_model::acme::DnsProvider::Cloudflare { api_token, .. } = &acme.dns_providers["cf"]
+    else {
+        panic!("cloudflare")
+    };
     assert_eq!(api_token, "${file:/run/secrets/cf_token}");
     // The stored source keeps the reference, not the resolved value.
     assert!(loaded.source.to_string().contains("${file:"));

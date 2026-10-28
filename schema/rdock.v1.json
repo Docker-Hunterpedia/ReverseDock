@@ -14,10 +14,10 @@
       "default": null
     },
     "acme": {
-      "description": "Automatic certificates (ACME). Let's Encrypt with HTTP-01 and TLS-ALPN-01 is used when\nomitted.",
+      "description": "Automatic certificates (ACME). On by default with Let's Encrypt, HTTP-01 and TLS-ALPN-01;\n`false` turns it off.",
       "anyOf": [
         {
-          "$ref": "#/$defs/Acme"
+          "$ref": "#/$defs/AcmeSetting"
         },
         {
           "type": "null"
@@ -89,6 +89,9 @@
             "cookie",
             "set-cookie"
           ]
+        },
+        "alerts": {
+          "webhook": null
         },
         "metrics": {
           "prometheus": true
@@ -216,6 +219,14 @@
             "$ref": "#/$defs/Challenge"
           }
         },
+        "dns_provider": {
+          "description": "DNS provider (a key of `dns_providers`) used for every route that does not name one:\nall certificates are then validated with DNS-01.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "dns_providers": {
           "description": "DNS providers for DNS-01, referenced by routes.",
           "type": "object",
@@ -295,6 +306,19 @@
         }
       ]
     },
+    "AcmeSetting": {
+      "description": "The `acme` section: `false` turns automatic certificates off, `true` or settings keep them on.",
+      "anyOf": [
+        {
+          "description": "`true` uses the defaults; `false` turns automatic certificates off.",
+          "type": "boolean"
+        },
+        {
+          "description": "Settings.",
+          "$ref": "#/$defs/Acme"
+        }
+      ]
+    },
     "ActiveHealth": {
       "description": "Periodic HTTP probes.",
       "type": "object",
@@ -368,6 +392,28 @@
           "description": "Address of the admin API. Keep it on loopback unless it is protected.",
           "$ref": "#/$defs/ListenAddress",
           "default": "127.0.0.1:2080"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Alerts": {
+      "description": "Alert delivery.",
+      "type": "object",
+      "properties": {
+        "webhook": {
+          "description": "Receives each alert as a JSON `POST`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Webhook"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
@@ -576,16 +622,24 @@
       "description": "A DNS provider for DNS-01 challenges.",
       "oneOf": [
         {
-          "description": "Cloudflare DNS with a scoped API token (Zone → DNS → Edit).",
+          "description": "Cloudflare DNS, with an API token allowed to edit the zone's DNS records.",
           "type": "object",
           "properties": {
             "api_token": {
-              "description": "API token. Reference a secret instead of writing it here:\n`\"${file:/run/secrets/cf_token}\"`.",
+              "description": "API token with Zone → DNS → Edit. Write it as a `${file:…}` or `${env:…}` reference.",
               "type": "string"
             },
             "type": {
               "type": "string",
               "const": "cloudflare"
+            },
+            "zone_id": {
+              "description": "Zone ID. Looked up from the name when omitted, which also needs Zone → Zone → Read.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
             }
           },
           "additionalProperties": false,
@@ -595,6 +649,59 @@
           "required": [
             "type",
             "api_token"
+          ]
+        },
+        {
+          "description": "A program run as `<command> <args…> present|cleanup <name> <value>`, without a shell.",
+          "type": "object",
+          "properties": {
+            "args": {
+              "description": "Arguments placed before the action.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "command": {
+              "description": "Absolute path of the program.",
+              "type": "string"
+            },
+            "timeout": {
+              "description": "Time allowed for each run.",
+              "$ref": "#/$defs/Duration",
+              "default": "30s"
+            },
+            "type": {
+              "type": "string",
+              "const": "exec"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "command"
+          ]
+        },
+        {
+          "description": "A JSON `POST` of `{\"action\", \"name\", \"value\"}` to an HTTPS endpoint.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "webhook"
+            }
+          },
+          "$ref": "#/$defs/Webhook",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
           ]
         }
       ]
@@ -1819,6 +1926,13 @@
             ]
           }
         },
+        "alerts": {
+          "description": "Where certificate alerts (renewal failures, near expiry) are sent besides the log,\nthe metrics and `rdock status`.",
+          "$ref": "#/$defs/Alerts",
+          "default": {
+            "webhook": null
+          }
+        },
         "metrics": {
           "description": "Metrics.",
           "$ref": "#/$defs/Metrics",
@@ -2839,6 +2953,36 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "Webhook": {
+      "description": "An HTTPS endpoint that receives JSON events.",
+      "type": "object",
+      "properties": {
+        "timeout": {
+          "description": "Time allowed for each request.",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "token": {
+          "description": "Bearer token sent in `Authorization`. Write it as a `${file:…}` or `${env:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "url": {
+          "description": "`https://` URL (`http://` only for loopback addresses).",
+          "$ref": "#/$defs/HttpUrl"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "url"
+      ]
     }
   }
 }

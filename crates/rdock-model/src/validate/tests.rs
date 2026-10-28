@@ -176,6 +176,116 @@ fn automatic_https_needs_hosts_and_dns_for_wildcards() {
 }
 
 #[test]
+fn acme_can_be_turned_off_or_given_a_default_dns_provider() {
+    assert_eq!(validate(with(app(), json!({ "acme": false }))), Vec::new());
+    assert_eq!(validate(with(app(), json!({ "acme": true }))), Vec::new());
+    let cf = json!({ "type": "cloudflare", "api_token": "${file:/run/secrets/cf}" });
+    let wildcard_with_default = with(
+        app(),
+        json!({
+            "acme": { "dns_provider": "cf", "dns_providers": { "cf": cf } },
+            "routes": { "app": { "match": "Host(`*.example.com`)" } }
+        }),
+    );
+    assert_eq!(validate(wildcard_with_default), Vec::new());
+    let undefined = with(app(), json!({ "acme": { "dns_provider": "nope" } }));
+    assert!(has(
+        &errors(undefined),
+        "acme.dns_provider",
+        "`nope` is not defined"
+    ));
+    let acme_off = with(
+        app(),
+        json!({
+            "acme": false,
+            "routes": { "app": { "tls": { "dns_provider": "cf" } } }
+        }),
+    );
+    assert!(has(
+        &errors(acme_off),
+        "routes.app.tls.dns_provider",
+        "not defined"
+    ));
+}
+
+#[test]
+fn checks_exec_and_webhook_dns_providers() {
+    let config = with(
+        app(),
+        json!({
+            "acme": { "dns_providers": {
+                "script": { "type": "exec", "command": "dns-hook.sh", "timeout": "0s" },
+                "hook": { "type": "webhook", "url": "http://dns.example.com/acme", "token": "plain" },
+                "local": { "type": "webhook", "url": "http://127.0.0.1:8080/acme" },
+                "good": { "type": "exec", "command": "/usr/local/bin/dns-hook", "args": ["--zone", "example.com"] }
+            } },
+            "observability": { "alerts": { "webhook": { "url": "http://alerts.example.com/" } } }
+        }),
+    );
+    let found = errors(config.clone());
+    assert!(has(
+        &found,
+        "acme.dns_providers.script.command",
+        "not an absolute path"
+    ));
+    assert!(has(
+        &found,
+        "acme.dns_providers.script.timeout",
+        "longer than zero"
+    ));
+    assert!(has(&found, "acme.dns_providers.hook.url", "not encrypted"));
+    assert!(has(
+        &found,
+        "observability.alerts.webhook.url",
+        "not encrypted"
+    ));
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("acme.dns_providers.local")
+                || p.starts_with("acme.dns_providers.good"))
+    );
+    assert!(has(
+        &warnings(config),
+        "acme.dns_providers.hook.token",
+        "a secret is written in the configuration file"
+    ));
+}
+
+#[test]
+fn public_ip_addresses_need_shortlived_certificates() {
+    let ip = with(
+        app(),
+        json!({ "routes": { "app": { "match": "Host(`203.0.113.7`)" } } }),
+    );
+    assert!(has(
+        &warnings(ip.clone()),
+        "routes.app.tls",
+        "needs `acme.profile: shortlived`"
+    ));
+    let shortlived = with(ip.clone(), json!({ "acme": { "profile": "shortlived" } }));
+    assert_eq!(validate(shortlived), Vec::new());
+    let private = with(
+        app(),
+        json!({ "routes": { "app": { "match": "Host(`192.168.1.10`) || Host(`[::1]`)" } } }),
+    );
+    assert_eq!(validate(private), Vec::new());
+    let dns = with(
+        ip,
+        json!({
+            "acme": { "profile": "shortlived", "dns_provider": "cf", "dns_providers": {
+                "cf": { "type": "cloudflare", "api_token": "${file:/run/secrets/cf}" }
+            } }
+        }),
+    );
+    assert!(has(
+        &errors(dns),
+        "routes.app.tls",
+        "DNS-01 cannot validate"
+    ));
+}
+
+#[test]
 fn checks_services() {
     let config = json!({
         "services": {

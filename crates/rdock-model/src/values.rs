@@ -607,6 +607,19 @@ impl HttpUrl {
     pub fn as_url(&self) -> &url::Url {
         &self.0
     }
+
+    /// Whether requests to the URL are encrypted or stay on this machine: `https://`, or
+    /// `http://` to `localhost` or a loopback address.
+    #[must_use]
+    pub fn is_https_or_loopback(&self) -> bool {
+        self.0.scheme() == "https"
+            || match self.0.host() {
+                Some(url::Host::Domain(name)) => name.eq_ignore_ascii_case("localhost"),
+                Some(url::Host::Ipv4(ip)) => ip.is_loopback(),
+                Some(url::Host::Ipv6(ip)) => ip.is_loopback(),
+                None => false,
+            }
+    }
 }
 
 impl FromStr for HttpUrl {

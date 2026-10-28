@@ -8,7 +8,37 @@ use schemars::JsonSchema;
 use serde::de::{self, Visitor};
 use serde::{Deserialize, Deserializer, Serialize};
 
-use crate::values::HttpUrl;
+use crate::values::{Duration, HttpUrl};
+
+/// The `acme` section: `false` turns automatic certificates off, `true` or settings keep them on.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
+#[serde(untagged)]
+pub enum AcmeSetting {
+    /// `true` uses the defaults; `false` turns automatic certificates off.
+    Enabled(bool),
+    /// Settings.
+    Settings(Box<Acme>),
+}
+
+impl<'de> Deserialize<'de> for AcmeSetting {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct SettingVisitor;
+        impl<'de> Visitor<'de> for SettingVisitor {
+            type Value = AcmeSetting;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("`true`, `false` or ACME settings")
+            }
+            fn visit_bool<E: de::Error>(self, value: bool) -> Result<AcmeSetting, E> {
+                Ok(AcmeSetting::Enabled(value))
+            }
+            fn visit_map<A: de::MapAccess<'de>>(self, map: A) -> Result<AcmeSetting, A::Error> {
+                Acme::deserialize(de::value::MapAccessDeserializer::new(map))
+                    .map(|acme| AcmeSetting::Settings(Box::new(acme)))
+            }
+        }
+        deserializer.deserialize_any(SettingVisitor)
+    }
+}
 
 /// ACME (automatic certificates) settings.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
@@ -25,6 +55,9 @@ pub struct Acme {
     pub challenges: Vec<Challenge>,
     /// DNS providers for DNS-01, referenced by routes.
     pub dns_providers: BTreeMap<String, DnsProvider>,
+    /// DNS provider (a key of `dns_providers`) used for every route that does not name one:
+    /// all certificates are then validated with DNS-01.
+    pub dns_provider: Option<String>,
     /// Use the CA's staging environment (untrusted certificates, high rate limits).
     pub staging: bool,
     /// External account binding, required by some CAs.
@@ -41,6 +74,7 @@ impl Default for Acme {
             profile: None,
             challenges: vec![Challenge::Http01, Challenge::TlsAlpn01],
             dns_providers: BTreeMap::new(),
+            dns_provider: None,
             staging: false,
             eab: None,
             storage: None,
@@ -131,12 +165,48 @@ pub enum Challenge {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(tag = "type", rename_all = "snake_case")]
 pub enum DnsProvider {
-    /// Cloudflare DNS with a scoped API token (Zone → DNS → Edit).
+    /// Cloudflare DNS, with an API token allowed to edit the zone's DNS records.
     Cloudflare {
-        /// API token. Reference a secret instead of writing it here:
-        /// `"${file:/run/secrets/cf_token}"`.
+        /// API token with Zone → DNS → Edit. Write it as a `${file:…}` or `${env:…}` reference.
         api_token: String,
+        /// Zone ID. Looked up from the name when omitted, which also needs Zone → Zone → Read.
+        #[serde(default)]
+        zone_id: Option<String>,
     },
+    /// A program run as `<command> <args…> present|cleanup <name> <value>`, without a shell.
+    Exec {
+        /// Absolute path of the program.
+        command: PathBuf,
+        /// Arguments placed before the action.
+        #[serde(default)]
+        args: Vec<String>,
+        /// Time allowed for each run.
+        #[serde(default = "thirty_seconds")]
+        timeout: Duration,
+    },
+    /// A JSON `POST` of `{"action", "name", "value"}` to an HTTPS endpoint.
+    Webhook(Webhook),
+}
+
+/// An HTTPS endpoint that receives JSON events.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Webhook {
+    /// `https://` URL (`http://` only for loopback addresses).
+    pub url: HttpUrl,
+    /// Bearer token sent in `Authorization`. Write it as a `${file:…}` or `${env:…}` reference.
+    #[serde(default)]
+    pub token: Option<String>,
+    /// Time allowed for each request.
+    #[serde(default = "ten_seconds")]
+    pub timeout: Duration,
+}
+
+const fn thirty_seconds() -> Duration {
+    Duration::from_secs(30)
+}
+
+const fn ten_seconds() -> Duration {
+    Duration::from_secs(10)
 }
 
 /// External account binding credentials.

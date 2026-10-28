@@ -33,6 +33,36 @@ Output format.
 
 Header names whose values are replaced by `***`.
 
+## `observability.alerts`
+
+**Type:** object · **Default:** `{"webhook":null}`
+
+Where certificate alerts (renewal failures, near expiry) are sent besides the log, the metrics and `rdock status`.
+
+### `observability.alerts.webhook`
+
+**Type:** object
+
+Receives each alert as a JSON `POST`.
+
+#### `observability.alerts.webhook.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
+
+Time allowed for each request.
+
+#### `observability.alerts.webhook.token`
+
+**Type:** `string`
+
+Bearer token sent in `Authorization`. Write it as a `${file:…}` or `${env:…}` reference.
+
+#### `observability.alerts.webhook.url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+`https://` URL (`http://` only for loopback addresses).
+
 ## `observability.metrics`
 
 **Type:** object · **Default:** `{"prometheus":true}`

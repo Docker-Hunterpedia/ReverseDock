@@ -1211,7 +1211,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-config"
-version = "0.1.0-alpha.3"
+version = "0.2.0-alpha.1"
 dependencies = [
  "rdock-model",
  "serde",
@@ -1237,7 +1237,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-model"
-version = "0.1.0-alpha.3"
+version = "0.2.0-alpha.1"
 dependencies = [
  "ipnet",
  "rdock-rules",
@@ -1251,7 +1251,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-rules"
-version = "0.1.0-alpha.3"
+version = "0.2.0-alpha.1"
 dependencies = [
  "ipnet",
  "regex",
