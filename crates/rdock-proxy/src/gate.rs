@@ -45,9 +45,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     {
         gate.unsupported("acme.dns_provider", "DNS-01 certificates", "v0.3");
     }
-    if config.observability.alerts.webhook.is_some() {
-        gate.unsupported("observability.alerts.webhook", "alert webhooks", "v0.3");
-    }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
         if matches!(

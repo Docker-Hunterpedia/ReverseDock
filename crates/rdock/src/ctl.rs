@@ -4,7 +4,7 @@
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
 use std::process::ExitCode;
-use std::time::Duration;
+use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, bail};
 use rdock_model::Diagnostic;
@@ -143,6 +143,9 @@ pub(crate) fn status(args: &StatusArgs) -> anyhow::Result<ExitCode> {
             listener["routes"]
         ));
     }
+    for cert in s["certificates"].as_array().into_iter().flatten() {
+        lines.push(certificate_line(cert));
+    }
     if let Some(last) = s["last_reload"].as_object() {
         lines.push(format!(
             "last reload  {} by {} at {}",
@@ -154,6 +157,35 @@ pub(crate) fn status(args: &StatusArgs) -> anyhow::Result<ExitCode> {
     lines.push(String::new());
     print(&lines.join("\n"))?;
     Ok(ExitCode::SUCCESS)
+}
+
+/// One automatic certificate: names, expiry and renewal plan, and the last error if failing.
+fn certificate_line(cert: &serde_json::Value) -> String {
+    let names: Vec<&str> = cert["names"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(serde_json::Value::as_str)
+        .collect();
+    let when = |key: &str| {
+        cert[key]
+            .as_i64()
+            .and_then(|t| {
+                SystemTime::UNIX_EPOCH.checked_add(Duration::from_secs(t.try_into().ok()?))
+            })
+            .map_or_else(|| "-".to_owned(), rdock_observability::rfc3339)
+    };
+    let failing = cert["last_error"]
+        .as_str()
+        .map(|error| format!(" — {} failures, last: {error}", cert["failures"]))
+        .unwrap_or_default();
+    format!(
+        "certificate  {} expires {} renews {} ({}){failing}",
+        names.join(","),
+        when("not_after"),
+        when("renew_at"),
+        cert["renewal"].as_str().unwrap_or("?")
+    )
 }
 
 pub(crate) fn healthcheck(args: &CtlArgs) -> ExitCode {

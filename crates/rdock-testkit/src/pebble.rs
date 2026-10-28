@@ -11,6 +11,8 @@ use tempfile::TempDir;
 const PEBBLE: &str = "ghcr.io/letsencrypt/pebble:2.10.1";
 const CHALLTESTSRV: &str = "ghcr.io/letsencrypt/pebble-challtestsrv:2.10.1";
 const BUSYBOX: &str = "busybox:1.37";
+/// A name Pebble refuses to issue for, to test failures.
+pub const BLOCKED: &str = "blocked.example.com";
 
 /// A running Pebble.
 pub struct Pebble {
@@ -86,6 +88,7 @@ impl Pebble {
             "ocspResponderURL": "",
             "externalAccountBindingRequired": false,
             "keyAlgorithm": "ecdsa",
+            "domainBlocklist": [BLOCKED],
             "profiles": {
                 "default": { "description": "90 days", "validityPeriod": 7_776_000 },
                 "shortlived": { "description": "6 days", "validityPeriod": 518_400 }
@@ -178,6 +181,30 @@ impl Pebble {
     /// The root of the certificates Pebble issues, as PEM. It changes with every start.
     pub fn issuing_root(&self) -> String {
         curl(&format!("https://localhost:{}/roots/0", self.management)).unwrap()
+    }
+
+    /// Makes Pebble answer renewal-information requests for `cert_pem` (the leaf, PEM) with a
+    /// window from `start` to `end` (RFC 3339).
+    pub fn set_renewal_window(&self, cert_pem: &str, start: &str, end: &str) {
+        let window = serde_json::json!({ "suggestedWindow": { "start": start, "end": end } });
+        let body = serde_json::json!({
+            "Certificate": cert_pem,
+            "ARIResponse": window.to_string(),
+        });
+        let out = Command::new("curl")
+            .args(["-sfk", "--max-time", "5", "-X", "POST", "--data-binary"])
+            .arg(body.to_string())
+            .arg(format!(
+                "https://localhost:{}/set-renewal-info/",
+                self.management
+            ))
+            .output()
+            .unwrap();
+        assert!(
+            out.status.success(),
+            "set-renewal-info: {}",
+            String::from_utf8_lossy(&out.stderr)
+        );
     }
 
     /// Stops the CA (the DNS server keeps running), to test a CA outage.
