@@ -1,18 +1,22 @@
-description: "The retry middleware is a warning: retries are a service setting here."
+description: "A retry middleware becomes `retries` on the router's service; Traefik's attempts count the first try."
 containers:
   - name: "app"
     labels:
       traefik.enable: "true"
       traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "retry"
       traefik.http.middlewares.retry.retry.attempts: "4"
+      traefik.http.middlewares.retry.retry.status: "500-504"
     networks:
       web: "172.18.0.2"
     ports:
       - 80
 expect:
   routes:
-    app: {}
+    app:
+      middlewares: []
   services:
-    app: {}
-  diagnostics:
-    - "attempts\"]: the retry middleware is not supported"
+    app:
+      retries:
+        attempts: 3
+        on: ["connect", "reset", "502", "503", "504"]

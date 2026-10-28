@@ -1,0 +1,23 @@
+description: "passTLSClientCert forwards a verified client certificate in Traefik's headers."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "cert"
+      traefik.http.middlewares.cert.passtlsclientcert.pem: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.commonname: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    cert:
+      type: "client_cert"
+      required: false
+      forward: "traefik"

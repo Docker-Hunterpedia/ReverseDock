@@ -1,0 +1,18 @@
+description: "loadbalancer.strategy maps wrr, p2c, hrw and leasttime onto policies."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.services.app.loadbalancer.strategy: "hrw"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      load_balancer:
+        policy: "ip_hash"

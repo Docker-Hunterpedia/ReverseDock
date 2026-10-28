@@ -1,0 +1,18 @@
+description: "circuitBreaker expressions are reported with what to use instead."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.cb.circuitbreaker.expression: "NetworkErrorRatio() > 0.5"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "circuit-breaker expressions are not carried over"

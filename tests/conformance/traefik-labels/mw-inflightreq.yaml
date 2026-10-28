@@ -1,0 +1,23 @@
+description: "inFlightReq becomes in_flight; a header source criterion becomes the key."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "limit"
+      traefik.http.middlewares.limit.inflightreq.amount: "10"
+      traefik.http.middlewares.limit.inflightreq.sourcecriterion.requestheadername: "X-Api-Key"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    limit:
+      type: "in_flight"
+      amount: 10
+      key: "header:X-Api-Key"

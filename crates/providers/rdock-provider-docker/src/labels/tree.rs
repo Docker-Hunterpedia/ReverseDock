@@ -80,6 +80,11 @@ impl Tree {
         self.0.contains_key(key)
     }
 
+    /// The value at the top-level `key`, to edit.
+    pub(crate) fn top_mut(&mut self, key: &str) -> Option<&mut Value> {
+        self.0.get_mut(key)
+    }
+
     /// The tree as a JSON value.
     pub(crate) fn into_value(self) -> Value {
         Value::Object(self.0)

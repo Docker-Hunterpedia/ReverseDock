@@ -355,10 +355,10 @@ labels:
 | `traefik.docker.network` | network selection |
 | `traefik.http.routers.<r>.rule / priority / entrypoints / service / middlewares` | route fields; entrypoint names map via `providers.docker.entrypoints: {web: web, websecure: websecure}` |
 | `traefik.http.routers.<r>.tls`, `.tls.certresolver`, `.tls.domains[n].main/sans` | `tls: auto` (any resolver name → default ACME), explicit SANs |
-| `traefik.http.services.<s>.loadbalancer.server.port / scheme / url`, `.passhostheader`, `.sticky.cookie.*`, `.healthcheck.*`, `.serverstransport` (warn) | service fields |
-| `traefik.http.middlewares.<m>.headers.*`, `redirectscheme.*`, `redirectregex.*`, `stripprefix.*`, `addprefix.*`, `replacepath.*`, `replacepathregex.*`, `basicauth.*`, `ratelimit.*`, `ipallowlist.*`, `compress.*`, `forwardauth.*`, `errors.*`, `retry.*`, `inflightreq.*`, `buffering.*` | middleware types |
+| `traefik.http.services.<s>.loadbalancer.server.port / scheme / url`, `.passhostheader`, `.sticky.cookie.*`, `.healthcheck.*`, `.passivehealthcheck.*`, `.strategy`, `.serverstransport` (warn) | service fields |
+| `traefik.http.middlewares.<m>.headers.*`, `redirectscheme.*`, `redirectregex.*`, `stripprefix.*`, `addprefix.*`, `replacepath.*`, `replacepathregex.*`, `basicauth.*`, `ratelimit.*`, `ipallowlist.*`, `compress.*`, `forwardauth.*`, `errors.*`, `inflightreq.*`, `passtlsclientcert.*` | middleware types; `retry.*` becomes `retries` of the router's service |
 | `traefik.tcp.routers.<r>.rule (HostSNI) / entrypoints / tls.passthrough`, `traefik.tcp.services.<s>.loadbalancer.server.port` | L4 (v0.6) |
-| anything else (`plugin.*`, `chain`, `digestauth`, `passtlsclientcert` …) | **diagnostic warning** with the exact label, visible in `rdock status` and the dashboard |
+| anything else (`plugin.*`, `chain`, `digestauth`, `circuitbreaker` …) | **diagnostic warning** with the exact label, visible in `rdock status` and the dashboard |
 
 ## 12. Swarm and Kubernetes (summary)
 
