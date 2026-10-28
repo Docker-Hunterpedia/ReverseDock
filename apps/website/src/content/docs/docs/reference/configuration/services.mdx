@@ -35,7 +35,7 @@ Only used when no primary backend is available.
 
 Relative share of traffic.
 
-## `services.<name>.health` <Status planned="v0.4" />
+## `services.<name>.health`
 
 **Type:** object
 
@@ -210,10 +210,6 @@ Selection policy.
 - `header_hash`: Consistent hash of a request header (`hash_on`).
 - `cookie_hash`: Consistent hash of a cookie (`hash_on`).
 
-:::note[Planned for v0.4]
-Policies other than `round_robin` and `random`: accepted by `rdock validate` with a warning, refused by `rdock run` until v0.4.
-:::
-
 ## `services.<name>.max_connections_per_backend`
 
 **Type:** `integer`
@@ -290,7 +286,7 @@ Another service (`name` or `name@provider`).
 
 Relative share of traffic.
 
-## `services.<name>.sticky` <Status planned="v0.4" />
+## `services.<name>.sticky`
 
 **Type:** object
 
