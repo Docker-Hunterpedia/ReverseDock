@@ -30,6 +30,8 @@ pub struct Shared {
     pub runtime: ArcSwap<Runtime>,
     /// Metrics.
     pub metrics: Metrics,
+    /// ACME challenge answers.
+    pub challenges: Arc<rdock_tls::Challenges>,
 }
 
 /// The proxy of one listener.
@@ -81,6 +83,14 @@ fn valid_request_id(value: &str) -> bool {
 }
 
 impl RdockProxy {
+    /// The answer to an ACME HTTP-01 challenge request, served before any route or redirect.
+    fn http01_answer(&self, req: &RequestHeader) -> Option<Arc<str>> {
+        if req.method != http::Method::GET && req.method != http::Method::HEAD {
+            return None;
+        }
+        self.shared.challenges.http01_answer(req.uri.path())
+    }
+
     fn listener<'a>(&self, runtime: &'a Runtime) -> Option<&'a ListenerRuntime> {
         runtime.listeners.get(&*self.listener)
     }
@@ -259,6 +269,20 @@ impl ProxyHttp for RdockProxy {
         let Some(listener) = self.listener(&runtime) else {
             return Err(status_error(503, "listener is not configured"));
         };
+        if listener.tls.is_none()
+            && let Some(answer) = self.http01_answer(session.req_header())
+        {
+            let reply = Reply {
+                status: 200,
+                headers: vec![(
+                    http::header::CONTENT_TYPE,
+                    HeaderValue::from_static("text/plain"),
+                )],
+                body: Some(Bytes::copy_from_slice(answer.as_bytes())),
+            };
+            self.reply(session, ctx, reply, &[]).await?;
+            return Ok(true);
+        }
         let normalized = rdock_rules::path::normalize(session.req_header().uri.path())
             .map_err(|_| status_error(400, "invalid request path"))?;
         if normalized.forwarded != session.req_header().uri.path() {

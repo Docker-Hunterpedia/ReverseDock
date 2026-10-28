@@ -40,9 +40,10 @@ impl Gate<'_> {
 /// Reports every setting this version cannot honour.
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
-    // `acme: false` only states what this version already does.
-    if !matches!(config.acme, None | Some(AcmeSetting::Enabled(false))) {
-        gate.unsupported("acme", "automatic certificates (ACME)", "v0.3");
+    if let Some(AcmeSetting::Settings(acme)) = &config.acme
+        && acme.dns_provider.is_some()
+    {
+        gate.unsupported("acme.dns_provider", "DNS-01 certificates", "v0.3");
     }
     if config.observability.alerts.webhook.is_some() {
         gate.unsupported("observability.alerts.webhook", "alert webhooks", "v0.3");
@@ -76,13 +77,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
                 gate.unsupported(
                     format!("{path}.dns_provider"),
                     "DNS-01 certificates",
-                    "v0.3",
-                );
-            }
-            if !options.domains.is_empty() {
-                gate.unsupported(
-                    format!("{path}.domains"),
-                    "automatic certificate names",
                     "v0.3",
                 );
             }
@@ -180,13 +174,13 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "acme: { email: a@example.com }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n    health: { active: { path: / } }\n";
+        let yaml = "acme: { email: a@example.com, dns_provider: cf, dns_providers: { cf: { type: cloudflare, api_token: \"${file:/run/secrets/cf}\" } } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n    health: { active: { path: / } }\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
         assert_eq!(
             validate[0].message,
-            "automatic certificates (ACME): not supported in this version (planned for v0.3)"
+            "DNS-01 certificates: not supported in this version (planned for v0.3)"
         );
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));

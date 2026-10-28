@@ -120,6 +120,8 @@ jobs:
         env:
           # The runner's Docker daemon: the Docker provider end-to-end test (e2e_docker.rs).
           RDOCK_DOCKER_TESTS: "1"
+          # Pebble (Let's Encrypt's test CA) in Docker: the ACME end-to-end test (e2e_acme.rs).
+          RDOCK_ACME_TESTS: "1"
       - name: API docs build without warnings
         run: just doc
 

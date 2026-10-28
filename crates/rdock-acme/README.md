@@ -1,5 +1,5 @@
 # rdock-acme
 
-ACME automation: HTTP-01, TLS-ALPN-01 and DNS-01 solvers, the `DnsProvider` trait, the ARI-driven renewal scheduler and certificate storage.
+Automatic certificates ([ADR-0020](../../docs/decisions/0020-automatic-https.md)): the certificate manager, a background task that keeps one certificate per requested set of names, orders them with [instant-acme](https://crates.io/crates/instant-acme) (ring), answers HTTP-01 challenges through `rdock_tls::Challenges`, stores accounts and certificates under `$RDOCK_DATA_DIR/acme` (0600, atomic writes, a lock against a second process) and publishes issued certificates to the data plane's resolver. The data plane only reads; ACME or CA outages never stop traffic that already has certificates.
 
-**Status:** skeleton. Lands in v0.3. Design: [architecture §10](../../docs/05-architecture.md), [ADR-0002](../../docs/decisions/0002-tls-backend-rustls.md).
+**Status:** HTTP-01 issuance and renewal at a third of the remaining lifetime (v0.3). TLS-ALPN-01, ARI renewal, alerts and DNS-01 follow in the v0.3 milestone. End-to-end test against Pebble: `crates/rdock/tests/e2e_acme.rs` (`RDOCK_ACME_TESTS=1`, needs Docker).

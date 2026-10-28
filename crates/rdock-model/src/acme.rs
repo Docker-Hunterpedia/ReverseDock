@@ -64,6 +64,9 @@ pub struct Acme {
     pub eab: Option<ExternalAccountBinding>,
     /// Where accounts and certificates are stored. Defaults to `$RDOCK_DATA_DIR/acme`.
     pub storage: Option<PathBuf>,
+    /// PEM file with the root certificate of a CA whose ACME endpoint is not publicly trusted,
+    /// such as an internal step-ca. Only this root is then trusted for the CA's endpoint.
+    pub ca_root: Option<PathBuf>,
 }
 
 impl Default for Acme {
@@ -78,6 +81,7 @@ impl Default for Acme {
             staging: false,
             eab: None,
             storage: None,
+            ca_root: None,
         }
     }
 }
@@ -104,7 +108,7 @@ impl<'de> Deserialize<'de> for CaRef {
         impl Visitor<'_> for CaVisitor {
             type Value = CaRef;
             fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-                f.write_str("`letsencrypt`, `zerossl`, `buypass`, `google` or an https:// ACME directory URL")
+                f.write_str("`letsencrypt`, `zerossl`, `google` or an https:// ACME directory URL")
             }
             fn visit_str<E: de::Error>(self, value: &str) -> Result<CaRef, E> {
                 if let Ok(known) = KnownCa::deserialize(de::value::StrDeserializer::<E>::new(value))
@@ -129,7 +133,7 @@ pub enum KnownCa {
     Letsencrypt,
     /// ZeroSSL (needs `eab`).
     Zerossl,
-    /// Buypass Go SSL.
+    /// Buypass Go SSL: discontinued on 2025-10-16 and refused by validation.
     Buypass,
     /// Google Trust Services (needs `eab`).
     Google,

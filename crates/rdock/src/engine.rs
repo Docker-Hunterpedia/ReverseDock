@@ -92,6 +92,8 @@ pub(crate) struct Engine {
     source: Source,
     state: StateDir,
     plane: Arc<DataPlane>,
+    /// Issues and renews automatic certificates (ADR-0020).
+    acme: rdock_acme::Manager,
     applied: tokio::sync::Mutex<Applied>,
     ready: AtomicBool,
     metrics_enabled: AtomicBool,
@@ -106,6 +108,21 @@ pub(crate) struct Engine {
     /// Why a provider cannot reach its source, while it cannot.
     degraded: Mutex<BTreeMap<String, String>>,
     started_at: SystemTime,
+}
+
+/// What the certificate manager should do for an applied configuration: nothing when
+/// automatic certificates are off.
+fn acme_plan(config: &Config, runtime: &Runtime) -> rdock_acme::Plan {
+    let acme = config.effective_acme();
+    rdock_acme::Plan {
+        requests: if acme.is_some() {
+            runtime.cert_requests.clone()
+        } else {
+            Vec::new()
+        },
+        acme: acme.map(std::borrow::Cow::into_owned).unwrap_or_default(),
+        http01: runtime.listeners.values().any(|l| l.tls.is_none()),
+    }
 }
 
 fn now_rfc3339() -> String {
@@ -123,6 +140,11 @@ impl Engine {
         Self {
             source,
             state: StateDir::new(data_dir),
+            acme: rdock_acme::Manager::spawn(
+                data_dir.join("acme"),
+                plane.resolver(),
+                plane.challenges(),
+            ),
             plane,
             applied: tokio::sync::Mutex::new(Applied {
                 config: None,
@@ -311,12 +333,14 @@ impl Engine {
         };
         let generation = runtime.generation;
         let drain = config.lifecycle.drain_timeout.as_std();
+        let acme_plan = acme_plan(&config, &runtime);
         if let Err(err) = self.plane.apply(runtime, drain).await {
             drop(applied);
             return self
                 .rejected(trigger, Some(err.to_string()), diagnostics)
                 .await;
         }
+        self.acme.update(acme_plan);
         let summary = summarize(applied.config.as_ref(), &config);
         if applied.source.as_ref() != Some(&source) {
             let entry = HistoryEntry {

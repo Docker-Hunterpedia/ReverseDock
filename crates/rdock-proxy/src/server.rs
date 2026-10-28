@@ -102,6 +102,7 @@ impl DataPlane {
             shared: Arc::new(Shared {
                 runtime: ArcSwap::from_pointee(empty),
                 metrics,
+                challenges: Arc::default(),
             }),
             resolver: Arc::new(SniResolver::new(CertIndex::default())),
             dns: Arc::new(Dns::default()),
@@ -111,6 +112,18 @@ impl DataPlane {
             }),
             generation: AtomicU64::new(0),
         }
+    }
+
+    /// The certificate resolver, for automatically issued certificates.
+    #[must_use]
+    pub fn resolver(&self) -> Arc<SniResolver> {
+        self.resolver.clone()
+    }
+
+    /// ACME challenge answers served by the listeners.
+    #[must_use]
+    pub fn challenges(&self) -> Arc<rdock_tls::Challenges> {
+        self.shared.challenges.clone()
     }
 
     /// Metrics of the data plane.

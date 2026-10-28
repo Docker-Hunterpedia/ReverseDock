@@ -11,6 +11,7 @@
 pub mod backend;
 pub mod certs;
 pub mod client;
+pub mod pebble;
 pub mod rdock;
 
 /// A free TCP port on the loopback interface.
