@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 arc-swap.workspace = true
+async-trait.workspace = true
 bytes.workspace = true
 http.workspace = true
 http-body-util.workspace = true
@@ -19,11 +20,15 @@ hyper.workspace = true
 hyper-rustls.workspace = true
 hyper-util = { workspace = true, features = ["client-legacy"] }
 ipnet.workspace = true
+rdock-acme.workspace = true
+rdock-config.workspace = true
+rdock-model.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tracing.workspace = true
+url.workspace = true
 
 [dev-dependencies]
 tempfile.workspace = true

@@ -58,6 +58,11 @@ pub struct Acme {
     /// DNS provider (a key of `dns_providers`) used for every route that does not name one:
     /// all certificates are then validated with DNS-01.
     pub dns_provider: Option<String>,
+    /// Resolvers (`ip` or `ip:port`) that must see a DNS-01 record before the CA is asked to
+    /// validate. By default the zone's authoritative nameservers are asked.
+    pub dns_resolvers: Vec<String>,
+    /// How long to wait for a DNS-01 record to become visible; the CA validates anyway after.
+    pub dns_propagation_timeout: Duration,
     /// Use the CA's staging environment (untrusted certificates, high rate limits).
     pub staging: bool,
     /// External account binding, required by some CAs.
@@ -78,6 +83,8 @@ impl Default for Acme {
             challenges: vec![Challenge::Http01, Challenge::TlsAlpn01],
             dns_providers: BTreeMap::new(),
             dns_provider: None,
+            dns_resolvers: Vec::new(),
+            dns_propagation_timeout: Duration::from_secs(120),
             staging: false,
             eab: None,
             storage: None,
@@ -220,4 +227,14 @@ pub struct ExternalAccountBinding {
     pub key_id: String,
     /// Base64url HMAC key from the CA. Reference a secret instead of writing it here.
     pub hmac_key: String,
+}
+
+/// A resolver address from `acme.dns_resolvers`: `ip` (port 53), `ip:port` or `[ipv6]:port`.
+#[must_use]
+pub fn parse_resolver(text: &str) -> Option<std::net::SocketAddr> {
+    text.parse().ok().or_else(|| {
+        text.parse::<std::net::IpAddr>()
+            .ok()
+            .map(|ip| std::net::SocketAddr::new(ip, 53))
+    })
 }

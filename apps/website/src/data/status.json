@@ -28,13 +28,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\ntcp_services:\n  db: { backends: [{ address: \"127.0.0.1:5433\" }] }\n"
   },
   {
-    "path": "routes.<name>.tls.dns_provider",
-    "planned": "v0.3",
-    "what": "DNS-01 certificates",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\nroutes:\n  app:\n    match: \"Host(`app.example.com`)\"\n    service: app\n    tls: { dns_provider: cf }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nacme:\n  email: ops@example.com\n  dns_providers:\n    cf: { type: cloudflare, api_token: \"${env:CF_API_TOKEN}\" }\n"
-  },
-  {
     "path": "middlewares.<name>.algorithms",
     "planned": "v0.4",
     "what": "`br` and `zstd` compression",

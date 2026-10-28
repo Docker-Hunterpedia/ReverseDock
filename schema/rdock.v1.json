@@ -227,6 +227,11 @@
             "$ref": "#/$defs/Challenge"
           }
         },
+        "dns_propagation_timeout": {
+          "description": "How long to wait for a DNS-01 record to become visible; the CA validates anyway after.",
+          "$ref": "#/$defs/Duration",
+          "default": "2m"
+        },
         "dns_provider": {
           "description": "DNS provider (a key of `dns_providers`) used for every route that does not name one:\nall certificates are then validated with DNS-01.",
           "type": [
@@ -242,6 +247,14 @@
             "$ref": "#/$defs/DnsProvider"
           },
           "default": {}
+        },
+        "dns_resolvers": {
+          "description": "Resolvers (`ip` or `ip:port`) that must see a DNS-01 record before the CA is asked to\nvalidate. By default the zone's authoritative nameservers are asked.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
         },
         "eab": {
           "description": "External account binding, required by some CAs.",

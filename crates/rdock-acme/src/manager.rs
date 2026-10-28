@@ -17,8 +17,9 @@ use tracing::{info, warn};
 
 use crate::account::{Accounts, choose_profile};
 use crate::directory::{directory_url, staging_for};
+use crate::dns::{DnsProviders, Lookup};
 use crate::http::WebhookClient;
-use crate::issue::{IssueError, Issued, OrderSpec, issue};
+use crate::issue::{DnsChallenge, IssueError, Issued, OrderSpec, issue};
 use crate::state::{CertState, CertStatus, spread};
 use crate::storage::{CertMeta, Storage, StorageLock};
 
@@ -68,6 +69,8 @@ pub struct Services {
     pub challenges: Arc<Challenges>,
     /// Certificate expiry, renewal failures and orders.
     pub metrics: Metrics,
+    /// Builds DNS-01 solvers from `acme.dns_providers`.
+    pub dns: Arc<dyn DnsProviders>,
 }
 
 /// Handle to the manager task.
@@ -251,11 +254,14 @@ impl Worker {
 
     async fn issue_all(&mut self, plan: &Plan, storage: &Storage, due: Vec<CertRequest>) {
         let types = plan.challenge_types();
-        if types.is_empty() {
+        let (due, unusable): (Vec<CertRequest>, Vec<CertRequest>) = due
+            .into_iter()
+            .partition(|r| r.dns_provider.is_some() || !types.is_empty());
+        for request in unusable {
             let why = "no usable challenge: http-01 needs a plain-HTTP listener, tls-alpn-01 a TLS listener, each listed in acme.challenges";
-            for request in &due {
-                self.failed(&request.names, why.to_owned());
-            }
+            self.failed(&request.names, why.to_owned());
+        }
+        if due.is_empty() {
             return;
         }
         let account = match self.accounts.get(&plan.acme, storage).await {
@@ -269,13 +275,23 @@ impl Worker {
         };
         let directory = directory_url(&plan.acme).unwrap_or_default();
         let staging = self.staging_account(plan, storage, &directory).await;
+        let dns = self.dns_challenges(plan, &due);
         let profile = choose_profile(&account, plan.acme.profile);
         let limit = Arc::new(Semaphore::new(MAX_CONCURRENT_ORDERS));
         let mut orders = JoinSet::new();
         for request in due {
             let state = self.certs.get(&request.names);
+            let dns = request
+                .dns_provider
+                .as_ref()
+                .and_then(|name| dns.get(name).cloned());
             let job = Job {
-                types: rotated(&types, state.map_or(0, |s| s.failures)),
+                types: if request.dns_provider.is_some() {
+                    vec![ChallengeType::Dns01]
+                } else {
+                    rotated(&types, state.map_or(0, |s| s.failures))
+                },
+                dns,
                 replaces: state
                     .filter(|s| s.ari_known)
                     .and_then(|s| s.cert_id.clone()),
@@ -316,6 +332,45 @@ impl Worker {
                 Err(e) => self.failed(&request.names, e.to_string()),
             }
         }
+    }
+
+    /// A DNS-01 solver for every provider the due requests name. A provider that cannot be
+    /// built fails its requests when they run.
+    fn dns_challenges(&self, plan: &Plan, due: &[CertRequest]) -> BTreeMap<String, DnsChallenge> {
+        let lookup = if plan.acme.dns_resolvers.is_empty() {
+            Lookup::Authoritative
+        } else {
+            Lookup::Resolvers(
+                plan.acme
+                    .dns_resolvers
+                    .iter()
+                    .filter_map(|r| rdock_model::acme::parse_resolver(r))
+                    .collect(),
+            )
+        };
+        let mut built = BTreeMap::new();
+        for name in due.iter().filter_map(|r| r.dns_provider.as_ref()) {
+            if built.contains_key(name) {
+                continue;
+            }
+            let Some(config) = plan.acme.dns_providers.get(name) else {
+                continue;
+            };
+            match self.services.dns.build(config) {
+                Ok(solver) => {
+                    built.insert(
+                        name.clone(),
+                        DnsChallenge {
+                            solver,
+                            lookup: lookup.clone(),
+                            timeout: plan.acme.dns_propagation_timeout.as_std(),
+                        },
+                    );
+                }
+                Err(e) => warn!(provider = %name, error = %e, "cannot use the DNS provider"),
+            }
+        }
+        built
     }
 
     /// The Let's Encrypt staging account, when the configured CA is Let's Encrypt production.
@@ -428,6 +483,7 @@ impl Worker {
 /// One order, run on its own task.
 struct Job {
     types: Vec<ChallengeType>,
+    dns: Option<DnsChallenge>,
     replaces: Option<instant_acme::CertificateIdentifier<'static>>,
     staging: Option<Account>,
     profile: Option<String>,
@@ -445,6 +501,7 @@ impl Job {
                 profile: None,
                 challenge_types: &self.types,
                 replaces: None,
+                dns: self.dns.as_ref(),
             };
             issue(staging, rehearsal, &self.challenges).await?;
             info!(names = ?names, "staging order succeeded; ordering from production");
@@ -454,6 +511,7 @@ impl Job {
             profile: self.profile.as_deref(),
             challenge_types: &self.types,
             replaces: self.replaces.as_ref(),
+            dns: self.dns.as_ref(),
         };
         issue(&self.account, spec, &self.challenges).await
     }
