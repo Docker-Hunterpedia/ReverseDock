@@ -218,7 +218,43 @@ Except for `connect`, only idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `
 
 Metrics: `rdock_retries_total{service, reason}` and `rdock_retry_budget_exhausted_total{service}`.
 
-Weighted `split` between services <Status planned="v0.4" /> is coming next. See the [roadmap](/docs/project/roadmap/).
+## Splits: canary and blue/green <Status since="v0.4" />
+
+A service with `split` instead of `backends` sends each request to one of its target services by weight:
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    split:
+      - { service: app-v1, weight: 95 }
+      - { service: app-v2, weight: 5 }    # canary: 5 % of requests
+  app-v1: { backends: [{ address: "10.0.1.5:3000" }] }
+  app-v2: { backends: [{ address: "10.0.2.5:3000" }] }
+```
+
+- Requests are spread by smooth weighted round-robin, so 5 % means one request in twenty, evenly spaced.
+- Each target keeps its own balancing, health checks, retries and limits. A retry stays within the target that was chosen.
+- Splits can point at other splits, up to 4 levels; cycles are refused.
+- **Blue/green:** change the weights to `0` and `100` and reload. The switch is atomic: requests already running finish on the old target, new ones go to the new one.
+- The access log and metrics name the service that answered (`app-v2`), not the split.
+
+## Mirroring <Status since="v0.4" />
+
+`mirror` on a route sends a copy of requests to another service, for example to try a new version with real traffic. The copy's answer is ignored, and the client never waits for it:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    mirror: { service: app-next, percent: 10 }
+```
+
+- The copy is sent when the original request is done, with the same method, path, headers and body. Connection headers are removed.
+- Requests with a body over 64 KiB, WebSocket upgrades and `CONNECT` are not mirrored.
+- At most 64 copies per route are in flight; more are dropped rather than queued, so a slow mirror never slows the route.
+- `rdock_mirror_requests_total{service, outcome}` counts copies `sent`, `failed`, `dropped`, `too_large` and with `no_backend`.
+- Copies repeat side effects: mirror to a service that does not write to your production data.
 
 ## The `Host` header
 

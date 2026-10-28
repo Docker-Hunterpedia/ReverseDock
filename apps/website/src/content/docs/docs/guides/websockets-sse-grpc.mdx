@@ -114,6 +114,26 @@ Check a gRPC route with [grpcurl](https://github.com/fullstorydev/grpcurl), if t
 grpcurl grpc.example.com:443 list
 ```
 
+## gRPC-Web from browsers <Status since="v0.4" />
+
+Browsers cannot speak gRPC directly; gRPC-Web clients send `application/grpc-web` over HTTP/1.1 or HTTP/2 instead. The `grpc_web` middleware translates such requests to gRPC for the backend, and moves the backend's trailers into the last frame of the response body, where gRPC-Web clients expect them:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: grpc
+    middlewares: [grpc-web]
+middlewares:
+  grpc-web: { type: grpc_web }
+services:
+  grpc:
+    scheme: h2c
+    backends: [{ address: "grpc:50051" }]
+```
+
+Plain gRPC requests on the same route pass unchanged, so one route serves both. The binary format (`application/grpc-web`, `application/grpc-web+proto`) is translated; the base64 text format (`application/grpc-web-text`) is not. The service needs `scheme: h2c` or `https`. Cross-origin browser calls also need the [`cors`](/docs/guides/cors/) middleware.
+
 ## Related
 
 - [Timeouts and limits](/docs/guides/timeouts-and-limits/)

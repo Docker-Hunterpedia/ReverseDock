@@ -35,6 +35,24 @@ Requests this route handles: a Traefik v3 rule or a structured match.
 
 Middlewares applied in order (`name` or `name@provider`).
 
+## `routes.<name>.mirror`
+
+**Type:** object
+
+Send a copy of requests to another service and ignore its answers.
+
+### `routes.<name>.mirror.percent`
+
+**Type:** `integer` · **Default:** `100`
+
+Share of requests copied, from 1 to 100.
+
+### `routes.<name>.mirror.service`
+
+**Type:** `string` · **Required**
+
+The service that receives the copies (`name` or `name@provider`).
+
 ## `routes.<name>.priority`
 
 **Type:** `integer` · **Default:** `0`

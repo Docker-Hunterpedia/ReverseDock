@@ -88,9 +88,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
 }
 
 fn check_service(gate: &mut Gate<'_>, path: &str, service: &rdock_model::service::Service) {
-    if !service.split.is_empty() {
-        gate.unsupported(format!("{path}.split"), "weighted traffic splits", "v0.4");
-    }
     if service
         .tls
         .as_ref()
@@ -119,7 +116,7 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n  t:\n    split: [{ service: s, weight: 1 }]\n";
+        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nmiddlewares:\n  z: { type: compress, algorithms: [br] }\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
@@ -128,7 +125,7 @@ mod tests {
                 == "OpenTelemetry tracing: not supported in this version (planned for v0.4)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert!(run.iter().any(|d| d.path == "services.t.split"));
+        assert!(run.iter().any(|d| d.path == "middlewares.z.algorithms"));
     }
 
     #[test]

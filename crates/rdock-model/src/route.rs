@@ -33,9 +33,26 @@ pub struct Route {
     /// Upstream timeouts for this route, overriding the service's.
     #[serde(default)]
     pub timeouts: RouteTimeouts,
+    /// Send a copy of requests to another service and ignore its answers.
+    #[serde(default)]
+    pub mirror: Option<Mirror>,
     /// Set to `false` to keep the route defined but inactive.
     #[serde(default = "crate::defaults::yes")]
     pub enabled: bool,
+}
+
+/// Request mirroring (shadow traffic).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Mirror {
+    /// The service that receives the copies (`name` or `name@provider`).
+    pub service: String,
+    /// Share of requests copied, from 1 to 100.
+    #[serde(default = "hundred")]
+    pub percent: u32,
+}
+
+const fn hundred() -> u32 {
+    100
 }
 
 /// Upstream timeouts of a route. Unset values come from the service.
