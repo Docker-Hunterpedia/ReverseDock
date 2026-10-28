@@ -123,6 +123,7 @@ fn acme_plan(config: &Config, runtime: &Runtime) -> rdock_acme::Plan {
         acme: acme.map(std::borrow::Cow::into_owned).unwrap_or_default(),
         http01: runtime.listeners.values().any(|l| l.tls.is_none()),
         tls_alpn01: runtime.listeners.values().any(|l| l.tls.is_some()),
+        alerts: config.observability.alerts.webhook.clone(),
     }
 }
 
@@ -141,11 +142,12 @@ impl Engine {
         Self {
             source,
             state: StateDir::new(data_dir),
-            acme: rdock_acme::Manager::spawn(
-                data_dir.join("acme"),
-                plane.resolver(),
-                plane.challenges(),
-            ),
+            acme: rdock_acme::Manager::spawn(rdock_acme::Services {
+                default_storage: data_dir.join("acme"),
+                resolver: plane.resolver(),
+                challenges: plane.challenges(),
+                metrics: plane.metrics().clone(),
+            }),
             plane,
             applied: tokio::sync::Mutex::new(Applied {
                 config: None,
@@ -661,6 +663,7 @@ impl rdock_admin::Control for Engine {
             "origin": origin,
             "listeners": self.plane.listeners().await,
             "providers": self.provider_status(),
+            "certificates": self.acme.status(),
             "last_reload": last,
         })
     }

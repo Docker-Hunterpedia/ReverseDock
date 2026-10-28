@@ -34,6 +34,10 @@ pub struct Metrics {
     pub config_reloads: IntCounterVec,
     /// Expiry of each certificate, in seconds since the Unix epoch.
     pub cert_expiry: IntGaugeVec,
+    /// Failed attempts to issue or renew an automatic certificate, by its first name.
+    pub cert_renewal_failures: IntCounterVec,
+    /// ACME orders by CA host and result (`issued`, `failed`).
+    pub acme_orders: IntCounterVec,
 }
 
 impl Metrics {
@@ -91,6 +95,17 @@ impl Metrics {
             ),
             &["name"],
         )?;
+        let cert_renewal_failures = IntCounterVec::new(
+            Opts::new(
+                "rdock_cert_renewal_failures_total",
+                "Failed attempts to issue or renew an automatic certificate.",
+            ),
+            &["name"],
+        )?;
+        let acme_orders = IntCounterVec::new(
+            Opts::new("rdock_acme_orders_total", "ACME certificate orders."),
+            &["ca", "result"],
+        )?;
         let build_info = IntGaugeVec::new(
             Opts::new("rdock_build_info", "Version of the running binary."),
             &["version", "commit"],
@@ -106,6 +121,8 @@ impl Metrics {
             Box::new(config_generation.clone()),
             Box::new(config_reloads.clone()),
             Box::new(cert_expiry.clone()),
+            Box::new(cert_renewal_failures.clone()),
+            Box::new(acme_orders.clone()),
             Box::new(build_info),
         ] {
             registry.register(collector)?;
@@ -121,6 +138,8 @@ impl Metrics {
             config_generation,
             config_reloads,
             cert_expiry,
+            cert_renewal_failures,
+            acme_orders,
         })
     }
 

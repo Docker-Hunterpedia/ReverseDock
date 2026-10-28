@@ -4,7 +4,8 @@ use std::net::IpAddr;
 use std::time::Duration;
 
 use instant_acme::{
-    Account, AuthorizationStatus, ChallengeType, Identifier, NewOrder, OrderStatus, RetryPolicy,
+    Account, AuthorizationStatus, CertificateIdentifier, ChallengeType, Identifier, NewOrder,
+    Order, OrderStatus, RetryPolicy,
 };
 use std::sync::Arc;
 
@@ -56,6 +57,8 @@ pub struct OrderSpec<'a> {
     pub profile: Option<&'a str>,
     /// Challenge types this server can answer, most preferred first.
     pub challenge_types: &'a [ChallengeType],
+    /// The certificate this order replaces (RFC 9773 `replaces`).
+    pub replaces: Option<&'a CertificateIdentifier<'static>>,
 }
 
 /// Removes the challenge answers when the order ends, whatever the outcome.
@@ -83,12 +86,7 @@ pub async fn issue(
     spec: OrderSpec<'_>,
     challenges: &Challenges,
 ) -> Result<Issued, IssueError> {
-    let identifiers: Vec<Identifier> = spec.names.iter().map(|n| identifier(n)).collect();
-    let mut new_order = NewOrder::new(&identifiers);
-    if let Some(profile) = spec.profile {
-        new_order = new_order.profile(profile);
-    }
-    let mut order = account.new_order(&new_order).await?;
+    let mut order = new_order(account, spec).await?;
     let mut answers = Answers {
         challenges,
         tokens: Vec::new(),
@@ -141,6 +139,33 @@ pub async fn issue(
         chain_pem,
         key_pem: key.serialize_pem(),
     })
+}
+
+/// Creates the order. If the CA says the replaced certificate was already replaced (by an
+/// earlier order of ours that did not finish), the order is created without `replaces`.
+async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, IssueError> {
+    let identifiers: Vec<Identifier> = spec.names.iter().map(|n| identifier(n)).collect();
+    let plain = || {
+        let order = NewOrder::new(&identifiers);
+        match spec.profile {
+            Some(profile) => order.profile(profile),
+            None => order,
+        }
+    };
+    let Some(replaces) = spec.replaces else {
+        return Ok(account.new_order(&plain()).await?);
+    };
+    match account.new_order(&plain().replaces(replaces.clone())).await {
+        Err(instant_acme::Error::Api(problem))
+            if problem
+                .r#type
+                .as_deref()
+                .is_some_and(|t| t.ends_with(":alreadyReplaced")) =>
+        {
+            Ok(account.new_order(&plain()).await?)
+        }
+        other => Ok(other?),
+    }
 }
 
 /// The self-signed TLS-ALPN-01 certificate for `name` (RFC 8737): one name and the critical

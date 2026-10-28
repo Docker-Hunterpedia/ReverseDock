@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use rdock_testkit::backend::Backend;
 use rdock_testkit::client::{self, get};
 use rdock_testkit::free_port;
-use rdock_testkit::pebble::Pebble;
+use rdock_testkit::pebble::{BLOCKED, Pebble};
 use rdock_testkit::rdock::Rdock;
 use rustls_pki_types::CertificateDer;
 use rustls_pki_types::pem::PemObject;
@@ -204,5 +204,96 @@ async fn issues_through_tls_alpn01_and_hides_validation_certificates() {
     assert!(
         refused.is_err(),
         "a validation handshake without a challenge must fail"
+    );
+}
+
+#[tokio::test]
+async fn renews_inside_the_ari_window_and_survives_a_ca_outage() {
+    if !enabled() {
+        return;
+    }
+    let host = "ari.example.com";
+    let backend = Backend::start("app").await;
+    let ports = (free_port(), free_port());
+    let pebble = Pebble::start(ports.0, ports.1);
+    let mut rdock = Rdock::start(
+        RDOCK,
+        &config(&pebble, ports, "http-01", host, backend.addr),
+    );
+    let https: SocketAddr = format!("127.0.0.1:{}", ports.1).parse().unwrap();
+    let trust = client_config(&pebble.issuing_root());
+    let first = wait_for_certificate(https, host, &trust, &rdock).await;
+
+    // The CA moves the renewal window into the past: the next check renews at once.
+    rdock.stop(Duration::from_secs(15));
+    let stored = std::fs::read_to_string(
+        rdock
+            .data_dir()
+            .join("acme/certs")
+            .join(host)
+            .join("cert.pem"),
+    )
+    .unwrap();
+    pebble.set_renewal_window(&stored, "2020-01-01T00:00:00Z", "2020-01-02T00:00:00Z");
+    rdock.restart().unwrap();
+    let started = Instant::now();
+    let renewed = loop {
+        let leaf = wait_for_certificate(https, host, &trust, &rdock).await;
+        if leaf != first {
+            break leaf;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "not renewed\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    };
+    assert!(rdock.log().contains("certificate issued"));
+
+    // Without the CA, a restart still serves the stored certificate.
+    pebble.stop_ca();
+    rdock.restart().unwrap();
+    let served = wait_for_certificate(https, host, &trust, &rdock).await;
+    assert_eq!(served, renewed);
+}
+
+#[tokio::test]
+async fn failures_show_in_metrics_and_status() {
+    if !enabled() {
+        return;
+    }
+    let backend = Backend::start("app").await;
+    let ports = (free_port(), free_port());
+    let pebble = Pebble::start(ports.0, ports.1);
+    let rdock = Rdock::start(
+        RDOCK,
+        &config(&pebble, ports, "http-01", BLOCKED, backend.addr),
+    );
+    let started = Instant::now();
+    loop {
+        let (_, metrics) = rdock.get_admin("/metrics").unwrap_or_default();
+        if metrics.contains(&format!(
+            "rdock_cert_renewal_failures_total{{name=\"{BLOCKED}\"}} 1"
+        )) {
+            assert!(metrics.contains("rdock_acme_orders_total"), "{metrics}");
+            break;
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(30),
+            "no failure metric\n{metrics}\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let (status, body) = rdock.get_admin("/api/v1/status").unwrap();
+    assert_eq!(status, 200);
+    let status: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let cert = &status["certificates"][0];
+    assert_eq!(cert["names"][0], BLOCKED);
+    assert_eq!(cert["failures"], 1);
+    assert!(
+        cert["last_error"].as_str().is_some_and(|e| !e.is_empty()),
+        "{cert}"
     );
 }
