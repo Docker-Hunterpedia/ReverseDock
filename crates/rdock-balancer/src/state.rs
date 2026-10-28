@@ -4,12 +4,28 @@
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, RwLock, Weak};
+use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
+use std::time::{Duration, Instant};
+
+use crate::health::{Availability, BreakerState, EjectPolicy, Health, ProbePolicy};
 
 /// What is known about one backend address.
 #[derive(Debug, Default)]
 pub struct BackendState {
     in_flight: AtomicU32,
+    pool_in_flight: Arc<AtomicU32>,
+    health: Mutex<Health>,
+}
+
+/// What a recorded failure did.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Ejection {
+    /// Nothing changed.
+    None,
+    /// The backend was ejected for this long.
+    Ejected(Duration),
+    /// The threshold was reached, but the pool already has its maximum share ejected.
+    Refused,
 }
 
 impl BackendState {
@@ -22,7 +38,51 @@ impl BackendState {
     #[must_use]
     pub fn begin(self: &Arc<Self>) -> InFlight {
         self.in_flight.fetch_add(1, Ordering::Relaxed);
+        self.pool_in_flight.fetch_add(1, Ordering::Relaxed);
         InFlight(self.clone())
+    }
+
+    fn health(&self) -> MutexGuard<'_, Health> {
+        self.health.lock().unwrap_or_else(PoisonError::into_inner)
+    }
+
+    /// Whether the backend may get a request now.
+    pub fn availability(&self, now: Instant) -> Availability {
+        self.health().availability(now)
+    }
+
+    /// The circuit-breaker state.
+    pub fn breaker(&self, now: Instant) -> BreakerState {
+        self.health().state(now)
+    }
+
+    /// Marks the request just sent to this half-open backend as its trial.
+    pub fn start_trial(&self, now: Instant) {
+        self.health().start_trial(now);
+    }
+
+    /// Records a probe result; returns the new verdict when it changed (`true` = healthy).
+    pub fn probe(&self, ok: bool, policy: ProbePolicy, now: Instant) -> Option<bool> {
+        self.health().probe(ok, policy, now)
+    }
+
+    /// Records a successful request; returns `true` when it ended an ejection.
+    pub fn success(&self, now: Instant) -> bool {
+        self.health().success(now)
+    }
+
+    /// Keeps the backend out until `until` (the backend asked for it with `Retry-After`).
+    pub fn pause(&self, until: Instant) {
+        self.health().pause(until);
+    }
+
+    /// `weight`, reduced while the backend ramps up after recovering.
+    pub fn weight(&self, weight: u32, slow_start: Option<Duration>, now: Instant) -> u32 {
+        self.health().weight(weight, slow_start, now)
+    }
+
+    fn is_ejected(&self) -> bool {
+        self.health().is_ejected()
     }
 }
 
@@ -33,6 +93,7 @@ pub struct InFlight(Arc<BackendState>);
 impl Drop for InFlight {
     fn drop(&mut self) {
         self.0.in_flight.fetch_sub(1, Ordering::Relaxed);
+        self.0.pool_in_flight.fetch_sub(1, Ordering::Relaxed);
     }
 }
 
@@ -40,6 +101,7 @@ impl Drop for InFlight {
 #[derive(Debug, Default)]
 pub struct Pool {
     backends: RwLock<HashMap<String, Arc<BackendState>>>,
+    in_flight: Arc<AtomicU32>,
 }
 
 impl Pool {
@@ -57,8 +119,18 @@ impl Pool {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(id.to_owned())
-            .or_default()
+            .or_insert_with(|| {
+                Arc::new(BackendState {
+                    pool_in_flight: self.in_flight.clone(),
+                    ..BackendState::default()
+                })
+            })
             .clone()
+    }
+
+    /// Requests in flight to any backend of the pool.
+    pub fn in_flight(&self) -> u32 {
+        self.in_flight.load(Ordering::Relaxed)
     }
 
     /// Forgets backends not in `live` (addresses that left DNS or the configuration).
@@ -67,6 +139,31 @@ impl Pool {
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .retain(|id, _| live.contains(id.as_str()));
+    }
+
+    /// Records a failed request to `state`; ejects it when `policy` says so and fewer than
+    /// `max_percent` of the pool's backends are ejected.
+    pub fn failure(
+        &self,
+        state: &BackendState,
+        policy: EjectPolicy,
+        max_percent: u32,
+        now: Instant,
+    ) -> Ejection {
+        if !state.health().failure(policy, now) {
+            return Ejection::None;
+        }
+        let (total, ejected) = {
+            let backends = self.backends.read().unwrap_or_else(PoisonError::into_inner);
+            let ejected = backends.values().filter(|b| b.is_ejected()).count();
+            (backends.len(), ejected)
+        };
+        // A backend being re-ejected after its trial is already counted.
+        let already = usize::from(state.is_ejected());
+        if (ejected - already + 1) * 100 > total * max_percent as usize {
+            return Ejection::Refused;
+        }
+        Ejection::Ejected(state.health().eject(policy, now))
     }
 }
 
@@ -131,5 +228,32 @@ mod tests {
         let _keep = pool.state("b");
         pool.retain(&HashSet::from(["b"]));
         assert!(!Arc::ptr_eq(&old, &pool.state("a")));
+    }
+
+    #[test]
+    fn pool_counts_in_flight_and_caps_ejections() {
+        let pool = Pool::default();
+        let a = pool.state("a");
+        let b = pool.state("b");
+        let _c = pool.state("c");
+        let _ga = a.begin();
+        let _gb = b.begin();
+        assert_eq!(pool.in_flight(), 2);
+        let policy = EjectPolicy {
+            failures: 1,
+            window: Duration::from_secs(10),
+            ejection: Duration::from_secs(30),
+        };
+        let now = Instant::now();
+        assert_eq!(
+            pool.failure(&a, policy, 50, now),
+            Ejection::Ejected(Duration::from_secs(30))
+        );
+        assert_eq!(
+            pool.failure(&b, policy, 50, now),
+            Ejection::Refused,
+            "two of three would be more than half"
+        );
+        assert_eq!(b.availability(now), Availability::Up);
     }
 }

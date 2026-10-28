@@ -14,7 +14,7 @@ use crate::middleware::{
     RateLimitConfig, RedirectConfig, StripPrefixConfig,
 };
 use crate::route::{MatchSpec, Route, RouteTls, TlsMode};
-use crate::service::{LbPolicy, SameSite, Scheme, Service};
+use crate::service::{HealthMode, LbPolicy, SameSite, Scheme, Service};
 use crate::settings::ClientIpHeader;
 use crate::values::is_token;
 use rdock_rules::closest_match;
@@ -100,7 +100,8 @@ fn hash_strength(hash: &str) -> Option<HashStrength> {
 }
 
 /// Parses `404` or `500-599`.
-fn status_range(value: &str) -> Option<(u16, u16)> {
+#[must_use]
+pub fn status_range(value: &str) -> Option<(u16, u16)> {
     let (from, to) = value.split_once('-').unwrap_or((value, value));
     let (from, to) = (
         from.trim().parse::<u16>().ok()?,
@@ -627,7 +628,53 @@ impl Validator<'_> {
                 self.check_not_zero(&format!("{p}.failures"), passive.failures == 0);
                 self.check_not_zero(&format!("{p}.window"), passive.window.is_zero());
                 self.check_not_zero(&format!("{p}.ejection"), passive.ejection.is_zero());
+                if passive.max_ejection_percent > 100 {
+                    self.error(
+                        format!("{p}.max_ejection_percent"),
+                        "a percentage is at most 100",
+                    );
+                }
+                for (i, status) in passive.statuses.iter().enumerate() {
+                    if !(500..=599).contains(status) {
+                        self.error(
+                            path_index(&format!("{p}.statuses"), i),
+                            "only 5xx answers count as backend failures",
+                        );
+                    }
+                }
             }
+            if let Some(active) = &health.active {
+                let p = format!("{path}.health.active");
+                if active.mode == HealthMode::Grpc && service.scheme == Scheme::Http {
+                    self.error(
+                        format!("{p}.mode"),
+                        "gRPC health checks need HTTP/2: set the service `scheme` to `h2c` or `https`",
+                    );
+                }
+                if active.mode != HealthMode::Http
+                    && (active.expected_body.is_some() || !active.headers.is_empty())
+                {
+                    self.warning(
+                        format!("{p}.mode"),
+                        "`expected_body` and `headers` are only used by HTTP checks",
+                    );
+                }
+            }
+        }
+        if !service.backends.is_empty() && service.backends.iter().all(|b| b.backup) {
+            self.error(
+                format!("{path}.backends"),
+                "every backend is a backup; at least one must be a primary",
+            );
+        }
+        if service.max_requests == Some(0) {
+            self.error(format!("{path}.max_requests"), "must be at least 1");
+        }
+        if service.max_connections_per_backend == Some(0) {
+            self.error(
+                format!("{path}.max_connections_per_backend"),
+                "must be at least 1",
+            );
         }
     }
 

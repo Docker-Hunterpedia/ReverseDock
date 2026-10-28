@@ -139,7 +139,60 @@ services:
 - Cookies are `Secure`, `HttpOnly` and `SameSite=Lax` with `Path=/` by default (`secure`, `http_only`, `same_site`, `path`). `same_site: none` requires `secure`.
 - When the backend in a cookie is gone, the request is balanced normally and gets a new cookie.
 
-Health checks, retries and weighted `split` between services <Status planned="v0.4" /> are coming in the next steps of v0.4. Until then, a backend that is down still gets its share of requests, and those requests fail with `502`. See the [roadmap](/docs/project/roadmap/).
+## Health checks <Status since="v0.4" />
+
+Without health checks, a backend that is down still gets its share of requests, and those requests fail with `502`. There are two kinds, and they work together:
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
+    health:
+      active:                  # probe every backend in the background
+        path: /healthz
+        interval: 10s          # ± 10 % jitter
+        timeout: 2s
+        healthy: 2             # successes in a row to come back
+        unhealthy: 3           # failures in a row to go out
+        expected_status: "200-399"
+      passive:                 # watch real requests
+        failures: 5            # within `window`
+        window: 30s
+        ejection: 30s          # doubled for each ejection in a row, up to 5 minutes
+```
+
+**Active checks** run in the background, never on the request path. `mode` picks the probe:
+
+| `mode` | Healthy when |
+|---|---|
+| `http` (default) | `method` (`GET` or `HEAD`) on `path` answers within `timeout` with a status in `expected_status`, and the body contains `expected_body` if set. The probe uses the service's scheme; `hostname` sets its `Host` and `headers` adds headers. Redirects are not followed. |
+| `tcp` | A connection opens within `timeout` (also for Unix sockets). |
+| `grpc` | `grpc.health.v1.Health/Check` answers `SERVING` ([gRPC health checking](https://github.com/grpc/grpc/blob/master/doc/health-checking.md)); `grpc_service` names the service to check, empty for the whole server. Needs `scheme: h2c` or `https`. |
+
+`port` probes another port than the backend's. A new backend starts healthy, so a reload never empties a pool before the first probe.
+
+**Passive checks** count failures of real requests: connection errors, resets and timeouts before the response headers, and the answers in `statuses` (default `[502, 503, 504]`). `failures` of them within `window` eject the backend for `ejection`. When that time is over, one request tries it: success brings it back, failure ejects it again for twice as long. `max_ejection_percent` (default 50) stops passive checks from ejecting more than that share of the pool, as Envoy's outlier detection does ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/outlier_detection.proto), checked 2026-10-29).
+
+**When every backend is down**, `when_all_down: fail_open` (default) sends requests to all of them anyway: a broken health check, for example a wrong `path`, must not take your service offline. Envoy's panic mode and NGINX's rule for single-server upstreams do the same. `fail_closed` answers `503` with `Retry-After` instead.
+
+**Slow start:** with `slow_start: 30s`, a backend that comes back gets a growing share of its weight over 30 seconds, so a cold cache or JIT is not hit with full traffic at once.
+
+**Backups:** `backup: true` on a backend keeps it idle until no primary backend is available.
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    backends:
+      - address: "10.0.0.5:3000"
+      - address: "10.0.9.5:3000"
+        backup: true
+```
+
+**Limits:** `max_requests` caps the requests in flight across the pool; more get `503` with `Retry-After` (a circuit breaker). `max_connections_per_backend` caps them per backend; a backend at its limit gets no new requests until one ends.
+
+The metric `rdock_backend_up{service, backend}` is 1 while a backend takes traffic and 0 while it is out; `rdock_backend_ejections_total` counts ejections. Transitions are logged.
+
+Retries and weighted `split` between services <Status planned="v0.4" /> are coming in the next steps of v0.4. See the [roadmap](/docs/project/roadmap/).
 
 ## The `Host` header
 

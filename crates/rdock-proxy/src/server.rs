@@ -87,6 +87,7 @@ pub struct DataPlane {
     client: Arc<HttpClient>,
     cloudflare: CloudflareRanges,
     backends: rdock_balancer::Registry,
+    checkers: crate::health::Checkers,
     sticky_key: Vec<u8>,
     state: Mutex<State>,
     generation: AtomicU64,
@@ -114,6 +115,7 @@ impl DataPlane {
             client: Arc::new(HttpClient::default()),
             cloudflare: Arc::new(ArcSwap::from_pointee(Vec::new())),
             backends: rdock_balancer::Registry::default(),
+            checkers: crate::health::Checkers::default(),
             sticky_key: random_key(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
@@ -245,6 +247,8 @@ impl DataPlane {
             })
             .collect();
         let generation = runtime.generation;
+        self.checkers
+            .restart(&runtime, &self.client, &self.shared.metrics);
         self.shared.runtime.store(Arc::new(runtime));
         self.generation.store(generation, Ordering::SeqCst);
         self.shared

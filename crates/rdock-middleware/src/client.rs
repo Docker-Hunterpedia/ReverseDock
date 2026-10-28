@@ -79,12 +79,39 @@ impl HttpClient {
             .map_err(|_| FetchError::Timeout)?
     }
 
+    /// Sends `req` with `body` and returns the response with its trailers (HTTP/2 only), for
+    /// protocols such as the gRPC health check that report results in trailers.
+    pub async fn send_with_body(
+        &self,
+        peer: &HttpPeer,
+        req: RequestHeader,
+        body: Bytes,
+        timeout: Duration,
+        max_body: usize,
+    ) -> Result<(Fetched, Option<http::HeaderMap>), FetchError> {
+        tokio::time::timeout(timeout, self.exchange_full(peer, req, Some(body), max_body))
+            .await
+            .map_err(|_| FetchError::Timeout)?
+    }
+
     async fn exchange(
         &self,
         peer: &HttpPeer,
         req: RequestHeader,
         max_body: usize,
     ) -> Result<Fetched, FetchError> {
+        self.exchange_full(peer, req, None, max_body)
+            .await
+            .map(|(fetched, _)| fetched)
+    }
+
+    async fn exchange_full(
+        &self,
+        peer: &HttpPeer,
+        req: RequestHeader,
+        request_body: Option<Bytes>,
+        max_body: usize,
+    ) -> Result<(Fetched, Option<http::HeaderMap>), FetchError> {
         let failed = |e: Box<pingora::Error>| FetchError::Connect(e.to_string());
         let (mut session, _reused) = self
             .connector
@@ -95,7 +122,13 @@ impl HttpClient {
             .write_request_header(Box::new(req))
             .await
             .map_err(failed)?;
-        session.finish_request_body().await.map_err(failed)?;
+        match request_body {
+            Some(data) => session
+                .write_request_body(data, true)
+                .await
+                .map_err(failed)?,
+            None => session.finish_request_body().await.map_err(failed)?,
+        }
         session.read_response_header().await.map_err(failed)?;
         let header = session
             .response_header()
@@ -108,13 +141,22 @@ impl HttpClient {
             }
             body.extend_from_slice(&chunk);
         }
+        let trailers = match &mut session {
+            pingora::protocols::http::client::HttpSession::H2(h2) => {
+                h2.read_trailers().await.map_err(failed)?
+            }
+            _ => None,
+        };
         self.connector
             .release_http_session(session, peer, Some(POOL_IDLE))
             .await;
-        Ok(Fetched {
-            header,
-            body: body.freeze(),
-        })
+        Ok((
+            Fetched {
+                header,
+                body: body.freeze(),
+            },
+            trailers,
+        ))
     }
 
     /// A peer for an `http://` or `https://` URL; certificates are verified against the system

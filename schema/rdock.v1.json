@@ -341,13 +341,34 @@
       ]
     },
     "ActiveHealth": {
-      "description": "Periodic HTTP probes.",
+      "description": "Periodic probes.",
       "type": "object",
       "properties": {
+        "expected_body": {
+          "description": "Text the response body must contain (HTTP).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "expected_status": {
           "description": "Accepted status codes, e.g. `200` or `200-399`.",
           "type": "string",
           "default": "200-399"
+        },
+        "grpc_service": {
+          "description": "gRPC service name to check; empty checks the whole server.",
+          "type": "string",
+          "default": ""
+        },
+        "headers": {
+          "description": "Extra request headers (HTTP).",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
         },
         "healthy": {
           "description": "Consecutive successes before a backend is healthy.",
@@ -356,13 +377,31 @@
           "default": 2,
           "minimum": 0
         },
+        "hostname": {
+          "description": "`Host` of the probe (HTTP); the backend address when unset.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "interval": {
           "description": "Time between probes.",
           "$ref": "#/$defs/Duration",
           "default": "10s"
         },
+        "method": {
+          "description": "Method (HTTP).",
+          "$ref": "#/$defs/HealthMethod",
+          "default": "GET"
+        },
+        "mode": {
+          "description": "Probe type.",
+          "$ref": "#/$defs/HealthMode",
+          "default": "http"
+        },
         "path": {
-          "description": "Path to request.",
+          "description": "Path to request (HTTP).",
           "type": "string",
           "default": "/"
         },
@@ -449,6 +488,11 @@
         "address": {
           "description": "`host:port`, `[ipv6]:port` or `unix:///path.sock`.",
           "$ref": "#/$defs/BackendAddress"
+        },
+        "backup": {
+          "description": "Only used when no primary backend is available.",
+          "type": "boolean",
+          "default": false
         },
         "weight": {
           "description": "Relative share of traffic.",
@@ -899,12 +943,64 @@
             }
           ],
           "default": null
+        },
+        "slow_start": {
+          "description": "A backend that becomes healthy ramps up its weight over this time.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "when_all_down": {
+          "description": "What happens when no backend is healthy.",
+          "$ref": "#/$defs/WhenAllDown",
+          "default": "fail_open"
         }
       },
       "additionalProperties": false,
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "HealthMethod": {
+      "description": "Probe methods.",
+      "oneOf": [
+        {
+          "description": "`GET`.",
+          "type": "string",
+          "const": "GET"
+        },
+        {
+          "description": "`HEAD`.",
+          "type": "string",
+          "const": "HEAD"
+        }
+      ]
+    },
+    "HealthMode": {
+      "description": "How a probe checks a backend.",
+      "oneOf": [
+        {
+          "description": "An HTTP request with the service's scheme.",
+          "type": "string",
+          "const": "http"
+        },
+        {
+          "description": "A TCP (or Unix socket) connection.",
+          "type": "string",
+          "const": "tcp"
+        },
+        {
+          "description": "The gRPC health protocol (`grpc.health.v1.Health/Check`); healthy when `SERVING`.",
+          "type": "string",
+          "const": "grpc"
+        }
+      ]
     },
     "Hsts": {
       "description": "`Strict-Transport-Security` settings. Browsers then refuse plain HTTP for the host, so\nenable it only when HTTPS works for every name involved.",
@@ -1984,7 +2080,7 @@
       "type": "object",
       "properties": {
         "ejection": {
-          "description": "How long an ejected backend stays out before it is tried again.",
+          "description": "How long an ejected backend stays out before one request tries it again; doubled for\neach ejection in a row, up to 5 minutes.",
           "$ref": "#/$defs/Duration",
           "default": "30s"
         },
@@ -1994,6 +2090,28 @@
           "format": "uint32",
           "default": 5,
           "minimum": 0
+        },
+        "max_ejection_percent": {
+          "description": "Largest share of the pool ejected at once, in percent.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "statuses": {
+          "description": "Answers that count as failures, besides connection errors, resets and timeouts.",
+          "type": "array",
+          "default": [
+            502,
+            503,
+            504
+          ],
+          "items": {
+            "type": "integer",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0
+          }
         },
         "window": {
           "description": "Sliding window for counting failures.",
@@ -2456,6 +2574,26 @@
             "hash_on": null,
             "policy": "round_robin"
           }
+        },
+        "max_connections_per_backend": {
+          "description": "Requests in flight to one backend; a backend at the limit gets no more until one ends.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "max_requests": {
+          "description": "Requests in flight across the pool; more are answered `503` (circuit breaker).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
         },
         "pass_host_header": {
           "description": "Forward the client's `Host` header (otherwise the backend address is used).",
@@ -3024,6 +3162,21 @@
       },
       "required": [
         "url"
+      ]
+    },
+    "WhenAllDown": {
+      "description": "Behaviour when every backend is unhealthy.",
+      "oneOf": [
+        {
+          "description": "Send to every backend anyway: a broken health check must not cause an outage.",
+          "type": "string",
+          "const": "fail_open"
+        },
+        {
+          "description": "Answer `503`.",
+          "type": "string",
+          "const": "fail_closed"
+        }
       ]
     }
   }

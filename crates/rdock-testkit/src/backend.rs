@@ -7,13 +7,15 @@
 //! - `GET /ws`: WebSocket echo.
 //! - `POST /grpc` with `content-type: application/grpc`: echoes the messages, then the
 //!   `grpc-status: 0` trailer.
+//! - `GET /healthz`: `200` while healthy, `503` after [`Backend::set_healthy`]`(false)`.
+//! - `POST /grpc.health.v1.Health/Check`: `SERVING` or `NOT_SERVING` the same way.
 //! - anything else: a JSON echo of method, target, version, headers and body length.
 
 use std::collections::BTreeMap;
 use std::convert::Infallible;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::time::Duration;
 
 use bytes::Bytes;
@@ -34,6 +36,7 @@ pub struct Backend {
     pub addr: SocketAddr,
     requests: Arc<AtomicUsize>,
     targets: Arc<std::sync::Mutex<Vec<String>>>,
+    healthy: Arc<AtomicBool>,
     task: tokio::task::JoinHandle<()>,
 }
 
@@ -80,6 +83,8 @@ impl Backend {
         let targets: Arc<std::sync::Mutex<Vec<String>>> = Arc::default();
         let seen = targets.clone();
         let name: Arc<str> = Arc::from(name);
+        let healthy = Arc::new(AtomicBool::new(true));
+        let health = healthy.clone();
         let task = tokio::spawn(async move {
             loop {
                 let Ok((tcp, _)) = listener.accept().await else {
@@ -88,6 +93,7 @@ impl Backend {
                 let name = name.clone();
                 let counter = counter.clone();
                 let seen = seen.clone();
+                let health = health.clone();
                 let tls = tls.clone();
                 tokio::spawn(async move {
                     let service = service_fn(move |req: Request<Incoming>| {
@@ -98,7 +104,7 @@ impl Backend {
                                 .map_or("/", |p| p.as_str())
                                 .to_owned(),
                         );
-                        handle(name.clone(), req)
+                        handle(name.clone(), health.load(Ordering::SeqCst), req)
                     });
                     let builder =
                         hyper_util::server::conn::auto::Builder::new(TokioExecutor::new());
@@ -123,8 +129,22 @@ impl Backend {
             addr,
             requests,
             targets,
+            healthy,
             task,
         }
+    }
+
+    /// Makes the health endpoints report healthy or not.
+    pub fn set_healthy(&self, healthy: bool) {
+        self.healthy.store(healthy, Ordering::SeqCst);
+    }
+
+    /// Requests received so far that were not health probes.
+    pub fn traffic(&self) -> usize {
+        self.targets()
+            .iter()
+            .filter(|t| *t != "/healthz" && !t.starts_with("/grpc.health"))
+            .count()
     }
 
     /// Requests received so far.
@@ -149,8 +169,22 @@ fn query(req: &Request<Incoming>, key: &str) -> Option<u64> {
     })
 }
 
-async fn handle(name: Arc<str>, req: Request<Incoming>) -> Result<Response<Body>, Infallible> {
+async fn handle(
+    name: Arc<str>,
+    healthy: bool,
+    req: Request<Incoming>,
+) -> Result<Response<Body>, Infallible> {
     let path = req.uri().path().to_owned();
+    if path == "/healthz" {
+        let status = if healthy { 200 } else { 503 };
+        return Ok(Response::builder()
+            .status(status)
+            .body(full(if healthy { "ok\n" } else { "sick\n" }))
+            .unwrap());
+    }
+    if path == "/grpc.health.v1.Health/Check" {
+        return Ok(grpc_health(healthy));
+    }
     if let Some(code) = path.strip_prefix("/status/") {
         let status = StatusCode::from_u16(code.parse().unwrap_or(500)).unwrap_or(StatusCode::OK);
         return Ok(Response::builder()
@@ -263,6 +297,24 @@ fn websocket(req: Request<Incoming>) -> Response<Body> {
 }
 
 /// Echoes gRPC frames (length-prefixed messages) and ends with the status trailer.
+/// A `HealthCheckResponse` with `SERVING` (1) or `NOT_SERVING` (2).
+fn grpc_health(healthy: bool) -> Response<Body> {
+    let status = if healthy { 1 } else { 2 };
+    let message = Bytes::from(vec![0, 0, 0, 0, 2, 0x08, status]);
+    let mut trailers = HeaderMap::new();
+    trailers.insert("grpc-status", HeaderValue::from_static("0"));
+    let frames = vec![
+        Ok::<_, Infallible>(Frame::data(message)),
+        Ok(Frame::trailers(trailers)),
+    ];
+    Response::builder()
+        .header("content-type", "application/grpc")
+        .body(BodyExt::boxed(StreamBody::new(futures_util::stream::iter(
+            frames,
+        ))))
+        .unwrap()
+}
+
 async fn grpc(req: Request<Incoming>) -> Response<Body> {
     let body = req
         .into_body()

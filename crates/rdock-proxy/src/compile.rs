@@ -8,12 +8,16 @@ use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
-use rdock_balancer::{Balancer, HashRing, Registry, RoundRobin, StickyKeys};
+use rdock_balancer::{
+    Balancer, EjectPolicy, HashRing, ProbePolicy, Registry, RoundRobin, StickyKeys,
+};
 use rdock_middleware::{BuildEnv, HttpClient, Middleware, ServiceClient};
 use rdock_model::config::{Config, Listener, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::route::{MatchSpec, Route, RouteTls, TlsMode};
-use rdock_model::service::{LbPolicy, SameSite, Service, Sticky};
+use rdock_model::service::{
+    Health, HealthMethod, LbPolicy, SameSite, Service, Sticky, WhenAllDown,
+};
 use rdock_model::values::{BackendAddress, TrustedProxy};
 use rdock_observability::AccessLog;
 use rdock_rules::Expr;
@@ -23,8 +27,8 @@ use crate::forwarded::{ClientIpPolicy, CloudflareRanges};
 use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
-    BackendRuntime, Endpoint, HashOn, HttpsRedirect, ListenerRuntime, RouteRuntime, Runtime,
-    ServiceRuntime, StickyRuntime, UpstreamTls,
+    ActiveCheck, BackendRuntime, Endpoint, HashOn, HealthRuntime, HttpsRedirect, ListenerRuntime,
+    PassiveCheck, RouteRuntime, Runtime, ServiceRuntime, StickyRuntime, UpstreamTls,
 };
 use crate::upstream::{Dns, ServiceFetcher};
 
@@ -90,6 +94,10 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         cert_expiry: certs
             .iter()
             .map(|c| (c.name.clone(), c.not_after))
+            .collect(),
+        services: services
+            .iter()
+            .map(|(name, s)| (name.clone(), s.clone()))
             .collect(),
     });
     Compiled {
@@ -217,6 +225,7 @@ fn compile_service(
                 BackendAddress::Unix(path) => Endpoint::Unix(path.clone()),
             },
             weight: b.weight,
+            backup: b.backup,
         })
         .collect();
     let tls = service.tls.as_ref();
@@ -240,6 +249,9 @@ fn compile_service(
         },
         pool: env.backends.pool(name),
         members: ArcSwapOption::empty(),
+        health: compile_health(service.health.as_ref())?,
+        max_requests: service.max_requests,
+        max_per_backend: service.max_connections_per_backend,
         timeouts: service.timeouts,
         tls: UpstreamTls {
             verify,
@@ -261,6 +273,66 @@ fn balancer(policy: LbPolicy) -> Balancer {
             Balancer::Hash(Box::<HashRing>::default())
         }
     }
+}
+
+fn compile_health(health: Option<&Health>) -> Result<HealthRuntime, String> {
+    let Some(health) = health else {
+        return Ok(HealthRuntime {
+            fail_open: true,
+            ..HealthRuntime::default()
+        });
+    };
+    let active = match &health.active {
+        Some(a) => Some(ActiveCheck {
+            mode: a.mode,
+            method: match a.method {
+                HealthMethod::Get => http::Method::GET,
+                HealthMethod::Head => http::Method::HEAD,
+            },
+            path: a.path.clone(),
+            hostname: a.hostname.clone(),
+            headers: a
+                .headers
+                .iter()
+                .map(|(k, v)| {
+                    Ok((
+                        http::HeaderName::try_from(k.as_str()).map_err(|_| {
+                            format!("health.active.headers: `{k}` is not a header name")
+                        })?,
+                        http::HeaderValue::try_from(v.as_str())
+                            .map_err(|_| format!("health.active.headers.{k}: invalid value"))?,
+                    ))
+                })
+                .collect::<Result<_, String>>()?,
+            expected_status: rdock_model::status_range(&a.expected_status)
+                .ok_or_else(|| format!("health.active.expected_status: `{}`", a.expected_status))?,
+            expected_body: a.expected_body.clone(),
+            grpc_service: a.grpc_service.clone(),
+            port: a.port,
+            interval: a.interval.as_std(),
+            timeout: a.timeout.as_std(),
+            policy: ProbePolicy {
+                healthy: a.healthy,
+                unhealthy: a.unhealthy,
+            },
+        }),
+        None => None,
+    };
+    let passive = health.passive.as_ref().map(|p| PassiveCheck {
+        policy: EjectPolicy {
+            failures: p.failures,
+            window: p.window.as_std(),
+            ejection: p.ejection.as_std(),
+        },
+        statuses: p.statuses.clone(),
+        max_percent: p.max_ejection_percent,
+    });
+    Ok(HealthRuntime {
+        active,
+        passive,
+        fail_open: health.when_all_down == WhenAllDown::FailOpen,
+        slow_start: health.slow_start.map(rdock_model::values::Duration::as_std),
+    })
 }
 
 fn hash_on(service: &Service) -> HashOn {

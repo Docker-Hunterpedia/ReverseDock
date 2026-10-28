@@ -19,3 +19,4 @@ expect:
       backends:
         - address: "10.0.2.5:80"
           weight: 1
+          backup: false

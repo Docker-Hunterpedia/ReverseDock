@@ -17,6 +17,7 @@ pub use config::Config;
 pub use diagnostics::{Diagnostic, Severity, path_index, path_key};
 pub use rdock_rules::closest_match;
 pub use schema::{SCHEMA_ID, json_schema, json_schema_string};
+pub use validate::status_range;
 
 /// Serde default helpers shared by the configuration types.
 pub(crate) mod defaults {

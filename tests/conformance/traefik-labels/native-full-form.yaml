@@ -24,6 +24,7 @@ expect:
       backends:
         - address: "172.18.0.3:4000"
           weight: 1
+          backup: false
   middlewares:
     robots:
       type: "headers"
