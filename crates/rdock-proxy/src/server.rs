@@ -16,6 +16,7 @@ use rdock_tls::{CertIndex, SniResolver};
 use tokio::sync::Mutex;
 
 use crate::compile::{CompileEnv, Compiled, compile};
+use crate::forwarded::CloudflareRanges;
 use crate::gate::Mode;
 use crate::listener::{self, Running, Settings};
 use crate::proxy::Shared;
@@ -84,6 +85,7 @@ pub struct DataPlane {
     resolver: Arc<SniResolver>,
     dns: Arc<Dns>,
     client: Arc<HttpClient>,
+    cloudflare: CloudflareRanges,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -108,6 +110,7 @@ impl DataPlane {
             resolver,
             dns: Arc::new(Dns::default()),
             client: Arc::new(HttpClient::default()),
+            cloudflare: Arc::new(ArcSwap::from_pointee(Vec::new())),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
             }),
@@ -125,6 +128,12 @@ impl DataPlane {
     #[must_use]
     pub fn challenges(&self) -> Arc<rdock_tls::Challenges> {
         self.shared.challenges.clone()
+    }
+
+    /// Cloudflare's edge ranges, which the range sync keeps current. Empty until it starts.
+    #[must_use]
+    pub fn cloudflare_ranges(&self) -> CloudflareRanges {
+        self.cloudflare.clone()
     }
 
     /// Metrics of the data plane.
@@ -150,6 +159,7 @@ impl DataPlane {
                 dns: &self.dns,
                 client: self.client.clone(),
                 previous: Some(&previous),
+                cloudflare: &self.cloudflare,
             },
         )
     }

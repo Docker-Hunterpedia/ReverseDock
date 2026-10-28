@@ -547,7 +547,7 @@
       "description": "Sources of the client IP.",
       "oneOf": [
         {
-          "description": "`CF-Connecting-IP` from verified Cloudflare hops, otherwise the right-most untrusted\n`X-Forwarded-For` entry.",
+          "description": "`CF-Connecting-IP` when the peer is in Cloudflare's ranges, otherwise the right-most\nuntrusted `X-Forwarded-For` entry.",
           "type": "string",
           "const": "auto"
         },
@@ -562,7 +562,7 @@
           "const": "x-real-ip"
         },
         {
-          "description": "`CF-Connecting-IP` from a verified Cloudflare hop.",
+          "description": "`CF-Connecting-IP` from a trusted proxy (Cloudflare's edge or a listed network); needs\n`cloudflare` in `trusted_proxies`.",
           "type": "string",
           "const": "cf-connecting-ip"
         }

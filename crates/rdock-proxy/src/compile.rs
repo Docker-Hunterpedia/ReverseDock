@@ -19,7 +19,7 @@ use rdock_observability::AccessLog;
 use rdock_rules::Expr;
 use rdock_tls::{CertIndex, CertRequest, LoadedCert};
 
-use crate::forwarded::ClientIpPolicy;
+use crate::forwarded::{ClientIpPolicy, CloudflareRanges};
 use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
@@ -40,6 +40,8 @@ pub struct CompileEnv<'a> {
     pub client: Arc<HttpClient>,
     /// The running generation, whose access-log writer is reused when unchanged.
     pub previous: Option<&'a Runtime>,
+    /// Cloudflare's edge ranges, trusted when `trusted_proxies` contains `cloudflare`.
+    pub cloudflare: &'a CloudflareRanges,
 }
 
 /// The result of compilation.
@@ -73,7 +75,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
         generation: env.generation,
         listeners,
-        client_ip: client_ip_policy(config),
+        client_ip: client_ip_policy(config, env.cloudflare),
         limits: config.security.limits,
         access_log: access_log(config, env.previous),
         certificates: index,
@@ -97,17 +99,21 @@ fn access_log(config: &Config, previous: Option<&Runtime>) -> Arc<AccessLog> {
         .unwrap_or_else(|| Arc::new(AccessLog::new(wanted)))
 }
 
-fn client_ip_policy(config: &Config) -> ClientIpPolicy {
-    let trusted = config
-        .security
-        .trusted_proxies
+fn client_ip_policy(config: &Config, cloudflare: &CloudflareRanges) -> ClientIpPolicy {
+    let proxies = &config.security.trusted_proxies;
+    let trusted = proxies
         .iter()
         .filter_map(|p| match p {
             TrustedProxy::Network(net) => net.to_string().parse().ok(),
             TrustedProxy::Cloudflare => None,
         })
         .collect();
-    ClientIpPolicy::new(trusted, config.security.client_ip_header)
+    let policy = ClientIpPolicy::new(trusted, config.security.client_ip_header);
+    if proxies.contains(&TrustedProxy::Cloudflare) {
+        policy.with_cloudflare(cloudflare.clone())
+    } else {
+        policy
+    }
 }
 
 /// The key a reference names: `name@file` is the file's `name`; other providers' objects are

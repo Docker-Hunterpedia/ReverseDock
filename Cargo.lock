@@ -2872,6 +2872,7 @@ dependencies = [
  "notify-debouncer-full",
  "rdock-acme",
  "rdock-admin",
+ "rdock-cloudflare",
  "rdock-config",
  "rdock-middleware",
  "rdock-migrate",
@@ -2942,6 +2943,22 @@ dependencies = [
 [[package]]
 name = "rdock-cloudflare"
 version = "0.2.0-alpha.1"
+dependencies = [
+ "arc-swap",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "ipnet",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+]
 
 [[package]]
 name = "rdock-config"

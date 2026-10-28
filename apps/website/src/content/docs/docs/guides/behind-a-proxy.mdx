@@ -51,10 +51,12 @@ Reading from the right matters: a client can put anything at the left of `X-Forw
 
 | Value | Client IP from a trusted proxy |
 |---|---|
-| `auto` (default) | `X-Forwarded-For`, as above |
+| `auto` (default) | `CF-Connecting-IP` when the connection comes straight from Cloudflare (`cloudflare` in `trusted_proxies`), otherwise `X-Forwarded-For`, as above |
 | `x-forwarded-for` | `X-Forwarded-For`, as above |
 | `x-real-ip` | `X-Real-IP` sent by the proxy |
-| `cf-connecting-ip` <Status planned="v0.3" /> | `CF-Connecting-IP` from a verified Cloudflare hop |
+| `cf-connecting-ip` <Status planned="v0.3" /> | `CF-Connecting-IP` sent by the proxy; needs `cloudflare` in `trusted_proxies` |
+
+When the header is missing or is not an IP address, `x-real-ip` and `cf-connecting-ip` use the address of the connection, and `auto` falls back to `X-Forwarded-For`.
 
 This client IP is the one used by the `ClientIP` rule matcher, by `ip_allow`, `ip_deny`, `rate_limit` with `key: client_ip`, by the `allow` list of `maintenance`, and in the `client_ip` field of the access log. Without trusted proxies, all of these see the proxy's address, and a rate limit would throttle every client together.
 
@@ -94,9 +96,23 @@ Its access log line shows the address you connected from, not `203.0.113.99`.
 
 ## Cloudflare
 
-The value `cloudflare` in `trusted_proxies`, which keeps Cloudflare's edge ranges up to date on its own, is planned for v0.3 <Status planned="v0.3" />. `rdock validate` accepts it with a warning and `rdock run` refuses it.
+The value `cloudflare` in `trusted_proxies` <Status planned="v0.3" /> trusts Cloudflare's edge without a list of networks to maintain:
 
-Until then, list Cloudflare's ranges as networks. Cloudflare publishes them at [cloudflare.com/ips](https://www.cloudflare.com/ips/), with plain-text lists at `https://www.cloudflare.com/ips-v4/` and `https://www.cloudflare.com/ips-v6/` (checked 2026-10-27). The ranges change from time to time, so update the list when they do. With `client_ip_header: auto`, the client IP comes from `X-Forwarded-For`, which Cloudflare sets.
+```yaml title="rdock.yaml (excerpt)"
+security:
+  trusted_proxies: [cloudflare]
+  client_ip_header: cf-connecting-ip
+```
+
+- **The ranges stay current on their own.** Cloudflare publishes them at [cloudflare.com/ips](https://www.cloudflare.com/ips/) and through its API (checked 2026-10-28). ReverseDock fetches `https://api.cloudflare.com/client/v4/ips` once a day and keeps the last list in `$RDOCK_DATA_DIR/cloudflare/ips.json`.
+- **Startup never waits for the network.** Before the first request, ReverseDock uses the cached list, or a list built into the binary when there is no cache. A failed fetch, or an answer that does not look like Cloudflare's list, keeps the list in use and is tried again after an hour; the log says `cannot fetch Cloudflare's IP ranges`.
+- **Nothing is fetched** unless the configuration contains `cloudflare`.
+
+The client IP then comes from `CF-Connecting-IP`, which "provides the client IP address connecting to Cloudflare to the origin web server" ([Cloudflare HTTP headers](https://developers.cloudflare.com/fundamentals/reference/http-headers/), checked 2026-10-28). `client_ip_header: cf-connecting-ip` requires `cloudflare` in `trusted_proxies`. With the default `auto`, `CF-Connecting-IP` is used when the connection comes straight from a Cloudflare address, and `X-Forwarded-For` otherwise. From an address outside Cloudflare's ranges (and outside your own `trusted_proxies`), the header is removed and ignored, so a client that bypasses Cloudflare cannot choose its IP.
+
+If a load balancer of yours sits between Cloudflare and ReverseDock, add its network next to `cloudflare`. With `auto`, the `X-Forwarded-For` walk skips both the load balancer and Cloudflare's hops; with `cf-connecting-ip`, the load balancer must pass Cloudflare's header through unchanged.
+
+The access log records the `CF-Ray` header of each request as `cf_ray`: the Ray ID that identifies the request at Cloudflare (same page).
 
 :::caution
 Trust only addresses that you control or that belong to the proxy in front. A trusted network that also contains clients, for example `0.0.0.0/0` or a shared office network, lets those clients choose their own IP address, and with it bypass `ip_allow` and rate limits.

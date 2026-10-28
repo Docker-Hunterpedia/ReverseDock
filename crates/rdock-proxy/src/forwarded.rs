@@ -5,7 +5,9 @@
 //! trusted proxy they are kept and the proxy's address is appended to `X-Forwarded-For`.
 
 use std::net::IpAddr;
+use std::sync::Arc;
 
+use arc_swap::{ArcSwap, Guard};
 use http::{HeaderMap, HeaderName, HeaderValue};
 use ipnet::IpNet;
 use pingora::http::RequestHeader;
@@ -31,10 +33,16 @@ const MANAGED: [&str; 13] = [
     "cf-connecting-ip",
 ];
 
+/// Cloudflare's edge ranges, replaced in place by the range sync of `rdock-cloudflare`
+/// (W-CF-01) and read lock-free by every request that resolves its client IP.
+pub type CloudflareRanges = Arc<ArcSwap<Vec<IpNet>>>;
+
 /// How the client IP is derived.
 #[derive(Debug, Clone, Default)]
 pub struct ClientIpPolicy {
     trusted: Vec<IpNet>,
+    /// Set when `trusted_proxies` contains `cloudflare`.
+    cloudflare: Option<CloudflareRanges>,
     header: ClientIpHeader,
 }
 
@@ -42,35 +50,81 @@ impl ClientIpPolicy {
     /// A policy trusting `trusted` networks.
     #[must_use]
     pub fn new(trusted: Vec<IpNet>, header: ClientIpHeader) -> Self {
-        Self { trusted, header }
+        Self {
+            trusted,
+            cloudflare: None,
+            header,
+        }
+    }
+
+    /// Also trusts Cloudflare's edge, as `ranges` holds it when each request arrives.
+    #[must_use]
+    pub fn with_cloudflare(mut self, ranges: CloudflareRanges) -> Self {
+        self.cloudflare = Some(ranges);
+        self
+    }
+
+    fn trust(&self) -> Trust<'_> {
+        Trust {
+            configured: &self.trusted,
+            cloudflare: self.cloudflare.as_ref().map(|ranges| ranges.load()),
+        }
     }
 
     /// Whether `ip` belongs to a trusted proxy.
     #[must_use]
     pub fn is_trusted(&self, ip: IpAddr) -> bool {
-        let ip = canonical(ip);
-        self.trusted.iter().any(|net| net.contains(&ip))
+        self.trust().contains(canonical(ip))
     }
 
     /// The client IP of a request received from `peer`.
     #[must_use]
     pub fn client_ip(&self, peer: IpAddr, headers: &HeaderMap) -> IpAddr {
         let peer = canonical(peer);
-        if !self.is_trusted(peer) {
+        let trust = self.trust();
+        if !trust.contains(peer) {
             return peer;
         }
         match self.header {
-            ClientIpHeader::XRealIp => headers
-                .get("x-real-ip")
-                .and_then(|v| v.to_str().ok())
-                .and_then(parse_ip)
-                .unwrap_or(peer),
-            // `CfConnectingIp` and the Cloudflare branch of `Auto` arrive with W-CF-02 (v0.3); the
-            // capability check refuses `cf-connecting-ip` until then.
-            ClientIpHeader::Auto
-            | ClientIpHeader::XForwardedFor
-            | ClientIpHeader::CfConnectingIp => self.walk_forwarded_for(peer, headers),
+            ClientIpHeader::XRealIp => header_ip(headers, "x-real-ip").unwrap_or(peer),
+            ClientIpHeader::CfConnectingIp => {
+                header_ip(headers, "cf-connecting-ip").unwrap_or(peer)
+            }
+            // `CF-Connecting-IP` is believed only from Cloudflare's own edge. Behind another
+            // trusted proxy the walk still skips Cloudflare's hops, which are trusted as well.
+            ClientIpHeader::Auto => trust
+                .is_cloudflare(peer)
+                .then(|| header_ip(headers, "cf-connecting-ip"))
+                .flatten()
+                .unwrap_or_else(|| trust.walk_forwarded_for(peer, headers)),
+            ClientIpHeader::XForwardedFor => trust.walk_forwarded_for(peer, headers),
         }
+    }
+}
+
+/// The address in a single-valued header such as `X-Real-IP`.
+fn header_ip(headers: &HeaderMap, name: &str) -> Option<IpAddr> {
+    headers
+        .get(name)
+        .and_then(|v| v.to_str().ok())
+        .and_then(parse_ip)
+}
+
+/// The trusted networks for one request, with Cloudflare's ranges loaded once.
+struct Trust<'a> {
+    configured: &'a [IpNet],
+    cloudflare: Option<Guard<Arc<Vec<IpNet>>>>,
+}
+
+impl Trust<'_> {
+    fn is_cloudflare(&self, ip: IpAddr) -> bool {
+        self.cloudflare
+            .as_ref()
+            .is_some_and(|ranges| ranges.iter().any(|net| net.contains(&ip)))
+    }
+
+    fn contains(&self, ip: IpAddr) -> bool {
+        self.configured.iter().any(|net| net.contains(&ip)) || self.is_cloudflare(ip)
     }
 
     /// Walks `X-Forwarded-For` from the right, skipping trusted hops; the first untrusted
@@ -89,7 +143,7 @@ impl ClientIpPolicy {
                 break;
             };
             client = ip;
-            if !self.is_trusted(ip) {
+            if !self.contains(ip) {
                 break;
             }
         }
@@ -271,6 +325,79 @@ mod tests {
         let h = headers(&[("x-real-ip", "198.51.100.7")]);
         assert_eq!(policy.client_ip(ip("10.0.0.1"), &h), ip("198.51.100.7"));
         assert_eq!(policy.client_ip(ip("192.0.2.1"), &h), ip("192.0.2.1"));
+    }
+
+    fn cloudflare(header: ClientIpHeader, configured: &[&str]) -> ClientIpPolicy {
+        let ranges = Arc::new(ArcSwap::from_pointee(vec![
+            net("173.245.48.0/20"),
+            net("2400:cb00::/32"),
+        ]));
+        ClientIpPolicy::new(configured.iter().map(|s| net(s)).collect(), header)
+            .with_cloudflare(ranges)
+    }
+
+    #[test]
+    fn cf_connecting_ip_is_ignored_from_peers_outside_cloudflare() {
+        let spoofed = headers(&[
+            ("cf-connecting-ip", "198.51.100.66"),
+            ("x-forwarded-for", "198.51.100.66"),
+        ]);
+        for header in [ClientIpHeader::CfConnectingIp, ClientIpHeader::Auto] {
+            let policy = cloudflare(header, &[]);
+            assert!(!policy.is_trusted(ip("203.0.113.9")));
+            assert_eq!(
+                policy.client_ip(ip("203.0.113.9"), &spoofed),
+                ip("203.0.113.9")
+            );
+        }
+    }
+
+    #[test]
+    fn cf_connecting_ip_is_honoured_from_cloudflare_peers() {
+        let h = headers(&[
+            ("cf-connecting-ip", "198.51.100.7"),
+            ("x-forwarded-for", "192.0.2.50"),
+        ]);
+        for header in [ClientIpHeader::CfConnectingIp, ClientIpHeader::Auto] {
+            let policy = cloudflare(header, &[]);
+            assert_eq!(policy.client_ip(ip("173.245.48.1"), &h), ip("198.51.100.7"));
+            assert_eq!(policy.client_ip(ip("2400:cb00::1"), &h), ip("198.51.100.7"));
+        }
+        // Without the header, `auto` falls back to `X-Forwarded-For`, the strict mode to the peer.
+        let none = headers(&[("x-forwarded-for", "192.0.2.50")]);
+        let auto = cloudflare(ClientIpHeader::Auto, &[]);
+        assert_eq!(auto.client_ip(ip("173.245.48.1"), &none), ip("192.0.2.50"));
+        let strict = cloudflare(ClientIpHeader::CfConnectingIp, &[]);
+        assert_eq!(
+            strict.client_ip(ip("173.245.48.1"), &none),
+            ip("173.245.48.1")
+        );
+    }
+
+    #[test]
+    fn auto_believes_cf_connecting_ip_only_from_cloudflare_itself() {
+        // A load balancer at 10.0.0.1 sits behind Cloudflare: `auto` walks `X-Forwarded-For`,
+        // skipping the Cloudflare hop, and ignores the header a client could have sent the LB.
+        let h = headers(&[
+            ("cf-connecting-ip", "198.51.100.66"),
+            ("x-forwarded-for", "198.51.100.7, 173.245.48.1"),
+        ]);
+        let auto = cloudflare(ClientIpHeader::Auto, &["10.0.0.0/8"]);
+        assert_eq!(auto.client_ip(ip("10.0.0.1"), &h), ip("198.51.100.7"));
+        // `cf-connecting-ip` trusts every trusted peer to pass Cloudflare's header on.
+        let strict = cloudflare(ClientIpHeader::CfConnectingIp, &["10.0.0.0/8"]);
+        assert_eq!(strict.client_ip(ip("10.0.0.1"), &h), ip("198.51.100.66"));
+    }
+
+    #[test]
+    fn cloudflare_ranges_are_read_on_every_request() {
+        let ranges = Arc::new(ArcSwap::from_pointee(Vec::new()));
+        let policy = ClientIpPolicy::new(Vec::new(), ClientIpHeader::CfConnectingIp)
+            .with_cloudflare(ranges.clone());
+        let h = headers(&[("cf-connecting-ip", "198.51.100.7")]);
+        assert_eq!(policy.client_ip(ip("173.245.48.1"), &h), ip("173.245.48.1"));
+        ranges.store(Arc::new(vec![net("173.245.48.0/20")]));
+        assert_eq!(policy.client_ip(ip("173.245.48.1"), &h), ip("198.51.100.7"));
     }
 
     fn request(pairs: &[(&'static str, &str)]) -> RequestHeader {

@@ -22,15 +22,16 @@ pub struct Security {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "kebab-case")]
 pub enum ClientIpHeader {
-    /// `CF-Connecting-IP` from verified Cloudflare hops, otherwise the right-most untrusted
-    /// `X-Forwarded-For` entry.
+    /// `CF-Connecting-IP` when the peer is in Cloudflare's ranges, otherwise the right-most
+    /// untrusted `X-Forwarded-For` entry.
     #[default]
     Auto,
     /// Right-most untrusted `X-Forwarded-For` entry.
     XForwardedFor,
     /// `X-Real-IP` from a trusted proxy.
     XRealIp,
-    /// `CF-Connecting-IP` from a verified Cloudflare hop.
+    /// `CF-Connecting-IP` from a trusted proxy (Cloudflare's edge or a listed network); needs
+    /// `cloudflare` in `trusted_proxies`.
     CfConnectingIp,
 }
 

@@ -56,20 +56,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  kubernetes: {}\n"
   },
   {
-    "path": "security.trusted_proxies",
-    "planned": "v0.3",
-    "what": "`cloudflare` (synced edge ranges)",
-    "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nsecurity:\n  trusted_proxies: [cloudflare]\n"
-  },
-  {
-    "path": "security.client_ip_header",
-    "planned": "v0.3",
-    "what": "`cf-connecting-ip`",
-    "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nsecurity:\n  trusted_proxies: [cloudflare]\n  client_ip_header: cf-connecting-ip\n"
-  },
-  {
     "path": "observability.tracing",
     "planned": "v0.4",
     "what": "OpenTelemetry tracing",

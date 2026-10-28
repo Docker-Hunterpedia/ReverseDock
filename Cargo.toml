@@ -39,6 +39,7 @@ publish = false
 # Internal crates
 rdock-admin = { path = "crates/rdock-admin" }
 rdock-balancer = { path = "crates/rdock-balancer" }
+rdock-cloudflare = { path = "crates/rdock-cloudflare" }
 rdock-acme = { path = "crates/rdock-acme" }
 rdock-config = { path = "crates/rdock-config" }
 rdock-limits = { path = "crates/rdock-limits" }
@@ -121,6 +122,9 @@ rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "
 tempfile = "3.27.0"
 tokio-rustls = { version = "0.26.6", default-features = false, features = ["logging", "ring", "tls12"] }
 tokio-tungstenite = "0.30.0"
+
+# Cloudflare IP sync (W-CF-01): the HTTP client instant-acme already brings in, at the locked
+# versions. ring only (ADR-0013); the default features would pull in aws-lc-rs.
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

@@ -17,14 +17,10 @@ Client IP trust and request limits.
 
 Where the real client IP comes from.
 
-- `auto`: `CF-Connecting-IP` from verified Cloudflare hops, otherwise the right-most untrusted `X-Forwarded-For` entry.
+- `auto`: `CF-Connecting-IP` when the peer is in Cloudflare's ranges, otherwise the right-most untrusted `X-Forwarded-For` entry.
 - `x-forwarded-for`: Right-most untrusted `X-Forwarded-For` entry.
 - `x-real-ip`: `X-Real-IP` from a trusted proxy.
-- `cf-connecting-ip`: `CF-Connecting-IP` from a verified Cloudflare hop.
-
-:::note[Planned for v0.3]
-`cf-connecting-ip`: accepted by `rdock validate` with a warning, refused by `rdock run` until v0.3.
-:::
+- `cf-connecting-ip`: `CF-Connecting-IP` from a trusted proxy (Cloudflare's edge or a listed network); needs `cloudflare` in `trusted_proxies`.
 
 ## `security.limits`
 
@@ -61,7 +57,3 @@ Request target (path and query) length.
 **Type:** list of [`TrustedProxy`](/docs/reference/configuration/#trustedproxy)
 
 Proxies whose forwarded headers are believed. Headers from anyone else are replaced.
-
-:::note[Planned for v0.3]
-`cloudflare` (synced edge ranges): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.3.
-:::
