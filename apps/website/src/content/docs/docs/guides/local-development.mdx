@@ -44,7 +44,7 @@ sudo rdock trust --data-dir ~/.local/share/rdock
 
 `https://app.localhost:8443` now opens without a warning. If a name does not resolve on your system, add it to `/etc/hosts` (for example `127.0.0.1 app.localhost`) or to your local DNS.
 
-Use the same data directory for `rdock run` and `rdock trust`, and keep it owned by the user ReverseDock runs as. `rdock trust` creates the CA there if `rdock run` has not yet.
+Use the same data directory for `rdock run` and `rdock trust`. `rdock trust` creates the CA there if `rdock run` has not yet; under `sudo`, the files it creates are given to the user who ran `sudo`, so `rdock run` as that user can read them. Running `rdock trust --uninstall` when the root is not installed is harmless.
 
 ## What `rdock trust` changes
 

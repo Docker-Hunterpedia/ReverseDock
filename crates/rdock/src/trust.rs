@@ -55,6 +55,8 @@ struct Probe<'a> {
     is_dir: &'a dyn Fn(&Path) -> bool,
     /// The user's home directory, for the NSS database Chrome and Firefox use on Linux.
     home: Option<PathBuf>,
+    /// Whether a certificate with this name is in the macOS System keychain.
+    in_system_keychain: &'a dyn Fn(&str) -> bool,
 }
 
 /// The Linux anchor directories and the command that rebuilds the bundle from each, in the
@@ -92,6 +94,12 @@ fn plan(os: Platform, root: &Path, name: &str, uninstall: bool, probe: &Probe<'_
     let root_arg = root.display().to_string();
     let mut steps = Vec::new();
     match os {
+        Platform::MacOs if uninstall && !(probe.in_system_keychain)(name) => {
+            // Removing twice is not an error: the second time there is nothing to do.
+            steps.push(Step::Print(format!(
+                "{name} is not in the System keychain; nothing to remove there"
+            )));
+        }
         Platform::MacOs if uninstall => {
             steps.push(run("security", &["remove-trusted-cert", "-d", &root_arg]));
             steps.push(run(
@@ -175,12 +183,15 @@ pub(crate) fn trust(args: &TrustArgs) -> anyhow::Result<ExitCode> {
         (dir.join("root.pem"), name)
     } else {
         let ca = rdock_acme::LocalCa::open(&dir, unix_now()).context("opening the local CA")?;
+        give_back_to_sudo_user(&args.data_dir)
+            .context("handing the local CA back to the user who ran sudo")?;
         (ca.root_path(), ca.name().to_owned())
     };
     let probe = Probe {
         has_program: &on_path,
         is_dir: &|p: &Path| p.is_dir(),
         home: std::env::var_os("HOME").map(PathBuf::from),
+        in_system_keychain: &in_system_keychain,
     };
     println!("{name}: {}", root.display());
     let mut failed = false;
@@ -207,6 +218,49 @@ pub(crate) fn trust(args: &TrustArgs) -> anyhow::Result<ExitCode> {
         }
     );
     Ok(ExitCode::SUCCESS)
+}
+
+/// The user `sudo` was run by, from `SUDO_UID` and `SUDO_GID`.
+fn sudo_user(uid: Option<&str>, gid: Option<&str>) -> Option<(u32, u32)> {
+    Some((uid?.parse().ok()?, gid?.parse().ok()?))
+}
+
+/// `sudo rdock trust` creates the CA as root, but `rdock run` usually runs as the user who
+/// typed `sudo`, and the keys are readable only by their owner. Files root owns in the data
+/// directory and in `pki/` go back to that user, as mkcert does. Nothing else is touched.
+#[cfg(unix)]
+fn give_back_to_sudo_user(data_dir: &Path) -> std::io::Result<()> {
+    use std::os::unix::fs::MetadataExt;
+    let uid = std::env::var("SUDO_UID").ok();
+    let gid = std::env::var("SUDO_GID").ok();
+    let Some((uid, gid)) = sudo_user(uid.as_deref(), gid.as_deref()) else {
+        return Ok(());
+    };
+    let pki = data_dir.join("pki");
+    let mut paths = vec![data_dir.to_owned(), pki.clone()];
+    for entry in std::fs::read_dir(&pki)? {
+        paths.push(entry?.path());
+    }
+    for path in paths {
+        if std::fs::symlink_metadata(&path)?.uid() == 0 {
+            std::os::unix::fs::lchown(&path, Some(uid), Some(gid))?;
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(unix))]
+fn give_back_to_sudo_user(_data_dir: &Path) -> std::io::Result<()> {
+    Ok(())
+}
+
+fn in_system_keychain(name: &str) -> bool {
+    Command::new("security")
+        .args(["find-certificate", "-c", name, SYSTEM_KEYCHAIN])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status()
+        .is_ok_and(|s| s.success())
 }
 
 fn execute(step: &Step) -> anyhow::Result<()> {
@@ -274,12 +328,40 @@ mod tests {
             has_program: &has_program,
             is_dir: &is_dir,
             home,
+            in_system_keychain: &|_| true,
         };
         plan(os, Path::new("/data/pki/root.pem"), NAME, uninstall, &probe)
     }
 
     fn cmd(program: &str, args: &[&str]) -> Step {
         run(program, args)
+    }
+
+    #[test]
+    fn removing_a_root_that_is_not_installed_is_not_an_error() {
+        let probe = Probe {
+            has_program: &|_| false,
+            is_dir: &|_| false,
+            home: None,
+            in_system_keychain: &|_| false,
+        };
+        let steps = plan(
+            Platform::MacOs,
+            Path::new("/data/pki/root.pem"),
+            NAME,
+            true,
+            &probe,
+        );
+        assert!(
+            matches!(steps.as_slice(), [Step::Print(text)] if text.contains("nothing to remove"))
+        );
+    }
+
+    #[test]
+    fn finds_the_user_who_ran_sudo() {
+        assert_eq!(sudo_user(Some("501"), Some("20")), Some((501, 20)));
+        assert_eq!(sudo_user(None, Some("20")), None);
+        assert_eq!(sudo_user(Some("x"), Some("20")), None);
     }
 
     #[test]

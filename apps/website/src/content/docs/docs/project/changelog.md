@@ -9,6 +9,9 @@ sidebar:
 
 ## [Unreleased]
 
+### Fixed
+- `sudo rdock trust` created the local CA as root, so `rdock run` as your user could not read its keys; the files it creates now belong to the user who ran `sudo`. Removing a root that is not installed (`rdock trust --uninstall` twice) is no longer an error.
+
 ## [0.3.0-alpha.1] — v0.3 "Automatic HTTPS"
 
 ### Added

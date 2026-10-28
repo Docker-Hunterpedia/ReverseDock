@@ -38,7 +38,7 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [x] B-TLS-10 Multiple certificates per listener (SNI); default certificate; wildcard match rules
 - [x] B-TLS-11 HSTS opt-in (never forced preload)
 - [ ] B-TLS-12 Expiry / renewal-failure alerts (log, metric, dashboard, webhook)
-- [ ] B-TLS-13 Local development CA (`rdock trust`) and self-signed fallback for `.localhost`/private hosts
+- [x] B-TLS-13 Local development CA (`rdock trust`) and self-signed fallback for `.localhost`/private hosts
 
 ### B-CFG · Configuration and developer experience
 - [x] B-CFG-01 One static binary (musl), Linux x86-64 + ARM64; macOS for development
