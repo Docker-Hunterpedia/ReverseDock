@@ -97,6 +97,8 @@ pub(crate) struct Engine {
     acme: rdock_acme::Manager,
     /// Keeps Cloudflare's edge ranges current while `trusted_proxies` contains `cloudflare`.
     cloudflare: rdock_cloudflare::IpSync,
+    /// Issues local-CA certificates for private names (ADR-0020).
+    local_ca: rdock_acme::LocalIssuer,
     applied: tokio::sync::Mutex<Applied>,
     ready: AtomicBool,
     metrics_enabled: AtomicBool,
@@ -155,6 +157,7 @@ impl Engine {
                 rdock_cloudflare::Options::new(data_dir.join("cloudflare")),
                 plane.cloudflare_ranges(),
             ),
+            local_ca: rdock_acme::LocalIssuer::spawn(data_dir.join("pki"), plane.resolver()),
             plane,
             applied: tokio::sync::Mutex::new(Applied {
                 config: None,
@@ -344,6 +347,7 @@ impl Engine {
         let generation = runtime.generation;
         let drain = config.lifecycle.drain_timeout.as_std();
         let acme_plan = acme_plan(&config, &runtime);
+        let local_names = runtime.local_cert_names.clone();
         if let Err(err) = self.plane.apply(runtime, drain).await {
             drop(applied);
             return self
@@ -357,6 +361,7 @@ impl Engine {
                 .trusted_proxies
                 .contains(&TrustedProxy::Cloudflare),
         );
+        self.local_ca.update(local_names);
         let summary = summarize(applied.config.as_ref(), &config);
         if applied.source.as_ref() != Some(&source) {
             let entry = HistoryEntry {

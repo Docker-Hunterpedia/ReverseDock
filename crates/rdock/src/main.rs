@@ -14,6 +14,7 @@ mod hash;
 mod migrate;
 mod providers;
 mod run;
+mod trust;
 mod validate;
 mod watch;
 mod zero_config;
@@ -50,6 +51,9 @@ enum Command {
     Healthcheck(CtlArgs),
     /// Create an argon2id password hash for `basic_auth` (reads the password from stdin).
     Hash(HashArgs),
+    /// Install the local CA's root (for localhost and private names) into the system trust
+    /// stores, or remove it with --uninstall.
+    Trust(TrustArgs),
     /// Turn another proxy's configuration into rdock.yaml.
     #[command(subcommand)]
     Migrate(MigrateCommand),
@@ -82,6 +86,16 @@ struct MigrateTraefikArgs {
 }
 
 #[derive(Args)]
+struct TrustArgs {
+    /// Remove the root from the trust stores instead of installing it.
+    #[arg(long)]
+    uninstall: bool,
+    /// Data directory holding the local CA (`pki/`); the CA is created there when missing.
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
+}
+
+#[derive(Args)]
 struct HashArgs {
     /// Print a complete `user:hash` entry for `basic_auth.users`.
     #[arg(long)]
@@ -94,7 +108,8 @@ struct RunArgs {
     /// zero-config mode: HTTP on :80, routes from Docker labels.
     #[arg(short, long, env = "RDOCK_CONFIG")]
     config: Option<PathBuf>,
-    /// Directory for state (configuration history, last-known-good copy, admin token).
+    /// Directory for state (configuration history, last-known-good copy, admin token,
+    /// certificates and the local CA).
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
     /// Do not reload when the configuration or referenced files change.
@@ -168,6 +183,7 @@ fn main() -> ExitCode {
         Command::Status(args) => ctl::status(&args),
         Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
         Command::Hash(args) => hash::hash(&args),
+        Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),

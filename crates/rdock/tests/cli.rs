@@ -88,6 +88,25 @@ fn missing_files_are_errors() {
 }
 
 #[test]
+fn private_names_go_to_the_local_ca_except_single_labels() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("local.yaml");
+    std::fs::write(
+        &file,
+        "listeners:\n  websecure: { address: \":443\", tls: {} }\nroutes:\n  app:\n    match: \"Host(`app.localhost`) || Host(`nas`)\"\n    service: app\nservices:\n  app:\n    backends: [{ address: \"app:3000\" }]\n",
+    )
+    .unwrap();
+    let output = rdock(&["validate", file.to_str().unwrap()]);
+    let text = stdout(&output);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("warning: routes.app.tls: no certificate authority, not even the local one, can certify the single-label name nas\n    use `nas.internal` or `nas.home.arpa`"),
+        "{text}"
+    );
+    assert!(!text.contains("app.localhost"), "{text}");
+}
+
+#[test]
 fn prints_the_committed_schema() {
     let output = rdock(&["schema"]);
     assert!(output.status.success());

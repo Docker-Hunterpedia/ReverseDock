@@ -35,6 +35,8 @@ pub struct Runtime {
     pub certificates: Arc<rdock_tls::CertIndex>,
     /// Certificates to issue automatically.
     pub cert_requests: Vec<rdock_tls::CertRequest>,
+    /// Names that get a certificate from the local CA (private names, ADR-0020).
+    pub local_cert_names: Vec<String>,
     /// Expiry of each certificate (name, Unix seconds), for metrics.
     pub cert_expiry: Vec<(String, i64)>,
 }
@@ -54,6 +56,7 @@ impl Runtime {
             })),
             certificates: Arc::new(rdock_tls::CertIndex::default()),
             cert_requests: Vec::new(),
+            local_cert_names: Vec::new(),
             cert_expiry: Vec::new(),
         }
     }

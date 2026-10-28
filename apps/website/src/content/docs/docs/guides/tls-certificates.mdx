@@ -139,8 +139,13 @@ See [Logs and metrics](/docs/guides/logs-and-metrics/).
 
 ACME issuance (HTTP-01, TLS-ALPN-01 and DNS-01), renewal and storage are planned for v0.3. The `acme` section and `tls: auto` on routes already exist in the configuration model so that configurations can be written now; see the [`acme` reference](/docs/reference/configuration/acme/) and the [roadmap](/docs/project/roadmap/).
 
+## Local and private names
+
+`localhost`, names under `.internal`, `.home.arpa` and the other reserved suffixes, and private addresses get their certificates from ReverseDock's local CA instead of ACME <Status since="v0.3" />. See [HTTPS for localhost and private names](/docs/guides/local-development/).
+
 ## Related
 
+- [HTTPS for localhost and private names](/docs/guides/local-development/)
 - [HTTPS redirect and HSTS](/docs/guides/https-redirect-and-hsts/)
 - [`certificates` reference](/docs/reference/configuration/certificates/) and [`listeners` reference](/docs/reference/configuration/listeners/)
 - [Security model](/docs/concepts/security-model/)

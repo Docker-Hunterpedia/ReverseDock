@@ -69,9 +69,11 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         acme: config.effective_acme().is_some(),
         mode: env.mode,
         requests: BTreeSet::new(),
+        local: BTreeSet::new(),
     };
     let listeners = compile_listeners(config, &services, &middlewares, &mut auto_tls, &mut out);
     let cert_requests = auto_tls.requests.into_iter().collect();
+    let local_cert_names = auto_tls.local.into_iter().collect();
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
         generation: env.generation,
         listeners,
@@ -80,6 +82,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         access_log: access_log(config, env.previous),
         certificates: index,
         cert_requests,
+        local_cert_names,
         cert_expiry: certs
             .iter()
             .map(|c| (c.name.clone(), c.not_after))
@@ -439,13 +442,15 @@ fn compile_route(
 }
 
 /// Collects the certificates that routes with `tls: auto` need and no configured certificate
-/// covers.
+/// covers: public names go to ACME, private names to the local CA (ADR-0020).
 struct AutoTls<'a> {
     certs: &'a CertIndex,
     /// Whether automatic certificates are on.
     acme: bool,
     mode: Mode,
     requests: BTreeSet<CertRequest>,
+    /// Names the local CA certifies.
+    local: BTreeSet<String>,
 }
 
 impl AutoTls<'_> {
@@ -482,27 +487,18 @@ impl AutoTls<'_> {
         let (private, public): (Vec<String>, Vec<String>) = uncovered
             .into_iter()
             .partition(|h| rdock_tls::is_private_name(h));
-        if !private.is_empty() {
-            out.push(
-                Diagnostic::warning(
-                    format!("{path}.tls"),
-                    format!(
-                        "public certificate authorities do not issue certificates for {}",
-                        private.join(", ")
-                    ),
-                )
-                .with_hint(
-                    "add a certificate under `certificates`, or use `tls: off` on a plain listener",
-                ),
-            );
-        }
+        self.local_names(path, private, out);
         let dns_provider = options
             .and_then(|o| o.dns_provider.clone())
             .or_else(|| config.effective_acme().and_then(|a| a.dns_provider.clone()));
         if options.is_some_and(|o| !o.domains.is_empty()) {
             if !public.is_empty() {
+                // Private names would make the whole order fail; the local CA covers them.
                 self.requests.insert(CertRequest {
-                    names: hosts,
+                    names: hosts
+                        .into_iter()
+                        .filter(|h| !rdock_tls::is_private_name(h))
+                        .collect(),
                     dns_provider,
                 });
             }
@@ -514,6 +510,38 @@ impl AutoTls<'_> {
                 dns_provider: dns_provider.clone(),
             });
         }
+    }
+
+    /// Hands private names to the local CA, except single-label names, which name constraints
+    /// cannot express.
+    fn local_names(&mut self, path: &str, private: Vec<String>, out: &mut Vec<Diagnostic>) {
+        let (local, single): (Vec<String>, Vec<String>) = private
+            .into_iter()
+            .partition(|h| rdock_tls::is_local_ca_name(h));
+        self.local.extend(local);
+        if single.is_empty() {
+            return;
+        }
+        let suggestion = single
+            .iter()
+            .map(|h| {
+                let h = h.strip_prefix("*.").unwrap_or(h);
+                format!("`{h}.internal` or `{h}.home.arpa`")
+            })
+            .collect::<Vec<_>>()
+            .join(", ");
+        out.push(
+            Diagnostic::warning(
+                format!("{path}.tls"),
+                format!(
+                    "no certificate authority, not even the local one, can certify the single-label name {}",
+                    single.join(", ")
+                ),
+            )
+            .with_hint(format!(
+                "use {suggestion}, add a certificate under `certificates`, or use `tls: off` on a plain listener"
+            )),
+        );
     }
 
     /// With automatic certificates off, every host needs a configured certificate.
