@@ -16,8 +16,8 @@ The official image is `ghcr.io/docker-hunterpedia/rdock`. It contains the static
 
 | Tag | Meaning |
 |---|---|
-| `0.3.0-alpha.1` | The current release. Tags are never overwritten. |
-| `latest` | The newest stable release. Pre-releases such as `0.3.0-alpha.1` do not move `latest`, so pin the version. |
+| `0.3.0-alpha.2` | The current release. Tags are never overwritten. |
+| `latest` | The newest stable release. Pre-releases such as `0.3.0-alpha.2` do not move `latest`, so pin the version. |
 
 ## What the image expects
 
@@ -64,14 +64,14 @@ Validate it with the same image, then start the proxy:
 
 ```sh
 docker run --rm -v "$PWD/config:/etc/rdock:ro" \
-  ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.1 validate --strict /etc/rdock/rdock.yaml
+  ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2 validate --strict /etc/rdock/rdock.yaml
 
 docker run -d --name rdock --network rdock-net --restart unless-stopped \
   -p 80:80 \
   -v "$PWD/config:/etc/rdock:ro" \
   -v rdock-data:/var/lib/rdock \
   --read-only --cap-drop ALL --security-opt no-new-privileges:true \
-  ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.1
+  ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2
 ```
 
 - Mount the directory, not the single file: editors that save by replacing the file would leave the container with the old copy.
@@ -120,7 +120,7 @@ docker run -d --name rdock --network rdock-net --restart unless-stopped \
   -v "$PWD/config:/etc/rdock:ro" \
   -v rdock-data:/var/lib/rdock \
   --read-only --cap-drop ALL --security-opt no-new-privileges:true \
-  ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.1
+  ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2
 ```
 
 A separate mount below `/etc/rdock` fails when the configuration directory is mounted read-only, because Docker cannot create the mount point. The container runs as user `65532`, so the key files must be readable by that user. See [Your own TLS certificate](/docs/guides/tls-certificates/) for the configuration.
