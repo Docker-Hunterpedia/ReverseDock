@@ -1,0 +1,108 @@
+---
+title: Automatic HTTPS
+description: Get and renew certificates from Let's Encrypt or any ACME CA automatically, with HTTP-01, TLS-ALPN-01 or DNS-01, ARI renewals, staging and alerts.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock gets a certificate for every host of an HTTPS route on its own <Status planned="v0.3" />. Point the DNS name at the server, write the route, and the certificate is issued, served and renewed without a restart. The design is [ADR-0020](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0020-automatic-https.md).
+
+## What you need
+
+- A DNS name (`A`/`AAAA` record) pointing at the server, for each host.
+- Ports 80 and 443 reachable from the internet, or a DNS provider for [DNS-01](/docs/guides/dns-challenge/) when they are not.
+- A writable data directory (`/var/lib/rdock` in the container image), where accounts and certificates are kept.
+
+## The configuration
+
+```yaml title="rdock.yaml"
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+acme:
+  email: ops@example.com
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:3000"
+```
+
+That is all: `defaults.tls` is `auto` and `defaults.listeners` is `[websecure]`, so the route asks for a certificate. `web` redirects to HTTPS and answers the CA's HTTP-01 challenges. The `acme` section is optional; without it ReverseDock uses Let's Encrypt with no contact address. `acme: false` turns automatic certificates off, and then every HTTPS host needs a [certificate you provide](/docs/guides/tls-certificates/).
+
+Using a CA means accepting its terms of service; ReverseDock logs this once when it creates the account. Let's Encrypt stopped sending expiry emails on 2025-06-04 ([Let's Encrypt](https://letsencrypt.org/2025/01/22/ending-expiration-emails/), checked 2026-10-28), so the contact address is optional: ReverseDock's own [alerts](#renewal-and-alerts) warn you instead.
+
+## What gets a certificate
+
+- **One certificate per host name.** One failing name never blocks the others.
+- **`tls.domains` groups names** into one certificate for its route; wildcards need it, with [DNS-01](/docs/guides/dns-challenge/).
+- **Configured certificates win.** A host that a certificate under `certificates` covers gets no automatic one.
+- **Private names** (`localhost`, `.internal`, private addresses …) get a certificate from the [local CA](/docs/guides/local-development/), never from a public CA.
+- Routes with `tls: off` attach to the plain-HTTP listeners and get no certificate.
+- `HostRegexp` routes and `Host(`*`)` get no certificate; they are served the default certificate.
+
+Docker labels work the same way: `rdock.host` with the defaults, `traefik.http.routers.<r>.tls=true` or `tls.certresolver` (any resolver name), and `tls.domains[n].main`/`sans`. See [Docker containers and labels](/docs/guides/docker-labels/).
+
+## Challenges
+
+The CA checks that you control a name before it signs. `acme.challenges` sets the order to try (default `[http-01, tls-alpn-01]`):
+
+| Challenge | Needs | Covers |
+|---|---|---|
+| `http-01` | A plain-HTTP listener the CA reaches on port 80 | Names and IP addresses |
+| `tls-alpn-01` | A TLS listener the CA reaches on port 443 | Names |
+| `dns-01` | A [DNS provider](/docs/guides/dns-challenge/) | Names and wildcards, also behind firewalls |
+
+The listeners may use other ports behind a port mapping (`-p 80:8080`). After a failed attempt, the next one starts with the next challenge type. A TLS-ALPN-01 handshake gets its validation certificate only while the challenge runs and is closed without HTTP; no other client ever sees it.
+
+## Certificate authorities and profiles
+
+| `acme.ca` | Notes |
+|---|---|
+| `letsencrypt` (default) | `staging: true` uses the staging CA (untrusted certificates, high rate limits) |
+| `zerossl`, `google` | Need `eab: { key_id, hmac_key }` from the CA's dashboard |
+| An `https://` directory URL | Any RFC 8555 CA, such as step-ca; `ca_root` trusts its root if the endpoint is not publicly trusted |
+
+Let's Encrypt offers profiles: `classic` (90 days, moving to 64 days in 2027 and 45 days in 2028), `tlsserver` (45 days) and `shortlived` (about 6 days, required for IP addresses) ([profiles](https://letsencrypt.org/docs/profiles/), [From 90 to 45](https://letsencrypt.org/2025/12/02/from-90-to-45), checked 2026-10-28). Without `acme.profile`, ReverseDock asks for `tlsserver` when the CA offers it, which Let's Encrypt recommends for clients that renew automatically, and otherwise leaves the choice to the CA. Every certificate gets a new ECDSA P-256 key.
+
+## Renewal and alerts
+
+- **ARI** (RFC 9773): ReverseDock asks the CA for its suggested renewal window and renews at a random time inside it. Such renewals are exempt from Let's Encrypt's rate limits ([rate limits](https://letsencrypt.org/docs/rate-limits/), checked 2026-10-28).
+- **Without ARI**, it renews with a third of the lifetime left, whatever the lifetime.
+- **Failures** are retried after 1 minute, then 2, 4 … up to 24 hours. After a failure against Let's Encrypt, the next attempt is rehearsed on staging first, so a broken setup does not use up production limits.
+- **A CA outage** never stops serving: the stored certificate is used until it expires.
+
+`rdock status` lists every automatic certificate with its expiry, planned renewal and last error. Metrics: `rdock_cert_expiry_timestamp_seconds`, `rdock_cert_renewal_failures_total` and `rdock_acme_orders_total`. After 3 failures in a row, or with less than 7 days left, a warning is logged and, if set, a webhook receives the event:
+
+```yaml title="rdock.yaml (excerpt)"
+observability:
+  alerts:
+    webhook:
+      url: https://alerts.example.com/rdock
+      token: "${file:/run/secrets/alert_token}"
+```
+
+## Storage
+
+Accounts and certificates live in `$RDOCK_DATA_DIR/acme` (or `acme.storage`): `accounts/<directory>/account.json` and `certs/<name>/{cert.pem,key.pem,meta.json}`, readable only by ReverseDock (mode 0600) and replaced atomically. Keep the data directory on a volume, so a new container does not order everything again. A lock file keeps two processes sharing a directory from ordering the same certificates.
+
+## Try it safely first
+
+Set `acme: { staging: true }` while you set things up: certificates come from Let's Encrypt's staging CA, which browsers do not trust, but its limits are much higher. Remove it when everything works; the production certificates follow within seconds.
+
+## Related
+
+- [Wildcards and DNS-01](/docs/guides/dns-challenge/)
+- [Behind Cloudflare](/docs/guides/cloudflare/)
+- [HTTPS for localhost and private names](/docs/guides/local-development/)
+- [TLS certificates you provide](/docs/guides/tls-certificates/)
+- [`acme` reference](/docs/reference/configuration/acme/)

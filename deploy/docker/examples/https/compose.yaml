@@ -1,0 +1,34 @@
+# Automatic HTTPS for labelled containers (ADR-0020). Point the DNS names in the labels at this
+# server, then start with:
+#   DOCKER_GID=$(stat -c %g /var/run/docker.sock) docker compose up -d
+name: rdock-https
+
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.1
+    restart: unless-stopped
+    ports: ["80:80", "443:443"]
+    group_add: ["${DOCKER_GID:?set DOCKER_GID to the group of /var/run/docker.sock}"]
+    volumes:
+      - ./config:/etc/rdock:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      # Accounts and certificates: keep them across container updates.
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    networks: [proxy]
+
+  app:
+    image: traefik/whoami:v1.11.0
+    labels:
+      rdock.enable: "true"
+      rdock.host: app.example.com
+    networks: [proxy]
+
+networks:
+  proxy:
+    name: rdock-proxy
+
+volumes:
+  rdock-data:

@@ -1,0 +1,23 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+# Cloudflare terminates HTTPS; cloudflared reaches rdock over the private Docker network.
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+# Only cloudflared's network may set the client IP, through CF-Connecting-IP.
+security:
+  trusted_proxies: ["172.30.0.0/24"]
+  client_ip_header: cf-connecting-ip
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:80"

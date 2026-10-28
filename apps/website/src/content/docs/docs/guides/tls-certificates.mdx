@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock v0.1 serves HTTPS with certificates you provide as PEM files <Status since="v0.1" />. Automatic certificates from Let's Encrypt or another ACME CA <Status planned="v0.3" /> are not available yet: `rdock validate` warns about an `acme` section and `rdock run` refuses it.
+ReverseDock serves HTTPS with certificates you provide as PEM files <Status since="v0.1" />. Hosts no configured certificate covers get one automatically <Status planned="v0.3" />; see [Automatic HTTPS](/docs/guides/automatic-https/). A configured certificate always wins over an automatic one.
 
 ## What you need
 
@@ -62,10 +62,10 @@ The common name (CN) is not used, only subject alternative names. A certificate 
 
 ## Every HTTPS host needs a certificate
 
-Until automatic certificates exist, each route on a TLS listener needs a certificate that covers its hosts, or a `defaults.certificate`. Otherwise `rdock validate` reports:
+With automatic certificates off (`acme: false`), each route on a TLS listener needs a certificate that covers its hosts, or a `defaults.certificate`. Otherwise `rdock validate` reports:
 
 ```text
-warning: routes.app.tls: no certificate covers app.example.com; automatic certificates are not supported yet (planned for v0.3)
+warning: routes.app.tls: no certificate covers app.example.com, and automatic certificates are off (`acme: false`)
     add the certificate under `certificates`, set `defaults.certificate`, or use `tls: off` on a plain listener
 ```
 
@@ -137,7 +137,7 @@ See [Logs and metrics](/docs/guides/logs-and-metrics/).
 
 ## Automatic certificates <Status planned="v0.3" />
 
-ACME issuance (HTTP-01, TLS-ALPN-01 and DNS-01), renewal and storage are planned for v0.3. The `acme` section and `tls: auto` on routes already exist in the configuration model so that configurations can be written now; see the [`acme` reference](/docs/reference/configuration/acme/) and the [roadmap](/docs/project/roadmap/).
+Let's Encrypt or any ACME CA, with HTTP-01, TLS-ALPN-01 or DNS-01, renewed through ARI: see [Automatic HTTPS](/docs/guides/automatic-https/) and [Wildcards and DNS-01](/docs/guides/dns-challenge/). With `acme: false`, every HTTPS host needs a certificate from this page.
 
 ## Local and private names
 

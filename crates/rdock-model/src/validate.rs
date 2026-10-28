@@ -16,7 +16,7 @@ use crate::middleware::{
 use crate::route::{MatchSpec, Route, RouteTls, TlsMode};
 use crate::service::{LbPolicy, SameSite, Scheme, Service};
 use crate::settings::ClientIpHeader;
-use crate::values::{TrustedProxy, is_token};
+use crate::values::is_token;
 use rdock_rules::closest_match;
 
 /// Providers that can own objects referenced as `name@provider`.
@@ -1220,14 +1220,17 @@ impl Validator<'_> {
         if unique.len() != security.trusted_proxies.len() {
             self.warning("security.trusted_proxies", "an entry is listed twice");
         }
-        let trusts_cloudflare = security.trusted_proxies.contains(&TrustedProxy::Cloudflare);
         match security.client_ip_header {
-            ClientIpHeader::CfConnectingIp if !trusts_cloudflare => self.push(
+            // The header is only read from trusted peers: Cloudflare's edge, or the network of a
+            // `cloudflared` tunnel connector. With no trusted peer it would never be used.
+            ClientIpHeader::CfConnectingIp if security.trusted_proxies.is_empty() => self.push(
                 Diagnostic::error(
                     "security.client_ip_header",
-                    "`cf-connecting-ip` needs `cloudflare` in trusted_proxies",
+                    "`cf-connecting-ip` needs trusted_proxies",
                 )
-                .with_hint("otherwise any client could choose its own IP by sending the header"),
+                .with_hint(
+                    "add `cloudflare`, or the network of `cloudflared` behind a Cloudflare Tunnel",
+                ),
             ),
             ClientIpHeader::XForwardedFor | ClientIpHeader::XRealIp
                 if security.trusted_proxies.is_empty() =>

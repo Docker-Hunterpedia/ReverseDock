@@ -13,7 +13,7 @@ This guide puts one application, reachable at `10.0.0.5:3000`, behind `app.examp
 
 - ReverseDock installed (see [Install with Docker](/docs/install/docker/) or [Install the binary](/docs/install/binary/)).
 - A DNS record for `app.example.com` that points at the machine running ReverseDock.
-- A certificate and private key in PEM format that cover `app.example.com`, for example a wildcard certificate for `*.example.com`. Automatic certificates from Let's Encrypt <Status planned="v0.3" /> are not available yet, so the certificate comes from you. See [TLS certificates](/docs/guides/tls-certificates/).
+- A certificate and private key in PEM format that cover `app.example.com`, for example a wildcard certificate for `*.example.com`. From v0.3 ReverseDock gets one automatically <Status planned="v0.3" />; see [Automatic HTTPS](/docs/guides/automatic-https/). This page uses a certificate you provide, as in [TLS certificates](/docs/guides/tls-certificates/).
 
 ## The configuration
 
