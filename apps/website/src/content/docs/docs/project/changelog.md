@@ -20,6 +20,8 @@ sidebar:
 - Configuration for automatic HTTPS (ADR-0020): `acme: false` turns automatic certificates off; `acme.dns_provider` names a default DNS provider for every route; DNS providers `exec` (a program run without a shell) and `webhook` (JSON to an `https://` endpoint) next to `cloudflare`, which gains `zone_id`; `observability.alerts.webhook` for certificate alerts. Webhooks must use `https://` (plain `http://` only for localhost), exec commands must be absolute paths, and tokens should be `${file:…}` references. Public IP-address hosts are flagged unless `acme.profile: shortlived`, and DNS-01 for an IP address is refused. Issuance itself arrives with the following v0.3 changes; until then `rdock run` still refuses `acme` settings and webhooks with "planned for v0.3".
 
 ### Changed
+- **Zero-config mode serves HTTPS:** without a configuration file, labelled containers are served on `:443` with automatic certificates, `:80` redirects to HTTPS and answers HTTP-01, and `rdock.tls=off` containers stay on plain HTTP at `:80`.
+- **Routes with `tls: off` and no `listeners` attach to the plain-HTTP listeners** instead of `defaults.listeners` (ADR-0021), so a plain route never lands on an HTTPS listener it cannot be served on.
 - **`tls: auto` routes now get certificates.** In v0.2 a route asking for automatic HTTPS without a matching certificate was refused ("planned for v0.3"); now ReverseDock orders one from Let's Encrypt production, which accepts its terms of service. Set `acme: false` to keep v0.2's behaviour, or `acme: { staging: true }` to try it first. `ca: buypass` is refused: Buypass stopped issuing certificates on 2025-10-16.
 
 ## [0.2.0-alpha.1] — v0.2 "Docker-native"

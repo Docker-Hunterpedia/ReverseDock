@@ -273,6 +273,27 @@ fn checks_dns_resolvers_and_propagation_timeout() {
 }
 
 #[test]
+fn plain_routes_use_the_plain_listeners() {
+    let config: Config = serde_json::from_value(with(
+        app(),
+        json!({
+            "listeners": { "web": { "address": ":80" }, "websecure": { "address": ":443", "tls": {} } },
+            "routes": {
+                "plain": { "match": "Host(`p.example.com`)", "service": "app", "tls": "off" },
+                "pinned": { "match": "Host(`q.example.com`)", "service": "app", "tls": "off", "listeners": ["websecure"] }
+            }
+        }),
+    ))
+    .unwrap();
+    assert_eq!(config.route_listeners(&config.routes["plain"]), ["web"]);
+    assert_eq!(
+        config.route_listeners(&config.routes["pinned"]),
+        ["websecure"]
+    );
+    assert_eq!(config.route_listeners(&config.routes["app"]), ["websecure"]);
+}
+
+#[test]
 fn public_ip_addresses_need_shortlived_certificates() {
     let ip = with(
         app(),

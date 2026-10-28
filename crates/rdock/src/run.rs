@@ -112,8 +112,9 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     tracing::info!(version = VERSION, commit = COMMIT, config = %source.describe(), "starting rdock");
     if source == Source::ZeroConfig {
         tracing::info!(
-            "no configuration file: zero-config mode serves labelled Docker containers over HTTP on :80 \
-             (HTTPS arrives in v0.3; write {} to configure more)",
+            "no configuration file: zero-config mode serves labelled Docker containers over HTTPS on :443 \
+             with certificates from Let's Encrypt (accepting its terms of service), and redirects :80; \
+             write {} to configure more",
             crate::DEFAULT_CONFIG
         );
     }

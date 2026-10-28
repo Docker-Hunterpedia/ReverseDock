@@ -1,5 +1,7 @@
-//! Zero-config mode (B-CFG-11, ADR-0018): `rdock run` with no configuration file serves the
-//! routes of labelled Docker containers over plain HTTP on port 80. v0.3 adds HTTPS.
+//! Zero-config mode (B-CFG-11, ADR-0018, ADR-0020): `rdock run` with no configuration file
+//! serves the routes of labelled Docker containers over HTTPS on port 443 with automatic
+//! certificates, redirects port 80 to it and answers HTTP-01 there. Containers labelled
+//! `rdock.tls=off` are served over plain HTTP on port 80 (ADR-0021).
 
 use std::path::{Path, PathBuf};
 
@@ -7,9 +9,10 @@ use std::path::{Path, PathBuf};
 pub(crate) const CONFIG: &str = "\
 listeners:
   web: { address: \":80\" }
+  websecure: { address: \":443\", tls: {} }
 defaults:
-  listeners: [web]
-  tls: off
+  listeners: [websecure]
+  tls: auto
 providers:
   docker: {}
 ";
@@ -55,6 +58,24 @@ mod tests {
         rdock_proxy::gate::check(&loaded.config, rdock_proxy::Mode::Run, &mut gate);
         assert_eq!(gate, Vec::new());
         assert!(loaded.config.providers.docker.is_some());
+        assert!(
+            loaded.config.effective_acme().is_some(),
+            "certificates are automatic"
+        );
+        let plain = rdock_model::route::Route {
+            tls: Some(rdock_model::route::RouteTls::Mode(
+                rdock_model::route::TlsMode::Off,
+            )),
+            ..serde_json::from_value(
+                serde_json::json!({ "match": "Host(`a.example.com`)", "service": "s" }),
+            )
+            .unwrap()
+        };
+        assert_eq!(
+            loaded.config.route_listeners(&plain),
+            ["web"],
+            "rdock.tls=off serves on :80"
+        );
     }
 
     #[test]

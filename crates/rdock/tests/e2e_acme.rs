@@ -358,3 +358,72 @@ services:
             .exists()
     );
 }
+
+/// Removes the container when the test ends, however it ends.
+struct Container(String);
+
+impl Drop for Container {
+    fn drop(&mut self) {
+        let _ = std::process::Command::new("docker")
+            .args(["rm", "-f", &self.0])
+            .output();
+    }
+}
+
+/// The fresh-VPS scenario of the v0.3 acceptance criteria: one container with one label reaches
+/// valid HTTPS in under a minute. Needs container addresses the host can reach, so it also
+/// needs `RDOCK_DOCKER_TESTS=1` (a Linux Docker daemon, as in CI).
+#[tokio::test]
+async fn a_labelled_container_gets_https_within_a_minute() {
+    if !enabled() || !std::env::var("RDOCK_DOCKER_TESTS").is_ok_and(|v| v == "1") {
+        eprintln!("skipped: needs RDOCK_ACME_TESTS=1 and RDOCK_DOCKER_TESTS=1");
+        return;
+    }
+    let host = "vps.example.com";
+    let (http_port, tls_port) = (free_port(), free_port());
+    let pebble = Pebble::start(http_port, tls_port);
+    let name = format!("rdock-vps-{}", std::process::id());
+    let run = std::process::Command::new("docker")
+        .args(["run", "-d", "--name", &name, "--label", "rdock.enable=true"])
+        .args([
+            "--label",
+            &format!("rdock.host={host}"),
+            "--label",
+            "rdock.port=80",
+        ])
+        .arg("traefik/whoami:v1.11.0")
+        .output()
+        .unwrap();
+    assert!(
+        run.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run.stderr)
+    );
+    let _container = Container(name);
+    let config = format!(
+        r#"listeners:
+  web: {{ address: "0.0.0.0:{http_port}" }}
+  websecure: {{ address: "0.0.0.0:{tls_port}", tls: {{}} }}
+acme:
+  ca: "{directory}"
+  ca_root: "{root}"
+providers:
+  docker: {{}}
+"#,
+        directory = pebble.directory,
+        root = pebble.endpoint_root().display(),
+    );
+    let started = Instant::now();
+    let rdock = Rdock::start(RDOCK, &config);
+    let https: SocketAddr = format!("127.0.0.1:{tls_port}").parse().unwrap();
+    let trust = client_config(&pebble.issuing_root());
+    wait_for_certificate(https, host, &trust, &rdock).await;
+    let reply = client::tls(https, host, trust, get(host, "/")).await;
+    assert_eq!(reply.status, 200, "{}", rdock.log());
+    assert!(reply.text().contains("Hostname"), "served by whoami");
+    assert!(
+        started.elapsed() < Duration::from_secs(60),
+        "valid HTTPS took {:?}",
+        started.elapsed()
+    );
+}

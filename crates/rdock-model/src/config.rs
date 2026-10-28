@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use crate::acme::{Acme, AcmeSetting};
 use crate::middleware::Middleware;
 use crate::providers::Providers;
-use crate::route::{Route, TcpRoute, TlsMode};
+use crate::route::{Route, RouteTls, TcpRoute, TlsMode};
 use crate::service::{Service, TcpService};
 use crate::settings::{Admin, Lifecycle, Observability, Security};
 use crate::values::{Duration, IpNetwork, ListenAddress};
@@ -69,6 +69,33 @@ impl Config {
             Some(AcmeSetting::Enabled(false)) => None,
             Some(AcmeSetting::Settings(acme)) => Some(Cow::Borrowed(&**acme)),
         }
+    }
+
+    /// The listeners `route` attaches to: its own `listeners`; otherwise, for a route served
+    /// without TLS (`tls: off`), the plain-HTTP listeners; otherwise `defaults.listeners`
+    /// (ADR-0021). A `tls: off` route on an HTTPS listener could never be served.
+    #[must_use]
+    pub fn route_listeners(&self, route: &Route) -> Vec<String> {
+        if let Some(listeners) = &route.listeners {
+            return listeners.clone();
+        }
+        let plain_route = match &route.tls {
+            None => self.defaults.tls == TlsMode::Off,
+            Some(RouteTls::Mode(mode)) => *mode == TlsMode::Off,
+            Some(RouteTls::Options(_)) => false,
+        };
+        if plain_route {
+            let plain: Vec<String> = self
+                .effective_listeners()
+                .iter()
+                .filter(|(_, l)| l.effective_protocol() == ListenerProtocol::Http)
+                .map(|(name, _)| name.clone())
+                .collect();
+            if !plain.is_empty() {
+                return plain;
+            }
+        }
+        self.defaults.listeners.clone()
     }
 
     /// The listeners in effect: the configured ones, or `web` (`:80`) and `websecure`

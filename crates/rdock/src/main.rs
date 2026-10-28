@@ -105,7 +105,8 @@ struct HashArgs {
 #[derive(Args)]
 struct RunArgs {
     /// Configuration file [default: /etc/rdock/rdock.yaml]. Without one, rdock runs in
-    /// zero-config mode: HTTP on :80, routes from Docker labels.
+    /// zero-config mode: HTTPS on :443 with automatic certificates, :80 redirecting, routes from
+    /// Docker labels.
     #[arg(short, long, env = "RDOCK_CONFIG")]
     config: Option<PathBuf>,
     /// Directory for state (configuration history, last-known-good copy, admin token,
