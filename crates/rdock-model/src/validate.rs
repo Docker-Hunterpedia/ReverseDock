@@ -459,10 +459,7 @@ impl Validator<'_> {
             Some(RouteTls::Mode(mode)) => *mode == TlsMode::Auto,
             Some(RouteTls::Options(o)) => o.auto && o.certificate.is_none(),
         };
-        let listeners = route
-            .listeners
-            .as_ref()
-            .unwrap_or(&self.config.defaults.listeners);
+        let listeners = self.config.route_listeners(route);
         let serves_tls = listeners.iter().any(|l| {
             self.listeners
                 .get(l)

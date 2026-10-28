@@ -68,7 +68,18 @@ curl -s -H 'Host: shop.example.com' http://127.0.0.1/ | head -3
 
 `rdock status` lists the provider, whether it is connected, how many routes it contributes and every label it could not use.
 
-Without any configuration file, `rdock run` starts in **zero-config mode**, which is the `rdock.yaml` above without the `network` line: plain HTTP on `:80`, routes from labels. It needs the Docker socket at `/var/run/docker.sock`.
+Without any configuration file, `rdock run` starts in **zero-config mode**. From v0.3 <Status planned="v0.3" /> it serves routes from labels over HTTPS on `:443` with automatic certificates from Let's Encrypt (which accepts its terms of service), `:80` redirecting to HTTPS and answering the certificate challenges. Containers labelled `rdock.tls=off` are served over plain HTTP on `:80`. It needs the Docker socket at `/var/run/docker.sock`, and ports 80 and 443 reachable from the internet for the names in your labels. The built-in configuration is:
+
+```yaml
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+defaults:
+  listeners: [websecure]
+  tls: auto
+providers:
+  docker: {}
+```
 
 ## Labels
 

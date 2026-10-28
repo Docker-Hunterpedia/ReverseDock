@@ -343,11 +343,7 @@ fn compile_listeners(
         else {
             continue;
         };
-        let attached = route
-            .listeners
-            .as_ref()
-            .unwrap_or(&config.defaults.listeners);
-        for listener_name in attached {
+        for listener_name in &config.route_listeners(route) {
             let Some(listener) = listeners.get_mut(listener_name) else {
                 continue;
             };
