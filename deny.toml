@@ -39,6 +39,9 @@ exceptions = [
   { crate = "tiny-keccak", allow = ["CC0-1.0"] },
   # File watching for the file provider (B-CFG-07).
   { crate = "notify", allow = ["CC0-1.0"] },
+  # Mozilla's root certificate list, used by rustls-platform-verifier <- hyper-rustls <- instant-acme
+  # to reach ACME CAs (ADR-0020). CDLA-Permissive-2.0 is a permissive data licence.
+  { crate = "webpki-root-certs", allow = ["CDLA-Permissive-2.0"] },
 ]
 
 [bans]

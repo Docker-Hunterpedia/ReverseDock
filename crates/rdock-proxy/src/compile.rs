@@ -2,7 +2,7 @@
 //! configuration refers to (certificates, user lists, pages) but does no network I/O, so
 //! `rdock validate` runs it too.
 
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{Hash, Hasher};
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -17,7 +17,7 @@ use rdock_model::service::{LbPolicy, Service};
 use rdock_model::values::{BackendAddress, TrustedProxy};
 use rdock_observability::AccessLog;
 use rdock_rules::Expr;
-use rdock_tls::{CertIndex, LoadedCert};
+use rdock_tls::{CertIndex, CertRequest, LoadedCert};
 
 use crate::forwarded::ClientIpPolicy;
 use crate::gate::{self, Mode};
@@ -62,7 +62,14 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     ));
     let services = compile_services(config, env.dns, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
-    let listeners = compile_listeners(config, &services, &middlewares, &index, env.mode, &mut out);
+    let mut auto_tls = AutoTls {
+        certs: &index,
+        acme: config.effective_acme().is_some(),
+        mode: env.mode,
+        requests: BTreeSet::new(),
+    };
+    let listeners = compile_listeners(config, &services, &middlewares, &mut auto_tls, &mut out);
+    let cert_requests = auto_tls.requests.into_iter().collect();
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
         generation: env.generation,
         listeners,
@@ -70,6 +77,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         limits: config.security.limits,
         access_log: access_log(config, env.previous),
         certificates: index,
+        cert_requests,
         cert_expiry: certs
             .iter()
             .map(|c| (c.name.clone(), c.not_after))
@@ -302,8 +310,7 @@ fn compile_listeners(
     config: &Config,
     services: &HashMap<String, Arc<ServiceRuntime>>,
     middlewares: &HashMap<String, Arc<dyn Middleware>>,
-    certs: &CertIndex,
-    mode: Mode,
+    auto_tls: &mut AutoTls<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
     let effective = config.effective_listeners();
@@ -338,7 +345,7 @@ fn compile_listeners(
             if listener.tls.is_some() {
                 tls_hosts.extend(HostSet::of(&expr));
                 if wants_auto_tls(config, route) {
-                    check_coverage(&path, &expr, certs, config, mode, out);
+                    auto_tls.route(&path, route, &expr, config, out);
                 }
             }
             listener.routes.push(compiled.clone());
@@ -425,40 +432,113 @@ fn compile_route(
     }))
 }
 
-/// Before ACME exists, a route asking for automatic HTTPS needs a manual certificate for each
-/// of its hosts, or a default certificate.
-fn check_coverage(
-    path: &str,
-    expr: &Expr,
-    certs: &CertIndex,
-    config: &Config,
+/// Collects the certificates that routes with `tls: auto` need and no configured certificate
+/// covers.
+struct AutoTls<'a> {
+    certs: &'a CertIndex,
+    /// Whether automatic certificates are on.
+    acme: bool,
     mode: Mode,
-    out: &mut Vec<Diagnostic>,
-) {
-    if config.defaults.certificate.is_some() {
-        return;
-    }
-    let hosts = expr.positive_hosts();
-    let uncovered: Vec<&str> = hosts
-        .iter()
-        .copied()
-        .filter(|h| *h != "*" && !certs.covers(&crate::router::normalize_host(h)))
-        .collect();
-    let message = if hosts.is_empty() {
-        "the route has no Host and no default certificate is set".to_owned()
-    } else if uncovered.is_empty() {
-        return;
-    } else {
-        format!("no certificate covers {}", uncovered.join(", "))
-    };
-    let text =
-        format!("{message}; automatic certificates are not supported yet (planned for v0.3)");
-    let hint = "add the certificate under `certificates`, set `defaults.certificate`, or use `tls: off` on a plain listener";
-    out.push(
-        match mode {
-            Mode::Validate => Diagnostic::warning(format!("{path}.tls"), text),
-            Mode::Run => Diagnostic::error(format!("{path}.tls"), text),
+    requests: BTreeSet<CertRequest>,
+}
+
+impl AutoTls<'_> {
+    fn route(
+        &mut self,
+        path: &str,
+        route: &Route,
+        expr: &Expr,
+        config: &Config,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        let options = match &route.tls {
+            Some(RouteTls::Options(options)) => Some(options),
+            _ => None,
+        };
+        let hosts: Vec<String> = match options.filter(|o| !o.domains.is_empty()) {
+            Some(o) => o.domains.iter().map(|d| d.to_ascii_lowercase()).collect(),
+            None => expr
+                .positive_hosts()
+                .into_iter()
+                .filter(|h| *h != "*")
+                .map(crate::router::normalize_host)
+                .collect(),
+        };
+        let uncovered: Vec<String> = hosts
+            .iter()
+            .filter(|h| !self.certs.covers(h))
+            .cloned()
+            .collect();
+        if !self.acme {
+            self.report_uncovered(path, &hosts, &uncovered, config, out);
+            return;
         }
-        .with_hint(hint),
-    );
+        let (private, public): (Vec<String>, Vec<String>) = uncovered
+            .into_iter()
+            .partition(|h| rdock_tls::is_private_name(h));
+        if !private.is_empty() {
+            out.push(
+                Diagnostic::warning(
+                    format!("{path}.tls"),
+                    format!(
+                        "public certificate authorities do not issue certificates for {}",
+                        private.join(", ")
+                    ),
+                )
+                .with_hint(
+                    "add a certificate under `certificates`, or use `tls: off` on a plain listener",
+                ),
+            );
+        }
+        let dns_provider = options
+            .and_then(|o| o.dns_provider.clone())
+            .or_else(|| config.effective_acme().and_then(|a| a.dns_provider.clone()));
+        if options.is_some_and(|o| !o.domains.is_empty()) {
+            if !public.is_empty() {
+                self.requests.insert(CertRequest {
+                    names: hosts,
+                    dns_provider,
+                });
+            }
+            return;
+        }
+        for name in public {
+            self.requests.insert(CertRequest {
+                names: vec![name],
+                dns_provider: dns_provider.clone(),
+            });
+        }
+    }
+
+    /// With automatic certificates off, every host needs a configured certificate.
+    fn report_uncovered(
+        &self,
+        path: &str,
+        hosts: &[String],
+        uncovered: &[String],
+        config: &Config,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        if config.defaults.certificate.is_some() {
+            return;
+        }
+        let message = if hosts.is_empty() {
+            "the route has no Host and no default certificate is set".to_owned()
+        } else if uncovered.is_empty() {
+            return;
+        } else {
+            format!(
+                "no certificate covers {}, and automatic certificates are off (`acme: false`)",
+                uncovered.join(", ")
+            )
+        };
+        let hint = "add the certificate under `certificates`, set `defaults.certificate`, or use `tls: off` on a plain listener";
+        out.push(
+            match self.mode {
+                Mode::Validate => Diagnostic::warning(format!("{path}.tls"), message),
+                Mode::Run => Diagnostic::error(format!("{path}.tls"), message),
+            }
+            .with_hint(hint),
+        );
+    }
 }

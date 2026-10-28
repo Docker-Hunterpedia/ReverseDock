@@ -21,6 +21,8 @@ pub struct LoadedCert {
     /// DNS names and IP addresses of the leaf certificate (subject alternative names),
     /// lower-cased. Wildcards keep their `*.` prefix.
     pub names: Vec<String>,
+    /// Start of the leaf certificate's validity, in seconds since the Unix epoch.
+    pub not_before: i64,
     /// Expiry of the leaf certificate, in seconds since the Unix epoch.
     pub not_after: i64,
 }
@@ -90,12 +92,13 @@ pub fn load_certificate(
         path: key_file.to_owned(),
         reason: e.to_string(),
     })?;
-    let (names, not_after) = leaf_names(cert_file, &certified.cert[0])?;
+    let leaf = leaf_facts(cert_file, &certified.cert[0])?;
     Ok(LoadedCert {
         name: name.to_owned(),
         key: Arc::new(certified),
-        names,
-        not_after,
+        names: leaf.names,
+        not_before: leaf.not_before,
+        not_after: leaf.not_after,
     })
 }
 
@@ -159,8 +162,14 @@ fn decrypt_key(
     )))
 }
 
-/// Subject alternative names and expiry of the leaf.
-fn leaf_names(path: &Path, leaf: &CertificateDer<'_>) -> Result<(Vec<String>, i64), CertError> {
+struct LeafFacts {
+    names: Vec<String>,
+    not_before: i64,
+    not_after: i64,
+}
+
+/// Subject alternative names and validity of the leaf.
+fn leaf_facts(path: &Path, leaf: &CertificateDer<'_>) -> Result<LeafFacts, CertError> {
     let fail = |reason: String| CertError::Parse {
         path: path.to_owned(),
         reason,
@@ -185,7 +194,11 @@ fn leaf_names(path: &Path, leaf: &CertificateDer<'_>) -> Result<(Vec<String>, i6
             }
         }
     }
-    Ok((names, cert.validity().not_after.timestamp()))
+    Ok(LeafFacts {
+        names,
+        not_before: cert.validity().not_before.timestamp(),
+        not_after: cert.validity().not_after.timestamp(),
+    })
 }
 
 fn ip_from_bytes(bytes: &[u8]) -> Option<IpAddr> {

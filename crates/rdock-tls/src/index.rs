@@ -63,6 +63,12 @@ impl CertIndex {
             .or_else(|| self.default.clone())
     }
 
+    /// The certificate covering `name` (exact, then one-label wildcard), ignoring the default.
+    #[must_use]
+    pub fn get(&self, name: &str) -> Option<Arc<CertifiedKey>> {
+        self.find(name)
+    }
+
     /// Whether a certificate other than the default covers `host`.
     #[must_use]
     pub fn covers(&self, host: &str) -> bool {
@@ -79,11 +85,13 @@ impl CertIndex {
     }
 }
 
-/// A rustls certificate resolver backed by a [`CertIndex`] that can be replaced while
-/// listeners keep running.
+/// A rustls certificate resolver that can be updated while listeners keep running. It serves
+/// the configured certificates first, then automatically issued ones, then the configured
+/// default.
 #[derive(Debug, Default)]
 pub struct SniResolver {
     index: ArcSwap<CertIndex>,
+    managed: ArcSwap<CertIndex>,
 }
 
 impl SniResolver {
@@ -92,10 +100,22 @@ impl SniResolver {
     pub fn new(index: CertIndex) -> Self {
         Self {
             index: ArcSwap::from_pointee(index),
+            managed: ArcSwap::default(),
         }
     }
 
-    /// Replaces the certificates; new handshakes use them immediately.
+    /// Replaces the automatically issued certificates; new handshakes use them immediately.
+    pub fn swap_managed(&self, index: impl Into<Arc<CertIndex>>) {
+        self.managed.store(index.into());
+    }
+
+    /// Whether a configured or automatically issued certificate covers `name`.
+    #[must_use]
+    pub fn covers(&self, name: &str) -> bool {
+        self.index.load().covers(name) || self.managed.load().covers(name)
+    }
+
+    /// Replaces the configured certificates; new handshakes use them immediately.
     pub fn swap(&self, index: impl Into<Arc<CertIndex>>) {
         self.index.store(index.into());
     }
@@ -109,6 +129,13 @@ impl SniResolver {
 
 impl ResolvesServerCert for SniResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        self.index.load().lookup(client_hello.server_name())
+        let index = self.index.load();
+        let Some(name) = client_hello.server_name() else {
+            return index.lookup(None);
+        };
+        index
+            .get(name)
+            .or_else(|| self.managed.load().get(name))
+            .or_else(|| index.lookup(None))
     }
 }

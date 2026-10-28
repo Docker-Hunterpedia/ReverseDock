@@ -10,7 +10,11 @@ sidebar:
 ## [Unreleased]
 
 ### Added
+- **Automatic certificates** (ADR-0020): routes with `tls: auto` whose hosts no configured certificate covers get a certificate from Let's Encrypt (or `acme.ca`) through HTTP-01, answered on every plain-HTTP listener before routing. One certificate per name, or one per route with `tls.domains`; each with a new ECDSA P-256 key; stored in `$RDOCK_DATA_DIR/acme` (mode 0600, atomic writes, a lock against a second process) and served without a reload; renewed when a third of the lifetime is left; failures retried with backoff from 1 minute to 24 hours. `tlsserver` is ordered when the CA offers it. `acme.ca_root` trusts an internal CA's endpoint. Names public CAs do not certify (`localhost`, `.internal`, private addresses …) are reported instead of ordered. Tested end to end against Pebble.
 - Configuration for automatic HTTPS (ADR-0020): `acme: false` turns automatic certificates off; `acme.dns_provider` names a default DNS provider for every route; DNS providers `exec` (a program run without a shell) and `webhook` (JSON to an `https://` endpoint) next to `cloudflare`, which gains `zone_id`; `observability.alerts.webhook` for certificate alerts. Webhooks must use `https://` (plain `http://` only for localhost), exec commands must be absolute paths, and tokens should be `${file:…}` references. Public IP-address hosts are flagged unless `acme.profile: shortlived`, and DNS-01 for an IP address is refused. Issuance itself arrives with the following v0.3 changes; until then `rdock run` still refuses `acme` settings and webhooks with "planned for v0.3".
+
+### Changed
+- **`tls: auto` routes now get certificates.** In v0.2 a route asking for automatic HTTPS without a matching certificate was refused ("planned for v0.3"); now ReverseDock orders one from Let's Encrypt production, which accepts its terms of service. Set `acme: false` to keep v0.2's behaviour, or `acme: { staging: true }` to try it first. `ca: buypass` is refused: Buypass stopped issuing certificates on 2025-10-16.
 
 ## [0.2.0-alpha.1] — v0.2 "Docker-native"
 

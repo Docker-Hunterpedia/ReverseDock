@@ -1083,6 +1083,15 @@ impl Validator<'_> {
             }
             self.check_secret("acme.eab.hmac_key", &eab.hmac_key, "eab_hmac");
         }
+        if acme.ca == crate::acme::CaRef::Known(KnownCa::Buypass) {
+            self.push(
+                Diagnostic::error(
+                    "acme.ca",
+                    "Buypass stopped issuing certificates on 2025-10-16",
+                )
+                .with_hint("use `letsencrypt`, `zerossl`, `google` or another CA's directory URL"),
+            );
+        }
         if matches!(
             acme.ca,
             crate::acme::CaRef::Known(KnownCa::Zerossl | KnownCa::Google)

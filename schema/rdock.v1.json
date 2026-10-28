@@ -208,6 +208,14 @@
           "$ref": "#/$defs/CaRef",
           "default": "letsencrypt"
         },
+        "ca_root": {
+          "description": "PEM file with the root certificate of a CA whose ACME endpoint is not publicly trusted,\nsuch as an internal step-ca. Only this root is then trusted for the CA's endpoint.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "challenges": {
           "description": "Challenge types to use, in order of preference.",
           "type": "array",
@@ -943,7 +951,7 @@
           "const": "zerossl"
         },
         {
-          "description": "Buypass Go SSL.",
+          "description": "Buypass Go SSL: discontinued on 2025-10-16 and refused by validation.",
           "type": "string",
           "const": "buypass"
         },

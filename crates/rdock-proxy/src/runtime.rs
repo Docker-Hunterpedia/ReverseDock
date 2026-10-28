@@ -33,6 +33,8 @@ pub struct Runtime {
     pub access_log: Arc<AccessLog>,
     /// Certificates, served through the shared resolver.
     pub certificates: Arc<rdock_tls::CertIndex>,
+    /// Certificates to issue automatically.
+    pub cert_requests: Vec<rdock_tls::CertRequest>,
     /// Expiry of each certificate (name, Unix seconds), for metrics.
     pub cert_expiry: Vec<(String, i64)>,
 }
@@ -51,6 +53,7 @@ impl Runtime {
                 redact: Vec::new(),
             })),
             certificates: Arc::new(rdock_tls::CertIndex::default()),
+            cert_requests: Vec::new(),
             cert_expiry: Vec::new(),
         }
     }

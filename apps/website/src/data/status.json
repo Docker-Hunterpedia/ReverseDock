@@ -1,12 +1,5 @@
 [
   {
-    "path": "acme",
-    "planned": "v0.3",
-    "what": "Automatic certificates (ACME)",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nacme:\n  email: ops@example.com\n"
-  },
-  {
     "path": "listeners.<name>.proxy_protocol",
     "planned": "v0.6",
     "what": "The PROXY protocol",
@@ -40,13 +33,6 @@
     "what": "DNS-01 certificates",
     "value": false,
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\nroutes:\n  app:\n    match: \"Host(`app.example.com`)\"\n    service: app\n    tls: { dns_provider: cf }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nacme:\n  email: ops@example.com\n  dns_providers:\n    cf: { type: cloudflare, api_token: \"${env:CF_API_TOKEN}\" }\n"
-  },
-  {
-    "path": "routes.<name>.tls.domains",
-    "planned": "v0.3",
-    "what": "Automatic certificate names",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\nroutes:\n  app:\n    match: \"Host(`app.example.com`)\"\n    service: app\n    tls: { domains: [\"example.com\"] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   },
   {
     "path": "middlewares.<name>.algorithms",
