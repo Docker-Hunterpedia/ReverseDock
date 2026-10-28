@@ -29,6 +29,7 @@ notify.workspace = true
 notify-debouncer-full.workspace = true
 rdock-acme.workspace = true
 rdock-admin.workspace = true
+rdock-cloudflare.workspace = true
 rdock-config.workspace = true
 rdock-middleware.workspace = true
 rdock-migrate.workspace = true

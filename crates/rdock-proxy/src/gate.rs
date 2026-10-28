@@ -8,8 +8,6 @@ use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::middleware::{CompressAlgorithm, Middleware};
 use rdock_model::route::RouteTls;
 use rdock_model::service::LbPolicy;
-use rdock_model::settings::ClientIpHeader;
-use rdock_model::values::TrustedProxy;
 
 /// Why compilation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -103,17 +101,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     }
     if providers.kubernetes.is_some() {
         gate.unsupported("providers.kubernetes", "the Kubernetes provider", "v0.7");
-    }
-    let security = &config.security;
-    if security.trusted_proxies.contains(&TrustedProxy::Cloudflare) {
-        gate.unsupported(
-            "security.trusted_proxies",
-            "`cloudflare` (synced edge ranges)",
-            "v0.3",
-        );
-    }
-    if security.client_ip_header == ClientIpHeader::CfConnectingIp {
-        gate.unsupported("security.client_ip_header", "`cf-connecting-ip`", "v0.3");
     }
     if config.observability.tracing.is_some() {
         gate.unsupported("observability.tracing", "OpenTelemetry tracing", "v0.4");

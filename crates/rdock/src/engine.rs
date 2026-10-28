@@ -13,6 +13,7 @@ use rdock_config::merge::{ObjectKey, Snapshot, assemble, is_provider_owned, owne
 use rdock_config::state::{HISTORY_LIMIT, HistoryEntry, StateDir};
 use rdock_config::{Format, Loaded, System, load_str, load_value};
 use rdock_model::middleware::Middleware;
+use rdock_model::values::TrustedProxy;
 use rdock_model::{Config, Diagnostic};
 use rdock_proxy::{DataPlane, Runtime};
 use serde::Serialize;
@@ -94,6 +95,8 @@ pub(crate) struct Engine {
     plane: Arc<DataPlane>,
     /// Issues and renews automatic certificates (ADR-0020).
     acme: rdock_acme::Manager,
+    /// Keeps Cloudflare's edge ranges current while `trusted_proxies` contains `cloudflare`.
+    cloudflare: rdock_cloudflare::IpSync,
     applied: tokio::sync::Mutex<Applied>,
     ready: AtomicBool,
     metrics_enabled: AtomicBool,
@@ -148,6 +151,10 @@ impl Engine {
                 challenges: plane.challenges(),
                 metrics: plane.metrics().clone(),
             }),
+            cloudflare: rdock_cloudflare::IpSync::spawn(
+                rdock_cloudflare::Options::new(data_dir.join("cloudflare")),
+                plane.cloudflare_ranges(),
+            ),
             plane,
             applied: tokio::sync::Mutex::new(Applied {
                 config: None,
@@ -344,6 +351,12 @@ impl Engine {
                 .await;
         }
         self.acme.update(acme_plan);
+        self.cloudflare.set_enabled(
+            config
+                .security
+                .trusted_proxies
+                .contains(&TrustedProxy::Cloudflare),
+        );
         let summary = summarize(applied.config.as_ref(), &config);
         if applied.source.as_ref() != Some(&source) {
             let entry = HistoryEntry {
