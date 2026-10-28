@@ -63,13 +63,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    split: [{ service: blue, weight: 90 }, { service: green, weight: 10 }]\n  blue: { backends: [{ address: \"127.0.0.1:3001\" }] }\n  green: { backends: [{ address: \"127.0.0.1:3002\" }] }\n"
   },
   {
-    "path": "services.<name>.load_balancer.policy",
-    "planned": "v0.4",
-    "what": "Policies other than `round_robin` and `random`",
-    "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    load_balancer: { policy: least_conn }\n"
-  },
-  {
     "path": "services.<name>.health",
     "planned": "v0.4",
     "what": "Health checks",
@@ -82,13 +75,6 @@
     "what": "Retries",
     "value": false,
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    retries: { attempts: 2 }\n"
-  },
-  {
-    "path": "services.<name>.sticky",
-    "planned": "v0.4",
-    "what": "Sticky sessions",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    sticky: { cookie: { name: srv } }\n"
   },
   {
     "path": "services.<name>.tls",
