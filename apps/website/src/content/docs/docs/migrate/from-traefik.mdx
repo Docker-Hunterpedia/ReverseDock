@@ -23,7 +23,7 @@ The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-1
 | Router `rule` | `routes.<name>.match` (same grammar, or a structured match) |
 | Router `priority` | `routes.<name>.priority` |
 | Router `entryPoints` (all entry points when unset) | `routes.<name>.listeners` (`defaults.listeners` when unset, which is `[websecure]`) |
-| Router `tls` and `certResolver` | `routes.<name>.tls` and `defaults.tls`; automatic certificates <Status planned="v0.3" /> |
+| Router `tls` and `certResolver` | `routes.<name>.tls` and `defaults.tls`; automatic certificates <Status since="v0.3" /> |
 | `http.services.<name>.loadBalancer.servers[].url` | `services.<name>.backends[].address` plus `services.<name>.scheme` |
 | Server `weight` | `backends[].weight` |
 | `passHostHeader` (default true) | `pass_host_header` (default true) |
@@ -38,7 +38,7 @@ The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-1
 | `name@file` references | `name` or `name@file` |
 | `providers.file.directory` | one `rdock.yaml`; extra files (`providers.file.paths`) <Status since="v0.2" /> |
 | `providers.docker` and labels | `providers.docker` with `traefik_labels` <Status since="v0.2" /> |
-| `certificatesResolvers` (ACME) | `acme` <Status planned="v0.3" /> |
+| `certificatesResolvers` (ACME) | `acme` <Status since="v0.3" /> |
 
 Middleware kinds:
 
@@ -432,7 +432,7 @@ These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterped
 - **Paths are normalised and the normalised path is forwarded**, as in Traefik 3.7. Encoded slashes (`%2F`) are allowed and never act as separators.
 - **`ClientIP`, `ip_allow`, `ip_deny`, `rate_limit` and `maintenance.allow` use the resolved client IP.** Without `security.trusted_proxies` this is the TCP peer, the same as Traefik. Behind a load balancer it is the address the load balancer reports; Traefik needs an `ipStrategy` per middleware for that.
 - **Route defaults differ.** A Traefik router without `entryPoints` attaches to every entry point, and one without `tls` serves plain HTTP. A ReverseDock route without `listeners` attaches to `defaults.listeners` (`[websecure]`) and asks for HTTPS (`defaults.tls: auto`). A route meant for plain HTTP needs `listeners: [web]` and `tls: off`.
-- **Until automatic certificates arrive** <Status planned="v0.3" />, a route on an HTTPS listener needs a certificate under `certificates` that covers each of its hosts, or `defaults.certificate`. `rdock validate` warns, and `rdock run` refuses the configuration, when a host is not covered.
+- **Until automatic certificates arrive** <Status since="v0.3" />, a route on an HTTPS listener needs a certificate under `certificates` that covers each of its hosts, or `defaults.certificate`. `rdock validate` warns, and `rdock run` refuses the configuration, when a host is not covered.
 
 ### Forwarding headers and limits
 

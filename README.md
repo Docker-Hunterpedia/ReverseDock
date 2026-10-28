@@ -6,13 +6,13 @@
 
 [![ci](https://github.com/Docker-Hunterpedia/ReverseDock/actions/workflows/ci.yml/badge.svg)](https://github.com/Docker-Hunterpedia/ReverseDock/actions/workflows/ci.yml)
 [![License: Apache-2.0](https://img.shields.io/badge/license-Apache--2.0-F58F0A.svg)](LICENSE)
-[![Status: v0.2 alpha](https://img.shields.io/badge/status-v0.2%20Docker--native%20·%20alpha-78716C.svg)](docs/07-roadmap.md)
+[![Status: v0.3 alpha](https://img.shields.io/badge/status-v0.3%20Automatic%20HTTPS%20·%20alpha-78716C.svg)](docs/07-roadmap.md)
 [![DCO](https://img.shields.io/badge/DCO-required-1C1917.svg)](CONTRIBUTING.md#branches-and-commits)
 
 > One reverse proxy for a laptop, a VPS, a Docker Swarm, or a Kubernetes cluster.
 > Rust, built on [Cloudflare Pingora](https://github.com/cloudflare/pingora). 100 % free and open source (Apache-2.0). No account, no telemetry, no paid tier.
 
-**Status: v0.2 "Docker-native" (alpha, [`0.2.0-alpha.1`](https://github.com/Docker-Hunterpedia/ReverseDock/releases/tag/v0.2.0-alpha.1)).** ReverseDock routes Docker containers from their labels, `rdock.*` or your existing `traefik.*` labels, with no restart when containers start, stop or change health; `rdock run` with no configuration file serves labelled containers on port 80, and `rdock migrate traefik` turns Traefik labels into an `rdock.yaml`. It also replaces NGINX for host and path routing with your own certificates: HTTP/1.1, HTTP/2, h2c, WebSocket, server-sent events and gRPC; TLS with SNI and named policies; the Traefik rule grammar; headers, redirects, path rewrites, basic and forward authentication, IP filters, rate limits, CORS, gzip, error pages and maintenance mode; reloads on file change, `SIGHUP` or `rdock reload` without dropping requests (listener changes included); JSON access logs and Prometheus metrics. Automatic HTTPS arrives in v0.3 ([roadmap](docs/07-roadmap.md)).
+**Status: v0.3 "Automatic HTTPS" (alpha, [`0.3.0-alpha.1`](https://github.com/Docker-Hunterpedia/ReverseDock/releases/tag/v0.3.0-alpha.1)).** Point a DNS name at the server and add one label or one route: ReverseDock gets the certificate from Let's Encrypt or any ACME CA (HTTP-01, TLS-ALPN-01, or DNS-01 with Cloudflare, your own script or a webhook for wildcards), renews it inside the CA's ARI window, and alerts you when renewals fail; `localhost` and private names get certificates from a name-constrained local CA (`rdock trust`), and Cloudflare's edge ranges are trusted for the real client IP. It reads Docker labels, `rdock.*` or your existing `traefik.*` labels (v0.2), and replaces NGINX for host and path routing (v0.1): HTTP/1.1, HTTP/2, h2c, WebSocket, server-sent events and gRPC; the Traefik rule grammar; headers, redirects, rewrites, basic and forward authentication, IP filters, rate limits, CORS, gzip, error pages; reloads without dropping requests; JSON access logs and Prometheus metrics. Health checks, retries and mTLS arrive in v0.4 ([roadmap](docs/07-roadmap.md)).
 
 ```bash
 # With Docker: the example serves traefik/whoami on http://localhost
@@ -75,7 +75,7 @@ services:
 
 ## Contributing
 
-v0.2 reads Docker labels: bug reports from real setups, Traefik labels that route differently than expected, and real-world label sets from Dokploy, Coolify or your own Compose files are the most valuable contributions right now.
+v0.3 makes HTTPS automatic: reports from real domains, CAs other than Let's Encrypt, DNS providers you would like built in, and Traefik labels that route differently than expected are the most valuable contributions right now.
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): issues, PR rules, Conventional Commits, DCO sign-off (`git commit -s`)
 - [Code of Conduct](CODE_OF_CONDUCT.md) · [Governance](GOVERNANCE.md) · [Support](SUPPORT.md)

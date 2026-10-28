@@ -14,7 +14,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 | M0 | Foundations | build, lint, test and release; the configuration model and schema exist | Done (0.1.0-alpha.2) |
 | v0.1 | Hello proxy | replace NGINX for host and path routing with your own certificates | <Status since="v0.1" /> 0.1.0-alpha.3 |
 | v0.2 | Docker-native | replace Traefik on a Compose box using your existing labels | <Status since="v0.2" />  0.2.0-alpha.1 |
-| v0.3 | Automatic HTTPS | go from DNS to HTTPS with one label | <Status planned="v0.3" /> |
+| v0.3 | Automatic HTTPS | go from DNS to HTTPS with one label | <Status since="v0.3" />  0.3.0-alpha.1 |
 | v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status planned="v0.4" /> |
 | v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
 | v0.6 | Swarm, L4, static | multi-node Docker, TCP and SNI passthrough, static sites | <Status planned="v0.6" /> |
@@ -31,7 +31,7 @@ HTTP/1.1, HTTP/2, h2c, WebSocket, server-sent events and gRPC; routing with the 
 
 The Docker provider: routes from `rdock.*` labels and compatibility with a documented subset of `traefik.*` labels, tested against real Compose files. A zero-configuration mode, `rdock migrate traefik` to turn labels into YAML, diagnostics for unsupported labels, and examples for Dokploy, Coolify and Portainer. Losing the Docker socket does not drop traffic.
 
-## v0.3: Automatic HTTPS <Status planned="v0.3" />
+## v0.3: Automatic HTTPS <Status since="v0.3" />
 
 ACME with HTTP-01, TLS-ALPN-01 and DNS-01, renewal guided by ARI, a local CA for development, Cloudflare integration (trusted IP ranges, `CF-Connecting-IP`, DNS-01, Tunnel example). The goal: a fresh VPS reaches valid HTTPS in under 60 seconds.
 

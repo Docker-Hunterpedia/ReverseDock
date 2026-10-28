@@ -32,7 +32,7 @@ The **resolved client IP** is what `ClientIP`, `ip_allow`, `ip_deny`, `rate_limi
     the left-most one is used. At most 32 entries are examined, and an entry that is not an IP
     address ends the walk.
   - `x-real-ip`: the `X-Real-IP` header, or the peer when it is missing or invalid.
-  - `cf-connecting-ip` and the `cloudflare` entry in `trusted_proxies` are <Status planned="v0.3" />.
+  - `cf-connecting-ip` and the `cloudflare` entry in `trusted_proxies` are <Status since="v0.3" />.
 - IPv4-mapped IPv6 addresses (`::ffff:192.0.2.7`) are treated as IPv4.
 
 ## Headers added to requests

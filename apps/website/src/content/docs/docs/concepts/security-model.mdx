@@ -36,7 +36,7 @@ Every client is untrusted. The defaults that protect the proxy and the backends:
 
 List in `security.trusted_proxies` only the load balancers, CDNs or tunnels you control. For requests from them, ReverseDock keeps the forwarding headers, appends the proxy to `X-Forwarded-For`, accepts a valid `X-Request-ID`, and takes the client IP from `X-Forwarded-For` by walking it from the right and skipping trusted addresses (at most 32 entries), from `X-Real-IP` with `client_ip_header: x-real-ip`, or from `CF-Connecting-IP` (see below).
 
-That client IP is what `ClientIP`, `ip_allow`, `ip_deny`, `rate_limit`, `maintenance.allow` and the access log use. A trusted range that is too wide lets anyone inside it choose their own client IP, and with it pass an `ip_allow` list. `trusted_proxies: [cloudflare]` <Status planned="v0.3" /> trusts Cloudflare's published edge ranges, refreshed daily with a cached and a built-in fallback; `CF-Connecting-IP` is believed only from a trusted peer (with `auto`, only from a Cloudflare address) and removed otherwise. See [Behind a proxy](/docs/guides/behind-a-proxy/).
+That client IP is what `ClientIP`, `ip_allow`, `ip_deny`, `rate_limit`, `maintenance.allow` and the access log use. A trusted range that is too wide lets anyone inside it choose their own client IP, and with it pass an `ip_allow` list. `trusted_proxies: [cloudflare]` <Status since="v0.3" /> trusts Cloudflare's published edge ranges, refreshed daily with a cached and a built-in fallback; `CF-Connecting-IP` is believed only from a trusted peer (with `auto`, only from a Cloudflare address) and removed otherwise. See [Behind a proxy](/docs/guides/behind-a-proxy/).
 
 ### Backends
 
