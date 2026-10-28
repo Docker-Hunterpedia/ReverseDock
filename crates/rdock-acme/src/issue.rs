@@ -226,8 +226,9 @@ async fn validate(
     }
 }
 
-/// Creates the order. If the CA says the replaced certificate was already replaced (by an
-/// earlier order of ours that did not finish), the order is created without `replaces`.
+/// Creates the order. `replaces` (RFC 9773) only earns a renewal its rate-limit exemption, so
+/// when the CA refuses an order because of it (`alreadyReplaced`, or a CA that cannot match the
+/// replaced certificate), the order is created again without it. Rate limits are not retried.
 async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, IssueError> {
     let identifiers: Vec<Identifier> = spec.names.iter().map(|n| identifier(n)).collect();
     let plain = || {
@@ -241,16 +242,19 @@ async fn new_order(account: &Account, spec: OrderSpec<'_>) -> Result<Order, Issu
         return Ok(account.new_order(&plain()).await?);
     };
     match account.new_order(&plain().replaces(replaces.clone())).await {
-        Err(instant_acme::Error::Api(problem))
-            if problem
-                .r#type
-                .as_deref()
-                .is_some_and(|t| t.ends_with(":alreadyReplaced")) =>
-        {
+        Err(instant_acme::Error::Api(problem)) if !is_rate_limit(&problem) => {
+            warn!(problem = %problem, "the CA refused the renewal order with `replaces`; ordering without it");
             Ok(account.new_order(&plain()).await?)
         }
         other => Ok(other?),
     }
+}
+
+fn is_rate_limit(problem: &instant_acme::Problem) -> bool {
+    problem
+        .r#type
+        .as_deref()
+        .is_some_and(|t| t.ends_with(":rateLimited"))
 }
 
 /// The signing request for `names`. rcgen fills the subject with a placeholder common name,
