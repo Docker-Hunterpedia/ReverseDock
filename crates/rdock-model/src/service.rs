@@ -97,13 +97,14 @@ pub enum LbPolicy {
     RoundRobin,
     /// Weighted random.
     Random,
-    /// Fewest open connections.
+    /// Fewest requests in flight relative to the weight (an HTTP/1.1 request holds one
+    /// connection, so this is also the least-connections policy).
     LeastConn,
-    /// Fewest in-flight requests.
+    /// Fewest requests in flight relative to the weight.
     LeastRequests,
     /// Power of two random choices.
     P2c,
-    /// Consistent hash of the client IP.
+    /// Consistent hash of the client IP (Traefik's `hrw`).
     IpHash,
     /// Consistent hash of a request header (`hash_on`).
     HeaderHash,
@@ -283,6 +284,20 @@ pub struct StickyCookie {
     /// Lifetime; a session cookie when omitted.
     #[serde(default)]
     pub max_age: Option<Duration>,
+    /// `Path` attribute.
+    #[serde(default = "root_path")]
+    pub path: String,
+    /// Key that signs the cookie, as a `${file:…}` or `${env:…}` reference. Without it, a key is
+    /// generated once and kept in `$RDOCK_DATA_DIR/sticky.key`.
+    #[serde(default)]
+    pub secret: Option<String>,
+    /// Keys of earlier rotations: cookies signed with them stay valid and are replaced.
+    #[serde(default)]
+    pub previous_secrets: Vec<String>,
+}
+
+fn root_path() -> String {
+    "/".to_owned()
 }
 
 /// `SameSite` cookie attribute.

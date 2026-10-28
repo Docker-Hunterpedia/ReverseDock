@@ -107,15 +107,39 @@ Each backend has a `weight`, `1` by default. In the `app` service above, `10.0.0
 
 - **`round_robin`** (default): smooth weighted round-robin. Over each cycle every backend gets its share, and the requests of a heavy backend are spread out rather than sent in a row.
 - **`random`**: weighted random choice.
+- **`least_requests`** <Status since="v0.4" />: the backend with the fewest requests in flight relative to its weight (`weight / (in_flight + 1)`). Good for requests of very different durations. `least_conn` is the same policy: an HTTP/1.1 request holds one connection.
+- **`p2c`** <Status since="v0.4" />: two weighted random picks, the less busy one wins. Close to `least_requests` with less coordination; Traefik's `p2c`.
+- **`ip_hash`**, **`header_hash`**, **`cookie_hash`** <Status since="v0.4" />: consistent hashing of the client IP, of a header or of a cookie (`hash_on` names it), so the same key reaches the same backend. When a backend is added or removed, only the keys on its share of the ring move. A request without the header or cookie uses round-robin. Every instance maps a key the same way. Weights above 100 count as 100 here.
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
   app:
-    load_balancer: { policy: random }
+    load_balancer: { policy: header_hash, hash_on: x-tenant }
     backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
 ```
 
-Other policies (`least_conn`, `least_requests`, `p2c`, `ip_hash`, `header_hash`, `cookie_hash`) <Status planned="v0.4" />, health checks, retries, sticky sessions and weighted `split` between services are planned for v0.4. Until then, a backend that is down still gets its share of requests, and those requests fail with `502`. See the [roadmap](/docs/project/roadmap/).
+## Sticky sessions <Status since="v0.4" />
+
+With `sticky`, the first response sets a cookie naming the backend, and later requests with that cookie go to the same backend while it is in the pool:
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    sticky:
+      cookie:
+        name: srv
+        secret: "${file:/run/secrets/sticky_key}"   # optional
+        max_age: 1h                                  # optional; a session cookie otherwise
+    backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
+```
+
+- The value is an HMAC-SHA256 of the backend address with a secret key, never the address itself, so a client can neither learn your backend addresses nor forge a cookie for a backend of its choice. Traefik stores an unsigned hash of the backend URL instead.
+- Without `secret`, a key is generated on first start and kept in `$RDOCK_DATA_DIR/sticky.key`, so cookies survive restarts. Instances that share traffic need the same `secret`.
+- To rotate the key, set the new `secret` and move the old one to `previous_secrets`: old cookies still work and are replaced with new ones.
+- Cookies are `Secure`, `HttpOnly` and `SameSite=Lax` with `Path=/` by default (`secure`, `http_only`, `same_site`, `path`). `same_site: none` requires `secure`.
+- When the backend in a cookie is gone, the request is balanced normally and gets a new cookie.
+
+Health checks, retries and weighted `split` between services <Status planned="v0.4" /> are coming in the next steps of v0.4. Until then, a backend that is down still gets its share of requests, and those requests fail with `502`. See the [roadmap](/docs/project/roadmap/).
 
 ## The `Host` header
 

@@ -5,7 +5,6 @@
 use rdock_model::config::{Config, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::middleware::{CompressAlgorithm, Middleware};
-use rdock_model::service::LbPolicy;
 
 /// Why compilation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,24 +91,11 @@ fn check_service(gate: &mut Gate<'_>, path: &str, service: &rdock_model::service
     if !service.split.is_empty() {
         gate.unsupported(format!("{path}.split"), "weighted traffic splits", "v0.4");
     }
-    if !matches!(
-        service.load_balancer.policy,
-        LbPolicy::RoundRobin | LbPolicy::Random
-    ) {
-        gate.unsupported(
-            format!("{path}.load_balancer.policy"),
-            "load-balancing policies other than round_robin and random",
-            "v0.4",
-        );
-    }
     if service.health.is_some() {
         gate.unsupported(format!("{path}.health"), "health checks", "v0.4");
     }
     if service.retries.is_some() {
         gate.unsupported(format!("{path}.retries"), "retries", "v0.4");
-    }
-    if service.sticky.is_some() {
-        gate.unsupported(format!("{path}.sticky"), "sticky sessions", "v0.4");
     }
     if service
         .tls

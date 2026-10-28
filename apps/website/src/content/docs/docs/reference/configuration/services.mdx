@@ -127,16 +127,12 @@ Selection policy.
 
 - `round_robin`: Weighted round-robin.
 - `random`: Weighted random.
-- `least_conn`: Fewest open connections.
-- `least_requests`: Fewest in-flight requests.
+- `least_conn`: Fewest requests in flight relative to the weight (an HTTP/1.1 request holds one connection, so this is also the least-connections policy).
+- `least_requests`: Fewest requests in flight relative to the weight.
 - `p2c`: Power of two random choices.
-- `ip_hash`: Consistent hash of the client IP.
+- `ip_hash`: Consistent hash of the client IP (Traefik's `hrw`).
 - `header_hash`: Consistent hash of a request header (`hash_on`).
 - `cookie_hash`: Consistent hash of a cookie (`hash_on`).
-
-:::note[Planned for v0.4]
-Policies other than `round_robin` and `random`: accepted by `rdock validate` with a warning, refused by `rdock run` until v0.4.
-:::
 
 ## `services.<name>.pass_host_header`
 
@@ -202,7 +198,7 @@ Another service (`name` or `name@provider`).
 
 Relative share of traffic.
 
-## `services.<name>.sticky` <Status planned="v0.4" />
+## `services.<name>.sticky`
 
 **Type:** object
 
@@ -232,6 +228,18 @@ Lifetime; a session cookie when omitted.
 
 Cookie name.
 
+#### `services.<name>.sticky.cookie.path`
+
+**Type:** `string` · **Default:** `/`
+
+`Path` attribute.
+
+#### `services.<name>.sticky.cookie.previous_secrets`
+
+**Type:** list of `string`
+
+Keys of earlier rotations: cookies signed with them stay valid and are replaced.
+
 #### `services.<name>.sticky.cookie.same_site`
 
 **Type:** `lax` · `strict` · `none` · **Default:** `lax`
@@ -241,6 +249,12 @@ Cookie name.
 - `lax`: `Lax`.
 - `strict`: `Strict`.
 - `none`: `None` (requires `secure`).
+
+#### `services.<name>.sticky.cookie.secret`
+
+**Type:** `string`
+
+Key that signs the cookie, as a `${file:…}` or `${env:…}` reference. Without it, a key is generated once and kept in `$RDOCK_DATA_DIR/sticky.key`.
 
 #### `services.<name>.sticky.cookie.secure`
 

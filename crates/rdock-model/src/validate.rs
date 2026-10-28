@@ -691,6 +691,19 @@ impl Validator<'_> {
                     "SameSite=None requires `secure: true`",
                 );
             }
+            if !sticky.cookie.path.starts_with('/') {
+                self.error(format!("{p}.path"), "the path must start with `/`");
+            }
+            if let Some(secret) = &sticky.cookie.secret {
+                self.check_secret(&format!("{p}.secret"), secret, "sticky_key");
+            }
+            for (i, secret) in sticky.cookie.previous_secrets.iter().enumerate() {
+                self.check_secret(
+                    &path_index(&format!("{p}.previous_secrets"), i),
+                    secret,
+                    "sticky_key_old",
+                );
+            }
         }
     }
 

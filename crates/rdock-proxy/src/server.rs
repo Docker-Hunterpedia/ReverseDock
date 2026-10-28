@@ -86,6 +86,8 @@ pub struct DataPlane {
     dns: Arc<Dns>,
     client: Arc<HttpClient>,
     cloudflare: CloudflareRanges,
+    backends: rdock_balancer::Registry,
+    sticky_key: Vec<u8>,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -111,11 +113,20 @@ impl DataPlane {
             dns: Arc::new(Dns::default()),
             client: Arc::new(HttpClient::default()),
             cloudflare: Arc::new(ArcSwap::from_pointee(Vec::new())),
+            backends: rdock_balancer::Registry::default(),
+            sticky_key: random_key(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
             }),
             generation: AtomicU64::new(0),
         }
+    }
+
+    /// Signs sticky cookies with `key` instead of a key that lives only as long as the process.
+    #[must_use]
+    pub fn with_sticky_key(mut self, key: Vec<u8>) -> Self {
+        self.sticky_key = key;
+        self
     }
 
     /// The certificate resolver, for automatically issued certificates.
@@ -160,6 +171,8 @@ impl DataPlane {
                 client: self.client.clone(),
                 previous: Some(&previous),
                 cloudflare: &self.cloudflare,
+                backends: &self.backends,
+                sticky_key: &self.sticky_key,
             },
         )
     }
@@ -336,4 +349,17 @@ impl DataPlane {
             })
             .collect()
     }
+}
+
+/// 32 random bytes.
+#[must_use]
+pub fn random_key() -> Vec<u8> {
+    use ring::rand::SecureRandom;
+    let mut key = vec![0; 32];
+    // The system random source does not fail on supported platforms; a zero key would still
+    // only make sticky cookies predictable, never let a client choose a backend it cannot reach.
+    if ring::rand::SystemRandom::new().fill(&mut key).is_err() {
+        tracing::error!("the system random source failed; sticky cookies use a fixed key");
+    }
+    key
 }

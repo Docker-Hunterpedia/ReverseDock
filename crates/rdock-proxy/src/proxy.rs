@@ -66,6 +66,8 @@ pub struct RequestCtx {
     route: Option<Arc<RouteRuntime>>,
     mw: Option<MwContext>,
     upstream: Option<Candidate>,
+    in_flight: Option<rdock_balancer::InFlight>,
+    set_cookie: Option<String>,
     body_bytes: u64,
     sent_replacement: bool,
     error: Option<String>,
@@ -209,6 +211,8 @@ impl ProxyHttp for RdockProxy {
             route: None,
             mw: None,
             upstream: None,
+            in_flight: None,
+            set_cookie: None,
             body_bytes: 0,
             sent_replacement: false,
             error: None,
@@ -378,17 +382,23 @@ impl ProxyHttp for RdockProxy {
 
     async fn upstream_peer(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<Box<HttpPeer>> {
         let route = ctx
             .route
             .clone()
             .ok_or_else(|| status_error(404, "no route"))?;
-        let candidate = upstream::select(&route.service)
+        let key = upstream::RequestKey {
+            request: Some(session.req_header()),
+            client_ip: ctx.client_ip,
+        };
+        let selected = upstream::select(&route.service, key)
             .ok_or_else(|| status_error(503, "the service has no available backend"))?;
-        let peer = upstream::peer(&route.service, &candidate, &route.timeouts)?;
-        ctx.upstream = Some(candidate);
+        let peer = upstream::peer(&route.service, &selected.member.candidate, &route.timeouts)?;
+        ctx.in_flight = Some(selected.member.state.begin());
+        ctx.upstream = Some(selected.member.candidate.clone());
+        ctx.set_cookie = selected.set_cookie;
         Ok(Box::new(peer))
     }
 
@@ -437,6 +447,9 @@ impl ProxyHttp for RdockProxy {
             for mw in route.middlewares.iter().rev() {
                 mw.response(upstream_response, cx).await;
             }
+        }
+        if let Some(cookie) = ctx.set_cookie.take() {
+            upstream_response.append_header(http::header::SET_COOKIE, cookie)?;
         }
         if !upstream_response.headers.contains_key("x-request-id") {
             upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
@@ -570,6 +583,7 @@ impl ProxyHttp for RdockProxy {
     }
 
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut RequestCtx) {
+        ctx.in_flight = None;
         let status = session
             .response_written()
             .map_or_else(|| e.map_or(0, error_status), |r| r.status.as_u16());
