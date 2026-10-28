@@ -682,6 +682,7 @@ fn compile_route(
         rule,
         service: service.clone(),
         expr: expr.to_string(),
+        max_body: route.max_body,
         grpc_web: chain.iter().any(|m| m.translates_grpc_web()),
         middlewares: chain.into(),
         timeouts: route.timeouts,

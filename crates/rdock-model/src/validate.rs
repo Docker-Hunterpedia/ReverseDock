@@ -902,6 +902,22 @@ impl Validator<'_> {
                     }
                 }
                 Middleware::GrpcWeb(_) => {}
+                Middleware::InFlight(f) => {
+                    if f.amount == 0 {
+                        self.error(format!("{path}.amount"), "must be at least 1");
+                    }
+                    if f.queue > 0 && f.queue_timeout.is_zero() {
+                        self.error(
+                            format!("{path}.queue_timeout"),
+                            "a queue needs a timeout above zero",
+                        );
+                    }
+                }
+                Middleware::Bandwidth(b) => {
+                    if b.rate.as_u64() == 0 {
+                        self.error(format!("{path}.rate"), "must be above zero");
+                    }
+                }
             }
         }
     }

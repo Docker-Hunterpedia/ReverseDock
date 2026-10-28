@@ -46,6 +46,12 @@ Total size of the request line and headers.
 
 Number of request headers.
 
+### `security.limits.max_in_flight`
+
+**Type:** `integer`
+
+Requests in flight across every listener; more are answered `503` with `Retry-After` (load shedding). Unlimited when omitted.
+
 ### `security.limits.max_uri_bytes`
 
 **Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `8KiB`

@@ -92,6 +92,9 @@ fastrand = "2.5.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
 subtle = "2.6.1"
+# Response compression, at the versions pingora-core already builds.
+brotli = "3.5.0"
+zstd = "0.14.3"
 # `Retry-After` dates (already built for hyper).
 httpdate = "1.0.3"
 # HMAC for sticky cookies and JWT signatures; already built for rustls (ADR-0013).

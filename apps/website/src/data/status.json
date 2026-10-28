@@ -28,13 +28,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\ntcp_services:\n  db: { backends: [{ address: \"127.0.0.1:5433\" }] }\n"
   },
   {
-    "path": "middlewares.<name>.algorithms",
-    "planned": "v0.4",
-    "what": "`br` and `zstd` compression",
-    "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nmiddlewares:\n  zip: { type: compress, algorithms: [br, gzip] }\n"
-  },
-  {
     "path": "providers.swarm",
     "planned": "v0.6",
     "what": "The Swarm provider",

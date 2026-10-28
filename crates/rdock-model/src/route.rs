@@ -36,6 +36,9 @@ pub struct Route {
     /// Send a copy of requests to another service and ignore its answers.
     #[serde(default)]
     pub mirror: Option<Mirror>,
+    /// Request body size for this route, instead of `security.limits.max_body_bytes`.
+    #[serde(default)]
+    pub max_body: Option<crate::values::ByteSize>,
     /// Set to `false` to keep the route defined but inactive.
     #[serde(default = "crate::defaults::yes")]
     pub enabled: bool,

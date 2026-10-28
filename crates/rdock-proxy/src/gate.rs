@@ -4,7 +4,6 @@
 
 use rdock_model::config::{Config, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
-use rdock_model::middleware::{CompressAlgorithm, Middleware};
 
 /// Why compilation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,21 +59,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     for (name, service) in &config.services {
         check_service(&mut gate, &path_key("services", name), service);
     }
-    for (name, middleware) in &config.middlewares {
-        let path = path_key("middlewares", name);
-        match middleware {
-            Middleware::Compress(c)
-                if c.algorithms.iter().any(|a| *a != CompressAlgorithm::Gzip) =>
-            {
-                gate.unsupported(
-                    format!("{path}.algorithms"),
-                    "brotli and zstd compression",
-                    "v0.4",
-                );
-            }
-            _ => {}
-        }
-    }
     let providers = &config.providers;
     if providers.swarm.is_some() {
         gate.unsupported("providers.swarm", "the Swarm provider", "v0.6");
@@ -116,7 +100,7 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nmiddlewares:\n  z: { type: compress, algorithms: [br] }\n";
+        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  swarm: {}\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
@@ -125,7 +109,7 @@ mod tests {
                 == "OpenTelemetry tracing: not supported in this version (planned for v0.4)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert!(run.iter().any(|d| d.path == "middlewares.z.algorithms"));
+        assert!(run.iter().any(|d| d.path == "providers.swarm"));
     }
 
     #[test]

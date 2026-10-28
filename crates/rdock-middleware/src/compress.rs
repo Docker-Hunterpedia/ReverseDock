@@ -1,4 +1,5 @@
-//! `compress`: gzip for text-like responses, streamed chunk by chunk.
+//! `compress`: zstd, Brotli or gzip for text-like responses, negotiated with `Accept-Encoding`
+//! and streamed chunk by chunk.
 //!
 //! Skipped for HEAD, partial (206) and already encoded responses, bodies known to be smaller
 //! than `min_size`, server-sent events and gRPC. `Vary: Accept-Encoding` is added to every
@@ -38,41 +39,110 @@ const DEFAULT_TYPES: &[&str] = &[
 /// Never compressed: streams that must not be buffered or that carry their own framing.
 const EXCLUDED_TYPES: &[&str] = &["text/event-stream", "application/grpc"];
 
-/// A streaming gzip encoder.
-pub struct Gzip {
-    encoder: GzEncoder<Vec<u8>>,
+/// gzip level: the zlib default, a good balance for dynamic responses.
+const GZIP_LEVEL: u32 = 6;
+/// Brotli quality for on-the-fly compression; 11 is meant for static files and far slower.
+const BROTLI_QUALITY: u32 = 4;
+/// Brotli window: 4 MiB (lgwin 22).
+const BROTLI_WINDOW: u32 = 22;
+/// zstd level 3, its default; the window stays under the 8 MiB browsers accept (RFC 8878).
+const ZSTD_LEVEL: i32 = 3;
+
+/// A streaming response encoder. Each chunk is flushed, so streamed responses keep flowing.
+pub enum Encoder {
+    /// gzip.
+    Gzip(GzEncoder<Vec<u8>>),
+    /// Brotli.
+    Brotli(Box<brotli::CompressorWriter<Vec<u8>>>),
+    /// Zstandard.
+    Zstd(zstd::stream::write::Encoder<'static, Vec<u8>>),
 }
 
-impl std::fmt::Debug for Gzip {
+impl std::fmt::Debug for Encoder {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.write_str("Gzip")
+        f.write_str(self.name())
     }
 }
 
-impl Gzip {
-    fn new() -> Self {
-        Self {
-            encoder: GzEncoder::new(Vec::new(), Compression::new(6)),
+impl Encoder {
+    fn new(algorithm: CompressAlgorithm) -> std::io::Result<Self> {
+        Ok(match algorithm {
+            CompressAlgorithm::Gzip => {
+                Self::Gzip(GzEncoder::new(Vec::new(), Compression::new(GZIP_LEVEL)))
+            }
+            CompressAlgorithm::Br => Self::Brotli(Box::new(brotli::CompressorWriter::new(
+                Vec::new(),
+                4096,
+                BROTLI_QUALITY,
+                BROTLI_WINDOW,
+            ))),
+            CompressAlgorithm::Zstd => {
+                Self::Zstd(zstd::stream::write::Encoder::new(Vec::new(), ZSTD_LEVEL)?)
+            }
+        })
+    }
+
+    /// The `Content-Encoding` token.
+    #[must_use]
+    pub fn name(&self) -> &'static str {
+        match self {
+            Self::Gzip(_) => "gzip",
+            Self::Brotli(_) => "br",
+            Self::Zstd(_) => "zstd",
         }
     }
 
-    /// Compresses `chunk` and returns the bytes to send. Each chunk is flushed so streaming
-    /// responses keep flowing; `end` writes the gzip trailer.
+    /// Compresses `chunk` and returns the bytes to send; `end` finishes the stream.
     pub fn encode(&mut self, chunk: &[u8], end: bool) -> std::io::Result<Bytes> {
-        self.encoder.write_all(chunk)?;
-        if end {
-            self.encoder.try_finish()?;
-        } else {
-            self.encoder.flush()?;
-        }
-        Ok(Bytes::from(std::mem::take(self.encoder.get_mut())))
+        let out = match self {
+            Self::Gzip(e) => {
+                e.write_all(chunk)?;
+                if end {
+                    e.try_finish()?;
+                } else {
+                    e.flush()?;
+                }
+                std::mem::take(e.get_mut())
+            }
+            Self::Brotli(e) => {
+                e.write_all(chunk)?;
+                e.flush()?;
+                if end {
+                    // Dropping the writer would write the final block into a buffer we no
+                    // longer hold; replace it and finish the old one.
+                    let done = std::mem::replace(
+                        e,
+                        Box::new(brotli::CompressorWriter::new(
+                            Vec::new(),
+                            4096,
+                            0,
+                            BROTLI_WINDOW,
+                        )),
+                    );
+                    done.into_inner()
+                } else {
+                    std::mem::take(e.get_mut())
+                }
+            }
+            Self::Zstd(e) => {
+                e.write_all(chunk)?;
+                if end {
+                    e.do_finish()?;
+                } else {
+                    e.flush()?;
+                }
+                std::mem::take(e.get_mut())
+            }
+        };
+        Ok(Bytes::from(out))
     }
 }
 
 /// The `compress` middleware.
 #[derive(Debug)]
 pub(crate) struct Compress {
-    gzip: bool,
+    /// In order of preference.
+    algorithms: Vec<CompressAlgorithm>,
     min_size: u64,
     types: Vec<String>,
 }
@@ -89,7 +159,7 @@ impl Compress {
                 .collect()
         };
         Self {
-            gzip: config.algorithms.contains(&CompressAlgorithm::Gzip),
+            algorithms: config.algorithms.clone(),
             min_size: config.min_size.as_u64(),
             types,
         }
@@ -113,7 +183,7 @@ impl Compress {
 
     fn eligible(&self, resp: &ResponseHeader) -> bool {
         let status = resp.status.as_u16();
-        if !self.gzip || status < 200 || matches!(status, 204 | 206 | 304) {
+        if self.algorithms.is_empty() || status < 200 || matches!(status, 204 | 206 | 304) {
             return false;
         }
         let header = |name| {
@@ -137,10 +207,11 @@ impl Compress {
     }
 }
 
-/// Whether `Accept-Encoding` allows gzip (an explicit token or `*`, with q above zero).
-fn accepts_gzip(req: &RequestHeader) -> bool {
-    let mut gzip = None;
-    let mut any = None;
+/// The coding to use: among `offered` (in server preference order), the one the client weighs
+/// highest in `Accept-Encoding`; ties go to the server's order. `*` covers codings not named.
+/// `None` when the client accepts none of them.
+fn negotiate(req: &RequestHeader, offered: &[CompressAlgorithm]) -> Option<CompressAlgorithm> {
+    let mut named: Vec<(String, f32)> = Vec::new();
     for value in req.headers.get_all(http::header::ACCEPT_ENCODING) {
         let Ok(text) = value.to_str() else { continue };
         for item in text.split(',') {
@@ -150,20 +221,37 @@ fn accepts_gzip(req: &RequestHeader) -> bool {
                 .filter_map(|p| p.trim().strip_prefix("q="))
                 .find_map(|q| q.trim().parse::<f32>().ok())
                 .unwrap_or(1.0);
-            match coding.as_str() {
-                "gzip" | "x-gzip" => gzip = Some(q > 0.0),
-                "*" => any = Some(q > 0.0),
-                _ => {}
+            if !coding.is_empty() {
+                named.push((coding, q));
             }
         }
     }
-    gzip.or(any).unwrap_or(false)
+    let weight = |algorithm: CompressAlgorithm| {
+        let tokens: &[&str] = match algorithm {
+            CompressAlgorithm::Gzip => &["gzip", "x-gzip"],
+            CompressAlgorithm::Br => &["br"],
+            CompressAlgorithm::Zstd => &["zstd"],
+        };
+        named
+            .iter()
+            .find(|(c, _)| tokens.contains(&c.as_str()))
+            .or_else(|| named.iter().find(|(c, _)| c == "*"))
+            .map_or(0.0, |(_, q)| *q)
+    };
+    let mut best: Option<(CompressAlgorithm, f32)> = None;
+    for algorithm in offered {
+        let q = weight(*algorithm);
+        if q > 0.0 && best.is_none_or(|(_, top)| q > top) {
+            best = Some((*algorithm, q));
+        }
+    }
+    best.map(|(algorithm, _)| algorithm)
 }
 
 #[async_trait]
 impl Middleware for Compress {
     async fn request(&self, req: &mut RequestHeader, cx: &mut Context) -> Flow {
-        cx.accepts_gzip = accepts_gzip(req);
+        cx.encoding = negotiate(req, &self.algorithms);
         cx.head_request = req.method == Method::HEAD;
         Flow::Next
     }
@@ -176,12 +264,15 @@ impl Middleware for Compress {
             http::header::VARY,
             HeaderValue::from_static("Accept-Encoding"),
         );
-        if !cx.accepts_gzip || cx.head_request {
+        let Some(algorithm) = cx.encoding.filter(|_| !cx.head_request) else {
             return;
-        }
+        };
+        let Ok(encoder) = Encoder::new(algorithm) else {
+            return;
+        };
         let _ = resp.insert_header(
             http::header::CONTENT_ENCODING,
-            HeaderValue::from_static("gzip"),
+            HeaderValue::from_static(encoder.name()),
         );
         resp.remove_header(&http::header::CONTENT_LENGTH);
         resp.remove_header(&http::header::ACCEPT_RANGES);
@@ -194,7 +285,7 @@ impl Middleware for Compress {
         {
             let _ = resp.insert_header(http::header::ETAG, weak);
         }
-        cx.compression = Some(Gzip::new());
+        cx.compression = Some(encoder);
     }
 }
 
@@ -233,7 +324,7 @@ mod tests {
     #[test]
     fn compresses_text_for_gzip_clients() {
         let (resp, on) = run(
-            "br;q=1, gzip;q=0.5",
+            "gzip;q=1, br;q=0.5",
             "GET",
             response(
                 "text/html; charset=utf-8",
@@ -287,8 +378,64 @@ mod tests {
     }
 
     #[test]
+    fn negotiation_follows_q_values_then_server_order() {
+        let all = [
+            CompressAlgorithm::Zstd,
+            CompressAlgorithm::Br,
+            CompressAlgorithm::Gzip,
+        ];
+        let pick = |accept: &str, offered: &[CompressAlgorithm]| {
+            negotiate(
+                &request("GET", "/", &[("accept-encoding", accept)]),
+                offered,
+            )
+        };
+        assert_eq!(
+            pick("gzip, deflate, br, zstd", &all),
+            Some(CompressAlgorithm::Zstd)
+        );
+        assert_eq!(
+            pick("br;q=1, gzip;q=0.5", &all),
+            Some(CompressAlgorithm::Br)
+        );
+        assert_eq!(
+            pick("gzip;q=1, br;q=0.4", &all),
+            Some(CompressAlgorithm::Gzip)
+        );
+        assert_eq!(
+            pick("*", &[CompressAlgorithm::Br]),
+            Some(CompressAlgorithm::Br)
+        );
+        assert_eq!(pick("*;q=0.2, zstd;q=0", &all), Some(CompressAlgorithm::Br));
+        assert_eq!(pick("identity", &all), None);
+        assert_eq!(pick("br", &[CompressAlgorithm::Gzip]), None);
+    }
+
+    #[test]
+    fn brotli_and_zstd_streams_round_trip() {
+        for algorithm in [CompressAlgorithm::Br, CompressAlgorithm::Zstd] {
+            let mut encoder = Encoder::new(algorithm).unwrap();
+            let mut out = Vec::new();
+            let first = encoder.encode(b"hello ", false).unwrap();
+            assert!(!first.is_empty(), "{algorithm:?} flushes each chunk");
+            out.extend_from_slice(&first);
+            out.extend_from_slice(&encoder.encode(b"world", true).unwrap());
+            let text = if algorithm == CompressAlgorithm::Zstd {
+                zstd::stream::decode_all(&out[..]).unwrap()
+            } else {
+                let mut text = Vec::new();
+                brotli::Decompressor::new(&out[..], 4096)
+                    .read_to_end(&mut text)
+                    .unwrap();
+                text
+            };
+            assert_eq!(text, b"hello world", "{algorithm:?}");
+        }
+    }
+
+    #[test]
     fn gzip_stream_round_trips() {
-        let mut gz = Gzip::new();
+        let mut gz = Encoder::new(CompressAlgorithm::Gzip).unwrap();
         let mut out = Vec::new();
         out.extend_from_slice(&gz.encode(b"hello ", false).unwrap());
         out.extend_from_slice(&gz.encode(b"world", true).unwrap());

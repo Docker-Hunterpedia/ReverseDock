@@ -113,6 +113,8 @@ pub struct RouteRuntime {
     pub mirror: Option<MirrorRuntime>,
     /// Translate gRPC-Web to gRPC (the `grpc_web` middleware).
     pub grpc_web: bool,
+    /// Request body limit of this route, overriding `security.limits.max_body_bytes`.
+    pub max_body: Option<rdock_model::values::ByteSize>,
 }
 
 /// Request mirroring of a route.

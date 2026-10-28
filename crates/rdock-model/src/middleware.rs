@@ -34,6 +34,10 @@ pub enum Middleware {
     IpDeny(IpListConfig),
     /// Token-bucket rate limiting.
     RateLimit(RateLimitConfig),
+    /// A cap on requests in flight, with an optional queue (Traefik's `inFlightReq`).
+    InFlight(InFlightConfig),
+    /// A cap on response bytes per second.
+    Bandwidth(BandwidthConfig),
     /// Cross-origin resource sharing.
     Cors(CorsConfig),
     /// Response compression.
@@ -227,6 +231,37 @@ const fn one_second() -> Duration {
     Duration::from_secs(1)
 }
 
+/// Requests in flight per key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct InFlightConfig {
+    /// Requests in flight allowed per key.
+    pub amount: u32,
+    /// What to count by.
+    #[serde(default)]
+    pub key: RateLimitKey,
+    /// Requests over the limit that wait for a slot; more get `429` at once.
+    #[serde(default)]
+    pub queue: u32,
+    /// How long a queued request waits before it gets `429`.
+    #[serde(default = "five_seconds")]
+    pub queue_timeout: Duration,
+}
+
+/// Response bytes per second per key.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct BandwidthConfig {
+    /// Bytes per second, e.g. `1MiB`.
+    pub rate: ByteSize,
+    /// Bytes that may be sent at once before the rate applies; defaults to `rate`.
+    #[serde(default)]
+    pub burst: Option<ByteSize>,
+    /// What to count by.
+    #[serde(default)]
+    pub key: RateLimitKey,
+}
+
 /// Cross-origin resource sharing.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -270,7 +305,11 @@ pub struct CompressConfig {
 impl Default for CompressConfig {
     fn default() -> Self {
         Self {
-            algorithms: vec![CompressAlgorithm::Gzip],
+            algorithms: vec![
+                CompressAlgorithm::Zstd,
+                CompressAlgorithm::Br,
+                CompressAlgorithm::Gzip,
+            ],
             min_size: ByteSize::kib(1),
             content_types: Vec::new(),
         }

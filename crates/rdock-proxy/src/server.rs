@@ -111,6 +111,7 @@ impl DataPlane {
                 metrics,
                 challenges: resolver.challenges(),
                 client: client.clone(),
+                in_flight: Arc::default(),
             }),
             resolver,
             dns: Arc::new(Dns::default()),

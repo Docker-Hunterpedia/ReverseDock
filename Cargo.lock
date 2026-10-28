@@ -3020,6 +3020,7 @@ dependencies = [
  "anyhow",
  "argon2",
  "async-trait",
+ "brotli",
  "bytes",
  "clap",
  "flate2",
@@ -3052,6 +3053,7 @@ dependencies = [
  "tokio-tungstenite",
  "tracing",
  "uuid",
+ "zstd 0.14.3",
 ]
 
 [[package]]
@@ -3149,6 +3151,9 @@ dependencies = [
 [[package]]
 name = "rdock-limits"
 version = "0.3.0-alpha.2"
+dependencies = [
+ "tokio",
+]
 
 [[package]]
 name = "rdock-middleware"
@@ -3158,6 +3163,7 @@ dependencies = [
  "async-trait",
  "base64 0.23.1",
  "bcrypt",
+ "brotli",
  "bytes",
  "flate2",
  "http",
@@ -3174,6 +3180,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "zstd 0.14.3",
 ]
 
 [[package]]

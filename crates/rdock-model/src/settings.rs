@@ -47,6 +47,9 @@ pub struct Limits {
     pub max_body_bytes: Option<ByteSize>,
     /// Request target (path and query) length.
     pub max_uri_bytes: ByteSize,
+    /// Requests in flight across every listener; more are answered `503` with `Retry-After`
+    /// (load shedding). Unlimited when omitted.
+    pub max_in_flight: Option<u32>,
 }
 
 impl Default for Limits {
@@ -56,6 +59,7 @@ impl Default for Limits {
             max_headers: 100,
             max_body_bytes: None,
             max_uri_bytes: ByteSize::kib(8),
+            max_in_flight: None,
         }
     }
 }

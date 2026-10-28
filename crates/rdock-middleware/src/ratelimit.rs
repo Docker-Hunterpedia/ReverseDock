@@ -1,4 +1,4 @@
-//! `rate_limit`: token buckets per client IP, per route or per header value.
+//! `rate_limit`: token buckets per client IP, route, header or cookie value.
 
 use std::time::Instant;
 
@@ -11,8 +11,7 @@ use rdock_model::values::RateLimitKey;
 
 use crate::{Context, Flow, Middleware, Reply};
 
-/// Keys tracked per rate-limit middleware.
-const MAX_KEYS: usize = 65_536;
+use crate::limits::MAX_KEYS;
 
 /// The `rate_limit` middleware.
 #[derive(Debug)]
@@ -41,15 +40,9 @@ impl RateLimit {
 impl Middleware for RateLimit {
     async fn request(&self, req: &mut RequestHeader, cx: &mut Context) -> Flow {
         let now = Instant::now();
-        let decision = match &self.key {
-            RateLimitKey::ClientIp => self.limiter.check(&cx.client_ip, now),
-            RateLimitKey::Route => self.limiter.check(&*cx.route, now),
-            RateLimitKey::Header(name) => {
-                // A missing header shares one bucket, like Traefik's `requestHeaderName`.
-                let value = req.headers.get(name.as_str()).map(HeaderValue::as_bytes);
-                self.limiter.check(&value, now)
-            }
-        };
+        let decision = self
+            .limiter
+            .check(&crate::limits::key_of(&self.key, req, cx), now);
         match decision {
             Decision::Allow => Flow::Next,
             Decision::Deny { retry_after } => {
