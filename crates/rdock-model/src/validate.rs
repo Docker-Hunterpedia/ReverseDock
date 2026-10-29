@@ -1495,6 +1495,9 @@ impl Validator<'_> {
 
     fn check_observability(&mut self) {
         let observability = &self.config.observability;
+        if !(0.0..=1.0).contains(&observability.access_log.sample) {
+            self.error("observability.access_log.sample", "must be between 0 and 1");
+        }
         if let Some(tracing) = &observability.tracing
             && !(0.0..=1.0).contains(&tracing.sample_ratio)
         {

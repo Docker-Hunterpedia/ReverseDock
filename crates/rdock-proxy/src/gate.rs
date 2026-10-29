@@ -63,9 +63,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     if providers.kubernetes.is_some() {
         gate.unsupported("providers.kubernetes", "the Kubernetes provider", "v0.7");
     }
-    if config.observability.tracing.is_some() {
-        gate.unsupported("observability.tracing", "OpenTelemetry tracing", "v0.4");
-    }
 }
 
 #[cfg(test)]
@@ -83,13 +80,12 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "observability: { tracing: { otlp: \"http://tempo:4318\" } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  swarm: {}\n";
+        let yaml = "tcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  swarm: {}\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
-        assert!(validate.iter().any(|d| d.path == "observability.tracing"
-            && d.message
-                == "OpenTelemetry tracing: not supported in this version (planned for v0.4)"));
+        assert!(validate.iter().any(|d| d.path == "tcp_services"
+            && d.message == "TCP services: not supported in this version (planned for v0.6)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
         assert!(run.iter().any(|d| d.path == "providers.swarm"));

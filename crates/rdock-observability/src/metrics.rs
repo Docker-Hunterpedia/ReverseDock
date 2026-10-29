@@ -46,6 +46,10 @@ pub struct Metrics {
     pub retries: IntCounterVec,
     /// Retries not made because the service's retry budget was used up.
     pub retry_budget_exhausted: IntCounterVec,
+    /// Answers of each backend by service, backend address and status class.
+    pub backend_requests: IntCounterVec,
+    /// Time from sending a request to a backend to its response headers, by service.
+    pub upstream_duration: HistogramVec,
     /// Mirrored copies by target service and outcome (`sent`, `failed`, `dropped`,
     /// `too_large`, `no_backend`).
     pub mirrors: IntCounterVec,
@@ -183,6 +187,25 @@ impl Metrics {
             "Retries refused because the retry budget was used up.",
             &["service"],
         )?;
+        let backend_requests = counters(
+            &registry,
+            "rdock_backend_requests_total",
+            "Answers from each backend.",
+            &["service", "backend", "status_class"],
+        )?;
+        let upstream_duration = registered(
+            &registry,
+            HistogramVec::new(
+                HistogramOpts::new(
+                    "rdock_upstream_duration_seconds",
+                    "Time from sending a request to a backend to its response headers.",
+                )
+                .buckets(vec![
+                    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+                ]),
+                &["service"],
+            ),
+        )?;
         let mirrors = counters(
             &registry,
             "rdock_mirror_requests_total",
@@ -213,6 +236,8 @@ impl Metrics {
             backend_ejections,
             retries,
             retry_budget_exhausted,
+            backend_requests,
+            upstream_duration,
             mirrors,
         })
     }

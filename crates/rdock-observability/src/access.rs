@@ -116,15 +116,23 @@ impl AccessLog {
         &self.config
     }
 
+    /// Whether `record` is logged when the sampling draw is `draw` (in `[0, 1)`).
+    fn keeps(&self, record: &AccessRecord, draw: f64) -> bool {
+        record.status >= 400 || record.error.is_some() || draw < self.config.sample
+    }
+
     /// Whether the header `name` (lower case) is redacted.
     #[must_use]
     pub fn redacts(&self, name: &str) -> bool {
         self.redact.iter().any(|r| r == name)
     }
 
-    /// Queues a record. Never blocks.
+    /// Queues a record, unless `sample` leaves out this successful request. Never blocks.
     pub fn write(&self, record: &AccessRecord) {
         let Some(sender) = &self.sender else { return };
+        if !self.keeps(record, fastrand::f64()) {
+            return;
+        }
         let mut line = match self.config.format {
             LogFormat::Json => serde_json::to_vec(record).unwrap_or_default(),
             LogFormat::Text => text_line(record).into_bytes(),
@@ -221,6 +229,7 @@ mod tests {
         let log = AccessLog::new(&AccessLogConfig {
             format: LogFormat::Off,
             redact: vec!["User-Agent".into()],
+            sample: 1.0,
         });
         assert!(log.redacts("user-agent"));
         assert!(!log.redacts("referer"));
@@ -234,5 +243,36 @@ mod tests {
             ..AccessRecord::default()
         });
         assert!(line.contains("\"GET / HTTP/1.1\" 200"), "{line}");
+    }
+
+    #[test]
+    fn sampling_keeps_every_error() {
+        let log = AccessLog::new(&AccessLogConfig {
+            format: LogFormat::Off,
+            redact: Vec::new(),
+            sample: 0.1,
+        });
+        let ok = AccessRecord {
+            status: 200,
+            ..AccessRecord::default()
+        };
+        assert!(log.keeps(&ok, 0.05));
+        assert!(!log.keeps(&ok, 0.5));
+        let server_error = AccessRecord {
+            status: 502,
+            ..AccessRecord::default()
+        };
+        assert!(log.keeps(&server_error, 0.99));
+        let not_found = AccessRecord {
+            status: 404,
+            ..AccessRecord::default()
+        };
+        assert!(log.keeps(&not_found, 0.99));
+        let failed = AccessRecord {
+            status: 200,
+            error: Some("reset".into()),
+            ..AccessRecord::default()
+        };
+        assert!(log.keeps(&failed, 0.99));
     }
 }

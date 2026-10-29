@@ -101,6 +101,8 @@ Fields without a value are left out.
 
 `format: text` writes one line per request in a compact text form, and `format: off` turns the access log off.
 
+**Sampling** <Status since="v0.4" />: on busy services, `sample: 0.1` logs one in ten successful requests (status below 400). Errors, client errors and failed requests are always logged, so nothing you need for debugging is lost. Metrics count every request either way.
+
 ## Metrics
 
 Prometheus metrics are served at `/metrics` on the admin listener:
@@ -125,6 +127,10 @@ rdock_config_reloads_total{result="applied"} 1
 | `rdock_config_generation` | gauge | |
 | `rdock_config_reloads_total` | counter | `result` |
 | `rdock_cert_expiry_timestamp_seconds` | gauge | `name` |
+| `rdock_backend_requests_total` | counter | `service`, `backend`, `status_class` |
+| `rdock_upstream_duration_seconds` | histogram | `service` |
+| `rdock_backend_up`, `rdock_backend_ejections_total` | gauge, counter | `service`, `backend` |
+| `rdock_retries_total`, `rdock_retry_budget_exhausted_total` | counter | `service` (and `reason`) |
 | `rdock_build_info` | gauge | `version`, `commit` |
 
 Label values come from your configuration (listener, route and service names) or from small fixed sets: `status_class` is `1xx` to `5xx`, and methods other than the standard ones are counted as `OTHER`. Request data never becomes a label, so the number of series stays bounded. Details are in the [metrics reference](/docs/reference/metrics/).
@@ -159,9 +165,23 @@ histogram_quantile(0.95, sum by (le, route) (rate(rdock_http_request_duration_se
 increase(rdock_config_reloads_total{result="rejected"}[15m]) > 0
 ```
 
-## Tracing <Status planned="v0.4" />
+## Tracing <Status since="v0.4" />
 
-OpenTelemetry tracing (`observability.tracing`) is planned for v0.4. `rdock validate` accepts the section with a warning and `rdock run` refuses it.
+ReverseDock sends OpenTelemetry traces over OTLP/HTTP to a collector: Grafana Tempo, Jaeger, the OpenTelemetry Collector, or a hosted service.
+
+```yaml title="rdock.yaml (excerpt)"
+observability:
+  tracing:
+    otlp: http://tempo:4318      # `/v1/traces` is added; a URL with a path is used as it is
+    sample_ratio: 0.1            # share of new traces; default 1
+```
+
+- **One server span per request**, named `{method} {route}` (for example `GET api`), and **one client span per attempt** to a backend, with `http.request.resend_count` on retries. Attributes follow the stable OpenTelemetry HTTP conventions: `http.request.method`, `url.path`, `url.scheme`, `http.route`, `http.response.status_code`, `server.address`, `client.address`, `user_agent.original` ([semantic conventions](https://opentelemetry.io/docs/specs/semconv/http/http-spans/), checked 2026-10-29). 5xx answers are errors; 4xx are errors on client spans only.
+- **W3C Trace Context**: a `traceparent` from the client continues its trace, and the backend receives a `traceparent` naming ReverseDock's client span ([W3C](https://www.w3.org/TR/trace-context/), checked 2026-10-29).
+- **Sampling** is parent-based: a client's sampling decision is kept, and `sample_ratio` applies to traces that start at ReverseDock. This is the OpenTelemetry default, `parentbased_traceidratio`.
+- Spans are exported in batches by a background thread. If the collector is slow or down, at most 4096 spans wait and newer ones are dropped; requests never wait for the collector.
+- `OTEL_SERVICE_NAME`, `OTEL_RESOURCE_ATTRIBUTES` and `OTEL_EXPORTER_OTLP_TRACES_HEADERS` (for collector authentication) are read from the environment. The service name defaults to `rdock`.
+- Changing `otlp` or `sample_ratio` and reloading flushes the old exporter and starts a new one.
 
 ## Related
 

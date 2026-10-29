@@ -88,7 +88,8 @@
             "proxy-authorization",
             "cookie",
             "set-cookie"
-          ]
+          ],
+          "sample": 1.0
         },
         "alerts": {
           "webhook": null
@@ -193,6 +194,12 @@
           "items": {
             "type": "string"
           }
+        },
+        "sample": {
+          "description": "Share of successful requests (status below 400) that are logged, from 0 to 1. Errors\nand failed requests are always logged.",
+          "type": "number",
+          "format": "double",
+          "default": 1.0
         }
       },
       "additionalProperties": false,
@@ -2446,7 +2453,8 @@
               "proxy-authorization",
               "cookie",
               "set-cookie"
-            ]
+            ],
+            "sample": 1.0
           }
         },
         "alerts": {

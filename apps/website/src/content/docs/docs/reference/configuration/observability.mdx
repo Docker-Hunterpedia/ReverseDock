@@ -13,7 +13,7 @@ Logs, metrics and traces.
 
 ## `observability.access_log`
 
-**Type:** object · **Default:** `{"format":"json","redact":["authorization","proxy-authorization","cookie","set-cookie"]}`
+**Type:** object · **Default:** see the fields below
 
 Access log.
 
@@ -32,6 +32,12 @@ Output format.
 **Type:** list of `string` · **Default:** `["authorization","proxy-authorization","cookie","set-cookie"]`
 
 Header names whose values are replaced by `***`.
+
+### `observability.access_log.sample`
+
+**Type:** `number` · **Default:** `1`
+
+Share of successful requests (status below 400) that are logged, from 0 to 1. Errors and failed requests are always logged.
 
 ## `observability.alerts`
 
@@ -75,7 +81,7 @@ Metrics.
 
 Serve Prometheus metrics at `/metrics` on the admin listener.
 
-## `observability.tracing` <Status planned="v0.4" />
+## `observability.tracing`
 
 **Type:** object
 

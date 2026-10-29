@@ -71,6 +71,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         config.defaults.certificate.as_deref(),
     ));
     let services = compile_services(config, env, &mut out);
+    let tracer = tracer(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
     let mut auto_tls = AutoTls {
         certs: &index,
@@ -99,6 +100,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
             .iter()
             .map(|(name, s)| (name.clone(), s.clone()))
             .collect(),
+        tracer,
     });
     Compiled {
         runtime,
@@ -112,6 +114,34 @@ fn access_log(config: &Config, previous: Option<&Runtime>) -> Arc<AccessLog> {
         .map(|p| p.access_log.clone())
         .filter(|log| log.config() == wanted)
         .unwrap_or_else(|| Arc::new(AccessLog::new(wanted)))
+}
+
+/// The tracer for `observability.tracing`: the running one when its settings are unchanged
+/// (it holds the export queue), otherwise a new one. `rdock validate` starts none.
+fn tracer(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Option<Arc<rdock_observability::Tracer>> {
+    let settings = config.observability.tracing.as_ref()?;
+    if env.mode == Mode::Validate {
+        return None;
+    }
+    let url = settings.otlp.as_url();
+    if let Some(running) = env
+        .previous
+        .and_then(|p| p.tracer.clone())
+        .filter(|t| t.is_for(url, settings.sample_ratio))
+    {
+        return Some(running);
+    }
+    match rdock_observability::Tracer::new(url, settings.sample_ratio, env!("CARGO_PKG_VERSION")) {
+        Ok(tracer) => Some(Arc::new(tracer)),
+        Err(e) => {
+            out.push(Diagnostic::error("observability.tracing", e.to_string()));
+            None
+        }
+    }
 }
 
 fn client_ip_policy(config: &Config, cloudflare: &CloudflareRanges) -> ClientIpPolicy {

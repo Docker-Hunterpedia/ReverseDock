@@ -92,6 +92,11 @@ fastrand = "2.5.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
 subtle = "2.6.1"
+# Tracing (ADR-0022): OTLP over HTTP/protobuf through our own hyper-rustls client; no tonic, no reqwest.
+opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }
+opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace"] }
+opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["http-proto", "trace"] }
+opentelemetry-http = { version = "0.33.1", default-features = false }
 # Response compression, at the versions pingora-core already builds.
 brotli = "3.5.0"
 zstd = "0.14.3"

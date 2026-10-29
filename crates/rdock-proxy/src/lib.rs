@@ -11,6 +11,7 @@ mod proxy;
 pub mod router;
 pub mod runtime;
 mod server;
+mod trace;
 pub mod upstream;
 
 pub use compile::{CompileEnv, Compiled, compile};

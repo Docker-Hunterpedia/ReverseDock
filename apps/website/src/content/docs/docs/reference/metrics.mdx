@@ -78,6 +78,45 @@ Errors after the connection is open, such as a read timeout, show up as 502 or 5
 epoch. Label: `name`, the key under `certificates`. Updated whenever a configuration is applied,
 including when certificate files change.
 
+## Backends <Status since="v0.4" />
+
+### `rdock_backend_requests_total`
+
+**Counter.** Answers from each backend. Labels: `service`, `backend` (the resolved address,
+or `unix:` and the socket path), `status_class`. Retried attempts count separately.
+
+### `rdock_upstream_duration_seconds`
+
+**Histogram.** Time from sending a request to a backend to its response headers. Label:
+`service`. For percentiles: `histogram_quantile(0.99, sum by (le, service)
+(rate(rdock_upstream_duration_seconds_bucket[5m])))`.
+
+### `rdock_backend_up`
+
+**Gauge.** `1` while a backend takes traffic, `0` while health checks or passive ejection keep
+it out. Labels: `service`, `backend`.
+
+### `rdock_backend_ejections_total`
+
+**Counter.** Ejections by passive health. Labels: `service`, `backend`.
+
+### `rdock_retries_total`
+
+**Counter.** Retries. Labels: `service`, `reason` (`connect`, `reset`, `timeout`, `502`,
+`503`, `504`).
+
+### `rdock_retry_budget_exhausted_total`
+
+**Counter.** Retries refused because the retry budget was used up. Label: `service`.
+
+### `rdock_mirror_requests_total`
+
+**Counter.** Mirrored copies. Labels: `service` and `outcome` (`sent`, `failed`, `dropped`,
+`too_large`, `no_backend`).
+
+Backend addresses come from your configuration and its DNS answers, so their number stays
+bounded by your pools.
+
 ## Configuration
 
 ### `rdock_config_generation`
