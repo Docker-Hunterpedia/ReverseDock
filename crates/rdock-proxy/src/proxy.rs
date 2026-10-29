@@ -621,6 +621,7 @@ impl ProxyHttp for RdockProxy {
             }
         }
         ctx.mw = Some(cx);
+        start_mirror(session.req_header(), ctx, &route);
         Ok(false)
     }
 
@@ -641,6 +642,8 @@ impl ProxyHttp for RdockProxy {
         ) {
             ctx.body_bytes += chunk.len() as u64;
             if ctx.body_bytes > max.as_u64() {
+                // A refused request is not mirrored, and its body copy is incomplete anyway.
+                ctx.mirror = None;
                 return Err(status_error(413, "request body too large"));
             }
         }
@@ -1067,8 +1070,7 @@ fn client_identity(session: &mut Session) -> Option<Arc<rdock_middleware::Client
 }
 
 /// Per-request state that follows from the matched route: the service (a `split` picks its
-/// target here), gRPC-Web translation, whether this request is mirrored, and the route's body
-/// limit.
+/// target here), gRPC-Web translation and the route's body limit.
 fn start_route(
     session: &mut Session,
     ctx: &mut RequestCtx,
@@ -1081,12 +1083,6 @@ fn start_route(
         // Turns `application/grpc-web` into `application/grpc`; other requests pass.
         grpc_web.request_header_filter(session.req_header_mut());
         ctx.grpc_web = Some(grpc_web);
-    }
-    if let Some(mirror) = &route.mirror
-        && fastrand::u32(0..100) < mirror.percent
-        && !is_upgrade(session.req_header())
-    {
-        ctx.mirror = Some(MirrorCopy::default());
     }
     // A declared length over the limit is refused before anything is sent; chunked
     // bodies are counted as they arrive (`request_body_filter`).
@@ -1102,6 +1098,18 @@ fn start_route(
         return Err(status_error(413, "request body too large"));
     }
     Ok(())
+}
+
+/// Whether this request is mirrored. Called once the middlewares let the request through: a
+/// request they refused (authentication, IP allow list, rate limit) never reaches the route's
+/// service, so it must not reach the mirror either.
+fn start_mirror(req: &RequestHeader, ctx: &mut RequestCtx, route: &RouteRuntime) {
+    if let Some(mirror) = &route.mirror
+        && fastrand::u32(0..100) < mirror.percent
+        && !is_upgrade(req)
+    {
+        ctx.mirror = Some(MirrorCopy::default());
+    }
 }
 
 /// Largest request body copied to a mirror (Pingora's replay buffer is the same size).

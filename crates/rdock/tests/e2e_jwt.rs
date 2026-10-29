@@ -202,3 +202,92 @@ async fn keys_come_from_a_jwks_url_in_the_background() {
     }
     assert_eq!(hits.load(Ordering::SeqCst), 1, "fetched once, then cached");
 }
+
+#[tokio::test]
+async fn a_repeated_token_is_refused() {
+    let issuer = Issuer::new("k1");
+    let dir = tempfile::tempdir().unwrap();
+    let jwks = dir.path().join("jwks.json");
+    std::fs::write(&jwks, issuer.jwks()).unwrap();
+    let backend = Backend::start("api").await;
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  header: {{ match: "Host(`api.test`)", service: api, middlewares: [auth] }}
+  cookie: {{ match: "Host(`cookie.test`)", service: api, middlewares: [by-cookie] }}
+  query: {{ match: "Host(`query.test`)", service: api, middlewares: [by-query] }}
+middlewares:
+  auth: &auth
+    type: jwt
+    jwks_file: "{jwks}"
+    issuer: https://idp.test
+    audiences: [api]
+    algorithms: [ES256]
+  by-cookie: {{ <<: *auth, token: {{ cookie: session }} }}
+  by-query: {{ <<: *auth, token: {{ query: access_token }} }}
+services:
+  api: {{ backends: [{{ address: "{backend}" }}] }}
+"#,
+        jwks = jwks.display(),
+        backend = backend.addr,
+    );
+    let _rdock = Rdock::start(RDOCK, &config);
+    let good = issuer.token(&claims("alice"));
+    let forged = Issuer::new("k1").token(&claims("admin"));
+
+    // The first header verifies, the second would reach the backend unverified.
+    let mut req = bearer(&good);
+    req.headers_mut()
+        .append("authorization", format!("Bearer {forged}").parse().unwrap());
+    let repeated = client::http1(addr(port), req).await;
+    assert_eq!(repeated.status, 400);
+    assert_eq!(
+        repeated.header("www-authenticate"),
+        Some("Bearer error=\"invalid_request\"")
+    );
+
+    let mut req = get("cookie.test", "/");
+    req.headers_mut().insert(
+        "cookie",
+        format!("session={good}; session={forged}").parse().unwrap(),
+    );
+    assert_eq!(client::http1(addr(port), req).await.status, 400);
+    let mut req = get("cookie.test", "/");
+    req.headers_mut()
+        .insert("cookie", format!("session={good}").parse().unwrap());
+    req.headers_mut()
+        .append("cookie", format!("session={forged}").parse().unwrap());
+    assert_eq!(client::http1(addr(port), req).await.status, 400);
+
+    let target = format!("/?access_token={good}&access_token={forged}");
+    assert_eq!(
+        client::http1(addr(port), get("query.test", &target))
+            .await
+            .status,
+        400
+    );
+    assert_eq!(
+        backend.traffic(),
+        0,
+        "no repeated token reached the backend"
+    );
+
+    for req in [
+        bearer(&good),
+        {
+            let mut req = get("cookie.test", "/");
+            req.headers_mut().insert(
+                "cookie",
+                format!("session={good}; theme=dark").parse().unwrap(),
+            );
+            req
+        },
+        get("query.test", &format!("/?access_token={good}&page=2")),
+    ] {
+        assert_eq!(client::http1(addr(port), req).await.status, 200);
+    }
+}
