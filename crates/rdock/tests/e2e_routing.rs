@@ -98,6 +98,59 @@ services:
 }
 
 #[tokio::test]
+async fn requests_refused_by_middlewares_are_not_mirrored() {
+    let main = Backend::start("main").await;
+    let shadow = Backend::start("shadow").await;
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  private:
+    match: "PathPrefix(`/private`)"
+    service: main
+    middlewares: [office-only]
+    mirror: {{ service: shadow }}
+  public:
+    match: "PathPrefix(`/`)"
+    service: main
+    mirror: {{ service: shadow }}
+middlewares:
+  office-only: {{ type: ip_allow, cidrs: [10.0.0.0/8] }}
+services:
+  main: {{ backends: [{{ address: "{}" }}] }}
+  shadow: {{ backends: [{{ address: "{}" }}] }}
+"#,
+        main.addr, shadow.addr
+    );
+    let _rdock = Rdock::start(RDOCK, &config);
+    let refused = client::http1(addr(port), get("a", "/private/data")).await;
+    assert_eq!(refused.status, 403);
+    // A request that is let through is mirrored; once it arrives, the refused one would have too.
+    assert_eq!(
+        client::http1(addr(port), get("a", "/public")).await.status,
+        200
+    );
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while shadow.traffic() < 1 {
+        assert!(
+            Instant::now() < deadline,
+            "the allowed request was not mirrored"
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+    tokio::time::sleep(Duration::from_millis(200)).await;
+    assert_eq!(
+        shadow.targets(),
+        vec!["/public"],
+        "only the allowed request"
+    );
+    assert_eq!(main.targets(), vec!["/public"]);
+}
+
+#[tokio::test]
 async fn grpc_web_reaches_a_grpc_backend() {
     let backend = Backend::start("grpc").await;
     let port = free_port();

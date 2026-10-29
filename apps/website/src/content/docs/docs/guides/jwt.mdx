@@ -51,7 +51,7 @@ ReverseDock follows the JWT best practices of [RFC 8725](https://www.rfc-editor.
 - **`iss` and `aud`**, unless set to `any`.
 - Tokens with `crit` extensions are refused; `jku`, `x5u` and embedded keys are ignored, so a token can never bring its own key.
 
-A request without a token gets `401` with `WWW-Authenticate: Bearer`; a token that fails any check gets `401` with `error="invalid_token"`. The reason is in the debug log, never in the answer.
+A request without a token gets `401` with `WWW-Authenticate: Bearer`; a token that fails any check gets `401` with `error="invalid_token"`. A request that repeats its token (two token headers, the cookie twice, or the query parameter twice) gets `400` with `error="invalid_request"` ([RFC 6750 §3.1](https://www.rfc-editor.org/rfc/rfc6750#section-3.1)): only one copy could be verified, and the backend might read the other. The reason is in the debug log, never in the answer.
 
 Copies of the `claims_to_headers` headers sent by the client are removed before the check, so a backend can trust them. The `sub` claim appears as `user` in the access log.
 
