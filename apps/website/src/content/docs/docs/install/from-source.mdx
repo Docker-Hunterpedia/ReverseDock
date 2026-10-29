@@ -21,7 +21,7 @@ Build from source to run an unreleased commit, to target a platform without a re
 ```sh
 git clone https://github.com/Docker-Hunterpedia/ReverseDock.git
 cd ReverseDock
-git checkout v0.3.0-alpha.2
+git checkout v0.4.0-alpha.1
 cargo build --release --locked -p rdock
 ./target/release/rdock version
 ```
@@ -56,7 +56,7 @@ docker build -t rdock:dev .
 docker run --rm rdock:dev version
 ```
 
-Use `rdock:dev` instead of `ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2` in the [Docker](/docs/install/docker/) and [Compose](/docs/install/compose/) instructions. Release images are built differently, from the signed release binaries, by `Dockerfile.release`.
+Use `rdock:dev` instead of `ghcr.io/docker-hunterpedia/rdock:0.4.0-alpha.1` in the [Docker](/docs/install/docker/) and [Compose](/docs/install/compose/) instructions. Release images are built differently, from the signed release binaries, by `Dockerfile.release`.
 
 ## Run the tests
 

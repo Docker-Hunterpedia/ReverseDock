@@ -9,7 +9,7 @@ import Status from '../../../../components/Status.astro';
 
 ## Is ReverseDock ready for production?
 
-The current release, 0.3.0-alpha.2, is a pre-release. The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load) and fuzz targets, but the configuration format can still change between 0.x releases. If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
+The current release, 0.4.0-alpha.1, is a pre-release. The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load) and fuzz targets, but the configuration format can still change between 0.x releases. If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
 
 ## Is it really free?
 
@@ -45,7 +45,7 @@ Yes: HTTP/2 over TLS, h2c on plain listeners and to backends, WebSocket, server-
 
 ## Does it do health checks and retries?
 
-Not yet. Active and passive health checks, retries, sticky sessions and further load-balancing policies are <Status planned="v0.4" />. In 0.1 a service spreads requests over all its backends with weighted round-robin or random, and a failed request is not retried.
+Yes <Status since="v0.4" />: active checks over HTTP, TCP or gRPC, passive ejection of backends that keep failing, retries to another backend with a retry budget, sticky sessions and several balancing policies. See [Backends and load balancing](/docs/guides/backends/#health-checks).
 
 ## Can it proxy TCP or UDP?
 

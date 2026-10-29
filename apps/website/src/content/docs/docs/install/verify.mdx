@@ -25,7 +25,7 @@ Every release is built and signed by the [release workflow](https://github.com/D
 Download the archive for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json` from the [release page](https://github.com/Docker-Hunterpedia/ReverseDock/releases) into one directory:
 
 ```sh
-VERSION=0.3.0-alpha.2
+VERSION=0.4.0-alpha.1
 TARGET=x86_64-unknown-linux-musl
 BASE="https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION"
 curl -fsSLO "$BASE/rdock-$VERSION-$TARGET.tar.gz"
@@ -54,7 +54,7 @@ sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 --ignore-mi
 ```
 
 ```text
-rdock-0.3.0-alpha.2-x86_64-unknown-linux-musl.tar.gz: OK
+rdock-0.4.0-alpha.1-x86_64-unknown-linux-musl.tar.gz: OK
 ```
 
 **3. The archive was built by GitHub Actions from this repository:**
@@ -72,7 +72,7 @@ If any step fails, do not run the binary. Download it again from the release pag
 The image is signed by digest with cosign, using the same workflow identity:
 
 ```sh
-cosign verify ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2 \
+cosign verify ghcr.io/docker-hunterpedia/rdock:0.4.0-alpha.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
 ```
@@ -80,7 +80,7 @@ cosign verify ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2 \
 cosign lists the checks it performed and prints the signature payload with the image digest. Check the build-provenance attestation too:
 
 ```sh
-gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2 --repo Docker-Hunterpedia/ReverseDock
+gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:0.4.0-alpha.1 --repo Docker-Hunterpedia/ReverseDock
 ```
 
 Tags are never overwritten once published, but a tag is still a name. To be certain you deploy what you verified, use the digest that `cosign verify` printed:
@@ -88,7 +88,7 @@ Tags are never overwritten once published, but a tag is still a name. To be cert
 ```yaml title="compose.yaml (excerpt)"
 services:
   rdock:
-    image: ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2@sha256:<digest>
+    image: ghcr.io/docker-hunterpedia/rdock:0.4.0-alpha.1@sha256:<digest>
 ```
 
 ## Related

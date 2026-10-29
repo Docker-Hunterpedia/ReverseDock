@@ -4,6 +4,8 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.4.0-alpha.1] — v0.4 "Production reliability"
+
 ### Changed
 - `compress` offers `[zstd, br, gzip]` by default instead of `[gzip]`. Set `algorithms: [gzip]` to keep the old behaviour.
 

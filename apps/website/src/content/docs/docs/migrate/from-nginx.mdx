@@ -226,7 +226,7 @@ services:
       - { address: "10.0.0.31:8080" }
 ```
 
-Both proxies use weighted round-robin by default. NGINX also marks a server unavailable after failed attempts (`max_fails` 1, `fail_timeout` 10 s); ReverseDock health checks are <Status planned="v0.4" />, so until then a backend that is down still receives its share and those requests get 502. See [WebSockets, SSE and gRPC](/docs/guides/websockets-sse-grpc/).
+Both proxies use weighted round-robin by default. NGINX also marks a server unavailable after failed attempts (`max_fails` 1, `fail_timeout` 10 s); ReverseDock's passive health checks do the same with `health.passive` <Status since="v0.4" />, and active checks probe backends in the background. See [WebSockets, SSE and gRPC](/docs/guides/websockets-sse-grpc/).
 
 ### 4. Basic authentication, security headers and an upload limit
 

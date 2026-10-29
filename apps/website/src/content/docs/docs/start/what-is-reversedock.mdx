@@ -21,9 +21,13 @@ The goal is one proxy for a laptop, a VPS, a Docker Swarm or a Kubernetes cluste
 
 Every feature is designed so that the first group never pays in complexity for the last.
 
-## What works in 0.3.0-alpha.2
+## What works in 0.4.0-alpha.1
 
-The current release is a pre-release of milestone v0.3, "Automatic HTTPS". It replaces NGINX for host and path routing <Status since="v0.1" />, Traefik on a Docker host using your existing labels <Status since="v0.2" />, and Caddy's automatic HTTPS, with certificates from Let's Encrypt or any ACME CA, wildcards through DNS-01 and a local CA for private names <Status since="v0.3" />.
+The current release is a pre-release of milestone v0.4, "Production reliability". It replaces NGINX for host and path routing <Status since="v0.1" />, Traefik on a Docker host using your existing labels <Status since="v0.2" />, and Caddy's automatic HTTPS, with certificates from Let's Encrypt or any ACME CA, wildcards through DNS-01 and a local CA for private names <Status since="v0.3" />. It runs busy APIs with health checks, retries, more balancing policies, limits, mTLS, JWT and tracing <Status since="v0.4" />.
+
+- **Reliability:** least-requests, power-of-two-choices and consistent-hash balancing, signed sticky sessions, active (HTTP, TCP, gRPC) and passive health checks with fail-open, backups, slow start, retries with a retry budget, weighted splits and mirroring. See [Backends and load balancing](/docs/guides/backends/).
+- **Security and limits:** client certificates (mTLS) and Cloudflare Authenticated Origin Pulls, JWT validation, requests in flight, load shedding and bandwidth limits. See [Client certificates](/docs/guides/client-certificates/) and [JWT authentication](/docs/guides/jwt/).
+- **Observability:** OpenTelemetry traces, per-backend metrics, sampled access logs. See [Logs and metrics](/docs/guides/logs-and-metrics/).
 
 - **Docker:** routes from container labels, `rdock.*` and a documented subset of `traefik.*`; opt-in containers, replicas, health checks and draining; zero-config mode; `rdock migrate traefik`. See [Docker containers and labels](/docs/guides/docker-labels/).
 - **Extra configuration files:** `providers.file.paths`, such as `conf.d/*.yaml`. See [Split the configuration](/docs/guides/split-configuration/).
@@ -31,7 +35,7 @@ The current release is a pre-release of milestone v0.3, "Automatic HTTPS". It re
 - **HTTP proxying:** HTTP/1.1, HTTP/2 over TLS, h2c, WebSocket, server-sent events and gRPC. Backends by IP address, DNS name or Unix socket, over HTTP, HTTPS or h2c, with weighted round-robin or random balancing.
 - **Routing** with the Traefik v3 rule grammar: `Host`, `HostRegexp`, `Path`, `PathPrefix`, `PathRegexp`, `Method`, `Header`, `Query`, `ClientIP`, with `&&`, `||`, `!` and priorities. See [Rules](/docs/reference/rules/).
 - **TLS** with your own certificates: SNI, wildcard and default certificates, encrypted keys, `modern` and `intermediate` policies, and reload when the files change.
-- **Middlewares:** `headers` (including HSTS), `redirect`, `rewrite`, `strip_prefix`, `add_prefix`, `replace_path`, `basic_auth`, `forward_auth`, `ip_allow`, `ip_deny`, `rate_limit`, `cors`, `compress` (gzip), `errors` and `maintenance`.
+- **Middlewares:** `headers` (including HSTS), `redirect`, `rewrite`, `strip_prefix`, `add_prefix`, `replace_path`, `basic_auth`, `forward_auth`, `ip_allow`, `ip_deny`, `rate_limit`, `in_flight`, `bandwidth`, `cors`, `compress` (zstd, Brotli, gzip), `errors`, `maintenance`, `jwt`, `client_cert` and `grpc_web`.
 - **Security defaults:** forwarded headers trusted only from `security.trusted_proxies`, header, target and body limits, and request-smuggling hardening.
 - **Operations:** reload on file change, `SIGHUP`, `rdock reload` or the admin API, without dropping requests. Listener changes apply without a restart. A history of applied configurations and a last-known-good copy that is used at start when the file is broken.
 - **Observability:** JSON access log, Prometheus metrics, `/healthz` and `/readyz` on the admin listener (`127.0.0.1:2080`).
@@ -44,7 +48,7 @@ Settings for these features are already part of the configuration model. `rdock 
 | Feature | Status |
 |---|---|
 | Automatic HTTPS (ACME, DNS-01, Cloudflare) | <Status since="v0.3" /> |
-| Health checks, retries, sticky sessions, more load-balancing policies, tracing | <Status planned="v0.4" /> |
+| Health checks, retries, sticky sessions, more load-balancing policies, mTLS, JWT, tracing | <Status since="v0.4" /> |
 | Dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
 | Swarm, TCP and UDP routing, PROXY protocol, static files | <Status planned="v0.6" /> |
 | Kubernetes Gateway API controller | <Status planned="v0.7" /> |

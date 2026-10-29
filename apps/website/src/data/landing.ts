@@ -29,8 +29,9 @@ export const features: { title: string; status: string; kind: Kind; body: string
   { title: 'Docker labels', status: 'v0.2', kind: 'shipped', body: 'Opt-in per container, network selection, live on container events.' },
   { title: 'rdock migrate traefik', status: 'v0.2', kind: 'shipped', body: 'Turns Traefik labels into rdock.yaml and lists what does not carry over.' },
   { title: 'Automatic HTTPS', status: 'v0.3', kind: 'shipped', body: 'ACME HTTP-01, TLS-ALPN-01 and DNS-01, with ARI renewals.' },
-  { title: 'Health checks and retries', status: 'v0.4', kind: 'next', body: 'Active and passive checks, more balancing policies, retry budgets.' },
-  { title: 'Dashboard', status: 'v0.5', kind: 'planned', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
+  { title: 'Health checks and retries', status: 'v0.4', kind: 'shipped', body: 'Active and passive checks, consistent hashing, sticky sessions, retry budgets.' },
+  { title: 'mTLS, JWT and tracing', status: 'v0.4', kind: 'shipped', body: 'Client certificates, Cloudflare origin pulls, JWT on ring, OpenTelemetry spans.' },
+  { title: 'Dashboard', status: 'v0.5', kind: 'next', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
   { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'planned', body: 'A Gateway API controller, checked with the upstream conformance tests.' },
 ];
 

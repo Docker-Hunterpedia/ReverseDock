@@ -1,6 +1,6 @@
 # ReverseDock — rules for AI assistants
 
-ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) and v0.2 (the Docker provider, Traefik labels, zero-config, `rdock migrate traefik`) and v0.3 (automatic HTTPS, ADR-0020) are implemented; v0.4 (production reliability, ADR-0022) is in progress. Read [docs/README.md](docs/README.md) before proposing changes.
+ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) and v0.2 (the Docker provider, Traefik labels, zero-config, `rdock migrate traefik`) and v0.3 (automatic HTTPS, ADR-0020) and v0.4 (production reliability, ADR-0022) are implemented. Read [docs/README.md](docs/README.md) before proposing changes.
 
 ## Working rules
 

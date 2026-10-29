@@ -15,7 +15,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 | v0.1 | Hello proxy | replace NGINX for host and path routing with your own certificates | <Status since="v0.1" /> 0.1.0-alpha.3 |
 | v0.2 | Docker-native | replace Traefik on a Compose box using your existing labels | <Status since="v0.2" />  0.2.0-alpha.1 |
 | v0.3 | Automatic HTTPS | go from DNS to HTTPS with one label | <Status since="v0.3" />  0.3.0-alpha.2 |
-| v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status planned="v0.4" /> |
+| v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status since="v0.4" />  0.4.0-alpha.1 |
 | v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
 | v0.6 | Swarm, L4, static | multi-node Docker, TCP and SNI passthrough, static sites | <Status planned="v0.6" /> |
 | v0.7 | Kubernetes | run it as a Gateway API controller | <Status planned="v0.7" /> |
@@ -35,9 +35,9 @@ The Docker provider: routes from `rdock.*` labels and compatibility with a docum
 
 ACME with HTTP-01, TLS-ALPN-01 and DNS-01, renewal guided by ARI, a local CA for development, Cloudflare integration (trusted IP ranges, `CF-Connecting-IP`, DNS-01, Tunnel example). The goal: a fresh VPS reaches valid HTTPS in under 60 seconds.
 
-## v0.4: Production reliability <Status planned="v0.4" />
+## v0.4: Production reliability <Status since="v0.4" />
 
-Load-balancing policies, active and passive health checks, retries with a retry budget, sticky sessions, traffic splits, mTLS, JWT, brotli and zstd, tracing, and the first published benchmarks against NGINX, Traefik, Caddy and HAProxy.
+Load-balancing policies, active and passive health checks, retries with a retry budget, sticky sessions, traffic splits and mirroring, mTLS and Cloudflare Authenticated Origin Pulls, JWT, limits, brotli and zstd, OpenTelemetry tracing, a chaos suite, and the [first published benchmarks](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks) against NGINX, HAProxy, Caddy and Traefik. Request buffering moves to v0.8.
 
 ## v0.5 to v1.0
 

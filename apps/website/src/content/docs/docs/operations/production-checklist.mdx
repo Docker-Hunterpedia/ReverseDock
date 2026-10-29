@@ -7,12 +7,12 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-Go through this list before ReverseDock serves real traffic. Each item says what to check and how. ReverseDock 0.3.0-alpha.2 is a pre-release; read the [changelog](/docs/project/changelog/) for every upgrade.
+Go through this list before ReverseDock serves real traffic. Each item says what to check and how. ReverseDock 0.4.0-alpha.1 is a pre-release; read the [changelog](/docs/project/changelog/) for every upgrade.
 
 ## Installation
 
 - **The download is verified.** Checksums, cosign signature and provenance pass ([Verify a download](/docs/install/verify/)). For images, deploy by digest.
-- **The version is pinned.** Use `ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2`, not `latest`.
+- **The version is pinned.** Use `ghcr.io/docker-hunterpedia/rdock:0.4.0-alpha.1`, not `latest`.
 - **rdock runs unprivileged.** The image runs as user 65532; the [systemd unit](/docs/install/systemd/) uses `DynamicUser` and only `CAP_NET_BIND_SERVICE`. In Compose, keep `read_only: true`, `cap_drop: [ALL]` and `no-new-privileges`.
 - **The data directory persists.** `/var/lib/rdock` is a named volume or the systemd `StateDirectory`, so history and the last-known-good copy survive restarts and upgrades.
 - **Configuration files are mounted as a directory** in containers, so file replacements are seen.
