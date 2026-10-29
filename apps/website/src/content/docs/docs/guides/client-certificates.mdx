@@ -1,0 +1,96 @@
+---
+title: Client certificates (mTLS)
+description: Require or accept client certificates on a listener, check their names per route, pass the identity to backends, and present a certificate to backends yourself.
+sidebar:
+  order: 4
+---
+
+import Status from '../../../../components/Status.astro';
+
+With mutual TLS <Status since="v0.4" />, clients prove who they are with a certificate during the TLS handshake. Use it for service-to-service traffic, partner APIs, admin tools, or to accept only Cloudflare's connections to your origin.
+
+## Require a certificate on a listener
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls:
+      client_auth:
+        mode: required                     # or optional
+        ca_files: [/etc/rdock/clients-ca.pem]
+```
+
+- **`required`**: a handshake without a valid certificate fails; no request is read.
+- **`optional`**: clients without a certificate are let in, and routes decide with the [`client_cert`](#check-a-certificate-per-route) middleware. A certificate that is sent is still verified.
+- `ca_files` lists PEM files with the CAs that sign your client certificates. Certificates are always verified against them: modes that accept unverified certificates, such as Traefik's `RequireAnyClientCert`, are not offered, because a backend could then be fooled by any self-made certificate.
+- The CA files are read on every reload; a missing or empty file refuses the configuration.
+
+## Check a certificate per route
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  admin:
+    match: "Host(`admin.example.com`)"
+    service: admin
+    middlewares: [staff-only]
+middlewares:
+  staff-only:
+    type: client_cert
+    required: true                         # 403 without a verified certificate
+    allow: ["*.staff.example.com", "spiffe://example.com/ops/*"]
+    forward: xfcc                          # none, traefik or xfcc
+```
+
+`allow` matches the certificate's common name and its DNS, URI and email names; `*` stands for any run of characters. Without `allow`, any certificate from the listener's CAs is accepted.
+
+## Pass the identity to the backend
+
+| `forward` | Headers |
+|---|---|
+| `none` (default) | nothing |
+| `traefik` | `X-Forwarded-Tls-Client-Cert` (the certificate, base64 DER, URL-escaped) and `X-Forwarded-Tls-Client-Cert-Info` (`Subject`, `Issuer`, `NB`, `NA`, `SAN`), as Traefik's `passTLSClientCert` sends them ([Traefik](https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/passtlsclientcert/), checked 2026-10-29) |
+| `xfcc` | `X-Forwarded-Client-Cert` in Envoy's format: `Hash` (SHA-256), `Subject`, `URI`, `DNS` ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_conn_man/headers), checked 2026-10-29) |
+
+Copies of these three headers sent by clients are removed from **every** request, on every route, so a backend can trust them.
+
+## Cloudflare Authenticated Origin Pulls
+
+With [Authenticated Origin Pulls](https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/), Cloudflare presents a client certificate when it connects to your origin, so you can refuse connections that do not come through Cloudflare:
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls:
+      client_auth:
+        mode: required
+        cloudflare: true       # Cloudflare's global origin-pull CA, built in
+```
+
+`cloudflare: true` trusts the CA of global Authenticated Origin Pulls (`origin-pull.cloudflare.net`, valid until 2029-11-01), which ReverseDock ships. Every Cloudflare account uses that same certificate, so it proves the connection comes from Cloudflare, not from your zone. Cloudflare advises zone-level or per-hostname pulls with your own certificate for stricter checks ([Cloudflare](https://developers.cloudflare.com/ssl/origin-configuration/authenticated-origin-pull/set-up/global/), checked 2026-10-29): upload a client certificate to Cloudflare, and list the CA that signed it in `ca_files` instead.
+
+Turn on Authenticated Origin Pulls in the Cloudflare dashboard (SSL/TLS → Origin Server) before you set `mode: required`, or Cloudflare's connections are refused. See also [Behind Cloudflare](/docs/guides/cloudflare/).
+
+## Present a certificate to backends
+
+A backend that requires client certificates gets one from the service:
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  payments:
+    scheme: https
+    backends: [{ address: "payments.internal:8443" }]
+    tls:
+      ca_file: /etc/rdock/internal-ca.pem
+      cert_file: /etc/rdock/rdock-client.pem
+      key_file: /etc/rdock/rdock-client.key
+```
+
+`cert_file` holds the certificate and any intermediates, leaf first; `key_file` the PEM key (PKCS#8, PKCS#1 or SEC1). Both are checked when the configuration loads. `ca_file` can name a different CA from the one that signs the client certificate.
+
+## Related
+
+- [TLS certificates](/docs/guides/tls-certificates/)
+- [Behind Cloudflare](/docs/guides/cloudflare/)
+- [Backends and load balancing](/docs/guides/backends/#tls-to-backends)

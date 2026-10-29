@@ -19,7 +19,8 @@ use pingora::protocols::tls::TlsRef;
 use pingora::protocols::{GetSocketDigest, SocketDigest, Stream};
 use pingora::proxy::HttpProxy;
 use pingora::server::configuration::ServerConf;
-use rdock_model::config::{ListenerTimeouts, TlsPolicy};
+use rdock_middleware::ClientIdentity;
+use rdock_model::config::ListenerTimeouts;
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::SniResolver;
@@ -29,33 +30,98 @@ use tokio::task::JoinSet;
 
 use crate::conn::ConnStream;
 use crate::proxy::{RdockProxy, Shared};
+use crate::runtime::ListenerTls;
 
 /// The HTTP/2 connection preface (RFC 9113 §3.4).
 const H2_PREFACE: &[u8; 24] = b"PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
 
-/// SNI of a TLS connection, stored in Pingora's TLS digest for the access log.
-#[derive(Debug, Clone)]
-pub struct ServerName(pub String);
+/// What the TLS handshake established, stored in Pingora's TLS digest: the SNI for the access
+/// log, and the client certificate that the listener verified.
+#[derive(Debug, Clone, Default)]
+pub struct Handshake {
+    /// Server name the client asked for.
+    pub sni: Option<String>,
+    /// The verified client certificate (only listeners with `client_auth` ask for one).
+    pub client_cert: Option<Arc<ClientIdentity>>,
+}
 
-struct CaptureSni;
+struct CaptureHandshake;
 
 #[async_trait]
-impl TlsAccept for CaptureSni {
+impl TlsAccept for CaptureHandshake {
     async fn handshake_complete_callback(
         &self,
         tls: &TlsRef,
     ) -> Option<Arc<dyn Any + Send + Sync>> {
-        tls.server_name()
-            .map(|name| Arc::new(ServerName(name.to_owned())) as Arc<dyn Any + Send + Sync>)
+        let handshake = Handshake {
+            sni: tls.server_name().map(str::to_owned),
+            client_cert: tls.peer_certificate_der().and_then(identity).map(Arc::new),
+        };
+        Some(Arc::new(handshake))
     }
 }
 
-/// Builds a TLS acceptor for `policy`. Pingora's `TlsSettings` is only used for its
+/// The fields of a client certificate. rustls has already verified it, so it parses; `None`
+/// would only mean a certificate x509-parser cannot read, which then counts as absent.
+fn identity(der: &[u8]) -> Option<ClientIdentity> {
+    use std::fmt::Write;
+    use x509_parser::extensions::GeneralName;
+    use x509_parser::prelude::FromDer;
+
+    let (_, cert) = x509_parser::certificate::X509Certificate::from_der(der).ok()?;
+    let mut identity = ClientIdentity {
+        common_name: cert
+            .subject()
+            .iter_common_name()
+            .next()
+            .and_then(|cn| cn.as_str().ok())
+            .map(str::to_owned),
+        subject: cert.subject().to_string(),
+        issuer: cert.issuer().to_string(),
+        not_before: cert.validity().not_before.timestamp(),
+        not_after: cert.validity().not_after.timestamp(),
+        sha256: ring::digest::digest(&ring::digest::SHA256, der)
+            .as_ref()
+            .iter()
+            .fold(String::new(), |mut hex, b| {
+                let _ = write!(hex, "{b:02x}");
+                hex
+            }),
+        der_base64: base64::engine::Engine::encode(&base64::engine::general_purpose::STANDARD, der),
+        ..ClientIdentity::default()
+    };
+    if let Ok(Some(san)) = cert.subject_alternative_name() {
+        for name in &san.value.general_names {
+            match name {
+                GeneralName::DNSName(dns) => identity.dns.push((*dns).to_owned()),
+                GeneralName::URI(uri) => identity.uris.push((*uri).to_owned()),
+                GeneralName::RFC822Name(email) => identity.emails.push((*email).to_owned()),
+                GeneralName::IPAddress(bytes) => {
+                    let ip = match bytes.len() {
+                        4 => <[u8; 4]>::try_from(*bytes).ok().map(IpAddr::from),
+                        16 => <[u8; 16]>::try_from(*bytes).ok().map(IpAddr::from),
+                        _ => None,
+                    };
+                    identity.ips.extend(ip.map(|ip| ip.to_string()));
+                }
+                _ => {}
+            }
+        }
+    }
+    Some(identity)
+}
+
+/// Builds a TLS acceptor for `tls`. Pingora's `TlsSettings` is only used for its
 /// handshake-complete callback; the rustls configuration is ours.
-pub fn acceptor(policy: TlsPolicy, resolver: Arc<SniResolver>) -> Result<Acceptor, String> {
-    let config = rdock_tls::server_config(policy, resolver.clone()).map_err(|e| e.to_string())?;
+pub fn acceptor(tls: &ListenerTls, resolver: Arc<SniResolver>) -> Result<Acceptor, String> {
+    let verifier = match &tls.client_auth {
+        Some(auth) => Some(auth.verifier().map_err(|e| e.to_string())?),
+        None => None,
+    };
+    let config = rdock_tls::server_config(tls.policy, resolver.clone(), verifier)
+        .map_err(|e| e.to_string())?;
     let mut settings =
-        TlsSettings::with_callbacks(Box::new(CaptureSni)).map_err(|e| e.to_string())?;
+        TlsSettings::with_callbacks(Box::new(CaptureHandshake)).map_err(|e| e.to_string())?;
     settings.set_cert_resolver(resolver);
     let mut acceptor = settings.build();
     acceptor.acceptor = pingora::tls::TlsAcceptor::from(config);

@@ -601,6 +601,69 @@
         }
       ]
     },
+    "ClientAuth": {
+      "description": "Client certificate verification.",
+      "type": "object",
+      "properties": {
+        "ca_files": {
+          "description": "PEM files with the CA certificates that sign client certificates.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "cloudflare": {
+          "description": "Also trust Cloudflare's CA for global Authenticated Origin Pulls.",
+          "type": "boolean",
+          "default": false
+        },
+        "mode": {
+          "description": "`required` refuses handshakes without a valid certificate; `optional` accepts them\nwithout one, but verifies a certificate that is sent.",
+          "$ref": "#/$defs/ClientAuthMode",
+          "default": "required"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "ClientAuthMode": {
+      "description": "Whether a client certificate is required.",
+      "oneOf": [
+        {
+          "description": "Every connection needs a valid certificate.",
+          "type": "string",
+          "const": "required"
+        },
+        {
+          "description": "A certificate is optional; routes can demand one with the `client_cert` middleware.",
+          "type": "string",
+          "const": "optional"
+        }
+      ]
+    },
+    "ClientCertForward": {
+      "description": "How a client certificate is passed to the backend. Copies of these headers sent by clients\nare always removed.",
+      "oneOf": [
+        {
+          "description": "Not passed on.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Traefik's `X-Forwarded-Tls-Client-Cert` (the certificate) and\n`X-Forwarded-Tls-Client-Cert-Info` (its fields).",
+          "type": "string",
+          "const": "traefik"
+        },
+        {
+          "description": "Envoy's `X-Forwarded-Client-Cert`.",
+          "type": "string",
+          "const": "xfcc"
+        }
+      ]
+    },
     "ClientIpHeader": {
       "description": "Sources of the client IP.",
       "oneOf": [
@@ -1341,6 +1404,18 @@
       "description": "TLS termination settings of a listener.",
       "type": "object",
       "properties": {
+        "client_auth": {
+          "description": "Client certificates (mTLS). A certificate is always verified against these roots.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClientAuth"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "policy": {
           "description": "TLS versions and cipher suites.",
           "$ref": "#/$defs/TlsPolicy",
@@ -2107,6 +2182,41 @@
             "type": {
               "type": "string",
               "const": "maintenance"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Demand a verified client certificate, check its names and pass its identity on.",
+          "type": "object",
+          "properties": {
+            "allow": {
+              "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "forward": {
+              "description": "Headers that pass the identity to the backend.",
+              "$ref": "#/$defs/ClientCertForward",
+              "default": "none"
+            },
+            "required": {
+              "description": "Answer `403` to requests without a verified client certificate.",
+              "type": "boolean",
+              "default": true
+            },
+            "type": {
+              "type": "string",
+              "const": "client_cert"
             }
           },
           "additionalProperties": false,

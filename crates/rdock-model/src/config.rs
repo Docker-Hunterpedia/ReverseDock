@@ -224,11 +224,39 @@ impl Default for ListenerTimeouts {
 }
 
 /// TLS termination settings of a listener.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct ListenerTls {
     /// TLS versions and cipher suites.
     pub policy: TlsPolicy,
+    /// Client certificates (mTLS). A certificate is always verified against these roots.
+    pub client_auth: Option<ClientAuth>,
+}
+
+/// Client certificate verification.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct ClientAuth {
+    /// `required` refuses handshakes without a valid certificate; `optional` accepts them
+    /// without one, but verifies a certificate that is sent.
+    #[serde(default)]
+    pub mode: ClientAuthMode,
+    /// PEM files with the CA certificates that sign client certificates.
+    #[serde(default)]
+    pub ca_files: Vec<std::path::PathBuf>,
+    /// Also trust Cloudflare's CA for global Authenticated Origin Pulls.
+    #[serde(default)]
+    pub cloudflare: bool,
+}
+
+/// Whether a client certificate is required.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientAuthMode {
+    /// Every connection needs a valid certificate.
+    #[default]
+    Required,
+    /// A certificate is optional; routes can demand one with the `client_cert` middleware.
+    Optional,
 }
 
 /// TLS policies.

@@ -314,6 +314,7 @@ pub fn peer(
     options.verify_cert = service.tls.verify;
     options.verify_hostname = service.tls.verify;
     options.ca.clone_from(&service.tls.ca);
+    peer.client_cert_key.clone_from(&service.tls.client_cert);
     peer.group_key = service.tls.group_key;
     Ok(peer)
 }

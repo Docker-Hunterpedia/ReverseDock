@@ -56,9 +56,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     if !config.tcp_services.is_empty() {
         gate.unsupported("tcp_services", "TCP services", "v0.6");
     }
-    for (name, service) in &config.services {
-        check_service(&mut gate, &path_key("services", name), service);
-    }
     let providers = &config.providers;
     if providers.swarm.is_some() {
         gate.unsupported("providers.swarm", "the Swarm provider", "v0.6");
@@ -68,20 +65,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     }
     if config.observability.tracing.is_some() {
         gate.unsupported("observability.tracing", "OpenTelemetry tracing", "v0.4");
-    }
-}
-
-fn check_service(gate: &mut Gate<'_>, path: &str, service: &rdock_model::service::Service) {
-    if service
-        .tls
-        .as_ref()
-        .is_some_and(|t| t.cert_file.is_some() || t.key_file.is_some())
-    {
-        gate.unsupported(
-            format!("{path}.tls"),
-            "client certificates to backends",
-            "v0.4",
-        );
     }
 }
 

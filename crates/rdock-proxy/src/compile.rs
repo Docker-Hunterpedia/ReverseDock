@@ -291,10 +291,20 @@ fn compile_service(
         Some(file) => Some(load_ca(file)?),
         None => None,
     };
+    let client_cert = match tls.and_then(|t| t.cert_file.as_deref().zip(t.key_file.as_deref())) {
+        Some((cert, key)) => Some(load_client_cert(cert, key)?),
+        None => None,
+    };
     let verify = tls.is_none_or(|t| t.verify);
     let server_name = tls.and_then(|t| t.server_name.clone());
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    (verify, &server_name, tls.and_then(|t| t.ca_file.as_ref())).hash(&mut hasher);
+    (
+        verify,
+        &server_name,
+        tls.and_then(|t| t.ca_file.as_ref()),
+        tls.and_then(|t| t.cert_file.as_ref()),
+    )
+        .hash(&mut hasher);
     Ok(ServiceRuntime {
         name: Arc::from(name),
         scheme: service.scheme,
@@ -318,6 +328,7 @@ fn compile_service(
             verify,
             server_name,
             ca,
+            client_cert,
             group_key: hasher.finish(),
         },
         pass_host_header: service.pass_host_header,
@@ -447,6 +458,43 @@ fn compile_sticky(sticky: &Sticky, default_key: &[u8]) -> Result<StickyRuntime, 
     })
 }
 
+/// Reads the client certificate chain and key that a service presents to its backends. They
+/// are checked here because Pingora asserts a non-empty chain and unwraps the key conversion.
+fn load_client_cert(
+    cert_file: &std::path::Path,
+    key_file: &std::path::Path,
+) -> Result<Arc<pingora::utils::tls::CertKey>, String> {
+    use rustls_pki_types::pem::PemObject;
+    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
+    use x509_parser::prelude::FromDer;
+
+    let chain = CertificateDer::pem_file_iter(cert_file)
+        .and_then(Iterator::collect::<Result<Vec<_>, _>>)
+        .map_err(|e| format!("cannot read `{}`: {e}", cert_file.display()))?;
+    if chain.is_empty() {
+        return Err(format!("`{}` holds no certificate", cert_file.display()));
+    }
+    for der in &chain {
+        x509_parser::certificate::X509Certificate::from_der(der.as_ref())
+            .map_err(|e| format!("invalid certificate in `{}`: {e}", cert_file.display()))?;
+    }
+    let key = PrivateKeyDer::from_pem_file(key_file)
+        .map_err(|e| format!("cannot read the key `{}`: {e}", key_file.display()))?;
+    rustls::crypto::ring::sign::any_supported_type(&key)
+        .map_err(|e| format!("unusable key `{}`: {e}", key_file.display()))?;
+    let key = key.secret_der().to_vec();
+    if PrivateKeyDer::try_from(key.clone()).is_err() {
+        return Err(format!(
+            "unsupported key format in `{}`",
+            key_file.display()
+        ));
+    }
+    Ok(Arc::new(pingora::utils::tls::CertKey::new(
+        chain.into_iter().map(|c| c.to_vec()).collect(),
+        key,
+    )))
+}
+
 /// Reads a PEM bundle of CA certificates for backend verification.
 fn load_ca(file: &std::path::Path) -> Result<Arc<[pingora::utils::tls::WrappedX509]>, String> {
     use rustls_pki_types::CertificateDer;
@@ -565,7 +613,16 @@ fn compile_listeners(
                 ListenerProtocol::Http | ListenerProtocol::Https
             )
         })
-        .map(|(name, l)| (name.clone(), new_listener(name, l)))
+        .filter_map(|(name, l)| match new_listener(name, l) {
+            Ok(listener) => Some((name.clone(), listener)),
+            Err(message) => {
+                out.push(Diagnostic::error(
+                    format!("{}.tls.client_auth", path_key("listeners", name)),
+                    message,
+                ));
+                None
+            }
+        })
         .collect();
     let mut tls_hosts = HostSet::Some(std::collections::BTreeSet::new());
     for (name, route) in config.routes.iter().filter(|(_, r)| r.enabled) {
@@ -614,15 +671,43 @@ fn compile_listeners(
     listeners
 }
 
-fn new_listener(name: &str, listener: &Listener) -> ListenerRuntime {
-    ListenerRuntime {
+fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, String> {
+    let tls = match &listener.tls {
+        Some(tls) => Some(crate::runtime::ListenerTls {
+            policy: tls.policy,
+            client_auth: tls.client_auth.as_ref().map(client_auth).transpose()?,
+        }),
+        None => None,
+    };
+    Ok(ListenerRuntime {
         name: Arc::from(name),
         address: listener.address,
-        tls: listener.tls.map(|t| t.policy),
+        tls,
         timeouts: listener.timeouts,
         routes: Vec::new(),
         https_redirect: None,
+    })
+}
+
+/// The CA bundles of a listener's `client_auth`, read now so a missing file fails the reload.
+fn client_auth(config: &rdock_model::config::ClientAuth) -> Result<rdock_tls::ClientAuth, String> {
+    let mut bundles = Vec::new();
+    for file in &config.ca_files {
+        let text = std::fs::read_to_string(file)
+            .map_err(|e| format!("cannot read `{}`: {e}", file.display()))?;
+        bundles.push((file.display().to_string(), text));
     }
+    if config.cloudflare {
+        bundles.push((
+            "Cloudflare origin-pull CA".to_owned(),
+            rdock_tls::CLOUDFLARE_ORIGIN_PULL_CA.to_owned(),
+        ));
+    }
+    rdock_tls::ClientAuth::new(
+        config.mode == rdock_model::config::ClientAuthMode::Required,
+        &bundles,
+    )
+    .map_err(|e| e.to_string())
 }
 
 fn compile_route(

@@ -72,8 +72,8 @@ pub struct ListenerRuntime {
     pub name: Arc<str>,
     /// Bind address.
     pub address: ListenAddress,
-    /// TLS policy, for HTTPS listeners.
-    pub tls: Option<TlsPolicy>,
+    /// TLS settings, for HTTPS listeners.
+    pub tls: Option<ListenerTls>,
     /// Client-side timeouts.
     pub timeouts: ListenerTimeouts,
     /// Routes in evaluation order.
@@ -81,6 +81,15 @@ pub struct ListenerRuntime {
     /// Plain-HTTP listeners: redirect these hosts to HTTPS when no route of the listener
     /// matches.
     pub https_redirect: Option<HttpsRedirect>,
+}
+
+/// TLS settings of a listener. Equal settings keep the running acceptor across reloads.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ListenerTls {
+    /// Versions and cipher suites.
+    pub policy: TlsPolicy,
+    /// Client certificate verification.
+    pub client_auth: Option<rdock_tls::ClientAuth>,
 }
 
 /// The automatic HTTP to HTTPS redirect of a plain listener.
@@ -176,6 +185,8 @@ pub struct UpstreamTls {
     pub server_name: Option<String>,
     /// CA certificates replacing the system roots.
     pub ca: Option<Arc<[pingora::utils::tls::WrappedX509]>>,
+    /// Client certificate and key presented to backends (upstream mTLS).
+    pub client_cert: Option<Arc<pingora::utils::tls::CertKey>>,
     /// Distinguishes connection pools with different trust settings (Pingora's pool key does
     /// not include the CA).
     pub group_key: u64,
@@ -187,6 +198,7 @@ impl std::fmt::Debug for UpstreamTls {
             .field("verify", &self.verify)
             .field("server_name", &self.server_name)
             .field("custom_ca", &self.ca.is_some())
+            .field("client_cert", &self.client_cert.is_some())
             .finish_non_exhaustive()
     }
 }

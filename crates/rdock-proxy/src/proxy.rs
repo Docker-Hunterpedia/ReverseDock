@@ -571,6 +571,7 @@ impl ProxyHttp for RdockProxy {
             ctx.request_id.clone(),
             ctx.authority.clone(),
         );
+        cx.client_cert = client_identity(session);
         for (i, mw) in route.middlewares.iter().enumerate() {
             if let Flow::Reply(reply) = mw.request(session.req_header_mut(), &mut cx).await {
                 ctx.mw = Some(cx);
@@ -980,8 +981,8 @@ impl ProxyHttp for RdockProxy {
             tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
             sni: ssl
                 .as_ref()
-                .and_then(|s| s.extension.get::<crate::listener::ServerName>())
-                .map(|s| s.0.clone()),
+                .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+                .and_then(|h| h.sni.clone()),
             user: ctx.mw.as_ref().and_then(|cx| cx.user.clone()),
             user_agent: header("user-agent"),
             referer: header("referer").map(|r| r.split('?').next().unwrap_or_default().to_owned()),
@@ -990,6 +991,19 @@ impl ProxyHttp for RdockProxy {
         };
         log.write(&record);
     }
+}
+
+/// The verified client certificate of the connection. Client-sent identity headers are
+/// removed first: only the `client_cert` middleware sets them.
+fn client_identity(session: &mut Session) -> Option<Arc<rdock_middleware::ClientIdentity>> {
+    for name in rdock_middleware::IDENTITY_HEADERS {
+        session.req_header_mut().remove_header(name);
+    }
+    session
+        .digest()
+        .and_then(|d| d.ssl_digest.as_ref())
+        .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+        .and_then(|h| h.client_cert.clone())
 }
 
 /// Per-request state that follows from the matched route: the service (a `split` picks its

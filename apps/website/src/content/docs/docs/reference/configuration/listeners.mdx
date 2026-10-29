@@ -80,6 +80,33 @@ Longest wait for the client to accept data.
 
 TLS termination settings.
 
+### `listeners.<name>.tls.client_auth`
+
+**Type:** object
+
+Client certificates (mTLS). A certificate is always verified against these roots.
+
+#### `listeners.<name>.tls.client_auth.ca_files`
+
+**Type:** list of `string`
+
+PEM files with the CA certificates that sign client certificates.
+
+#### `listeners.<name>.tls.client_auth.cloudflare`
+
+**Type:** `boolean` · **Default:** `false`
+
+Also trust Cloudflare's CA for global Authenticated Origin Pulls.
+
+#### `listeners.<name>.tls.client_auth.mode`
+
+**Type:** `required` · `optional` · **Default:** `required`
+
+`required` refuses handshakes without a valid certificate; `optional` accepts them without one, but verifies a certificate that is sent.
+
+- `required`: Every connection needs a valid certificate.
+- `optional`: A certificate is optional; routes can demand one with the `client_cert` middleware.
+
 ### `listeners.<name>.tls.policy`
 
 **Type:** `modern` · `intermediate` · **Default:** `intermediate`

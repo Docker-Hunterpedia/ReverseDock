@@ -46,9 +46,50 @@ pub enum Middleware {
     Errors(ErrorsConfig),
     /// Maintenance mode.
     Maintenance(MaintenanceConfig),
+    /// Demand a verified client certificate, check its names and pass its identity on.
+    ClientCert(ClientCertConfig),
     /// Translate gRPC-Web from browsers into gRPC for the backend (binary
     /// `application/grpc-web`; the service needs `scheme: h2c` or `https`).
     GrpcWeb(GrpcWebConfig),
+}
+
+/// Client certificate checks of a route.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[schemars(inline)]
+pub struct ClientCertConfig {
+    /// Answer `403` to requests without a verified client certificate.
+    pub required: bool,
+    /// Names a certificate must have one of: its common name or a DNS, URI or email SAN.
+    /// `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+    pub allow: Vec<String>,
+    /// Headers that pass the identity to the backend.
+    pub forward: ClientCertForward,
+}
+
+impl Default for ClientCertConfig {
+    fn default() -> Self {
+        Self {
+            required: true,
+            allow: Vec::new(),
+            forward: ClientCertForward::None,
+        }
+    }
+}
+
+/// How a client certificate is passed to the backend. Copies of these headers sent by clients
+/// are always removed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ClientCertForward {
+    /// Not passed on.
+    #[default]
+    None,
+    /// Traefik's `X-Forwarded-Tls-Client-Cert` (the certificate) and
+    /// `X-Forwarded-Tls-Client-Cert-Info` (its fields).
+    Traefik,
+    /// Envoy's `X-Forwarded-Client-Cert`.
+    Xfcc,
 }
 
 /// gRPC-Web translation has no settings.
