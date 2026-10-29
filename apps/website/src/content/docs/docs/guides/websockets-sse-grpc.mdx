@@ -5,6 +5,8 @@ sidebar:
   order: 7
 ---
 
+import Status from '../../../../components/Status.astro';
+
 WebSockets, server-sent events (SSE) and gRPC work through ordinary routes; nothing has to be turned on. What they need is timeouts that fit connections which stay open, and for gRPC, HTTP/2 on both sides.
 
 ## What you need
