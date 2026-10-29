@@ -141,7 +141,7 @@ impl Jwt {
     }
 
     /// The token and, for header tokens, the header it came from.
-    fn token<'a>(&self, req: &'a RequestHeader) -> Option<(&'a str, Option<HeaderName>)> {
+    fn token<'a>(&self, req: &'a RequestHeader) -> Token<'a> {
         let source = &self.source;
         let header = source
             .header
@@ -151,28 +151,47 @@ impl Jwt {
             });
         let defaulted =
             source.header.is_none() && source.cookie.is_none() && source.query.is_none();
-        if (defaulted || source.header.is_some())
-            && let Some(value) = req.headers.get(&header).and_then(|v| v.to_str().ok())
-        {
-            let token = if header == http::header::AUTHORIZATION {
-                value
-                    .strip_prefix("Bearer ")
-                    .or_else(|| value.strip_prefix("bearer "))?
-            } else {
-                value
-            };
-            return Some((token.trim(), Some(header)));
+        if defaulted || source.header.is_some() {
+            let values = req.headers.get_all(&header);
+            if values.iter().nth(1).is_some() {
+                return Token::Repeated;
+            }
+            if let Some(value) = values.iter().next().and_then(|v| v.to_str().ok()) {
+                let token = if header == http::header::AUTHORIZATION {
+                    match value
+                        .strip_prefix("Bearer ")
+                        .or_else(|| value.strip_prefix("bearer "))
+                    {
+                        Some(token) => token,
+                        None => return Token::Missing,
+                    }
+                } else {
+                    value
+                };
+                return Token::Found(token.trim(), Some(header));
+            }
         }
-        if let Some(name) = &source.cookie
-            && let Some(value) = crate::limits::cookie(req, name)
-        {
-            return Some((value, None));
+        if let Some(name) = &source.cookie {
+            let mut values = crate::limits::cookies(req, name);
+            if let Some(value) = values.next() {
+                if values.next().is_some() {
+                    return Token::Repeated;
+                }
+                return Token::Found(value, None);
+            }
         }
-        let name = source.query.as_deref()?;
-        req.uri.query()?.split('&').find_map(|pair| {
+        let (Some(name), Some(query)) = (source.query.as_deref(), req.uri.query()) else {
+            return Token::Missing;
+        };
+        let mut values = query.split('&').filter_map(|pair| {
             let (k, v) = pair.split_once('=')?;
-            (k == name).then_some((v, None))
-        })
+            (k == name).then_some(v)
+        });
+        match (values.next(), values.next()) {
+            (Some(value), None) => Token::Found(value, None),
+            (Some(_), Some(_)) => Token::Repeated,
+            (None, _) => Token::Missing,
+        }
     }
 
     async fn keys(&self) -> Vec<Arc<Vec<Key>>> {
@@ -269,6 +288,24 @@ async fn refresh_loop(remote: Weak<Remote>) {
     }
 }
 
+/// Where the token of a request is.
+enum Token<'a> {
+    /// The only token, and for header tokens the header it came from.
+    Found(&'a str, Option<HeaderName>),
+    /// No token where the middleware looks.
+    Missing,
+    /// The token header, cookie or query parameter appears more than once.
+    Repeated,
+}
+
+/// `400` for a request that repeats its token (RFC 6750 §3.1, `invalid_request`).
+fn invalid_request() -> Flow {
+    Flow::Reply(Reply::status(400).header(
+        http::header::WWW_AUTHENTICATE,
+        HeaderValue::from_static("Bearer error=\"invalid_request\""),
+    ))
+}
+
 fn unauthorized(error: Option<&str>) -> Flow {
     let challenge = match error {
         None => "Bearer".to_owned(),
@@ -297,8 +334,14 @@ impl Middleware for Jwt {
         for (_, header) in &self.claims_to_headers {
             req.remove_header(header);
         }
-        let Some((token, header)) = self.token(req).map(|(t, h)| (t.to_owned(), h)) else {
-            return unauthorized(None);
+        let (token, header) = match self.token(req) {
+            Token::Found(token, header) => (token.to_owned(), header),
+            Token::Missing => return unauthorized(None),
+            Token::Repeated => {
+                // The backend could read another copy than the one verified here.
+                tracing::debug!(middleware = %self.name, "JWT refused: more than one token");
+                return invalid_request();
+            }
         };
         let remote = self.keys().await;
         let keys: Vec<&Key> = self
