@@ -252,6 +252,7 @@ routes:
 
 - The copy is sent when the original request is done, with the same method, path, headers and body. Connection headers are removed.
 - Requests with a body over 64 KiB, WebSocket upgrades and `CONNECT` are not mirrored.
+- Only requests that reach the route's service are mirrored: a request refused by a middleware (for example `forward_auth`, `ip_allow` or `rate_limit`) or by a body limit is not copied.
 - At most 64 copies per route are in flight; more are dropped rather than queued, so a slow mirror never slows the route.
 - `rdock_mirror_requests_total{service, outcome}` counts copies `sent`, `failed`, `dropped`, `too_large` and with `no_backend`.
 - Copies repeat side effects: mirror to a service that does not write to your production data.

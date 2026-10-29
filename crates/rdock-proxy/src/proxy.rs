@@ -549,6 +549,7 @@ impl ProxyHttp for RdockProxy {
             }
         }
         ctx.mw = Some(cx);
+        start_mirror(session.req_header(), ctx, &route);
         Ok(false)
     }
 
@@ -565,6 +566,8 @@ impl ProxyHttp for RdockProxy {
         if let (Some(max), Some(chunk)) = (ctx.runtime.limits.max_body_bytes, body.as_ref()) {
             ctx.body_bytes += chunk.len() as u64;
             if ctx.body_bytes > max.as_u64() {
+                // A refused request is not mirrored, and its body copy is incomplete anyway.
+                ctx.mirror = None;
                 return Err(status_error(413, "request body too large"));
             }
         }
@@ -949,7 +952,7 @@ impl ProxyHttp for RdockProxy {
 }
 
 /// Per-request state that follows from the matched route: the service (a `split` picks its
-/// target here), gRPC-Web translation and whether this request is mirrored.
+/// target here) and gRPC-Web translation.
 fn start_route(session: &mut Session, ctx: &mut RequestCtx, route: &RouteRuntime) {
     ctx.service = Some(upstream::resolve(&route.service));
     if route.grpc_web {
@@ -959,9 +962,15 @@ fn start_route(session: &mut Session, ctx: &mut RequestCtx, route: &RouteRuntime
         grpc_web.request_header_filter(session.req_header_mut());
         ctx.grpc_web = Some(grpc_web);
     }
+}
+
+/// Whether this request is mirrored. Called once the middlewares let the request through: a
+/// request they refused (authentication, IP allow list, rate limit) never reaches the route's
+/// service, so it must not reach the mirror either.
+fn start_mirror(req: &RequestHeader, ctx: &mut RequestCtx, route: &RouteRuntime) {
     if let Some(mirror) = &route.mirror
         && fastrand::u32(0..100) < mirror.percent
-        && !is_upgrade(session.req_header())
+        && !is_upgrade(req)
     {
         ctx.mirror = Some(MirrorCopy::default());
     }
