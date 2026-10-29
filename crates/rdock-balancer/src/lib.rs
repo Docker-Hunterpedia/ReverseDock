@@ -65,7 +65,8 @@ pub struct RoundRobin {
 }
 
 impl RoundRobin {
-    fn pick(&self, choices: &[Choice<'_>]) -> Option<usize> {
+    /// Picks the index of one of `choices` by weight, or `None` when all weights are zero.
+    pub fn pick(&self, choices: &[Choice<'_>]) -> Option<usize> {
         let total: i64 = choices.iter().map(|c| i64::from(c.weight)).sum();
         if total == 0 {
             return None;

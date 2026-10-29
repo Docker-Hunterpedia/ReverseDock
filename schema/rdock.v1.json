@@ -2023,7 +2023,48 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "Translate gRPC-Web from browsers into gRPC for the backend (binary\n`application/grpc-web`; the service needs `scheme: h2c` or `https`).",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "grpc_web"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
         }
+      ]
+    },
+    "Mirror": {
+      "description": "Request mirroring (shadow traffic).",
+      "type": "object",
+      "properties": {
+        "percent": {
+          "description": "Share of requests copied, from 1 to 100.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "service": {
+          "description": "The service that receives the copies (`name` or `name@provider`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "service"
       ]
     },
     "Observability": {
@@ -2345,6 +2386,18 @@
           "items": {
             "type": "string"
           }
+        },
+        "mirror": {
+          "description": "Send a copy of requests to another service and ignore its answers.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Mirror"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "priority": {
           "description": "Higher priorities are evaluated first. `0` uses the rule length, like Traefik.",

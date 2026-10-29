@@ -46,6 +46,9 @@ pub struct Metrics {
     pub retries: IntCounterVec,
     /// Retries not made because the service's retry budget was used up.
     pub retry_budget_exhausted: IntCounterVec,
+    /// Mirrored copies by target service and outcome (`sent`, `failed`, `dropped`,
+    /// `too_large`, `no_backend`).
+    pub mirrors: IntCounterVec,
 }
 
 /// Creates `metric` and registers it in `registry`.
@@ -180,6 +183,12 @@ impl Metrics {
             "Retries refused because the retry budget was used up.",
             &["service"],
         )?;
+        let mirrors = counters(
+            &registry,
+            "rdock_mirror_requests_total",
+            "Copies of requests sent to mirror services.",
+            &["service", "outcome"],
+        )?;
         let build_info = gauges(
             &registry,
             "rdock_build_info",
@@ -204,6 +213,7 @@ impl Metrics {
             backend_ejections,
             retries,
             retry_budget_exhausted,
+            mirrors,
         })
     }
 

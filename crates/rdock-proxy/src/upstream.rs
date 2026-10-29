@@ -115,6 +115,30 @@ pub struct RequestKey<'a> {
     pub tried: &'a [String],
 }
 
+/// The service that serves a request to `service`: itself, or for a `split` service a
+/// target chosen by weight (smooth round-robin), followed through nested splits.
+#[must_use]
+pub fn resolve(service: &Arc<ServiceRuntime>) -> Arc<ServiceRuntime> {
+    let mut current = service.clone();
+    while !current.split.is_empty() {
+        let choices: Vec<Choice<'_>> = current
+            .split
+            .iter()
+            .map(|(target, weight)| Choice {
+                id: &target.name,
+                weight: *weight,
+                in_flight: 0,
+            })
+            .collect();
+        let Some(index) = current.split_balancer.pick(&choices) else {
+            break;
+        };
+        let next = current.split[index].0.clone();
+        current = next;
+    }
+    current
+}
+
 /// Picks a backend of `service` for a request.
 ///
 /// Backends that are unhealthy, ejected, paused or at `max_connections_per_backend` are left

@@ -28,7 +28,7 @@ use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
     ActiveCheck, BackendRuntime, Endpoint, HashOn, HealthRuntime, HttpsRedirect, ListenerRuntime,
-    PassiveCheck, RouteRuntime, Runtime, ServiceRuntime, StickyRuntime, UpstreamTls,
+    MirrorRuntime, PassiveCheck, RouteRuntime, Runtime, ServiceRuntime, StickyRuntime, UpstreamTls,
 };
 use crate::upstream::{Dns, ServiceFetcher};
 
@@ -176,19 +176,76 @@ fn load_certificates(config: &Config, out: &mut Vec<Diagnostic>) -> Vec<LoadedCe
     certs
 }
 
+/// Mirrored copies in flight per route; more are dropped rather than queued.
+const MIRRORS_IN_FLIGHT: usize = 64;
+
+/// Nested `split` services deeper than this are refused.
+const MAX_SPLIT_DEPTH: usize = 4;
+
 fn compile_services(
     config: &Config,
     env: &CompileEnv<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> HashMap<String, Arc<ServiceRuntime>> {
     let mut services = HashMap::new();
+    let mut depth: HashMap<String, usize> = HashMap::new();
+    let mut pending: Vec<(&String, &Service)> = Vec::new();
     for (name, service) in &config.services {
-        let path = path_key("services", name);
-        match compile_service(name, service, env) {
+        if !service.split.is_empty() {
+            pending.push((name, service));
+            continue;
+        }
+        match compile_service(name, service, Vec::new(), env) {
             Ok(runtime) => {
                 services.insert(name.clone(), Arc::new(runtime));
+                depth.insert(name.clone(), 0);
             }
-            Err(message) => out.push(Diagnostic::error(path, message)),
+            Err(message) => out.push(Diagnostic::error(path_key("services", name), message)),
+        }
+    }
+    // Splits refer to other services: compile each once all its targets exist.
+    while !pending.is_empty() {
+        let before = pending.len();
+        pending.retain(|(name, service)| {
+            let targets: Option<Vec<_>> = service
+                .split
+                .iter()
+                .map(|t| services.get(key(&t.service)).map(|s| (s.clone(), t.weight)))
+                .collect();
+            let Some(targets) = targets else {
+                return true;
+            };
+            let path = path_key("services", name);
+            let level = 1 + service
+                .split
+                .iter()
+                .filter_map(|t| depth.get(key(&t.service)))
+                .max()
+                .unwrap_or(&0);
+            if level > MAX_SPLIT_DEPTH {
+                out.push(Diagnostic::error(
+                    format!("{path}.split"),
+                    format!("splits are nested more than {MAX_SPLIT_DEPTH} levels deep"),
+                ));
+            } else {
+                match compile_service(name, service, targets, env) {
+                    Ok(runtime) => {
+                        services.insert((*name).clone(), Arc::new(runtime));
+                        depth.insert((*name).clone(), level);
+                    }
+                    Err(message) => out.push(Diagnostic::error(path, message)),
+                }
+            }
+            false
+        });
+        if pending.len() == before {
+            for (name, _) in &pending {
+                out.push(Diagnostic::error(
+                    format!("{}.split", path_key("services", name)),
+                    "a split target does not exist or the splits form a cycle",
+                ));
+            }
+            break;
         }
     }
     services
@@ -197,6 +254,7 @@ fn compile_services(
 fn compile_service(
     name: &str,
     service: &Service,
+    split: Vec<(Arc<ServiceRuntime>, u32)>,
     env: &CompileEnv<'_>,
 ) -> Result<ServiceRuntime, String> {
     let dns = env.dns;
@@ -250,6 +308,8 @@ fn compile_service(
         pool: env.backends.pool(name),
         members: ArcSwapOption::empty(),
         health: compile_health(service.health.as_ref())?,
+        split,
+        split_balancer: RoundRobin::default(),
         retries: service.retries.clone().filter(|r| r.attempts > 0),
         max_requests: service.max_requests,
         max_per_backend: service.max_connections_per_backend,
@@ -445,6 +505,31 @@ fn build_middlewares(
     built
 }
 
+/// Rules that match every request.
+const CATCH_ALL: [&str; 2] = ["PathPrefix(`/`)", "Host(`*`)"];
+
+/// Warns about routes that can never match because an earlier route on the same listener has
+/// the same rule or matches everything (M-RT-02).
+fn report_shadowed(listener: &str, routes: &[Arc<RouteRuntime>], out: &mut Vec<Diagnostic>) {
+    for (i, route) in routes.iter().enumerate() {
+        let earlier = routes[..i]
+            .iter()
+            .find(|e| e.expr == route.expr || CATCH_ALL.contains(&e.expr.as_str()));
+        if let Some(earlier) = earlier {
+            out.push(
+                Diagnostic::warning(
+                    format!("{}.match", path_key("routes", &route.name)),
+                    format!(
+                        "this route never matches on listener `{listener}`: route `{}` comes first and matches the same requests",
+                        earlier.name
+                    ),
+                )
+                .with_hint("give this route a higher `priority`, or make its rule more specific"),
+            );
+        }
+    }
+}
+
 /// The expression of a route's match, and the rule length used as its default priority.
 fn route_expr(route: &Route) -> Option<(Expr, usize)> {
     match &route.matcher {
@@ -515,6 +600,7 @@ fn compile_listeners(
                 .cmp(&a.priority)
                 .then_with(|| a.name.cmp(&b.name))
         });
+        report_shadowed(&listener.name, &listener.routes, out);
         if listener.tls.is_none()
             && config.defaults.redirect_http_to_https
             && let Some(port) = https_port
@@ -576,13 +662,30 @@ fn compile_route(
     } else {
         route.priority
     };
+    let mirror = match &route.mirror {
+        Some(m) => {
+            let Some(target) = services.get(key(&m.service)) else {
+                out.push(unavailable("mirror service", &m.service));
+                return None;
+            };
+            Some(MirrorRuntime {
+                service: target.clone(),
+                percent: m.percent,
+                slots: Arc::new(tokio::sync::Semaphore::new(MIRRORS_IN_FLIGHT)),
+            })
+        }
+        None => None,
+    };
     Some(Arc::new(RouteRuntime {
         name: Arc::from(name),
         priority,
         rule,
         service: service.clone(),
+        expr: expr.to_string(),
+        grpc_web: chain.iter().any(|m| m.translates_grpc_web()),
         middlewares: chain.into(),
         timeouts: route.timeouts,
+        mirror,
     }))
 }
 

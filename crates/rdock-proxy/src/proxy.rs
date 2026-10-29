@@ -11,6 +11,7 @@ use bytes::Bytes;
 use http::{HeaderValue, Version};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::modules::http::HttpModules;
+use pingora::protocols::http::bridge::grpc_web::GrpcWebCtx;
 use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 use pingora::{Error, ErrorSource, ErrorType};
@@ -22,7 +23,9 @@ use rdock_observability::{AccessRecord, Metrics, rfc3339};
 use crate::errorpage;
 use crate::forwarded::{self, Forwarding};
 use crate::router::{Facts, normalize_host};
-use crate::runtime::{Candidate, ListenerRuntime, Member, RouteRuntime, Runtime, ServiceRuntime};
+use crate::runtime::{
+    Candidate, ListenerRuntime, Member, MirrorRuntime, RouteRuntime, Runtime, ServiceRuntime,
+};
 use crate::upstream;
 
 /// State shared by every listener.
@@ -34,6 +37,8 @@ pub struct Shared {
     pub metrics: Metrics,
     /// ACME challenge answers.
     pub challenges: Arc<rdock_tls::Challenges>,
+    /// Client for mirrored requests.
+    pub client: Arc<rdock_middleware::HttpClient>,
 }
 
 /// The proxy of one listener.
@@ -132,6 +137,77 @@ impl RdockProxy {
         true
     }
 
+    /// Sends the mirrored copy in the background; its answer is read and dropped.
+    fn send_mirror(&self, mirror: &MirrorRuntime, request: &RequestHeader, copy: MirrorCopy) {
+        let metrics = self.shared.metrics.clone();
+        let target = upstream::resolve(&mirror.service);
+        let count = |outcome: &str| {
+            metrics
+                .mirrors
+                .with_label_values(&[&*target.name, outcome])
+                .inc();
+        };
+        let Some(body) = copy.body() else {
+            count("too_large");
+            return;
+        };
+        let Ok(slot) = mirror.slots.clone().try_acquire_owned() else {
+            count("dropped");
+            return;
+        };
+        let Some(selected) = upstream::select(&target, upstream::RequestKey::default()) else {
+            count("no_backend");
+            return;
+        };
+        let mut req = request.clone();
+        for name in HOP_BY_HOP {
+            req.remove_header(*name);
+        }
+        let candidate = &selected.member.candidate;
+        let replace_host =
+            !target.pass_host_header || !req.headers.contains_key(http::header::HOST);
+        if replace_host
+            && req
+                .insert_header(
+                    http::header::HOST,
+                    backend_authority(target.scheme, candidate),
+                )
+                .is_err()
+        {
+            return;
+        }
+        let timeouts = rdock_model::route::RouteTimeouts::default();
+        let Ok(peer) = upstream::peer(&target, candidate, &timeouts) else {
+            return;
+        };
+        let client = self.shared.client.clone();
+        let timeout = target.timeouts.read.as_std();
+        let metrics = self.shared.metrics.clone();
+        tokio::spawn(async move {
+            let _slot = slot;
+            let _in_flight = selected.member.state.begin();
+            let result = if body.is_empty() {
+                client
+                    .send(&peer, req, timeout, MIRROR_BODY)
+                    .await
+                    .map(drop)
+            } else {
+                client
+                    .send_with_body(&peer, req, body, timeout, MIRROR_BODY)
+                    .await
+                    .map(drop)
+            };
+            let outcome = match result {
+                Ok(()) | Err(rdock_middleware::FetchError::TooLarge(_)) => "sent",
+                Err(_) => "failed",
+            };
+            metrics
+                .mirrors
+                .with_label_values(&[&*target.name, outcome])
+                .inc();
+        });
+    }
+
     /// The proxy for listener `listener`.
     #[must_use]
     pub fn new(listener: Arc<str>, shared: Arc<Shared>) -> Self {
@@ -154,6 +230,12 @@ pub struct RequestCtx {
     path: String,
     query_len: usize,
     route: Option<Arc<RouteRuntime>>,
+    /// The service the request goes to: the route's, or the target a `split` chose.
+    service: Option<Arc<ServiceRuntime>>,
+    /// The request body kept for a mirrored copy; `None` when this request is not mirrored.
+    mirror: Option<MirrorCopy>,
+    /// gRPC-Web translation state, for routes with the `grpc_web` middleware.
+    grpc_web: Option<GrpcWebCtx>,
     mw: Option<MwContext>,
     upstream: Option<Candidate>,
     member: Option<Arc<Member>>,
@@ -306,6 +388,9 @@ impl ProxyHttp for RdockProxy {
             path: String::new(),
             query_len: 0,
             route: None,
+            service: None,
+            mirror: None,
+            grpc_web: None,
             mw: None,
             upstream: None,
             member: None,
@@ -446,6 +531,7 @@ impl ProxyHttp for RdockProxy {
         session
             .req_header_mut()
             .insert_header("x-request-id", &*ctx.request_id)?;
+        start_route(session, ctx, &route);
         ctx.route = Some(route.clone());
         let mut cx = MwContext::new(
             client_ip,
@@ -463,6 +549,7 @@ impl ProxyHttp for RdockProxy {
             }
         }
         ctx.mw = Some(cx);
+        start_mirror(session.req_header(), ctx, &route);
         Ok(false)
     }
 
@@ -473,9 +560,14 @@ impl ProxyHttp for RdockProxy {
         _end_of_stream: bool,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
+        if let (Some(copy), Some(chunk)) = (ctx.mirror.as_mut(), body.as_ref()) {
+            copy.push(chunk);
+        }
         if let (Some(max), Some(chunk)) = (ctx.runtime.limits.max_body_bytes, body.as_ref()) {
             ctx.body_bytes += chunk.len() as u64;
             if ctx.body_bytes > max.as_u64() {
+                // A refused request is not mirrored, and its body copy is incomplete anyway.
+                ctx.mirror = None;
                 return Err(status_error(413, "request body too large"));
             }
         }
@@ -487,17 +579,15 @@ impl ProxyHttp for RdockProxy {
         session: &mut Session,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<Box<HttpPeer>> {
-        let route = ctx
-            .route
-            .clone()
-            .ok_or_else(|| status_error(404, "no route"))?;
+        let (Some(route), Some(service)) = (ctx.route.clone(), ctx.service.clone()) else {
+            return Err(status_error(404, "no route"));
+        };
         // The first attempt of a request counts against the pool's limit; retries of a request
         // already in flight do not.
         if ctx.in_flight.is_none()
-            && route
-                .service
+            && service
                 .max_requests
-                .is_some_and(|max| route.service.pool.in_flight() >= max)
+                .is_some_and(|max| service.pool.in_flight() >= max)
         {
             return Err(status_error(503, "the service is at max_requests"));
         }
@@ -509,10 +599,10 @@ impl ProxyHttp for RdockProxy {
             client_ip: ctx.client_ip,
             tried: &ctx.tried,
         };
-        let selected = upstream::select(&route.service, key)
+        let selected = upstream::select(&service, key)
             .ok_or_else(|| status_error(503, "the service has no available backend"))?;
         ctx.tried.push(selected.member.id.clone());
-        let peer = upstream::peer(&route.service, &selected.member.candidate, &route.timeouts)?;
+        let peer = upstream::peer(&service, &selected.member.candidate, &route.timeouts)?;
         ctx.in_flight = Some(selected.member.state.begin());
         ctx.upstream = Some(selected.member.candidate.clone());
         ctx.member = Some(selected.member);
@@ -526,16 +616,16 @@ impl ProxyHttp for RdockProxy {
         upstream_request: &mut RequestHeader,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
-        let (Some(route), Some(candidate)) = (&ctx.route, &ctx.upstream) else {
+        let (Some(service), Some(candidate)) = (&ctx.service, &ctx.upstream) else {
             return Ok(());
         };
         // HTTP/1.0 clients may omit Host; backends (and HTTP/2) need one.
         let missing = !upstream_request.headers.contains_key(http::header::HOST)
             && upstream_request.uri.authority().is_none();
-        if !route.service.pass_host_header || missing {
+        if !service.pass_host_header || missing {
             upstream_request.insert_header(
                 http::header::HOST,
-                backend_authority(route.service.scheme, candidate),
+                backend_authority(service.scheme, candidate),
             )?;
         }
         Ok(())
@@ -549,18 +639,16 @@ impl ProxyHttp for RdockProxy {
     ) -> pingora::Result<()> {
         strip_response_hop_by_hop(upstream_response);
         let status = upstream_response.status.as_u16();
-        if let Some(route) = &ctx.route {
-            let failed = route
-                .service
-                .health
-                .passive
-                .as_ref()
-                .is_some_and(|p| p.statuses.contains(&status));
-            self.report(&route.service, ctx.member.as_ref(), !failed);
-        }
-        let route = ctx.route.clone();
-        if let Some(route) = route
-            && let Some(retries) = &route.service.retries
+        let Some(service) = ctx.service.clone() else {
+            return Ok(());
+        };
+        let failed = service
+            .health
+            .passive
+            .as_ref()
+            .is_some_and(|p| p.statuses.contains(&status));
+        self.report(&service, ctx.member.as_ref(), !failed);
+        if let Some(retries) = &service.retries
             && let Some(kind) = retries
                 .on
                 .iter()
@@ -575,7 +663,7 @@ impl ProxyHttp for RdockProxy {
             {
                 member.state.pause(Instant::now() + wait.min(MAX_PAUSE));
             }
-            if self.take_retry(session, ctx, &route.service, kind) {
+            if self.take_retry(session, ctx, &service, kind) {
                 ctx.status_retry = true;
                 let mut e = Error::create(
                     ErrorType::HTTPStatus(status),
@@ -596,6 +684,9 @@ impl ProxyHttp for RdockProxy {
         upstream_response: &mut ResponseHeader,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
+        if let Some(grpc_web) = ctx.grpc_web.as_mut() {
+            grpc_web.response_header_filter(upstream_response);
+        }
         // An HTTP/1.0 backend must not turn the client's HTTP/1.1 connection into HTTP/1.0.
         if !session.is_http2() {
             upstream_response.set_version(Version::HTTP_11);
@@ -641,6 +732,19 @@ impl ProxyHttp for RdockProxy {
         Ok(None)
     }
 
+    async fn response_trailer_filter(
+        &self,
+        _session: &mut Session,
+        upstream_trailers: &mut http::HeaderMap,
+        ctx: &mut RequestCtx,
+    ) -> pingora::Result<Option<Bytes>> {
+        // gRPC-Web carries the trailers as a final body frame.
+        match ctx.grpc_web.as_mut() {
+            Some(grpc_web) => grpc_web.response_trailer_filter(upstream_trailers),
+            None => Ok(None),
+        }
+    }
+
     fn suppress_error_log(&self, _session: &Session, _ctx: &RequestCtx, _error: &Error) -> bool {
         // Failures are reported in the access log.
         true
@@ -653,7 +757,7 @@ impl ProxyHttp for RdockProxy {
         ctx: &mut RequestCtx,
         e: Box<Error>,
     ) -> Box<Error> {
-        if let Some(route) = &ctx.route {
+        if let Some(service) = &ctx.service {
             let kind = if matches!(e.etype(), ErrorType::ConnectTimedout) {
                 "timeout"
             } else {
@@ -662,12 +766,12 @@ impl ProxyHttp for RdockProxy {
             self.shared
                 .metrics
                 .upstream_errors
-                .with_label_values(&[&*route.service.name, kind])
+                .with_label_values(&[&*service.name, kind])
                 .inc();
-            self.report(&route.service, ctx.member.as_ref(), false);
+            self.report(service, ctx.member.as_ref(), false);
         }
         let mut e = e;
-        let service = ctx.route.as_ref().map(|r| r.service.clone());
+        let service = ctx.service.clone();
         if let Some(service) = service
             && self.take_retry(session, ctx, &service, RetryOn::Connect)
         {
@@ -688,9 +792,9 @@ impl ProxyHttp for RdockProxy {
         // on a reused pooled connection is the pool's, not the backend's.
         if session.response_written().is_none()
             && !client_reused
-            && let Some(route) = &ctx.route
+            && let Some(service) = &ctx.service
         {
-            self.report(&route.service, ctx.member.as_ref(), false);
+            self.report(service, ctx.member.as_ref(), false);
         }
         let mut e = e.more_context(format!("Peer: {peer}"));
         if std::mem::take(&mut ctx.status_retry) {
@@ -700,14 +804,14 @@ impl ProxyHttp for RdockProxy {
         // Never retry once the client saw a response, or when the body cannot be replayed.
         // A reused pooled connection that closed under us is retried once for idempotent
         // requests, as Pingora does; everything else follows `retries`.
-        if session.response_written().is_some()
-            || !session.req_header().method.is_idempotent()
-            || session.as_ref().retry_buffer_truncated()
-        {
+        if session.response_written().is_some() || session.as_ref().retry_buffer_truncated() {
             e.set_retry(false);
             return e;
         }
-        if client_reused && matches!(e.retry, pingora::RetryType::ReusedOnly) {
+        if client_reused
+            && matches!(e.retry, pingora::RetryType::ReusedOnly)
+            && session.req_header().method.is_idempotent()
+        {
             e.retry.decide_reuse(true);
             return e;
         }
@@ -719,7 +823,7 @@ impl ProxyHttp for RdockProxy {
         } else {
             RetryOn::Reset
         };
-        let service = ctx.route.as_ref().map(|r| r.service.clone());
+        let service = ctx.service.clone();
         let retry = service.is_some_and(|service| self.take_retry(session, ctx, &service, kind));
         e.set_retry(retry);
         e
@@ -776,12 +880,18 @@ impl ProxyHttp for RdockProxy {
 
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut RequestCtx) {
         ctx.in_flight = None;
+        if let (Some(copy), Some(route)) = (ctx.mirror.take(), &ctx.route)
+            && let Some(mirror) = &route.mirror
+        {
+            self.send_mirror(mirror, session.req_header(), copy);
+        }
         let status = session
             .response_written()
             .map_or_else(|| e.map_or(0, error_status), |r| r.status.as_u16());
         let route = ctx.route.as_ref();
         let route_name = route.map_or("", |r| &*r.name);
-        let service_name = route.map_or("", |r| &*r.service.name);
+        let service = ctx.service.clone();
+        let service_name = service.as_ref().map_or("", |s| &*s.name);
         let elapsed = ctx.started.elapsed();
         self.shared.metrics.observe_request(
             (&self.listener, route_name, service_name),
@@ -823,7 +933,7 @@ impl ProxyHttp for RdockProxy {
             duration_ms: elapsed.as_secs_f64() * 1000.0,
             listener: self.listener.to_string(),
             route: route.map(|r| r.name.to_string()),
-            service: route.map(|r| r.service.name.to_string()),
+            service: service.as_ref().map(|s| s.name.to_string()),
             upstream: ctx.upstream.as_ref().map(ToString::to_string),
             tls_version: ssl.as_ref().map(|s| s.version.to_string()),
             tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
@@ -839,6 +949,71 @@ impl ProxyHttp for RdockProxy {
         };
         log.write(&record);
     }
+}
+
+/// Per-request state that follows from the matched route: the service (a `split` picks its
+/// target here) and gRPC-Web translation.
+fn start_route(session: &mut Session, ctx: &mut RequestCtx, route: &RouteRuntime) {
+    ctx.service = Some(upstream::resolve(&route.service));
+    if route.grpc_web {
+        let mut grpc_web = GrpcWebCtx::default();
+        grpc_web.init();
+        // Turns `application/grpc-web` into `application/grpc`; other requests pass.
+        grpc_web.request_header_filter(session.req_header_mut());
+        ctx.grpc_web = Some(grpc_web);
+    }
+}
+
+/// Whether this request is mirrored. Called once the middlewares let the request through: a
+/// request they refused (authentication, IP allow list, rate limit) never reaches the route's
+/// service, so it must not reach the mirror either.
+fn start_mirror(req: &RequestHeader, ctx: &mut RequestCtx, route: &RouteRuntime) {
+    if let Some(mirror) = &route.mirror
+        && fastrand::u32(0..100) < mirror.percent
+        && !is_upgrade(req)
+    {
+        ctx.mirror = Some(MirrorCopy::default());
+    }
+}
+
+/// Largest request body copied to a mirror (Pingora's replay buffer is the same size).
+const MIRROR_BODY: usize = 64 * 1024;
+
+/// Request headers that belong to the client's connection, not to a copy.
+const HOP_BY_HOP: &[&str] = &[
+    "connection",
+    "keep-alive",
+    "proxy-connection",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "upgrade",
+];
+
+/// The request body of a mirrored request, up to [`MIRROR_BODY`].
+#[derive(Debug, Default)]
+struct MirrorCopy {
+    body: bytes::BytesMut,
+    too_large: bool,
+}
+
+impl MirrorCopy {
+    fn push(&mut self, chunk: &[u8]) {
+        if self.too_large || self.body.len() + chunk.len() > MIRROR_BODY {
+            self.too_large = true;
+            self.body.clear();
+        } else {
+            self.body.extend_from_slice(chunk);
+        }
+    }
+
+    fn body(self) -> Option<Bytes> {
+        (!self.too_large).then(|| self.body.freeze())
+    }
+}
+
+fn is_upgrade(req: &RequestHeader) -> bool {
+    req.headers.contains_key(http::header::UPGRADE) || req.method == http::Method::CONNECT
 }
 
 /// Longest pause a backend's `Retry-After` can cause.

@@ -101,12 +101,29 @@ pub struct RouteRuntime {
     pub priority: i64,
     /// Compiled rule.
     pub rule: Rule,
+    /// The rule in canonical form, to find routes that can never match.
+    pub expr: String,
     /// Target service.
     pub service: Arc<ServiceRuntime>,
     /// Middlewares, in order.
     pub middlewares: Arc<[Arc<dyn Middleware>]>,
     /// Per-route timeout overrides.
     pub timeouts: RouteTimeouts,
+    /// Copies of requests sent to another service.
+    pub mirror: Option<MirrorRuntime>,
+    /// Translate gRPC-Web to gRPC (the `grpc_web` middleware).
+    pub grpc_web: bool,
+}
+
+/// Request mirroring of a route.
+#[derive(Debug)]
+pub struct MirrorRuntime {
+    /// The service that receives copies.
+    pub service: Arc<ServiceRuntime>,
+    /// Share of requests copied, in percent.
+    pub percent: u32,
+    /// Bounds the copies in flight; a copy that finds no slot is dropped.
+    pub slots: Arc<tokio::sync::Semaphore>,
 }
 
 /// A backend pool.
@@ -128,6 +145,10 @@ pub struct ServiceRuntime {
     pub pool: Arc<Pool>,
     /// Health checks and ejection.
     pub health: HealthRuntime,
+    /// Weighted targets of a `split` service (then `backends` is empty).
+    pub split: Vec<(Arc<ServiceRuntime>, u32)>,
+    /// Chooses among `split` targets.
+    pub split_balancer: rdock_balancer::RoundRobin,
     /// Retry policy.
     pub retries: Option<rdock_model::service::Retries>,
     /// Requests in flight across the pool before new ones get `503`.

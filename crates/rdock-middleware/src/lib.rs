@@ -131,6 +131,11 @@ pub trait Middleware: Send + Sync + fmt::Debug {
     /// Changes the response before it is sent to the client.
     async fn response(&self, _resp: &mut ResponseHeader, _cx: &mut Context) {}
 
+    /// Whether the proxy translates gRPC-Web for routes using this middleware.
+    fn translates_grpc_web(&self) -> bool {
+        false
+    }
+
     /// A page for an error the proxy produced itself (502, 503, 504), if this middleware has
     /// one. Returns the content type and body.
     async fn error_page(&self, _status: u16, _cx: &Context) -> Option<(HeaderValue, Bytes)> {
@@ -177,6 +182,17 @@ pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, BuildError> {
     })
 }
 
+/// Marks a route for gRPC-Web translation, which the proxy does.
+#[derive(Debug)]
+struct GrpcWeb;
+
+#[async_trait]
+impl Middleware for GrpcWeb {
+    fn translates_grpc_web(&self) -> bool {
+        true
+    }
+}
+
 /// Builds the middleware `name` from its configuration.
 pub fn build(
     name: &str,
@@ -199,6 +215,8 @@ pub fn build(
         Config::Compress(c) => Arc::new(compress::Compress::new(c)),
         Config::Errors(c) => Arc::new(errors::Errors::new(c, env)?),
         Config::Maintenance(c) => Arc::new(maintenance::Maintenance::new(c)?),
+        // The proxy converts the protocol itself (it needs the trailers); see `rdock-proxy`.
+        Config::GrpcWeb(_) => Arc::new(GrpcWeb),
     })
 }
 

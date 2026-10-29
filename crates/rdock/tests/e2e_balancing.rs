@@ -88,7 +88,11 @@ async fn least_requests_avoids_busy_backends() {
     let port = pool.port;
     // Two slow requests occupy two backends; every short request meanwhile goes to the third.
     let slow = || tokio::spawn(client::http1(addr(port), get("a", "/slow/1500")));
-    let (a, b) = (slow(), slow());
+    // Started a moment apart: two requests picked at the same instant may both see an idle
+    // backend before either is counted.
+    let a = slow();
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    let b = slow();
     tokio::time::sleep(Duration::from_millis(300)).await;
     let idle = client::http1(addr(port), get("a", "/")).await;
     let idle = idle.header("x-backend").unwrap().to_owned();

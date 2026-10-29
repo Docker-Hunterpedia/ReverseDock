@@ -384,6 +384,40 @@ impl Validator<'_> {
                 let p = path_index(&format!("{path}.middlewares"), i);
                 self.check_reference(&p, "middleware", middleware, &self.config.middlewares);
             }
+            if let Some(mirror) = &route.mirror {
+                let p = format!("{path}.mirror");
+                self.check_reference(
+                    &format!("{p}.service"),
+                    "service",
+                    &mirror.service,
+                    &self.config.services,
+                );
+                if !(1..=100).contains(&mirror.percent) {
+                    self.error(format!("{p}.percent"), "must be between 1 and 100");
+                }
+                if mirror.service == route.service {
+                    self.warning(
+                        format!("{p}.service"),
+                        "the mirror is the route's own service, so it gets every request twice",
+                    );
+                }
+            }
+            let grpc_web = route
+                .middlewares
+                .iter()
+                .any(|m| matches!(self.config.middlewares.get(m), Some(Middleware::GrpcWeb(_))));
+            if grpc_web
+                && self
+                    .config
+                    .services
+                    .get(&route.service)
+                    .is_some_and(|s| s.scheme == Scheme::Http && s.split.is_empty())
+            {
+                self.error(
+                    format!("{path}.middlewares"),
+                    "gRPC-Web is translated to gRPC, which needs HTTP/2: set the service `scheme` to `h2c` or `https`",
+                );
+            }
             self.check_route_tls(&path, route, expr.as_ref());
         }
     }
@@ -867,6 +901,7 @@ impl Validator<'_> {
                         );
                     }
                 }
+                Middleware::GrpcWeb(_) => {}
             }
         }
     }

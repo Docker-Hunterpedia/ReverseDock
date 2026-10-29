@@ -42,7 +42,15 @@ pub enum Middleware {
     Errors(ErrorsConfig),
     /// Maintenance mode.
     Maintenance(MaintenanceConfig),
+    /// Translate gRPC-Web from browsers into gRPC for the backend (binary
+    /// `application/grpc-web`; the service needs `scheme: h2c` or `https`).
+    GrpcWeb(GrpcWebConfig),
 }
+
+/// gRPC-Web translation has no settings.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct GrpcWebConfig {}
 
 /// Header changes for requests (to the backend) and responses (to the client).
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]

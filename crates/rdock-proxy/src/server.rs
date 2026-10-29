@@ -104,15 +104,17 @@ impl DataPlane {
     #[must_use]
     pub fn new(metrics: Metrics, empty: Runtime) -> Self {
         let resolver = Arc::new(SniResolver::new(CertIndex::default()));
+        let client = Arc::new(HttpClient::default());
         Self {
             shared: Arc::new(Shared {
                 runtime: ArcSwap::from_pointee(empty),
                 metrics,
                 challenges: resolver.challenges(),
+                client: client.clone(),
             }),
             resolver,
             dns: Arc::new(Dns::default()),
-            client: Arc::new(HttpClient::default()),
+            client,
             cloudflare: Arc::new(ArcSwap::from_pointee(Vec::new())),
             backends: rdock_balancer::Registry::default(),
             checkers: crate::health::Checkers::default(),
