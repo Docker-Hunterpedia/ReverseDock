@@ -80,43 +80,43 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 ## M — Medium traffic (P1): production workloads
 
 ### M-LB · Load balancing and health
-- [ ] M-LB-01 Round-robin, weighted round-robin, random, power-of-two-choices, least-connections, least-requests
-- [ ] M-LB-02 Consistent hashing (ketama) and IP-hash; header/cookie hashing
-- [ ] M-LB-03 Sticky sessions (signed cookie, key rotation, fallback when backend gone)
-- [ ] M-LB-04 Active health checks: HTTP(S) (status/body match), TCP, gRPC health protocol; configurable interval/timeout/thresholds
-- [ ] M-LB-05 Passive health: error/timeout counting, ejection, slow recovery (slow-start)
-- [ ] M-LB-06 Retries only for safe/idempotent or replayable requests; per-route retry budget; `Retry-After` awareness
-- [ ] M-LB-07 Circuit breaker per backend/service with explicit states and half-open probes
+- [x] M-LB-01 Round-robin, weighted round-robin, random, power-of-two-choices, least-connections, least-requests
+- [x] M-LB-02 Consistent hashing (ketama) and IP-hash; header/cookie hashing
+- [x] M-LB-03 Sticky sessions (signed cookie, key rotation, fallback when backend gone)
+- [x] M-LB-04 Active health checks: HTTP(S) (status/body match), TCP, gRPC health protocol; configurable interval/timeout/thresholds
+- [x] M-LB-05 Passive health: error/timeout counting, ejection, slow recovery (slow-start)
+- [x] M-LB-06 Retries only for safe/idempotent or replayable requests; per-route retry budget; `Retry-After` awareness
+- [x] M-LB-07 Circuit breaker per backend/service with explicit states and half-open probes
 - [ ] M-LB-08 Connection limits per upstream; connection-pool sizing and idle eviction
-- [ ] M-LB-09 Backup/failover pools; fail-open vs fail-closed policy
-- [ ] M-LB-10 DNS (A/AAAA/SRV) upstream discovery honouring TTL
+- [x] M-LB-09 Backup/failover pools; fail-open vs fail-closed policy
+- [x] M-LB-10 DNS (A/AAAA/SRV) upstream discovery honouring TTL
 
 ### M-TLS · TLS and identity in production
-- [ ] M-TLS-01 Client mTLS: CA-pinned verification per listener/route (`optional`/`required`), identity exposed as headers; upstream mTLS with distinct trust roots
-- [ ] M-SEC-01 JWT validation middleware (JWKS with caching and rotation, issuer/audience/expiry checks, claims → headers, per route)
+- [x] M-TLS-01 Client mTLS: CA-pinned verification per listener/route (`optional`/`required`), identity exposed as headers; upstream mTLS with distinct trust roots
+- [x] M-SEC-01 JWT validation middleware (JWKS with caching and rotation, issuer/audience/expiry checks, claims → headers, per route)
 
 ### M-RT · Production routing
 - [ ] ~~M-RT-01~~ merged into B-NET-04 (regex/header/query routing is needed for Traefik-label compatibility in v0.2)
-- [ ] M-RT-02 Deterministic priorities (explicit > rule length), shadowed-route diagnostics
-- [ ] M-RT-03 Weighted traffic split, canary, blue/green atomic cutover with draining
-- [ ] M-RT-04 Request mirroring (sanitised, percentage-based)
-- [ ] M-RT-05 Per-route middleware chains with explicit order
-- [ ] M-RT-06 Multi-tenant host routing; API version routing (path/header)
-- [ ] M-RT-07 gRPC-Web ↔ gRPC translation for browser clients
+- [x] M-RT-02 Deterministic priorities (explicit > rule length), shadowed-route diagnostics
+- [x] M-RT-03 Weighted traffic split, canary, blue/green atomic cutover with draining
+- [x] M-RT-04 Request mirroring (sanitised, percentage-based)
+- [x] M-RT-05 Per-route middleware chains with explicit order
+- [x] M-RT-06 Multi-tenant host routing; API version routing (path/header)
+- [x] M-RT-07 gRPC-Web ↔ gRPC translation for browser clients
 
 ### M-TM · Traffic management
-- [ ] M-TM-01 Rate limits keyed by IP, header, cookie, JWT claim, route; burst + sustained
-- [ ] M-TM-02 Concurrency limits with queue and queue deadline
-- [ ] M-TM-03 Load shedding / overload protection (CPU, inflight, memory watermarks)
-- [ ] M-TM-04 Bandwidth limits per route/client
+- [x] M-TM-01 Rate limits keyed by IP, header, cookie, JWT claim, route; burst + sustained
+- [x] M-TM-02 Concurrency limits with queue and queue deadline
+- [x] M-TM-03 Load shedding / overload protection (CPU, inflight, memory watermarks)
+- [x] M-TM-04 Bandwidth limits per route/client
 - [ ] M-TM-05 Buffering controls (request/response, upload streaming)
-- [ ] M-TM-06 Compression: gzip, brotli, zstd (negotiated, min size, content types)
-- [ ] M-TM-07 Per-route timeouts and body limits override
+- [x] M-TM-06 Compression: gzip, brotli, zstd (negotiated, min size, content types)
+- [x] M-TM-07 Per-route timeouts and body limits override
 
 ### M-OBS · Observability and administration
-- [ ] M-OBS-01 OpenTelemetry traces (OTLP), W3C `traceparent`, sampling
-- [ ] M-OBS-02 Per-route/service metrics with bounded labels; p50/p95/p99
-- [ ] M-OBS-03 Log sampling, structured export (Loki/OpenSearch via stdout or OTLP logs)
+- [x] M-OBS-01 OpenTelemetry traces (OTLP), W3C `traceparent`, sampling
+- [x] M-OBS-02 Per-route/service metrics with bounded labels; p50/p95/p99
+- [x] M-OBS-03 Log sampling, structured export (Loki/OpenSearch via stdout or OTLP logs)
 - [ ] M-OBS-04 Alert rules (cert expiry, backend down, error-rate) → webhook, email (SMTP), Slack/Discord-compatible webhooks
 - [ ] M-OBS-05 Grafana dashboard JSON shipped in repo
 
@@ -131,7 +131,7 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [ ] M-L4-02 TLS termination for TCP routes (databases, MQTT, SMTP-with-TLS)
 - [ ] M-L4-03 PROXY protocol v1/v2 inbound (trusted sources only) and outbound
 - [ ] M-L4-04 UDP relay with session idle timeouts (P2)
-- [ ] M-L4-05 TCP health checks shared with HTTP checker framework
+- [x] M-L4-05 TCP health checks shared with HTTP checker framework
 
 ### M-SWM · Docker Swarm
 Tracked as W-SWM-01…03 below.
@@ -172,7 +172,7 @@ Tracked as W-SWM-01…03 below.
 - [ ] H-SEC-07 Tenant isolation for config, API scopes and metrics
 
 ### H-ENG · Reliability and performance engineering (P1 onward, continuous)
-- [ ] H-ENG-01 Benchmarks: sustained/burst, connection churn, long-lived WS/SSE, TLS handshakes, tail latency; same hardware vs NGINX/Traefik/Caddy/HAProxy; published scripts + results
+- [x] H-ENG-01 Benchmarks: sustained/burst, connection churn, long-lived WS/SSE, TLS handshakes, tail latency; same hardware vs NGINX/Traefik/Caddy/HAProxy; published scripts + results
 - [ ] H-ENG-02 Soak tests (24h+), fault injection (toxiproxy), backend failure/recovery, reload under load
 - [ ] H-ENG-03 Memory-leak and resource-exhaustion tests; HTTP parsing fuzzing (differential)
 - [ ] H-ENG-04 Rule: control plane and dashboard are never on the request path
@@ -235,10 +235,10 @@ Tracked as W-SWM-01…03 below.
 - [ ] W-CF-02 `CF-Connecting-IP` honoured only from verified Cloudflare hops; `CF-Ray` logged
 - [ ] W-CF-03 DNS-01 via scoped API token (Zone:DNS:Edit) for wildcards
 - [ ] W-CF-04 Origin CA certificates and Full (strict) guidance
-- [ ] W-CF-08 Authenticated Origin Pulls: client-certificate verification against Cloudflare's origin-pull CA (needs M-TLS-01)
+- [x] W-CF-08 Authenticated Origin Pulls: client-certificate verification against Cloudflare's origin-pull CA (needs M-TLS-01)
 - [ ] W-CF-05 Cloudflare Tunnel: documented deployment with `cloudflared` sidecar, no inbound ports
 - [ ] W-CF-06 Cloudflare Access JWT validation middleware (P2)
-- [ ] W-CF-07 Compatible with Cloudflare Load Balancer origin pools (health endpoints, PROXY-less)
+- [x] W-CF-07 Compatible with Cloudflare Load Balancer origin pools (health endpoints, PROXY-less)
 
 ### W-DKR · Docker and Compose (P0, highest priority)
 - [ ] W-DKR-01 Engine API discovery (events + periodic full reconcile), read-only scopes, socket-proxy documented, Podman socket compatible

@@ -1882,7 +1882,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-config"
-version = "0.3.0-alpha.2"
+version = "0.4.0-alpha.1"
 dependencies = [
  "rdock-model",
  "serde",
@@ -1909,14 +1909,14 @@ dependencies = [
 
 [[package]]
 name = "rdock-limits"
-version = "0.3.0-alpha.2"
+version = "0.4.0-alpha.1"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "rdock-middleware"
-version = "0.3.0-alpha.2"
+version = "0.4.0-alpha.1"
 dependencies = [
  "arc-swap",
  "argon2",
@@ -1948,7 +1948,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-model"
-version = "0.3.0-alpha.2"
+version = "0.4.0-alpha.1"
 dependencies = [
  "ipnet",
  "rdock-rules",
@@ -1962,7 +1962,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-rules"
-version = "0.3.0-alpha.2"
+version = "0.4.0-alpha.1"
 dependencies = [
  "ipnet",
  "regex",

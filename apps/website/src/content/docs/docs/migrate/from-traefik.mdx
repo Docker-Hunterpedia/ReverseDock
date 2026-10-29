@@ -457,7 +457,7 @@ These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterped
 - `rate_limit` defaults `burst` to `average`; Traefik's default burst is 1 (checked 2026-10-27). Requests over the limit get 429 with `Retry-After` at once; Traefik first delays them briefly (Traefik v3.7.16 source, per the research behind ADR-0014). `average: 0` is a validation error, where Traefik reads it as no limit.
 - `ip_allow` answers 403 and has no `rejectStatusCode`.
 - `cors` is its own middleware. It answers preflights itself with 204; `*` together with `allow_credentials: true` is a validation error, where Traefik echoes the request's `Origin`. List the origins instead.
-- `compress` uses gzip on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. Brotli and zstd are <Status planned="v0.4" />.
+- `compress` uses gzip on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. zstd and Brotli <Status since="v0.4" /> are offered too, preferred in that order.
 - `errors` keeps the original status and also covers ReverseDock's own 502, 503 and 504 answers.
 - `maintenance` has no Traefik equivalent: it answers with its `status` (503 by default), `Retry-After`, `Cache-Control: no-store` and your page, except for the `allow` networks.
 

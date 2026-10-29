@@ -80,7 +80,7 @@ ReverseDock does not protect against these in v0.1. Plan for them elsewhere.
 - **A compromised host or operator.** Anyone with access to the configuration files, the data directory (admin token, history) or the process can control the proxy.
 - **A compromised trusted proxy.** Its forwarding headers are believed by design.
 - **Backends you disabled verification for.** `verify: false` accepts any certificate.
-- **Client-certificate authentication** of users is not available, and client certificates to backends are <Status planned="v0.4" />.
+- **Client certificates you trust.** With `client_auth`, any certificate your CA signed is accepted; revocation lists are not checked yet.
 
 ## Related
 

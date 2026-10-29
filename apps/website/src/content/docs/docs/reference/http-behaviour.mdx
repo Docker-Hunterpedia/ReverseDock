@@ -121,7 +121,7 @@ If the client goes away, nothing is sent; the access log records the request.
 
 A request is sent again on a new connection only when it is idempotent, its body can be
 replayed, nothing has been sent to the client yet, and it failed because a reused keep-alive
-connection to the backend was closed. Configurable retries are <Status planned="v0.4" />.
+connection to the backend was closed. Configurable [retries](/docs/guides/backends/#retries) <Status since="v0.4" /> add connect failures, resets, timeouts and 502/503/504 answers.
 
 ## Defaults
 

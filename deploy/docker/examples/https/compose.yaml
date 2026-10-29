@@ -5,7 +5,7 @@ name: rdock-https
 
 services:
   rdock:
-    image: ghcr.io/docker-hunterpedia/rdock:0.3.0-alpha.2
+    image: ghcr.io/docker-hunterpedia/rdock:0.4.0-alpha.1
     restart: unless-stopped
     ports: ["80:80", "443:443"]
     group_add: ["${DOCKER_GID:?set DOCKER_GID to the group of /var/run/docker.sock}"]
