@@ -118,9 +118,9 @@ services:
     backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
 ```
 
-## Sticky sessions <Status since="v0.4" />
+## Sticky sessions
 
-With `sticky`, the first response sets a cookie naming the backend, and later requests with that cookie go to the same backend while it is in the pool:
+<Status since="v0.4" /> With `sticky`, the first response sets a cookie naming the backend, and later requests with that cookie go to the same backend while it is in the pool:
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
@@ -139,9 +139,9 @@ services:
 - Cookies are `Secure`, `HttpOnly` and `SameSite=Lax` with `Path=/` by default (`secure`, `http_only`, `same_site`, `path`). `same_site: none` requires `secure`.
 - When the backend in a cookie is gone, the request is balanced normally and gets a new cookie.
 
-## Health checks <Status since="v0.4" />
+## Health checks
 
-Without health checks, a backend that is down still gets its share of requests, and those requests fail with `502`. There are two kinds, and they work together:
+<Status since="v0.4" /> Without health checks, a backend that is down still gets its share of requests, and those requests fail with `502`. There are two kinds, and they work together:
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
@@ -192,9 +192,9 @@ services:
 
 The metric `rdock_backend_up{service, backend}` is 1 while a backend takes traffic and 0 while it is out; `rdock_backend_ejections_total` counts ejections. Transitions are logged.
 
-## Retries <Status since="v0.4" />
+## Retries
 
-```yaml title="rdock.yaml (excerpt)"
+<Status since="v0.4" /> ```yaml title="rdock.yaml (excerpt)"
 services:
   app:
     backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
