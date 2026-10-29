@@ -9,7 +9,7 @@ mod sticky;
 
 pub use hashring::HashRing;
 pub use health::{Availability, BreakerState, EjectPolicy, MAX_EJECTION, ProbePolicy};
-pub use state::{BackendState, Ejection, InFlight, Pool, Registry};
+pub use state::{BackendState, Ejection, InFlight, MIN_RETRIES, Pool, Registry, RetryPermit};
 pub use sticky::{Match as StickyMatch, StickyKeys};
 
 /// One backend the balancer may pick.

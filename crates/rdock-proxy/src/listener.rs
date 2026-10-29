@@ -89,7 +89,9 @@ pub fn http_engine(
 ) -> Arc<HttpProxy<RdockProxy>> {
     let conf = Arc::new(ServerConf {
         // Attempts per request: one retry for a pooled connection that closed under us.
-        max_retries: 2,
+        // Retries are limited per request by `services.<s>.retries` (at most 10) and the
+        // stale pooled-connection retry; this is only Pingora's outer bound.
+        max_retries: 16,
         ..ServerConf::default()
     });
     let mut proxy = pingora::proxy::http_proxy(&conf, RdockProxy::new(name, shared));

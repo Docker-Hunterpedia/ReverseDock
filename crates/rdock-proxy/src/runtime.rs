@@ -128,6 +128,8 @@ pub struct ServiceRuntime {
     pub pool: Arc<Pool>,
     /// Health checks and ejection.
     pub health: HealthRuntime,
+    /// Retry policy.
+    pub retries: Option<rdock_model::service::Retries>,
     /// Requests in flight across the pool before new ones get `503`.
     pub max_requests: Option<u32>,
     /// Requests in flight to one backend before it gets no more.

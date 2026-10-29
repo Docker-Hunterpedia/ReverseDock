@@ -2252,7 +2252,7 @@
           "minimum": 0
         },
         "budget_percent": {
-          "description": "Maximum share of retries relative to requests, in percent, to avoid retry storms.",
+          "description": "Retries in flight may be at most this share of the requests in flight, in percent\n(at least 3 are always allowed), so retries cannot overload a failing pool.",
           "type": "integer",
           "format": "uint32",
           "default": 20,
@@ -2280,10 +2280,10 @@
       }
     },
     "RetryOn": {
-      "description": "Retryable failures (before upstream response headers).",
+      "description": "Retryable failures. Nothing is retried once the client has received a response.",
       "oneOf": [
         {
-          "description": "The connection to the backend could not be established.",
+          "description": "The connection to the backend could not be established (also a connect timeout).\nNothing reached the backend, so this is retried for every method.",
           "type": "string",
           "const": "connect"
         },
@@ -2296,6 +2296,21 @@
           "description": "The backend did not answer within `timeouts.read`.",
           "type": "string",
           "const": "timeout"
+        },
+        {
+          "description": "The backend answered `502 Bad Gateway`.",
+          "type": "string",
+          "const": "502"
+        },
+        {
+          "description": "The backend answered `503 Service Unavailable`.",
+          "type": "string",
+          "const": "503"
+        },
+        {
+          "description": "The backend answered `504 Gateway Timeout`.",
+          "type": "string",
+          "const": "504"
         }
       ]
     },
@@ -2601,7 +2616,7 @@
           "default": true
         },
         "retries": {
-          "description": "Retries of failed requests (transport failures only, see ADR-0010).",
+          "description": "Retries of failed requests (ADR-0010, ADR-0015, ADR-0022).",
           "anyOf": [
             {
               "$ref": "#/$defs/Retries"

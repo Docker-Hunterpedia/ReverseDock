@@ -25,7 +25,7 @@ pub struct Service {
     /// Active and passive health checks.
     #[serde(default)]
     pub health: Option<Health>,
-    /// Retries of failed requests (transport failures only, see ADR-0010).
+    /// Retries of failed requests (ADR-0010, ADR-0015, ADR-0022).
     #[serde(default)]
     pub retries: Option<Retries>,
     /// Upstream timeouts.
@@ -259,7 +259,8 @@ pub struct Retries {
     pub attempts: u32,
     /// Failures that are retried.
     pub on: Vec<RetryOn>,
-    /// Maximum share of retries relative to requests, in percent, to avoid retry storms.
+    /// Retries in flight may be at most this share of the requests in flight, in percent
+    /// (at least 3 are always allowed), so retries cannot overload a failing pool.
     pub budget_percent: u32,
     /// Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.
     pub retry_non_idempotent: bool,
@@ -276,16 +277,39 @@ impl Default for Retries {
     }
 }
 
-/// Retryable failures (before upstream response headers).
+/// Retryable failures. Nothing is retried once the client has received a response.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum RetryOn {
-    /// The connection to the backend could not be established.
+    /// The connection to the backend could not be established (also a connect timeout).
+    /// Nothing reached the backend, so this is retried for every method.
     Connect,
     /// The connection was reset before response headers arrived.
     Reset,
     /// The backend did not answer within `timeouts.read`.
     Timeout,
+    /// The backend answered `502 Bad Gateway`.
+    #[serde(rename = "502")]
+    BadGateway,
+    /// The backend answered `503 Service Unavailable`.
+    #[serde(rename = "503")]
+    ServiceUnavailable,
+    /// The backend answered `504 Gateway Timeout`.
+    #[serde(rename = "504")]
+    GatewayTimeout,
+}
+
+impl RetryOn {
+    /// The status code for the status variants.
+    #[must_use]
+    pub fn status(self) -> Option<u16> {
+        match self {
+            Self::BadGateway => Some(502),
+            Self::ServiceUnavailable => Some(503),
+            Self::GatewayTimeout => Some(504),
+            Self::Connect | Self::Reset | Self::Timeout => None,
+        }
+    }
 }
 
 /// Upstream timeouts.

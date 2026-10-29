@@ -9,6 +9,7 @@
 //!   `grpc-status: 0` trailer.
 //! - `GET /healthz`: `200` while healthy, `503` after [`Backend::set_healthy`]`(false)`.
 //! - `POST /grpc.health.v1.Health/Check`: `SERVING` or `NOT_SERVING` the same way.
+//! - `/flaky`: the JSON echo while healthy; `503` with `Retry-After: 30` otherwise.
 //! - anything else: a JSON echo of method, target, version, headers and body length.
 
 use std::collections::BTreeMap;
@@ -184,6 +185,13 @@ async fn handle(
     }
     if path == "/grpc.health.v1.Health/Check" {
         return Ok(grpc_health(healthy));
+    }
+    if path == "/flaky" && !healthy {
+        return Ok(Response::builder()
+            .status(503)
+            .header("retry-after", "30")
+            .body(full(format!("status 503 from {name}\n")))
+            .unwrap());
     }
     if let Some(code) = path.strip_prefix("/status/") {
         let status = StatusCode::from_u16(code.parse().unwrap_or(500)).unwrap_or(StatusCode::OK);

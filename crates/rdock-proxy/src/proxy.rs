@@ -14,8 +14,9 @@ use pingora::modules::http::HttpModules;
 use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 use pingora::{Error, ErrorSource, ErrorType};
-use rdock_balancer::Ejection;
+use rdock_balancer::{Ejection, RetryPermit};
 use rdock_middleware::{Context as MwContext, Flow, Middleware, Reply};
+use rdock_model::service::RetryOn;
 use rdock_observability::{AccessRecord, Metrics, rfc3339};
 
 use crate::errorpage;
@@ -89,6 +90,48 @@ impl RdockProxy {
         }
     }
 
+    /// Whether this failure may be retried, and if so takes a retry from the budget. Connect
+    /// failures are retried for any method (nothing reached the backend); other failures only
+    /// for idempotent methods unless `retry_non_idempotent`; never after the client saw a
+    /// response or when the body exceeded the replay buffer.
+    fn take_retry(
+        &self,
+        session: &Session,
+        ctx: &mut RequestCtx,
+        service: &ServiceRuntime,
+        kind: RetryOn,
+    ) -> bool {
+        let Some(retries) = &service.retries else {
+            return false;
+        };
+        let method_ok = kind == RetryOn::Connect
+            || retries.retry_non_idempotent
+            || session.req_header().method.is_idempotent();
+        if !retries.on.contains(&kind)
+            || ctx.retries >= retries.attempts
+            || !method_ok
+            || session.response_written().is_some()
+            || session.as_ref().retry_buffer_truncated()
+        {
+            return false;
+        }
+        let metrics = &self.shared.metrics;
+        let Some(permit) = service.pool.try_retry(retries.budget_percent) else {
+            metrics
+                .retry_budget_exhausted
+                .with_label_values(&[&*service.name])
+                .inc();
+            return false;
+        };
+        ctx.retries += 1;
+        ctx.retry_permit = Some(permit);
+        metrics
+            .retries
+            .with_label_values(&[&*service.name, retry_reason(kind)])
+            .inc();
+        true
+    }
+
     /// The proxy for listener `listener`.
     #[must_use]
     pub fn new(listener: Arc<str>, shared: Arc<Shared>) -> Self {
@@ -115,6 +158,12 @@ pub struct RequestCtx {
     upstream: Option<Candidate>,
     member: Option<Arc<Member>>,
     in_flight: Option<rdock_balancer::InFlight>,
+    /// Retries made so far, backends tried, and the budget permit of the running retry.
+    retries: u32,
+    tried: Vec<String>,
+    retry_permit: Option<RetryPermit>,
+    /// `upstream_response_filter` turned a status into a retry already counted.
+    status_retry: bool,
     set_cookie: Option<String>,
     body_bytes: u64,
     sent_replacement: bool,
@@ -261,6 +310,10 @@ impl ProxyHttp for RdockProxy {
             upstream: None,
             member: None,
             in_flight: None,
+            retries: 0,
+            tried: Vec::new(),
+            retry_permit: None,
+            status_retry: false,
             set_cookie: None,
             body_bytes: 0,
             sent_replacement: false,
@@ -448,12 +501,17 @@ impl ProxyHttp for RdockProxy {
         {
             return Err(status_error(503, "the service is at max_requests"));
         }
+        if ctx.retry_permit.is_some() {
+            tokio::time::sleep(backoff(ctx.retries)).await;
+        }
         let key = upstream::RequestKey {
             request: Some(session.req_header()),
             client_ip: ctx.client_ip,
+            tried: &ctx.tried,
         };
         let selected = upstream::select(&route.service, key)
             .ok_or_else(|| status_error(503, "the service has no available backend"))?;
+        ctx.tried.push(selected.member.id.clone());
         let peer = upstream::peer(&route.service, &selected.member.candidate, &route.timeouts)?;
         ctx.in_flight = Some(selected.member.state.begin());
         ctx.upstream = Some(selected.member.candidate.clone());
@@ -485,7 +543,7 @@ impl ProxyHttp for RdockProxy {
 
     async fn upstream_response_filter(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         upstream_response: &mut ResponseHeader,
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
@@ -499,6 +557,35 @@ impl ProxyHttp for RdockProxy {
                 .as_ref()
                 .is_some_and(|p| p.statuses.contains(&status));
             self.report(&route.service, ctx.member.as_ref(), !failed);
+        }
+        let route = ctx.route.clone();
+        if let Some(route) = route
+            && let Some(retries) = &route.service.retries
+            && let Some(kind) = retries
+                .on
+                .iter()
+                .copied()
+                .find(|k| k.status() == Some(status))
+        {
+            if status == 503
+                && let (Some(member), Some(wait)) = (
+                    &ctx.member,
+                    retry_after(upstream_response, SystemTime::now()),
+                )
+            {
+                member.state.pause(Instant::now() + wait.min(MAX_PAUSE));
+            }
+            if self.take_retry(session, ctx, &route.service, kind) {
+                ctx.status_retry = true;
+                let mut e = Error::create(
+                    ErrorType::HTTPStatus(status),
+                    ErrorSource::Upstream,
+                    Some("retrying the backend's answer".into()),
+                    None,
+                );
+                e.set_retry(true);
+                return Err(e);
+            }
         }
         Ok(())
     }
@@ -561,7 +648,7 @@ impl ProxyHttp for RdockProxy {
 
     fn fail_to_connect(
         &self,
-        _session: &mut Session,
+        session: &mut Session,
         _peer: &HttpPeer,
         ctx: &mut RequestCtx,
         e: Box<Error>,
@@ -578,6 +665,13 @@ impl ProxyHttp for RdockProxy {
                 .with_label_values(&[&*route.service.name, kind])
                 .inc();
             self.report(&route.service, ctx.member.as_ref(), false);
+        }
+        let mut e = e;
+        let service = ctx.route.as_ref().map(|r| r.service.clone());
+        if let Some(service) = service
+            && self.take_retry(session, ctx, &service, RetryOn::Connect)
+        {
+            e.set_retry(true);
         }
         e
     }
@@ -599,16 +693,35 @@ impl ProxyHttp for RdockProxy {
             self.report(&route.service, ctx.member.as_ref(), false);
         }
         let mut e = e.more_context(format!("Peer: {peer}"));
-        // Retry only an idempotent request whose body can be replayed, only when the failure was
-        // a reused connection closing under us, and never once the client saw a response.
+        if std::mem::take(&mut ctx.status_retry) {
+            // A retry of a backend status, already checked and counted.
+            return e;
+        }
+        // Never retry once the client saw a response, or when the body cannot be replayed.
+        // A reused pooled connection that closed under us is retried once for idempotent
+        // requests, as Pingora does; everything else follows `retries`.
         if session.response_written().is_some()
             || !session.req_header().method.is_idempotent()
             || session.as_ref().retry_buffer_truncated()
         {
             e.set_retry(false);
-        } else {
-            e.retry.decide_reuse(client_reused);
+            return e;
         }
+        if client_reused && matches!(e.retry, pingora::RetryType::ReusedOnly) {
+            e.retry.decide_reuse(true);
+            return e;
+        }
+        let kind = if matches!(
+            e.etype(),
+            ErrorType::ReadTimedout | ErrorType::WriteTimedout
+        ) {
+            RetryOn::Timeout
+        } else {
+            RetryOn::Reset
+        };
+        let service = ctx.route.as_ref().map(|r| r.service.clone());
+        let retry = service.is_some_and(|service| self.take_retry(session, ctx, &service, kind));
+        e.set_retry(retry);
         e
     }
 
@@ -726,6 +839,46 @@ impl ProxyHttp for RdockProxy {
         };
         log.write(&record);
     }
+}
+
+/// Longest pause a backend's `Retry-After` can cause.
+const MAX_PAUSE: Duration = Duration::from_secs(60);
+
+fn retry_reason(kind: RetryOn) -> &'static str {
+    match kind {
+        RetryOn::Connect => "connect",
+        RetryOn::Reset => "reset",
+        RetryOn::Timeout => "timeout",
+        RetryOn::BadGateway => "502",
+        RetryOn::ServiceUnavailable => "503",
+        RetryOn::GatewayTimeout => "504",
+    }
+}
+
+/// Fully jittered exponential backoff before retry `n` (1-based): a random time up to
+/// 25 ms × 2ⁿ⁻¹, capped at 250 ms (Envoy's defaults).
+fn backoff(n: u32) -> Duration {
+    let ceiling = 25u64
+        .saturating_mul(1 << n.saturating_sub(1).min(8))
+        .min(250);
+    Duration::from_millis(fastrand::u64(..=ceiling))
+}
+
+/// `Retry-After` as seconds or an HTTP date (RFC 9110 §10.2.3).
+fn retry_after(resp: &ResponseHeader, now: SystemTime) -> Option<Duration> {
+    let value = resp
+        .headers
+        .get(http::header::RETRY_AFTER)?
+        .to_str()
+        .ok()?
+        .trim();
+    if let Ok(seconds) = value.parse::<u64>() {
+        return Some(Duration::from_secs(seconds));
+    }
+    httpdate::parse_http_date(value)
+        .ok()?
+        .duration_since(now)
+        .ok()
 }
 
 /// `Host` for a backend: its configured name, with the port unless it is the scheme's default.

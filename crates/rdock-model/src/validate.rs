@@ -699,7 +699,7 @@ impl Validator<'_> {
             if retries.on.is_empty() {
                 self.error(
                     format!("{p}.on"),
-                    "list at least one of connect, reset, timeout",
+                    "list at least one of connect, reset, timeout, 502, 503, 504",
                 );
             }
             if retries.retry_non_idempotent {
