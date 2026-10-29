@@ -1,0 +1,32 @@
+description: "gRPC and HTTP health-check options and passive health checks."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.services.app.loadbalancer.server.scheme: "h2c"
+      traefik.http.services.app.loadbalancer.healthcheck.mode: "grpc"
+      traefik.http.services.app.loadbalancer.healthcheck.hostname: "health.internal"
+      traefik.http.services.app.loadbalancer.healthcheck.headers.x-probe: "rdock"
+      traefik.http.services.app.loadbalancer.healthcheck.status: "204"
+      traefik.http.services.app.loadbalancer.passivehealthcheck.failurewindow: "10"
+      traefik.http.services.app.loadbalancer.passivehealthcheck.maxfailedattempts: "3"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      scheme: "h2c"
+      health:
+        active:
+          mode: "grpc"
+          hostname: "health.internal"
+          headers: { x-probe: "rdock" }
+          expected_status: "204"
+        passive:
+          window: "10s"
+          failures: 3

@@ -61,7 +61,10 @@ Middleware kinds:
 | `compress` | `compress` |
 | `errors` (`status`, `service`, `query`) | `errors` (`status`, `service`, `path`) |
 | (none) | `maintenance` |
-| `retry` | `services.<name>.retries` <Status planned="v0.4" /> |
+| `retry` | `services.<name>.retries` <Status since="v0.4" /> (`attempts` minus one; statuses 502–504) |
+| `inFlightReq` | `in_flight` <Status since="v0.4" /> |
+| `passTLSClientCert` | `client_cert` <Status since="v0.4" /> |
+| `circuitBreaker` | `health.passive` and `max_requests` on the service <Status since="v0.4" /> |
 
 ## Five common setups
 
@@ -320,7 +323,7 @@ services:
       ca_file: /etc/rdock/certs/internal-ca.pem
 ```
 
-Traefik's default strategy is weighted round-robin; ReverseDock's `round_robin` is the same, and `random` is the other policy available in v0.1. Health checks are <Status planned="v0.4" />, so a backend that is down keeps receiving its share of requests until then.
+Traefik's default strategy is weighted round-robin; ReverseDock's `round_robin` is the same. Traefik's `p2c`, `hrw` and `leasttime` are `p2c`, `ip_hash` and `least_requests` here. Traefik's `healthCheck` maps onto `health.active` and `passiveHealthCheck` onto `health.passive`; see [health checks](/docs/guides/backends/#health-checks) <Status since="v0.4" />.
 
 ### 5. Rate limit and IP allow-list behind a load balancer
 

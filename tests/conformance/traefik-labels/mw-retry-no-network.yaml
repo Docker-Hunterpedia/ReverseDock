@@ -1,0 +1,25 @@
+description: "disableRetryOnNetworkError leaves only status retries; initialInterval is reported."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "retry"
+      traefik.http.middlewares.retry.retry.attempts: "2"
+      traefik.http.middlewares.retry.retry.status: "503"
+      traefik.http.middlewares.retry.retry.disableretryonnetworkerror: "true"
+      traefik.http.middlewares.retry.retry.initialinterval: "100ms"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      retries:
+        attempts: 1
+        on: ["503"]
+  diagnostics:
+    - "initialinterval\"]: retries use a fixed jittered backoff"

@@ -99,6 +99,9 @@ pub(crate) struct Draft {
     pub(crate) routes: BTreeMap<String, Tree>,
     pub(crate) services: BTreeMap<String, ServiceDraft>,
     pub(crate) middlewares: BTreeMap<String, Tree>,
+    /// Traefik `retry` middlewares, which become `retries` of the services that routes using
+    /// them point to.
+    pub(crate) retries: BTreeMap<String, traefik::Retry>,
 }
 
 /// A service as labels describe it.
@@ -236,6 +239,7 @@ impl<'a> Scope<'a> {
     fn build(&mut self, mut draft: Draft, pools: &mut Pools, fragment: &mut Fragment) {
         draft.routes.retain(|_, tree| !tree.is_empty());
         self.link_services(&mut draft);
+        traefik::apply_retries(self, &mut draft);
         for (name, service) in std::mem::take(&mut draft.services) {
             if let Some((service, backend)) = self.service(&name, service) {
                 pools.add(self, name, &service, backend);

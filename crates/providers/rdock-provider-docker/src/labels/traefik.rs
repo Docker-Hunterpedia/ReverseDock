@@ -157,20 +157,82 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
             Value::String(value.to_ascii_lowercase()),
         ),
         "sticky.cookie.maxage" => service.tree.set("sticky.cookie.max_age", seconds(value)),
-        "healthcheck.path" => service
-            .tree
-            .set("health.active.path", Value::String(value.to_owned())),
-        "healthcheck.interval" => service
-            .tree
-            .set("health.active.interval", Value::String(value.to_owned())),
-        "healthcheck.timeout" => service
-            .tree
-            .set("health.active.timeout", Value::String(value.to_owned())),
-        "healthcheck.port" => service.tree.set("health.active.port", scalar(value)),
+        "strategy" => {
+            let policy = match value.to_ascii_lowercase().as_str() {
+                "wrr" => "round_robin",
+                "p2c" => "p2c",
+                "hrw" => "ip_hash",
+                "leasttime" => "least_requests",
+                other => {
+                    return Err(format!(
+                        "`{other}` is not `wrr`, `p2c`, `hrw` or `leasttime`"
+                    ));
+                }
+            };
+            service
+                .tree
+                .set("load_balancer.policy", Value::String(policy.to_owned()))
+        }
+        f if f.starts_with("healthcheck.") || f.starts_with("passivehealthcheck.") => {
+            health(&mut service.tree, f, value)
+        }
         "serverstransport" => {
             Err("servers transports are not supported; the backend's defaults are used".to_owned())
         }
         _ => Err(unsupported()),
+    }
+}
+
+/// `healthcheck.*` and `passivehealthcheck.*` of a Traefik service.
+fn health(tree: &mut super::Tree, field: &str, value: &str) -> Result<(), String> {
+    match field {
+        "healthcheck.path" => tree.set("health.active.path", Value::String(value.to_owned())),
+        "healthcheck.interval" => {
+            tree.set("health.active.interval", Value::String(value.to_owned()))
+        }
+        "healthcheck.timeout" => tree.set("health.active.timeout", Value::String(value.to_owned())),
+        "healthcheck.port" => tree.set("health.active.port", scalar(value)),
+        "healthcheck.mode" => match value.to_ascii_lowercase().as_str() {
+            mode @ ("http" | "grpc") => {
+                tree.set("health.active.mode", Value::String(mode.to_owned()))
+            }
+            other => Err(format!("`{other}` is not `http` or `grpc`")),
+        },
+        "healthcheck.status" => tree.set(
+            "health.active.expected_status",
+            Value::String(value.trim().to_owned()),
+        ),
+        "healthcheck.hostname" => {
+            tree.set("health.active.hostname", Value::String(value.to_owned()))
+        }
+        "healthcheck.method" => tree.set(
+            "health.active.method",
+            Value::String(value.to_ascii_uppercase()),
+        ),
+        "healthcheck.followredirects" => match value {
+            "false" => Ok(()),
+            _ => Err(
+                "redirects are never followed by health checks; the label is ignored".to_owned(),
+            ),
+        },
+        "healthcheck.scheme" => {
+            Err("health checks use the service's scheme; the label is ignored".to_owned())
+        }
+        "healthcheck.unhealthyinterval" => Err(
+            "one interval is used for healthy and unhealthy backends; the label is ignored"
+                .to_owned(),
+        ),
+        "passivehealthcheck.failurewindow" => tree.set("health.passive.window", seconds(value)),
+        "passivehealthcheck.maxfailedattempts" => {
+            tree.set("health.passive.failures", scalar(value))
+        }
+        _ => match field.strip_prefix("healthcheck.headers.") {
+            Some(header) => tree.set(
+                &format!("health.active.headers.{header}"),
+                Value::String(value.to_owned()),
+            ),
+            None => Err(unsupported()),
+        },
     }
 }
 
@@ -313,8 +375,27 @@ fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result
         ("basicauth", "usersfile") => {
             return Err("`usersfile` cannot be set from labels: a container must not name files on the proxy's host".to_owned());
         }
-        ("retry", _) => {
-            return Err("the retry middleware is not supported; set `retries` on the service (rdock.services.<name>.retries.attempts)".to_owned());
+        ("retry", _) => return retry(draft, name, setting, value),
+        ("inflightreq", "amount") => ("in_flight", Some("amount"), scalar(value)),
+        ("inflightreq", "sourcecriterion.requestheadername") => (
+            "in_flight",
+            Some("key"),
+            Value::String(format!("header:{value}")),
+        ),
+        ("inflightreq", "sourcecriterion.ipstrategy.depth" | "sourcecriterion.requesthost") => {
+            return Err("only the client IP and `requestHeaderName` are supported as keys; the client IP is used".to_owned());
+        }
+        ("passtlsclientcert", _) if setting == "pem" || setting.starts_with("info") => {
+            let tree = draft.middlewares.entry(name.to_owned()).or_default();
+            set_type(tree, "client_cert")?;
+            if !tree.has("required") {
+                tree.set("required", Value::Bool(false))?;
+                tree.set("forward", Value::String("traefik".to_owned()))?;
+            }
+            return Ok(());
+        }
+        ("circuitbreaker", _) => {
+            return Err("circuit-breaker expressions are not carried over; use `health.passive` and `max_requests` on the service".to_owned());
         }
         _ => {
             let (_, _, our_type, our_field, how) = MIDDLEWARES
@@ -388,4 +469,111 @@ fn headers(tree: &mut super::Tree, setting: &str, value: &str) -> Result<(), Str
         return tree.push(&path, value);
     }
     tree.set(&path, value)
+}
+
+/// A Traefik `retry` middleware, waiting to be moved onto services.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct Retry {
+    attempts: Option<Value>,
+    statuses: Vec<u16>,
+    network: bool,
+    non_idempotent: bool,
+}
+
+/// Traefik's `retry`: `attempts` counts every try, ours counts tries after the first.
+fn retry(draft: &mut Draft, name: &str, setting: &str, value: &str) -> Result<(), String> {
+    let retry = draft
+        .retries
+        .entry(name.to_owned())
+        .or_insert_with(|| Retry {
+            network: true,
+            ..Retry::default()
+        });
+    match setting {
+        "attempts" => {
+            let total: u32 = value
+                .trim()
+                .parse()
+                .map_err(|_| format!("`{value}` is not a number"))?;
+            retry.attempts = Some(Value::from(total.saturating_sub(1)));
+        }
+        "status" => {
+            for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+                let (from, to) = part.split_once('-').unwrap_or((part, part));
+                let (Ok(from), Ok(to)) = (from.trim().parse::<u16>(), to.trim().parse::<u16>())
+                else {
+                    return Err(format!("`{part}` is not a status or range"));
+                };
+                retry
+                    .statuses
+                    .extend((from..=to).filter(|s| matches!(s, 502..=504)));
+            }
+            if retry.statuses.is_empty() {
+                return Err("only 502, 503 and 504 are retried; the label is ignored".to_owned());
+            }
+        }
+        "disableretryonnetworkerror" => retry.network = value != "true",
+        "retrynonidempotentmethod" => retry.non_idempotent = value == "true",
+        "initialinterval" => {
+            return Err(
+                "retries use a fixed jittered backoff (25 to 250 ms); the label is ignored"
+                    .to_owned(),
+            );
+        }
+        _ => return Err(unsupported()),
+    }
+    Ok(())
+}
+
+/// Moves the `retry` middlewares that routes use onto the routes' services.
+pub(super) fn apply_retries(scope: &mut Scope<'_>, draft: &mut Draft) {
+    let retries = std::mem::take(&mut draft.retries);
+    if retries.is_empty() {
+        return;
+    }
+    for (route_name, route) in &mut draft.routes {
+        let service_name = match route.top_mut("service") {
+            Some(Value::String(s)) => s.clone(),
+            _ => continue,
+        };
+        let Some(Value::Array(list)) = route.top_mut("middlewares") else {
+            continue;
+        };
+        let used: Vec<String> = list
+            .iter()
+            .filter_map(Value::as_str)
+            .filter(|m| retries.contains_key(*m))
+            .map(str::to_owned)
+            .collect();
+        list.retain(|m| m.as_str().is_none_or(|m| !retries.contains_key(m)));
+        for middleware in used {
+            let retry = &retries[&middleware];
+            let Some(service) = draft.services.get_mut(&service_name) else {
+                scope.warn_object(
+                    "retry middleware",
+                    &middleware,
+                    &format!("route `{route_name}` uses a service from another container"),
+                );
+                continue;
+            };
+            let mut on: Vec<Value> = Vec::new();
+            if retry.network {
+                on.push(Value::String("connect".into()));
+                on.push(Value::String("reset".into()));
+            }
+            let mut statuses = retry.statuses.clone();
+            statuses.sort_unstable();
+            statuses.dedup();
+            on.extend(statuses.iter().map(|s| Value::String(s.to_string())));
+            let tree = &mut service.tree;
+            let _ = tree.set(
+                "retries.attempts",
+                retry.attempts.clone().unwrap_or(Value::from(1)),
+            );
+            let _ = tree.set("retries.on", Value::Array(on));
+            if retry.non_idempotent {
+                let _ = tree.set("retries.retry_non_idempotent", Value::Bool(true));
+            }
+        }
+    }
 }
