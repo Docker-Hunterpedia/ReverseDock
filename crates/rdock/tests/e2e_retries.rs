@@ -114,3 +114,47 @@ async fn non_idempotent_requests_are_not_resent_after_an_answer() {
     assert_eq!(sick.traffic(), 1);
     assert_eq!(fine.traffic(), 0, "and was not sent again");
 }
+
+/// Sends `clients × per_client` requests to a pool where every backend answers 503 and returns
+/// how many requests the backends received in total.
+async fn outage(budget_percent: u32) -> (usize, usize) {
+    let a = Backend::start("a").await;
+    let b = Backend::start("b").await;
+    let port = free_port();
+    let backends = [a.addr.to_string(), b.addr.to_string()];
+    let retries =
+        format!("    retries: {{ attempts: 5, on: [\"503\"], budget_percent: {budget_percent} }}");
+    let _rdock = Rdock::start(RDOCK, &config(port, &backends, &retries));
+    let (clients, per_client) = (40, 10);
+    let mut tasks = Vec::new();
+    for _ in 0..clients {
+        tasks.push(tokio::spawn(async move {
+            for _ in 0..per_client {
+                let reply = client::http1(addr(port), get("a", "/status/503")).await;
+                assert_eq!(reply.status, 503);
+            }
+        }));
+    }
+    for task in tasks {
+        task.await.unwrap();
+    }
+    (clients * per_client, a.requests() + b.requests())
+}
+
+#[tokio::test]
+async fn the_retry_budget_prevents_amplification_in_an_outage() {
+    let (sent, with_budget) = outage(20).await;
+    let (_, without_budget) = outage(100).await;
+    eprintln!(
+        "outage: {sent} requests; backends got {with_budget} with a 20 % budget, {without_budget} without"
+    );
+    // Without a budget nearly every request is tried 6 times; with 20 % only a few retry.
+    assert!(
+        without_budget > 4 * sent,
+        "control: {without_budget} backend requests for {sent}"
+    );
+    assert!(
+        2 * with_budget < 5 * sent,
+        "budget: {with_budget} backend requests for {sent}"
+    );
+}

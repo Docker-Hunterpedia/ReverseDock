@@ -174,6 +174,8 @@ impl RdockProxy {
             return false;
         }
         let metrics = &self.shared.metrics;
+        // A request holds at most one permit: the previous retry's goes back first.
+        ctx.retry_permit = None;
         let Some(permit) = service.pool.try_retry(retries.budget_percent) else {
             metrics
                 .retry_budget_exhausted

@@ -1,0 +1,12 @@
+# ReverseDock: one plain listener, one route, one backend, no access log.
+listeners:
+  web: { address: ":8080" }
+defaults: { listeners: [web], tls: off }
+routes:
+  app: { match: "PathPrefix(`/`)", service: app }
+services:
+  app:
+    backends: [{ address: "backend:80" }]
+observability:
+  access_log: { format: off }
+admin: { enabled: false }

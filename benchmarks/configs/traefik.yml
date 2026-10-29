@@ -1,0 +1,6 @@
+# Traefik: one entry point and the file provider; access logs are off by default.
+entryPoints:
+  web: { address: ":8080" }
+providers:
+  file: { filename: /etc/traefik/dynamic.yml }
+log: { level: ERROR }
