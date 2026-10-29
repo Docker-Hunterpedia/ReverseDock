@@ -20,13 +20,15 @@ mod forward_auth;
 mod hashes;
 mod headers;
 mod ip;
+mod limits;
 mod maintenance;
 mod paths;
 mod ratelimit;
 mod redirect;
 
 pub use client::{FetchError, Fetched, HttpClient};
-pub use compress::Gzip;
+pub use compress::Encoder;
+pub use limits::Throttle;
 
 /// What middlewares know about a request and share between its request and response phases.
 #[derive(Debug)]
@@ -44,10 +46,14 @@ pub struct Context {
     /// User authenticated by `basic_auth`, for the access log.
     pub user: Option<String>,
     /// Response compression chosen by `compress`; the proxy feeds the body through it.
-    pub compression: Option<Gzip>,
+    pub compression: Option<Encoder>,
     /// Body that replaces the upstream body (custom error pages).
     pub replace_body: Option<Bytes>,
-    accepts_gzip: bool,
+    /// Slots taken by `in_flight`, freed when the request ends.
+    pub admitted: Vec<rdock_limits::Admitted>,
+    /// Response byte limit set by `bandwidth`.
+    pub throttle: Option<Throttle>,
+    encoding: Option<rdock_model::middleware::CompressAlgorithm>,
     head_request: bool,
     cors_origin: Option<HeaderValue>,
 }
@@ -71,7 +77,9 @@ impl Context {
             user: None,
             compression: None,
             replace_body: None,
-            accepts_gzip: false,
+            admitted: Vec::new(),
+            throttle: None,
+            encoding: None,
             head_request: false,
             cors_origin: None,
         }
@@ -211,6 +219,8 @@ pub fn build(
         Config::IpAllow(c) => Arc::new(ip::IpFilter::allow(c)),
         Config::IpDeny(c) => Arc::new(ip::IpFilter::deny(c)),
         Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c)),
+        Config::InFlight(c) => Arc::new(limits::InFlight::new(c)),
+        Config::Bandwidth(c) => Arc::new(limits::Bandwidth::new(c)),
         Config::Cors(c) => Arc::new(cors::Cors::new(c)?),
         Config::Compress(c) => Arc::new(compress::Compress::new(c)),
         Config::Errors(c) => Arc::new(errors::Errors::new(c, env)?),

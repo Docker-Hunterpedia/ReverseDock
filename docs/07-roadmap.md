@@ -39,8 +39,8 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 **Done when:** e2e against Pebble: issue, renew via ARI, recover from CA outage, wildcard via mocked DNS-01; fresh-VPS scenario script reaches valid HTTPS < 60 s; cert metrics and alerts fire in tests.
 
 ## v0.4 — Production reliability (P1 traffic)
-**Status:** in progress. Design: [ADR-0022](decisions/0022-production-reliability.md); research: [v0.4 production reliability](research/v0.4-production-reliability.md). Plan and issues: the [v0.4 milestone](https://github.com/Docker-Hunterpedia/ReverseDock/milestone/5). Order: configuration model → backend state and balancing → health and circuit breaking → retries → routing (splits, mirroring, gRPC-Web) → limits and compression → client certificates and Cloudflare AOP → JWT → tracing and metrics → DNS discovery and ping → chaos suite and benchmarks → release.
-**Scope:** M-LB-01…10, M-TLS-01, M-SEC-01, M-RT-02…07, M-TM-01…07, M-OBS-01/02/03, M-L4-05, W-CF-07, W-CF-08, H-ENG-01…03 (first benchmark publication). Retries per ADR-0010 (transport failures before response headers).
+**Status:** in progress. Design: [ADR-0022](decisions/0022-production-reliability.md); research: [v0.4 production reliability](research/v0.4-production-reliability.md). Plan and issues: the [v0.4 milestone](https://github.com/Docker-Hunterpedia/ReverseDock/milestone/5). Order: configuration model → backend state and balancing → health and circuit breaking → retries → routing (splits, mirroring, gRPC-Web) → limits and compression → client certificates and Cloudflare AOP → JWT → tracing and metrics → DNS discovery and ping → chaos suite and benchmarks → release. M-TM-05 (request buffering) moves to v0.8: Pingora 0.9 replays at most 64 KiB of a request body, so a whole upload cannot be held before it is forwarded without an upstream change.
+**Scope:** M-LB-01…10, M-TLS-01, M-SEC-01, M-RT-02…07, M-TM-01…04, M-TM-06, M-TM-07, M-OBS-01/02/03, M-L4-05, W-CF-07, W-CF-08, H-ENG-01…03 (first benchmark publication). Retries per ADR-0010 (transport failures before response headers).
 **Done when:** chaos suite (toxiproxy: latency, resets, partial outages; backend flapping) passes with documented behaviour; retry budget prevents amplification in a simulated outage; mTLS and JWT suites pass; published benchmark report vs NGINX/Traefik/Caddy/HAProxy with identical configs.
 
 ## v0.5 — Management (P1 admin)
@@ -56,7 +56,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 **Done when:** upstream Gateway API conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` pass on kind in CI (TCP/UDP tests as they leave provisional status); Helm install on k3s documented and tested.
 
 ## v0.8 — Cache and extensibility (P2)
-**Scope:** F-WEB-02, F-WEB-03 cache (memory + disk, purge API, SWR/SIE), F-EXT-01…05 (stable native trait, WASM experimental, out-of-process agents, plugin SDK + signatures), F-GW-01…05, W-CF-06 (Cloudflare Access JWT), M-L4-04 UDP, F-MGMT-02 Terraform provider (W-OBS-03 P2 part), W-OBS-02 Vault/External Secrets, status-code retries if the upstream Pingora hook landed (ADR-0010).
+**Scope:** M-TM-05 (request buffering, from v0.4), F-WEB-02, F-WEB-03 cache (memory + disk, purge API, SWR/SIE), F-EXT-01…05 (stable native trait, WASM experimental, out-of-process agents, plugin SDK + signatures), F-GW-01…05, W-CF-06 (Cloudflare Access JWT), M-L4-04 UDP, F-MGMT-02 Terraform provider (W-OBS-03 P2 part), W-OBS-02 Vault/External Secrets, status-code retries if the upstream Pingora hook landed (ADR-0010).
 **Done when:** cache conformance against an RFC 9111 test-suite subset; stampede test shows a single origin fetch; plugin SDK with two example plugins; WAF agent example (CRS-compatible engine) wired as an agent.
 
 ## v0.9 — Scale (P3)

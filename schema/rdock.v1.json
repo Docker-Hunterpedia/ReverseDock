@@ -126,6 +126,7 @@
           "max_body_bytes": null,
           "max_header_bytes": "64KiB",
           "max_headers": 100,
+          "max_in_flight": null,
           "max_uri_bytes": "8KiB"
         },
         "trusted_proxies": []
@@ -1187,6 +1188,16 @@
           "default": 100,
           "minimum": 0
         },
+        "max_in_flight": {
+          "description": "Requests in flight across every listener; more are answered `503` with `Retry-After`\n(load shedding). Unlimited when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
         "max_uri_bytes": {
           "description": "Request target (path and query) length.",
           "$ref": "#/$defs/ByteSize",
@@ -1808,6 +1819,86 @@
           ]
         },
         {
+          "description": "A cap on requests in flight, with an optional queue (Traefik's `inFlightReq`).",
+          "type": "object",
+          "properties": {
+            "amount": {
+              "description": "Requests in flight allowed per key.",
+              "type": "integer",
+              "format": "uint32",
+              "minimum": 0
+            },
+            "key": {
+              "description": "What to count by.",
+              "$ref": "#/$defs/RateLimitKey",
+              "default": "client_ip"
+            },
+            "queue": {
+              "description": "Requests over the limit that wait for a slot; more get `429` at once.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 0,
+              "minimum": 0
+            },
+            "queue_timeout": {
+              "description": "How long a queued request waits before it gets `429`.",
+              "$ref": "#/$defs/Duration",
+              "default": "5s"
+            },
+            "type": {
+              "type": "string",
+              "const": "in_flight"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "amount"
+          ]
+        },
+        {
+          "description": "A cap on response bytes per second.",
+          "type": "object",
+          "properties": {
+            "burst": {
+              "description": "Bytes that may be sent at once before the rate applies; defaults to `rate`.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/ByteSize"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "key": {
+              "description": "What to count by.",
+              "$ref": "#/$defs/RateLimitKey",
+              "default": "client_ip"
+            },
+            "rate": {
+              "description": "Bytes per second, e.g. `1MiB`.",
+              "$ref": "#/$defs/ByteSize"
+            },
+            "type": {
+              "type": "string",
+              "const": "bandwidth"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "rate"
+          ]
+        },
+        {
           "description": "Cross-origin resource sharing.",
           "type": "object",
           "properties": {
@@ -1885,6 +1976,8 @@
               "description": "Algorithms offered, in order of preference.",
               "type": "array",
               "default": [
+                "zstd",
+                "br",
                 "gzip"
               ],
               "items": {
@@ -2264,7 +2357,7 @@
         "client_ip",
         "header:X-Api-Key"
       ],
-      "pattern": "^(client_ip|route|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+      "pattern": "^(client_ip|route|(header|cookie):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
     },
     "RedirectScheme": {
       "description": "Redirect target schemes.",
@@ -2378,6 +2471,18 @@
         "match": {
           "description": "Requests this route handles: a Traefik v3 rule or a structured match.",
           "$ref": "#/$defs/MatchSpec"
+        },
+        "max_body": {
+          "description": "Request body size for this route, instead of `security.limits.max_body_bytes`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         },
         "middlewares": {
           "description": "Middlewares applied in order (`name` or `name@provider`).",
@@ -2594,6 +2699,7 @@
             "max_body_bytes": null,
             "max_header_bytes": "64KiB",
             "max_headers": 100,
+            "max_in_flight": null,
             "max_uri_bytes": "8KiB"
           }
         },

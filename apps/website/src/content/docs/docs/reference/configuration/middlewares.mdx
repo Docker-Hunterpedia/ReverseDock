@@ -280,6 +280,56 @@ What to count by.
 
 Period of `average`.
 
+## `type: in_flight`
+
+A cap on requests in flight, with an optional queue (Traefik's `inFlightReq`).
+
+### `middlewares.<name>.amount`
+
+**Type:** `integer` · **Required**
+
+Requests in flight allowed per key.
+
+### `middlewares.<name>.key`
+
+**Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `client_ip`
+
+What to count by.
+
+### `middlewares.<name>.queue`
+
+**Type:** `integer` · **Default:** `0`
+
+Requests over the limit that wait for a slot; more get `429` at once.
+
+### `middlewares.<name>.queue_timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+How long a queued request waits before it gets `429`.
+
+## `type: bandwidth`
+
+A cap on response bytes per second.
+
+### `middlewares.<name>.burst`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize)
+
+Bytes that may be sent at once before the rate applies; defaults to `rate`.
+
+### `middlewares.<name>.key`
+
+**Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `client_ip`
+
+What to count by.
+
+### `middlewares.<name>.rate`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Required**
+
+Bytes per second, e.g. `1MiB`.
+
 ## `type: cors`
 
 Cross-origin resource sharing.
@@ -326,13 +376,9 @@ Response compression.
 
 ### `middlewares.<name>.algorithms`
 
-**Type:** list of `gzip` · `br` · `zstd` · **Default:** `["gzip"]`
+**Type:** list of `gzip` · `br` · `zstd` · **Default:** `["zstd","br","gzip"]`
 
 Algorithms offered, in order of preference.
-
-:::note[Planned for v0.4]
-`br` and `zstd` compression: accepted by `rdock validate` with a warning, refused by `rdock run` until v0.4.
-:::
 
 ### `middlewares.<name>.content_types`
 

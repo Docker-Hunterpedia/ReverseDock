@@ -35,6 +35,7 @@ bursts of up to 50.
 | `client_ip` | Resolved client IP, after [trusted-proxy handling](/docs/guides/behind-a-proxy/). |
 | `route` | Route. All clients of the route share one bucket. |
 | `header:<Name>` | Value of a request header, for example `header:X-Api-Key`. Requests without the header share one bucket. |
+| `cookie:<name>` <Status since="v0.4" /> | Value of a cookie, for example `cookie:session`. Requests without it share one bucket. |
 
 If ReverseDock runs behind a load balancer or CDN that is not listed in
 `security.trusted_proxies`, every request seems to come from that proxy and all clients share
@@ -106,6 +107,40 @@ the route, require the header in the rule, for example
   separate limits.
 - **Order matters.** Put `rate_limit` after `ip_allow` or `ip_deny` so blocked clients do not
   use up tokens, and before `basic_auth` to slow down password guessing.
+
+## Requests in flight: `in_flight` <Status since="v0.4" />
+
+`rate_limit` counts requests over time; `in_flight` caps how many run at once, which protects a
+backend from slow requests piling up (Traefik's `inFlightReq`):
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  reports-one-at-a-time:
+    type: in_flight
+    amount: 2              # running at once, per key
+    key: client_ip         # same keys as rate_limit
+    queue: 10              # wait for a slot instead of failing at once
+    queue_timeout: 5s
+```
+
+A request over `amount` waits in the queue for up to `queue_timeout`; with a full queue, or
+after the timeout, it gets `429` with `Retry-After`. Without `queue`, it gets `429` at once.
+
+## Response bandwidth: `bandwidth` <Status since="v0.4" />
+
+`bandwidth` limits response bytes per second per key, for example for large downloads:
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  downloads:
+    type: bandwidth
+    rate: 1MiB             # per second, per key
+    burst: 4MiB            # sent at full speed first; defaults to `rate`
+    key: client_ip
+```
+
+The response is not cut into pieces; after a chunk that uses up the allowance, the next one
+waits until the rate allows it, so the average holds. Requests with the same key share the rate.
 
 ## Check that it worked
 

@@ -7,9 +7,9 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The `compress` middleware <Status since="v0.1" /> compresses responses with gzip when the client
-accepts it. HTML, CSS, JavaScript and JSON usually shrink to a fraction of their size.
-Brotli and zstd are <Status planned="v0.4" />.
+The `compress` middleware <Status since="v0.1" /> compresses responses with zstd, Brotli
+<Status since="v0.4" /> or gzip, whichever the client accepts. HTML, CSS, JavaScript and JSON
+usually shrink to a fraction of their size.
 
 ## Before you start
 
@@ -45,13 +45,22 @@ middlewares:
 
 | Setting | Default | Meaning |
 |---|---|---|
-| `algorithms` | `[gzip]` | Algorithms offered. Only `gzip` works in this version. |
+| `algorithms` | `[zstd, br, gzip]` | Algorithms offered, in order of preference. |
 | `min_size` | `1KiB` | Responses whose `Content-Length` is smaller are not compressed. |
 | `content_types` | built-in list | Media types to compress. Setting it replaces the built-in list. |
 
-`br` and `zstd` are accepted by the configuration model, but in this version `rdock validate`
-reports them as "brotli and zstd compression: not supported in this version (planned for
-v0.4)", and `rdock run` refuses the configuration until you remove them.
+## Which algorithm
+
+The client's `Accept-Encoding` decides: the algorithm it weighs highest (`q=` values) wins, and
+when several have the same weight, the order of `algorithms` breaks the tie. Current browsers
+send `gzip, deflate, br, zstd`, all with the same weight, so they get zstd; older ones get
+Brotli or gzip. `*` covers algorithms not named, and `q=0` refuses one.
+
+The levels suit responses compressed on the fly: zstd level 3, Brotli quality 4 with a 4 MiB
+window, gzip level 6. Brotli's highest quality, 11, is meant for files compressed ahead of time
+and is many times slower. zstd's window stays under the 8 MiB that browsers accept
+([RFC 8878](https://www.rfc-editor.org/rfc/rfc8878.html#section-3.1.1.1.2), checked
+2026-10-29). Before v0.4 the default was `[gzip]`.
 
 ## Which responses are compressed
 
@@ -75,24 +84,23 @@ A response is left as it is when any of these holds:
 - It already has a `Content-Encoding` other than `identity`.
 - Its `Content-Length` is below `min_size`. A response without a length, for example a chunked
   stream, is compressed when its type allows it.
-- The client's `Accept-Encoding` does not accept gzip. `gzip`, `x-gzip` and `*` count, and a
-  `q=0` value means "not accepted".
+- The client's `Accept-Encoding` accepts none of the configured algorithms.
 
 ## What changes on a compressed response
 
-- `Content-Encoding: gzip` is set; `Content-Length` and `Accept-Ranges` are removed.
+- `Content-Encoding` is set (`zstd`, `br` or `gzip`); `Content-Length` and `Accept-Ranges` are removed.
 - A strong `ETag` becomes weak (`W/"…"`), because the bytes differ from the uncompressed ones.
 - `Vary: Accept-Encoding` is added to every response that could have been compressed, also when
-  this client did not ask for gzip, so caches keep the two versions apart.
+  this client did not ask for compression, so caches keep the versions apart.
 - The body is compressed chunk by chunk as it arrives, so long responses keep flowing.
 
 ## Check that it worked
 
 ```sh
-curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip' https://app.example.com/
+curl -s -o /dev/null -D - -H 'Accept-Encoding: gzip, br, zstd' https://app.example.com/
 ```
 
-For an HTML page of 1 KiB or more the response headers include `Content-Encoding: gzip` and
+For an HTML page of 1 KiB or more the response headers include `Content-Encoding: zstd` and
 `vary: Accept-Encoding`. Without the `Accept-Encoding` header, the same request returns the
 uncompressed page with `vary: Accept-Encoding` only.
 

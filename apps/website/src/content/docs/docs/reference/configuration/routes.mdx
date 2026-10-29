@@ -29,6 +29,12 @@ Listeners the route is attached to. Defaults to `defaults.listeners`.
 
 Requests this route handles: a Traefik v3 rule or a structured match.
 
+## `routes.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize)
+
+Request body size for this route, instead of `security.limits.max_body_bytes`.
+
 ## `routes.<name>.middlewares`
 
 **Type:** list of `string`

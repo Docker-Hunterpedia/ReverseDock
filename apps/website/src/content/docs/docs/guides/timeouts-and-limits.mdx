@@ -5,6 +5,8 @@ sidebar:
   order: 12
 ---
 
+import Status from '../../../../components/Status.astro';
+
 ReverseDock limits how long connections may stay silent and how large requests may be. The defaults suit most sites; this page shows where to change them and what a client sees when a limit is reached.
 
 ## The configuration
@@ -78,7 +80,7 @@ A route's `timeouts` override the service's for that route only; unset values co
 | `connect`, `read` or `write` ran out towards the backend | `504 Gateway Timeout` |
 | The service has no backend address (a DNS name that never resolved) | `503 Service Unavailable` |
 
-These pages are ReverseDock's own; replace them with the `errors` middleware, see [Error pages and maintenance](/docs/guides/error-pages-and-maintenance/). Retries of failed requests are planned for v0.4.
+These pages are ReverseDock's own; replace them with the `errors` middleware, see [Error pages and maintenance](/docs/guides/error-pages-and-maintenance/). To retry failed requests on another backend, see [retries](/docs/guides/backends/#retries).
 
 ## Request limits: `security.limits`
 
@@ -90,6 +92,18 @@ These pages are ReverseDock's own; replace them with the `errors` middleware, se
 | `max_body_bytes` | none (unlimited) | The request body | `413 Content Too Large` |
 
 `max_body_bytes` is checked against `Content-Length` before the request is forwarded, and counted while the body streams, so chunked bodies without a length are limited too. Set it when your applications accept uploads only up to a known size; without it, ReverseDock forwards bodies of any size. The limits apply to every listener; a value of `0` is a validation error.
+
+A route can set its own body limit, larger or smaller, with `max_body` <Status since="v0.4" />:
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  upload:
+    match: "Host(`files.example.com`) && PathPrefix(`/upload`)"
+    service: files
+    max_body: 2GiB
+```
+
+**Load shedding:** `max_in_flight` <Status since="v0.4" /> caps the requests in flight across all listeners. More are answered `503 Service Unavailable` with `Retry-After` before any work is done for them, so an overloaded instance stays responsive and a load balancer can send the traffic elsewhere. Size it from a load test of your slowest routes.
 
 Large cookies or long authentication tokens are the usual reason for `431`. Raise `max_header_bytes` only as far as you need.
 

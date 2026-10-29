@@ -39,6 +39,37 @@ pub struct Shared {
     pub challenges: Arc<rdock_tls::Challenges>,
     /// Client for mirrored requests.
     pub client: Arc<rdock_middleware::HttpClient>,
+    /// Requests in flight across listeners, for `security.limits.max_in_flight`.
+    pub in_flight: Arc<std::sync::atomic::AtomicU32>,
+}
+
+/// One request counted in [`Shared::in_flight`] until dropped.
+#[derive(Debug)]
+pub struct InFlightSlot {
+    counter: Arc<std::sync::atomic::AtomicU32>,
+    count: u32,
+}
+
+impl InFlightSlot {
+    fn take(counter: &Arc<std::sync::atomic::AtomicU32>) -> Self {
+        let count = counter.fetch_add(1, std::sync::atomic::Ordering::AcqRel) + 1;
+        Self {
+            counter: counter.clone(),
+            count,
+        }
+    }
+
+    /// Requests in flight, this one included, when it started.
+    fn count(&self) -> u32 {
+        self.count
+    }
+}
+
+impl Drop for InFlightSlot {
+    fn drop(&mut self) {
+        self.counter
+            .fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+    }
 }
 
 /// The proxy of one listener.
@@ -236,6 +267,8 @@ pub struct RequestCtx {
     mirror: Option<MirrorCopy>,
     /// gRPC-Web translation state, for routes with the `grpc_web` middleware.
     grpc_web: Option<GrpcWebCtx>,
+    /// Counted against `security.limits.max_in_flight`.
+    slot: Option<InFlightSlot>,
     mw: Option<MwContext>,
     upstream: Option<Candidate>,
     member: Option<Arc<Member>>,
@@ -311,16 +344,6 @@ impl RdockProxy {
         {
             return Err(status_error(417, "unsupported Expect"));
         }
-        if let Some(max) = limits.max_body_bytes
-            && let Some(length) = req
-                .headers
-                .get(http::header::CONTENT_LENGTH)
-                .and_then(|v| v.to_str().ok())
-                .and_then(|v| v.parse::<u64>().ok())
-            && length > max.as_u64()
-        {
-            return Err(status_error(413, "request body too large"));
-        }
         Ok(())
     }
 
@@ -391,6 +414,7 @@ impl ProxyHttp for RdockProxy {
             service: None,
             mirror: None,
             grpc_web: None,
+            slot: None,
             mw: None,
             upstream: None,
             member: None,
@@ -416,6 +440,13 @@ impl ProxyHttp for RdockProxy {
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
         let runtime = ctx.runtime.clone();
+        if let Some(max) = runtime.limits.max_in_flight {
+            let slot = InFlightSlot::take(&self.shared.in_flight);
+            if slot.count() > max {
+                return Err(status_error(503, "the proxy is at max_in_flight"));
+            }
+            ctx.slot = Some(slot);
+        }
         if let Some(listener) = self.listener(&runtime) {
             let t = &listener.timeouts;
             session.set_keepalive(Some(t.idle.as_std().as_secs().max(1)));
@@ -531,7 +562,7 @@ impl ProxyHttp for RdockProxy {
         session
             .req_header_mut()
             .insert_header("x-request-id", &*ctx.request_id)?;
-        start_route(session, ctx, &route);
+        start_route(session, ctx, &route)?;
         ctx.route = Some(route.clone());
         let mut cx = MwContext::new(
             client_ip,
@@ -563,7 +594,11 @@ impl ProxyHttp for RdockProxy {
         if let (Some(copy), Some(chunk)) = (ctx.mirror.as_mut(), body.as_ref()) {
             copy.push(chunk);
         }
-        if let (Some(max), Some(chunk)) = (ctx.runtime.limits.max_body_bytes, body.as_ref()) {
+        let route_max = ctx.route.as_ref().and_then(|r| r.max_body);
+        if let (Some(max), Some(chunk)) = (
+            route_max.or(ctx.runtime.limits.max_body_bytes),
+            body.as_ref(),
+        ) {
             ctx.body_bytes += chunk.len() as u64;
             if ctx.body_bytes > max.as_u64() {
                 // A refused request is not mirrored, and its body copy is incomplete anyway.
@@ -720,13 +755,19 @@ impl ProxyHttp for RdockProxy {
             ctx.sent_replacement = true;
             return Ok(None);
         }
-        if let Some(gzip) = cx.compression.as_mut() {
+        if let Some(encoder) = cx.compression.as_mut() {
             let chunk = body.take().unwrap_or_default();
             if !chunk.is_empty() || end_of_stream {
-                let encoded = gzip
-                    .encode(&chunk, end_of_stream)
-                    .map_err(|e| Error::because(ErrorType::InternalError, "gzip failed", e))?;
+                let encoded = encoder.encode(&chunk, end_of_stream).map_err(|e| {
+                    Error::because(ErrorType::InternalError, "compression failed", e)
+                })?;
                 *body = Some(encoded);
+            }
+        }
+        if let (Some(throttle), Some(chunk)) = (&cx.throttle, body.as_ref()) {
+            let wait = throttle.take(chunk.len());
+            if !wait.is_zero() {
+                return Ok(Some(wait));
             }
         }
         Ok(None)
@@ -952,8 +993,12 @@ impl ProxyHttp for RdockProxy {
 }
 
 /// Per-request state that follows from the matched route: the service (a `split` picks its
-/// target here) and gRPC-Web translation.
-fn start_route(session: &mut Session, ctx: &mut RequestCtx, route: &RouteRuntime) {
+/// target here), gRPC-Web translation and the route's body limit.
+fn start_route(
+    session: &mut Session,
+    ctx: &mut RequestCtx,
+    route: &RouteRuntime,
+) -> pingora::Result<()> {
     ctx.service = Some(upstream::resolve(&route.service));
     if route.grpc_web {
         let mut grpc_web = GrpcWebCtx::default();
@@ -962,6 +1007,20 @@ fn start_route(session: &mut Session, ctx: &mut RequestCtx, route: &RouteRuntime
         grpc_web.request_header_filter(session.req_header_mut());
         ctx.grpc_web = Some(grpc_web);
     }
+    // A declared length over the limit is refused before anything is sent; chunked
+    // bodies are counted as they arrive (`request_body_filter`).
+    if let Some(max) = route.max_body.or(ctx.runtime.limits.max_body_bytes)
+        && let Some(length) = session
+            .req_header()
+            .headers
+            .get(http::header::CONTENT_LENGTH)
+            .and_then(|v| v.to_str().ok())
+            .and_then(|v| v.parse::<u64>().ok())
+        && length > max.as_u64()
+    {
+        return Err(status_error(413, "request body too large"));
+    }
+    Ok(())
 }
 
 /// Whether this request is mirrored. Called once the middlewares let the request through: a

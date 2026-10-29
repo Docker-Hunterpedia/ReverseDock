@@ -699,7 +699,7 @@ schema!(Endpoint, "Endpoint", {
 // ---------------------------------------------------------------------------------------------
 // RateLimitKey
 
-/// What a rate limit counts by: `client_ip`, `route`, or `header:<Name>`.
+/// What a limit counts by: `client_ip`, `route`, `header:<Name>` or `cookie:<name>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum RateLimitKey {
     /// The client IP after trusted-proxy resolution.
@@ -709,6 +709,8 @@ pub enum RateLimitKey {
     Route,
     /// The value of a request header, e.g. an API key.
     Header(String),
+    /// The value of a cookie, e.g. a session.
+    Cookie(String),
 }
 
 impl FromStr for RateLimitKey {
@@ -718,10 +720,11 @@ impl FromStr for RateLimitKey {
         match s {
             "client_ip" => Ok(Self::ClientIp),
             "route" => Ok(Self::Route),
-            _ => match s.strip_prefix("header:") {
-                Some(name) if is_token(name) => Ok(Self::Header(name.to_owned())),
+            _ => match (s.strip_prefix("header:"), s.strip_prefix("cookie:")) {
+                (Some(name), _) if is_token(name) => Ok(Self::Header(name.to_owned())),
+                (_, Some(name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
                 _ => Err(ValueError::new(format!(
-                    "invalid rate-limit key `{s}`: use `client_ip`, `route` or `header:<Name>`"
+                    "invalid key `{s}`: use `client_ip`, `route`, `header:<Name>` or `cookie:<name>`"
                 ))),
             },
         }
@@ -734,14 +737,18 @@ impl fmt::Display for RateLimitKey {
             Self::ClientIp => f.write_str("client_ip"),
             Self::Route => f.write_str("route"),
             Self::Header(name) => write!(f, "header:{name}"),
+            Self::Cookie(name) => write!(f, "cookie:{name}"),
         }
     }
 }
 
-string_serde!(RateLimitKey, "`client_ip`, `route` or `header:<Name>`");
+string_serde!(
+    RateLimitKey,
+    "`client_ip`, `route`, `header:<Name>` or `cookie:<name>`"
+);
 schema!(RateLimitKey, "RateLimitKey", {
     "type": "string",
-    "pattern": "^(client_ip|route|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "pattern": "^(client_ip|route|(header|cookie):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
     "examples": ["client_ip", "header:X-Api-Key"]
 });
 

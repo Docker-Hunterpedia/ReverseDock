@@ -1,5 +1,11 @@
 #![doc = include_str!("../README.md")]
 
+mod bandwidth;
+mod concurrency;
+
+pub use bandwidth::ByteLimiter;
+pub use concurrency::{Admitted, ConcurrencyLimiter, Refused};
+
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, RandomState};
 use std::sync::{Mutex, PoisonError};
