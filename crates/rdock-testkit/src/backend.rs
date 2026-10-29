@@ -114,8 +114,18 @@ impl Backend {
         .await
     }
 
+    /// A plain backend on every interface, so containers (Toxiproxy) reach it through the
+    /// Docker host.
+    pub async fn start_public(name: &str) -> Self {
+        Self::start_at(name, None, "0.0.0.0:0").await
+    }
+
     async fn start_with(name: &str, tls: Option<tokio_rustls::TlsAcceptor>) -> Self {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        Self::start_at(name, tls, "127.0.0.1:0").await
+    }
+
+    async fn start_at(name: &str, tls: Option<tokio_rustls::TlsAcceptor>, bind: &str) -> Self {
+        let listener = TcpListener::bind(bind).await.unwrap();
         let addr = listener.local_addr().unwrap();
         let requests = Arc::new(AtomicUsize::new(0));
         let counter = requests.clone();

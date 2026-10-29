@@ -13,6 +13,7 @@ pub mod certs;
 pub mod client;
 pub mod pebble;
 pub mod rdock;
+pub mod toxiproxy;
 
 /// A free TCP port on the loopback interface.
 pub fn free_port() -> u16 {

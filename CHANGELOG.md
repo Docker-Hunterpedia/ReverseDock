@@ -20,6 +20,7 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 - **DNS discovery** (M-LB-10): backend names are resolved with hickory and refreshed when their TTL expires (kept between 1 s and 5 min), with the system resolver as a fallback; `srv://_service._proto.name` backends use SRV records, the lowest priority as primaries and higher ones as backups.
 - **Ping endpoint** (W-CF-07): `listeners.<l>.ping: /path` answers `200 OK` for any host before routing, for Cloudflare Load Balancing and other monitors.
 - **Traefik labels** for v0.4: `healthcheck.mode/status/hostname/method/headers`, `passivehealthcheck.*`, `loadbalancer.strategy`, the `retry` middleware (moved onto the router's service as `retries`), `inFlightReq` and `passTLSClientCert`; `circuitBreaker` is reported with what to use instead. `rdock migrate traefik` translates them too.
+- **Chaos suite and benchmarks** (H-ENG-01, H-ENG-02): Toxiproxy-driven tests (a slow backend, resets, an outage and a flapping backend) run in CI; a test shows the retry budget holding an outage to 1.35× the client traffic against 5.9× without it. `benchmarks/` compares ReverseDock with NGINX, HAProxy, Caddy and Traefik under identical configurations and limits with open-model k6 load, with the first published results.
 - `rdock validate` warns about routes that never match because an earlier route on the same listener has the same rule or matches everything (M-RT-02).
 
 ## [0.3.0-alpha.2] — v0.3 "Automatic HTTPS"

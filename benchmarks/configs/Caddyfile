@@ -1,0 +1,8 @@
+# Caddy: plain HTTP on :8080; access logs are off unless a `log` directive is set.
+{
+  auto_https off
+  admin off
+}
+:8080 {
+  reverse_proxy backend:80
+}
