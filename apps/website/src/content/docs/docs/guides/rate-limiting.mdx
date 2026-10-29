@@ -36,6 +36,7 @@ bursts of up to 50.
 | `route` | Route. All clients of the route share one bucket. |
 | `header:<Name>` | Value of a request header, for example `header:X-Api-Key`. Requests without the header share one bucket. |
 | `cookie:<name>` <Status since="v0.4" /> | Value of a cookie, for example `cookie:session`. Requests without it share one bucket. |
+| `claim:<name>` <Status since="v0.4" /> | A claim of the token verified by an earlier [`jwt`](/docs/guides/jwt/) middleware, for example `claim:sub`. |
 
 If ReverseDock runs behind a load balancer or CDN that is not listed in
 `security.trusted_proxies`, every request seems to come from that proxy and all clients share

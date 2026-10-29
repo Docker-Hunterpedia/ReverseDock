@@ -711,6 +711,8 @@ pub enum RateLimitKey {
     Header(String),
     /// The value of a cookie, e.g. a session.
     Cookie(String),
+    /// A claim of the token verified by an earlier `jwt` middleware, e.g. `sub`.
+    Claim(String),
 }
 
 impl FromStr for RateLimitKey {
@@ -720,11 +722,12 @@ impl FromStr for RateLimitKey {
         match s {
             "client_ip" => Ok(Self::ClientIp),
             "route" => Ok(Self::Route),
-            _ => match (s.strip_prefix("header:"), s.strip_prefix("cookie:")) {
-                (Some(name), _) if is_token(name) => Ok(Self::Header(name.to_owned())),
-                (_, Some(name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
+            _ => match s.split_once(':') {
+                Some(("header", name)) if is_token(name) => Ok(Self::Header(name.to_owned())),
+                Some(("cookie", name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
+                Some(("claim", name)) if is_token(name) => Ok(Self::Claim(name.to_owned())),
                 _ => Err(ValueError::new(format!(
-                    "invalid key `{s}`: use `client_ip`, `route`, `header:<Name>` or `cookie:<name>`"
+                    "invalid key `{s}`: use `client_ip`, `route`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
                 ))),
             },
         }
@@ -738,17 +741,18 @@ impl fmt::Display for RateLimitKey {
             Self::Route => f.write_str("route"),
             Self::Header(name) => write!(f, "header:{name}"),
             Self::Cookie(name) => write!(f, "cookie:{name}"),
+            Self::Claim(name) => write!(f, "claim:{name}"),
         }
     }
 }
 
 string_serde!(
     RateLimitKey,
-    "`client_ip`, `route`, `header:<Name>` or `cookie:<name>`"
+    "`client_ip`, `route`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
 );
 schema!(RateLimitKey, "RateLimitKey", {
     "type": "string",
-    "pattern": "^(client_ip|route|(header|cookie):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "pattern": "^(client_ip|route|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
     "examples": ["client_ip", "header:X-Api-Key"]
 });
 

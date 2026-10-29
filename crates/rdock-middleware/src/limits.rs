@@ -30,18 +30,32 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
         RateLimitKey::Cookie(name) => cookie(req, name)
             .map(|v| v.as_bytes().to_vec())
             .unwrap_or_default(),
+        RateLimitKey::Claim(name) => cx
+            .claims
+            .as_ref()
+            .and_then(|c| c.get(name))
+            .map(|v| match v {
+                serde_json::Value::String(s) => s.clone().into_bytes(),
+                other => other.to_string().into_bytes(),
+            })
+            .unwrap_or_default(),
     }
 }
 
 /// The value of cookie `name`.
 pub(crate) fn cookie<'a>(req: &'a RequestHeader, name: &str) -> Option<&'a str> {
+    cookies(req, name).next()
+}
+
+/// Every value of the cookie `name`, across all `Cookie` headers.
+pub(crate) fn cookies<'a>(req: &'a RequestHeader, name: &str) -> impl Iterator<Item = &'a str> {
     req.headers
         .get_all(http::header::COOKIE)
         .iter()
         .filter_map(|v| v.to_str().ok())
         .flat_map(|v| v.split(';'))
         .filter_map(|pair| pair.trim().split_once('='))
-        .find(|(n, _)| *n == name)
+        .filter(move |(n, _)| *n == name)
         .map(|(_, v)| v.trim_matches('"'))
 }
 

@@ -21,6 +21,9 @@ mod forward_auth;
 mod hashes;
 mod headers;
 mod ip;
+mod jwt;
+#[doc(hidden)]
+pub use jwt::fuzz_verify as fuzz_jwt;
 mod limits;
 mod maintenance;
 mod paths;
@@ -51,6 +54,8 @@ pub struct Context {
     pub compression: Option<Encoder>,
     /// Body that replaces the upstream body (custom error pages).
     pub replace_body: Option<Bytes>,
+    /// Claims of the token verified by `jwt`.
+    pub claims: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
     /// The verified client certificate of the connection, if any.
     pub client_cert: Option<Arc<ClientIdentity>>,
     /// Slots taken by `in_flight`, freed when the request ends.
@@ -81,6 +86,7 @@ impl Context {
             user: None,
             compression: None,
             replace_body: None,
+            claims: None,
             client_cert: None,
             admitted: Vec::new(),
             throttle: None,
@@ -226,6 +232,7 @@ pub fn build(
         Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c)),
         Config::InFlight(c) => Arc::new(limits::InFlight::new(c)),
         Config::ClientCert(c) => Arc::new(client_cert::ClientCert::new(c)),
+        Config::Jwt(c) => Arc::new(jwt::Jwt::new(name, c, env.client.clone())?),
         Config::Bandwidth(c) => Arc::new(limits::Bandwidth::new(c)),
         Config::Cors(c) => Arc::new(cors::Cors::new(c)?),
         Config::Compress(c) => Arc::new(compress::Compress::new(c)),

@@ -1110,6 +1110,71 @@
         "192.0.2.7"
       ]
     },
+    "JwtAlgorithm": {
+      "description": "JWS algorithms (RFC 7518, RFC 8037).",
+      "oneOf": [
+        {
+          "description": "RSASSA-PKCS1-v1_5 with SHA-256.",
+          "type": "string",
+          "const": "RS256"
+        },
+        {
+          "description": "RSASSA-PKCS1-v1_5 with SHA-384.",
+          "type": "string",
+          "const": "RS384"
+        },
+        {
+          "description": "RSASSA-PKCS1-v1_5 with SHA-512.",
+          "type": "string",
+          "const": "RS512"
+        },
+        {
+          "description": "RSASSA-PSS with SHA-256.",
+          "type": "string",
+          "const": "PS256"
+        },
+        {
+          "description": "RSASSA-PSS with SHA-384.",
+          "type": "string",
+          "const": "PS384"
+        },
+        {
+          "description": "RSASSA-PSS with SHA-512.",
+          "type": "string",
+          "const": "PS512"
+        },
+        {
+          "description": "ECDSA P-256 with SHA-256.",
+          "type": "string",
+          "const": "ES256"
+        },
+        {
+          "description": "ECDSA P-384 with SHA-384.",
+          "type": "string",
+          "const": "ES384"
+        },
+        {
+          "description": "Ed25519.",
+          "type": "string",
+          "const": "EdDSA"
+        },
+        {
+          "description": "HMAC with SHA-256 (needs `hmac_secret`).",
+          "type": "string",
+          "const": "HS256"
+        },
+        {
+          "description": "HMAC with SHA-384.",
+          "type": "string",
+          "const": "HS384"
+        },
+        {
+          "description": "HMAC with SHA-512.",
+          "type": "string",
+          "const": "HS512"
+        }
+      ]
+    },
     "KnownCa": {
       "description": "Certificate authorities known by name.",
       "oneOf": [
@@ -2193,6 +2258,103 @@
           ]
         },
         {
+          "description": "Verify JSON Web Tokens (JWS) and pass their claims on.",
+          "type": "object",
+          "properties": {
+            "algorithms": {
+              "description": "Algorithms accepted. `none` does not exist here.",
+              "type": "array",
+              "default": [
+                "RS256",
+                "ES256",
+                "EdDSA"
+              ],
+              "items": {
+                "$ref": "#/$defs/JwtAlgorithm"
+              }
+            },
+            "audiences": {
+              "description": "Accepted `aud` values (one must match); `[any]` accepts every audience.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "claims_to_headers": {
+              "description": "Request headers set from claims (`claim: header`). Client-sent copies are removed first.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "forward_token": {
+              "description": "Keep the token in the request to the backend.",
+              "type": "boolean",
+              "default": true
+            },
+            "hmac_secret": {
+              "description": "Shared secret for HS256/HS384/HS512 tokens, as a `${file:…}` or `${env:…}` reference.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "issuer": {
+              "description": "Required `iss`; `any` accepts every issuer.",
+              "type": "string"
+            },
+            "jwks_file": {
+              "description": "A JSON Web Key Set file, read on every reload.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "jwks_url": {
+              "description": "URL of a JSON Web Key Set, fetched in the background and cached for 10 minutes.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HttpUrl"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "leeway": {
+              "description": "Clock skew allowed for `exp` and `nbf`.",
+              "$ref": "#/$defs/Duration",
+              "default": "1m"
+            },
+            "token": {
+              "description": "Where the token is read from; `Authorization: Bearer` when empty.",
+              "$ref": "#/$defs/TokenSource",
+              "default": {
+                "cookie": null,
+                "header": null,
+                "query": null
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "jwt"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "issuer",
+            "audiences"
+          ]
+        },
+        {
           "description": "Demand a verified client certificate, check its names and pass its identity on.",
           "type": "object",
           "properties": {
@@ -2467,7 +2629,7 @@
         "client_ip",
         "header:X-Api-Key"
       ],
-      "pattern": "^(client_ip|route|(header|cookie):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+      "pattern": "^(client_ip|route|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
     },
     "RedirectScheme": {
       "description": "Redirect target schemes.",
@@ -3339,6 +3501,40 @@
           "const": "intermediate"
         }
       ]
+    },
+    "TokenSource": {
+      "description": "Where a JWT is read from. The first one present wins: header, cookie, query parameter.",
+      "type": "object",
+      "properties": {
+        "cookie": {
+          "description": "A cookie.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "header": {
+          "description": "A header; `Authorization` values must start with `Bearer `.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "query": {
+          "description": "A query parameter (tokens in URLs end up in logs; prefer a header).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Tracing": {
       "description": "OpenTelemetry tracing.",

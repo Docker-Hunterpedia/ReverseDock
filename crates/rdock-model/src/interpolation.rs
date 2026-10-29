@@ -25,6 +25,7 @@ const SECRETS: &[&[&str]] = &[
     &["observability", "alerts", "webhook", "token"],
     &["certificates", "*", "key_password"],
     &["services", "*", "sticky", "cookie", "secret"],
+    &["middlewares", "*", "hmac_secret"],
     &["services", "*", "sticky", "cookie", "previous_secrets", "*"],
 ];
 

@@ -911,6 +911,7 @@ impl Validator<'_> {
                     }
                 }
                 Middleware::GrpcWeb(_) => {}
+                Middleware::Jwt(j) => self.check_jwt(&path, j),
                 Middleware::ClientCert(c) => {
                     for (i, pattern) in c.allow.iter().enumerate() {
                         if pattern.trim().is_empty() {
@@ -943,6 +944,78 @@ impl Validator<'_> {
                         self.error(format!("{path}.rate"), "must be above zero");
                     }
                 }
+            }
+        }
+    }
+
+    fn check_jwt(&mut self, path: &str, jwt: &crate::middleware::JwtConfig) {
+        let hmac = jwt.algorithms.iter().any(|a| a.is_hmac());
+        let public = jwt.algorithms.iter().any(|a| !a.is_hmac());
+        if jwt.algorithms.is_empty() {
+            self.error(format!("{path}.algorithms"), "list at least one algorithm");
+        }
+        if public && jwt.jwks_url.is_none() && jwt.jwks_file.is_none() {
+            self.error(
+                format!("{path}.jwks_url"),
+                "public-key algorithms need `jwks_url` or `jwks_file`",
+            );
+        }
+        if hmac && jwt.hmac_secret.is_none() {
+            self.error(
+                format!("{path}.hmac_secret"),
+                "HS256/HS384/HS512 need `hmac_secret`",
+            );
+        }
+        if !hmac && jwt.hmac_secret.is_some() {
+            self.warning(
+                format!("{path}.hmac_secret"),
+                "`hmac_secret` is unused: no HS algorithm is listed in `algorithms`",
+            );
+        }
+        if let Some(secret) = &jwt.hmac_secret {
+            self.check_secret(&format!("{path}.hmac_secret"), secret, "jwt_secret");
+        }
+        if jwt.issuer.trim().is_empty() {
+            self.error(
+                format!("{path}.issuer"),
+                "set the expected issuer, or `any`",
+            );
+        } else if jwt.issuer == "any" {
+            self.warning(
+                format!("{path}.issuer"),
+                "tokens from any issuer are accepted (RFC 8725 §3.8 advises checking it)",
+            );
+        }
+        if jwt.audiences.is_empty() {
+            self.error(
+                format!("{path}.audiences"),
+                "list the accepted audiences, or `[any]`",
+            );
+        } else if jwt.audiences.iter().any(|a| a == "any") {
+            self.warning(
+                format!("{path}.audiences"),
+                "tokens for any audience are accepted (RFC 8725 §3.9 advises checking it)",
+            );
+        }
+        if let Some(url) = &jwt.jwks_url
+            && url.as_url().scheme() != "https"
+            && !url.as_url().host_str().is_some_and(|h| {
+                h == "localhost"
+                    || h.parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback())
+            })
+        {
+            self.error(
+                format!("{path}.jwks_url"),
+                "keys must be fetched over https",
+            );
+        }
+        for (claim, header) in &jwt.claims_to_headers {
+            if !is_token(header) {
+                self.error(
+                    format!("{path}.claims_to_headers.{claim}"),
+                    format!("`{header}` is not a header name"),
+                );
             }
         }
     }
