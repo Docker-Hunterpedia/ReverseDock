@@ -3412,6 +3412,8 @@ dependencies = [
  "base64 0.23.1",
  "bytes",
  "fastrand",
+ "futures-util",
+ "hickory-resolver",
  "http",
  "httpdate",
  "ipnet",

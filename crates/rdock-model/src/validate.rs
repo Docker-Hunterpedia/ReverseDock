@@ -267,6 +267,9 @@ impl Validator<'_> {
             ] {
                 self.check_not_zero(&format!("{path}.timeouts.{field}"), value.is_zero());
             }
+            if let Some(ping) = &listener.ping {
+                self.check_starts_with_slash(&format!("{path}.ping"), ping);
+            }
             if let Some(auth) = listener.tls.as_ref().and_then(|t| t.client_auth.as_ref())
                 && auth.ca_files.is_empty()
                 && !auth.cloudflare

@@ -519,12 +519,13 @@
       ]
     },
     "BackendAddress": {
-      "description": "Backend address: `host:port`, `[ipv6]:port` or `unix:///absolute/path.sock`.",
+      "description": "Backend address: `host:port`, `[ipv6]:port`, `unix:///absolute/path.sock` or `srv://_service._proto.example.com`.",
       "type": "string",
       "examples": [
         "app:3000",
         "10.0.0.5:8080",
-        "unix:///run/app.sock"
+        "unix:///run/app.sock",
+        "srv://_http._tcp.api.example.com"
       ]
     },
     "ByteSize": {
@@ -1361,6 +1362,14 @@
         "address": {
           "description": "Address to bind, e.g. `:443` or `127.0.0.1:8080`.",
           "$ref": "#/$defs/ListenAddress"
+        },
+        "ping": {
+          "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "protocol": {
           "description": "Protocol. Inferred when omitted: `https` if `tls` is set, otherwise `http`.",

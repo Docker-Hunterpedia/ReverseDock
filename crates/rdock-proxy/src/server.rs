@@ -15,12 +15,13 @@ use rdock_tls::{CertIndex, SniResolver};
 use tokio::sync::Mutex;
 
 use crate::compile::{CompileEnv, Compiled, compile};
+use crate::dns::DNS_TICK;
 use crate::forwarded::CloudflareRanges;
 use crate::gate::Mode;
 use crate::listener::{self, Running, Settings};
 use crate::proxy::Shared;
 use crate::runtime::{ListenerTls, Runtime};
-use crate::upstream::{DNS_REFRESH, Dns};
+use crate::upstream::Dns;
 
 /// Why a configuration could not be applied. Nothing changed when this is returned.
 #[derive(Debug, thiserror::Error)]
@@ -319,7 +320,7 @@ impl DataPlane {
         loop {
             tokio::select! {
                 _ = stop.changed() => return,
-                () = tokio::time::sleep(DNS_REFRESH) => self.dns.refresh().await,
+                () = tokio::time::sleep(DNS_TICK) => self.dns.refresh().await,
             }
         }
     }

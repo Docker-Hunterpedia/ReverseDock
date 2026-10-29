@@ -82,6 +82,8 @@ pub struct ListenerRuntime {
     pub timeouts: ListenerTimeouts,
     /// Routes in evaluation order.
     pub routes: Vec<Arc<RouteRuntime>>,
+    /// Path answered `200 OK` before routing, for load-balancer monitors.
+    pub ping: Option<String>,
     /// Plain-HTTP listeners: redirect these hosts to HTTPS when no route of the listener
     /// matches.
     pub https_redirect: Option<HttpsRedirect>,
@@ -222,6 +224,13 @@ pub enum Endpoint {
     },
     /// A Unix domain socket.
     Unix(std::path::PathBuf),
+    /// The targets of an SRV record, refreshed in the background.
+    Srv {
+        /// SRV name as written.
+        name: String,
+        /// Resolved targets.
+        targets: Arc<crate::dns::SrvCell>,
+    },
 }
 
 /// One backend.
@@ -329,10 +338,29 @@ pub struct Member {
     pub sticky: Option<String>,
 }
 
-/// The member list and the DNS address lists it was built from.
+/// The resolved answer of one backend, as of a moment.
+#[derive(Debug, Clone)]
+enum Source {
+    Addrs(Arc<Vec<SocketAddr>>),
+    Srv(Arc<Vec<crate::dns::SrvTarget>>),
+    Fixed,
+}
+
+impl Source {
+    fn same(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Self::Addrs(a), Self::Addrs(b)) => Arc::ptr_eq(a, b),
+            (Self::Srv(a), Self::Srv(b)) => Arc::ptr_eq(a, b),
+            (Self::Fixed, Self::Fixed) => true,
+            _ => false,
+        }
+    }
+}
+
+/// The member list and the DNS answers it was built from.
 #[derive(Debug)]
 pub(crate) struct Members {
-    sources: Vec<Arc<Vec<SocketAddr>>>,
+    sources: Vec<Source>,
     list: Arc<[Arc<Member>]>,
 }
 
@@ -340,21 +368,18 @@ impl ServiceRuntime {
     /// Every resolved address of every backend, with the backend's weight and shared state.
     #[must_use]
     pub fn members(&self) -> Arc<[Arc<Member>]> {
-        let sources: Vec<Arc<Vec<SocketAddr>>> = self
+        let sources: Vec<Source> = self
             .backends
             .iter()
-            .filter_map(|b| match &b.endpoint {
-                Endpoint::Tcp { addrs, .. } => Some(addrs.load_full()),
-                Endpoint::Unix(_) => None,
+            .map(|b| match &b.endpoint {
+                Endpoint::Tcp { addrs, .. } => Source::Addrs(addrs.load_full()),
+                Endpoint::Srv { targets, .. } => Source::Srv(targets.load_full()),
+                Endpoint::Unix(_) => Source::Fixed,
             })
             .collect();
         if let Some(cached) = self.members.load().as_ref()
             && cached.sources.len() == sources.len()
-            && cached
-                .sources
-                .iter()
-                .zip(&sources)
-                .all(|(a, b)| Arc::ptr_eq(a, b))
+            && cached.sources.iter().zip(&sources).all(|(a, b)| a.same(b))
         {
             return cached.list.clone();
         }
@@ -366,34 +391,54 @@ impl ServiceRuntime {
         list
     }
 
-    fn build_members(&self, sources: &[Arc<Vec<SocketAddr>>]) -> Arc<[Arc<Member>]> {
-        let mut resolved = sources.iter();
+    fn build_members(&self, sources: &[Source]) -> Arc<[Arc<Member>]> {
         let mut list = Vec::new();
-        for backend in &self.backends {
-            let candidates: Vec<Candidate> = match &backend.endpoint {
-                Endpoint::Tcp { host, .. } => resolved
-                    .next()
-                    .map(|addrs| {
-                        addrs
-                            .iter()
-                            .map(|addr| Candidate::Tcp {
-                                host: host.clone(),
-                                addr: *addr,
-                            })
-                            .collect()
+        for (backend, source) in self.backends.iter().zip(sources) {
+            // (candidate, weight, backup)
+            let candidates: Vec<(Candidate, u32, bool)> = match (&backend.endpoint, source) {
+                (Endpoint::Tcp { host, .. }, Source::Addrs(addrs)) => addrs
+                    .iter()
+                    .map(|addr| {
+                        let candidate = Candidate::Tcp {
+                            host: host.clone(),
+                            addr: *addr,
+                        };
+                        (candidate, backend.weight, backend.backup)
                     })
-                    .unwrap_or_default(),
-                Endpoint::Unix(path) => vec![Candidate::Unix(path.clone())],
+                    .collect(),
+                (Endpoint::Srv { .. }, Source::Srv(targets)) => {
+                    // RFC 2782: the lowest priority is used; higher ones only as backups.
+                    let best = targets.iter().map(|t| t.priority).min().unwrap_or(0);
+                    targets
+                        .iter()
+                        .map(|t| {
+                            let candidate = Candidate::Tcp {
+                                host: t.host.clone(),
+                                addr: t.addr,
+                            };
+                            let weight = backend.weight.saturating_mul(u32::from(t.weight.max(1)));
+                            (candidate, weight, backend.backup || t.priority > best)
+                        })
+                        .collect()
+                }
+                (Endpoint::Unix(path), _) => {
+                    vec![(
+                        Candidate::Unix(path.clone()),
+                        backend.weight,
+                        backend.backup,
+                    )]
+                }
+                _ => Vec::new(),
             };
-            for candidate in candidates {
+            for (candidate, weight, backup) in candidates {
                 let id = candidate.to_string();
                 list.push(Arc::new(Member {
                     state: self.pool.state(&id),
                     sticky: self.sticky.as_ref().map(|s| s.keys.token(&id)),
                     candidate,
                     id,
-                    weight: backend.weight,
-                    backup: backend.backup,
+                    weight,
+                    backup,
                 }));
             }
         }
