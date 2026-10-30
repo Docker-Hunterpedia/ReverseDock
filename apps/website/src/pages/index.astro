@@ -4,7 +4,7 @@ import '../styles/landing.css';
 import Logo from '../assets/logo.svg';
 import LogoDark from '../assets/logo-dark.svg';
 import release from '../data/release.json';
-import { compare, features, guides, installs, pillars, trust } from '../data/landing';
+import { announce, compare, features, guides, installs, pillars, trust } from '../data/landing';
 
 const runCommand = `docker run -p 80:80 ${release.image}:${release.version}`;
 const docs = '/docs/start/what-is-reversedock/';
@@ -71,7 +71,7 @@ const description = "Route, secure and observe your services on a laptop, a VPS 
       <div class="hero-text">
         <a class="announce" href="/docs/project/changelog/">
           <span class="announce-tag">v{release.version}</span>
-          <span>Automatic HTTPS is here. Health checks and retries are next.</span>
+          <span class="announce-text">{announce}</span>
         </a>
         <h1>One reverse proxy for every dock.</h1>
         <p class="lead">Route, secure and observe your services on a laptop, a VPS or a cluster. One static Rust binary on Cloudflare's Pingora, with Traefik's rule language and reloads that never drop a request.</p>
