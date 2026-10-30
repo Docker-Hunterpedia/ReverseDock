@@ -153,7 +153,11 @@ pub fn http_engine(
     shared: Arc<Shared>,
     timeouts: &ListenerTimeouts,
 ) -> Arc<HttpProxy<RdockProxy>> {
+    let idle = shared.runtime.load().limits.upstream_idle_connections;
     let conf = Arc::new(ServerConf {
+        // Pingora keeps 128 idle upstream connections by default; under load every request
+        // beyond them opened and closed its own backend connection (#86).
+        upstream_keepalive_pool_size: usize::try_from(idle).unwrap_or(usize::MAX).max(1),
         // Attempts per request: one retry for a pooled connection that closed under us.
         // Retries are limited per request by `services.<s>.retries` (at most 10) and the
         // stale pooled-connection retry; this is only Pingora's outer bound.

@@ -58,6 +58,12 @@ Requests in flight across every listener; more are answered `503` with `Retry-Af
 
 Request target (path and query) length.
 
+### `security.limits.upstream_idle_connections`
+
+**Type:** `integer` · **Default:** `4096`
+
+Idle keep-alive connections to backends kept per listener for reuse. Connections beyond it are closed when their request ends, so a busy listener keeps opening new ones. Applies to listeners started after the change.
+
 ## `security.trusted_proxies`
 
 **Type:** list of [`TrustedProxy`](/docs/reference/configuration/#trustedproxy)

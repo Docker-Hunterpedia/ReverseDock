@@ -1466,6 +1466,10 @@ impl Validator<'_> {
             );
         }
         self.check_not_zero("security.limits.max_headers", limits.max_headers == 0);
+        self.check_not_zero(
+            "security.limits.upstream_idle_connections",
+            limits.upstream_idle_connections == 0,
+        );
     }
 
     fn check_admin(&mut self) {
