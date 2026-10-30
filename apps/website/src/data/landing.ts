@@ -5,6 +5,9 @@ type Kind = 'shipped' | 'next' | 'planned';
 const image = `${release.image}:${release.version}`;
 const archive = `rdock-${release.version}-x86_64-unknown-linux-musl`;
 
+/** The line next to the version in the hero. */
+export const announce = 'Health checks, retries, mTLS and JWT are here.';
+
 export const pillars: { eyebrow: string; badge: string; kind: Kind; title: string; body: string }[] = [
   { eyebrow: 'Engine', badge: 'shipped', kind: 'shipped', title: 'Rust on Pingora', body: 'The HTTP engine Cloudflare runs at its edge, with our own listeners on top. HTTP/1.1, HTTP/2, h2c, WebSocket, SSE and gRPC.' },
   { eyebrow: 'Operations', badge: 'shipped', kind: 'shipped', title: 'Reloads that drop nothing', body: 'Edit the file, send SIGHUP or call the API. A broken config is refused and the last good one keeps serving.' },

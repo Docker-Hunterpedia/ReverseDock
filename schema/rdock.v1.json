@@ -128,7 +128,8 @@
           "max_header_bytes": "64KiB",
           "max_headers": 100,
           "max_in_flight": null,
-          "max_uri_bytes": "8KiB"
+          "max_uri_bytes": "8KiB",
+          "upstream_idle_connections": 4096
         },
         "trusted_proxies": []
       }
@@ -1338,6 +1339,13 @@
           "description": "Request target (path and query) length.",
           "$ref": "#/$defs/ByteSize",
           "default": "8KiB"
+        },
+        "upstream_idle_connections": {
+          "description": "Idle keep-alive connections to backends kept per listener for reuse. Connections\nbeyond it are closed when their request ends, so a busy listener keeps opening new\nones. Applies to listeners started after the change.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 4096,
+          "minimum": 0
         }
       },
       "additionalProperties": false,
@@ -2989,7 +2997,8 @@
             "max_header_bytes": "64KiB",
             "max_headers": 100,
             "max_in_flight": null,
-            "max_uri_bytes": "8KiB"
+            "max_uri_bytes": "8KiB",
+            "upstream_idle_connections": 4096
           }
         },
         "trusted_proxies": {

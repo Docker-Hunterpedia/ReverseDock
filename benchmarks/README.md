@@ -45,3 +45,4 @@ GitHub's shared runners are virtual machines whose speed changes from run to run
 | Version | Machine | Report |
 |---|---|---|
 | 0.4.0-alpha.1 | Apple M5 Pro (15 cores), 24 GiB, Docker Desktop | [results/0.4.0-alpha.1/report.md](results/0.4.0-alpha.1/report.md) |
+| main, 2026-10-30 (upstream pool, #86) | same | [results/2026-10-30-upstream-pool/report.md](results/2026-10-30-upstream-pool/report.md) |

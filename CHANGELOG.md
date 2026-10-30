@@ -4,6 +4,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Fixed
+- **Throughput collapsed under overload** ([#86](https://github.com/Docker-Hunterpedia/ReverseDock/issues/86), ADR-0023): each listener kept only 128 idle connections to backends, so with more requests in flight every extra request opened and closed its own backend connection. The pool is now 4096 and configurable with `security.limits.upstream_idle_connections` (M-LB-08). At a 40,000 req/s target the benchmark now holds about 14,900 req/s with 0.37 % failures instead of 1,925 req/s with 52 %.
+
 ## [0.4.0-alpha.1] — v0.4 "Production reliability"
 
 ### Changed

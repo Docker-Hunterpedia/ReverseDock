@@ -26,3 +26,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0020](0020-automatic-https.md) | Automatic HTTPS: instant-acme (ring), challenge maps read by the data plane, one certificate per name, ARI renewal with ⅓-lifetime fallback, ACME on by default, local CA for private names |
 | [0021](0021-plain-routes-use-plain-listeners.md) | Routes with `tls: off` and no `listeners` attach to the plain-HTTP listeners |
 | [0022](0022-production-reliability.md) | Production reliability: backend state shared across reloads, health with fail-open, retry budgets, verified-only client certificates, JWT on ring, OpenTelemetry over OTLP/HTTP |
+| [0023](0023-upstream-connection-pool.md) | Upstream keep-alive pool per listener sized for busy traffic (`upstream_idle_connections`, 4096) |
