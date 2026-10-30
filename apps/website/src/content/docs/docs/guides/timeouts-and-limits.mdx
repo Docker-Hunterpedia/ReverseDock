@@ -105,6 +105,8 @@ routes:
 
 **Load shedding:** `max_in_flight` <Status since="v0.4" /> caps the requests in flight across all listeners. More are answered `503 Service Unavailable` with `Retry-After` before any work is done for them, so an overloaded instance stays responsive and a load balancer can send the traffic elsewhere. Size it from a load test of your slowest routes.
 
+**Connections to backends:** each listener keeps up to `upstream_idle_connections` <Status since="v0.4" /> idle keep-alive connections to backends for reuse, 4096 by default. A pool smaller than the number of requests in flight makes every request beyond it open and close its own backend connection, which under heavy load costs more than the requests themselves. Lower it only for backends that limit connections per client. It applies to listeners started after the change.
+
 Large cookies or long authentication tokens are the usual reason for `431`. Raise `max_header_bytes` only as far as you need.
 
 ## Other requests ReverseDock refuses

@@ -87,7 +87,7 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [x] M-LB-05 Passive health: error/timeout counting, ejection, slow recovery (slow-start)
 - [x] M-LB-06 Retries only for safe/idempotent or replayable requests; per-route retry budget; `Retry-After` awareness
 - [x] M-LB-07 Circuit breaker per backend/service with explicit states and half-open probes
-- [ ] M-LB-08 Connection limits per upstream; connection-pool sizing and idle eviction
+- [x] M-LB-08 Connection limits per upstream; connection-pool sizing and idle eviction
 - [x] M-LB-09 Backup/failover pools; fail-open vs fail-closed policy
 - [x] M-LB-10 DNS (A/AAAA/SRV) upstream discovery honouring TTL
 
