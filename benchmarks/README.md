@@ -36,7 +36,7 @@ Results go to `results/<version>/<proxy>-<rate>.json`, and `results/<version>/re
 
 ## In CI
 
-The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 5,000 and 10,000 req/s, and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.95× its throughput, a p99 above 4× NGINX's plus 5 ms, or more than 1 % failed requests. The results are kept as a workflow artifact for 30 days and shown in the job summary.
+The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 2,500 and 5,000 req/s, and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.95× its throughput, a p99 above 4× NGINX's plus 25 ms, or more than 1 % failed requests. The rates stay below what ReverseDock sustains on a 4-CPU runner today (about 6,300 req/s, against NGINX's 10,000; see [#91](https://github.com/Docker-Hunterpedia/ReverseDock/issues/91)), so the check catches regressions from the current state. Raise the rates and lower the limits as that gap closes. The results are kept as a workflow artifact for 30 days and shown in the job summary.
 
 GitHub's shared runners are virtual machines whose speed changes from run to run, so these numbers are a regression check only and are never published. Running both proxies in one job cancels most of that noise. Published reports below come from fixed hardware.
 

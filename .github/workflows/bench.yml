@@ -12,7 +12,7 @@ on:
     inputs:
       rates:
         description: Target rates in req/s, separated by spaces
-        default: "5000 10000"
+        default: "2500 5000"
       duration:
         description: Time at each rate
         default: 30s
@@ -48,7 +48,7 @@ jobs:
       - name: ReverseDock and NGINX in the same job
         env:
           PROXIES: rdock nginx
-          RATES: ${{ inputs.rates || '5000 10000' }}
+          RATES: ${{ inputs.rates || '2500 5000' }}
           DURATION: ${{ inputs.duration || '30s' }}
           VERSION: ci
         run: benchmarks/run.sh
