@@ -90,7 +90,11 @@ code, .mono { font-family: var(--rd-font-mono); }
   border: 1px solid var(--rd-border); border-radius: var(--rd-radius-pill); background: var(--rd-surface); color: var(--rd-text-2); font-size: 13px; font-weight: 500;
 }
 .announce:hover { text-decoration: none; border-color: var(--rd-text-3); }
-.announce-tag { padding: 3px 10px; border-radius: var(--rd-radius-pill); background: var(--rd-accent-soft); color: var(--rd-accent-text); font-weight: 600; }
+.announce-tag {
+  flex: none; white-space: nowrap; padding: 2px 8px; border-radius: var(--rd-radius-pill);
+  background: var(--rd-accent-soft); color: var(--rd-accent-text); font-size: 12px; font-weight: 600; line-height: 18px;
+}
+.announce-text { min-width: 0; line-height: 18px; }
 .actions { display: flex; flex-wrap: wrap; gap: 12px; }
 .command {
   display: flex; align-items: center; gap: 12px; max-width: 100%; padding: 6px 6px 6px 16px;
