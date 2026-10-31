@@ -116,7 +116,10 @@ fn eligible(service: &ServiceRuntime, members: &[Arc<Member>], now: Instant) -> 
             .max_per_backend
             .is_none_or(|max| m.state.in_flight() < max)
     };
-    let candidates = members.iter().filter(|m| m.weight > 0 && has_room(m));
+    // Drained backends are out even when failing open: draining is an operator's decision.
+    let candidates = members
+        .iter()
+        .filter(|m| m.weight > 0 && has_room(m) && !m.state.is_drained());
     let up: Vec<&Arc<Member>> = candidates
         .clone()
         .filter(|m| m.state.availability(now) != Availability::Down)

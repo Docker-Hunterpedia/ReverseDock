@@ -125,3 +125,129 @@ async fn api_routes_are_served_and_roll_back() {
         200
     );
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_drained_backend_gets_no_new_requests() {
+    let first = Backend::start("first").await;
+    let second = Backend::start("second").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"PathPrefix(`/`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}, {{ address: \"{}\" }}] }}\n",
+        first.addr, second.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    let body =
+        serde_json::json!({ "service": "app", "backend": first.addr.to_string() }).to_string();
+    let json = [("Content-Type", "application/json")];
+    let (status, _, text) = rdock
+        .admin_send("POST", "/api/v1/backends/drain", &json, &body)
+        .unwrap();
+    assert_eq!(status, 200, "{text}");
+    let (_, _, list) = rdock
+        .admin_send("GET", "/api/v1/backends", &[], "")
+        .unwrap();
+    assert!(list.contains("\"drained\":true"), "{list}");
+    for _ in 0..20 {
+        let reply = client::http1(proxy, get("app.test", "/")).await;
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            reply.json()["backend"],
+            "second",
+            "only the other backend answers"
+        );
+    }
+    let (status, _, _) = rdock
+        .admin_send("POST", "/api/v1/backends/undrain", &json, &body)
+        .unwrap();
+    assert_eq!(status, 200);
+    let mut seen_first = false;
+    for _ in 0..20 {
+        seen_first |= client::http1(proxy, get("app.test", "/")).await.json()["backend"] == "first";
+    }
+    assert!(seen_first, "back in rotation");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_cli_manages_users_tokens_backends_and_history() {
+    let backend = Backend::start("cli").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"PathPrefix(`/`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let ok = |output: std::process::Output| {
+        let out = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(
+            output.status.success(),
+            "{out}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        out
+    };
+
+    // The first admin over the socket, then an operator.
+    let setup = serde_json::json!({ "name": "root", "password": "correct horse battery staple" })
+        .to_string();
+    let (status, _, _) = rdock
+        .admin_send(
+            "POST",
+            "/api/v1/setup",
+            &[("Content-Type", "application/json")],
+            &setup,
+        )
+        .unwrap();
+    assert_eq!(status, 201);
+    ok(rdock.command_with_input(
+        &["users", "add", "ops", "--role", "operator"],
+        "another long passphrase\n",
+    ));
+    let listed = ok(rdock.command(&["users", "list"]));
+    assert!(
+        listed.contains("ops") && listed.contains("operator"),
+        "{listed}"
+    );
+    let weak = rdock.command_with_input(&["users", "add", "weak"], "password1234\n");
+    assert!(!weak.status.success(), "common passwords are refused");
+    ok(rdock.command(&["users", "set", "ops", "--disable"]));
+    assert!(ok(rdock.command(&["users", "list"])).contains("disabled"));
+    ok(rdock.command(&["users", "remove", "ops"]));
+
+    let created = ok(rdock.command(&["tokens", "create", "ci", "--role", "viewer", "--days", "7"]));
+    assert!(created.starts_with("rdk_pat_"), "{created}");
+    let id = created.split('_').nth(2).unwrap().to_owned();
+    assert!(ok(rdock.command(&["tokens", "list"])).contains(&id));
+    ok(rdock.command(&["tokens", "revoke", &id]));
+
+    let backends = ok(rdock.command(&["backends", "list"]));
+    assert!(backends.contains(&backend.addr.to_string()), "{backends}");
+    let addr = backend.addr.to_string();
+    ok(rdock.command(&["backends", "drain", "app", &addr]));
+    assert!(ok(rdock.command(&["backends", "list"])).contains("drained"));
+    ok(rdock.command(&["backends", "undrain", "app", &addr]));
+
+    let history = ok(rdock.command(&["config", "history"]));
+    assert!(history.contains("gen"), "{history}");
+    let candidate = rdock.path("candidate.yaml");
+    std::fs::write(
+        &candidate,
+        "routes:\n  x: { match: \"Host(`x.test`)\", service: app@file }\n",
+    )
+    .unwrap();
+    let diff = rdock.command(&["config", "diff", candidate.to_str().unwrap()]);
+    let text = String::from_utf8_lossy(&diff.stdout);
+    assert!(text.contains("+++ candidate"), "{text}");
+
+    let audit = ok(rdock.command(&["audit", "list", "--limit", "100"]));
+    for action in [
+        "user.create",
+        "user.delete",
+        "token.create",
+        "token.revoke",
+        "backend.drain",
+    ] {
+        assert!(audit.contains(action), "{action} missing:\n{audit}");
+    }
+    ok(rdock.command(&["audit", "verify"]));
+}

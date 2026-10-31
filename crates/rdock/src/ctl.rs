@@ -70,7 +70,65 @@ fn api_token() -> anyhow::Result<String> {
     }
 }
 
+/// One request to the admin API: method, path, extra headers and an optional JSON body.
+pub(crate) struct Call<'a> {
+    pub method: &'a str,
+    pub path: &'a str,
+    pub headers: Vec<(&'a str, String)>,
+    pub body: Option<String>,
+}
+
+impl<'a> Call<'a> {
+    pub(crate) fn new(method: &'a str, path: &'a str) -> Self {
+        Self {
+            method,
+            path,
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    /// With a JSON body.
+    pub(crate) fn json(mut self, body: &serde_json::Value) -> Self {
+        self.headers
+            .push(("Content-Type", "application/json".into()));
+        self.body = Some(body.to_string());
+        self
+    }
+}
+
+/// The answer: status, response head and body.
+pub(crate) struct Answer {
+    pub status: u16,
+    pub head: String,
+    pub body: String,
+}
+
+impl Answer {
+    /// The body as JSON (`null` when it is not JSON).
+    pub(crate) fn json(&self) -> serde_json::Value {
+        serde_json::from_str(&self.body).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// A response header, by lower-case name.
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.head.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+    }
+}
+
+/// Sends `call` to the running proxy (socket, or listener with an API token).
+pub(crate) fn call(args: &CtlArgs, call: &Call<'_>) -> anyhow::Result<Answer> {
+    send_call(&target(args)?, call)
+}
+
 fn send(target: &Target, method: &str, path: &str) -> anyhow::Result<(u16, String)> {
+    send_call(target, &Call::new(method, path)).map(|a| (a.status, a.body))
+}
+
+fn send_call(target: &Target, call: &Call<'_>) -> anyhow::Result<Answer> {
     match target {
         Target::Socket(socket) => {
             let stream = UnixStream::connect(socket).with_context(|| {
@@ -81,40 +139,47 @@ fn send(target: &Target, method: &str, path: &str) -> anyhow::Result<(u16, Strin
             })?;
             stream.set_read_timeout(Some(TIMEOUT))?;
             stream.set_write_timeout(Some(TIMEOUT))?;
-            exchange(stream, method, path, "localhost", None)
+            exchange(stream, call, "localhost", None)
         }
-        Target::Tcp(address, token) => tcp_request(*address, method, path, Some(token)),
+        Target::Tcp(address, token) => tcp_request(*address, call, Some(token)),
     }
 }
 
-/// Sends one request to the admin listener and returns status and body.
+/// Sends one request to the admin listener.
 fn tcp_request(
     address: SocketAddr,
-    method: &str,
-    path: &str,
+    call: &Call<'_>,
     token: Option<&str>,
-) -> anyhow::Result<(u16, String)> {
+) -> anyhow::Result<Answer> {
     let stream = TcpStream::connect_timeout(&address, TIMEOUT)
         .with_context(|| format!("cannot reach the admin API at {address} (is rdock running?)"))?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
-    exchange(stream, method, path, &address.to_string(), token)
+    exchange(stream, call, &address.to_string(), token)
 }
 
 fn exchange(
     mut stream: impl Read + Write,
-    method: &str,
-    path: &str,
+    call: &Call<'_>,
     host: &str,
     token: Option<&str>,
-) -> anyhow::Result<(u16, String)> {
-    let auth = token
-        .map(|t| format!("Authorization: Bearer {t}\r\n"))
-        .unwrap_or_default();
-    write!(
-        stream,
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\n{auth}Content-Length: 0\r\nConnection: close\r\n\r\n"
-    )?;
+) -> anyhow::Result<Answer> {
+    use std::fmt::Write as _;
+    let mut head = format!("{} {} HTTP/1.1\r\nHost: {host}\r\n", call.method, call.path);
+    if let Some(token) = token {
+        let _ = write!(head, "Authorization: Bearer {token}\r\n");
+    }
+    for (name, value) in &call.headers {
+        let _ = write!(head, "{name}: {value}\r\n");
+    }
+    let body = call.body.as_deref().unwrap_or_default();
+    let _ = write!(
+        head,
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body.as_bytes())?;
     let mut raw = Vec::new();
     stream
         .read_to_end(&mut raw)
@@ -126,7 +191,11 @@ fn exchange(
         .nth(1)
         .and_then(|s| s.parse().ok())
         .context("invalid response from the admin API")?;
-    Ok((status, body.to_owned()))
+    Ok(Answer {
+        status,
+        head: head.to_owned(),
+        body: body.to_owned(),
+    })
 }
 
 pub(crate) fn reload(args: &CtlArgs) -> anyhow::Result<ExitCode> {
@@ -254,7 +323,8 @@ fn certificate_line(cert: &serde_json::Value) -> String {
 }
 
 pub(crate) fn healthcheck(args: &CtlArgs) -> ExitCode {
-    match tcp_request(address(args), "GET", "/readyz", None) {
+    match tcp_request(address(args), &Call::new("GET", "/readyz"), None).map(|a| (a.status, a.body))
+    {
         Ok((200, _)) => ExitCode::SUCCESS,
         Ok((status, body)) => {
             eprintln!("not ready ({status}): {}", body.trim());

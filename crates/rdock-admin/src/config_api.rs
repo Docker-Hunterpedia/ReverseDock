@@ -58,14 +58,14 @@ fn mask(value: &mut Value, path: &mut Vec<String>) {
     }
 }
 
-fn masked(mut value: Value, root: &[&str]) -> Value {
+pub(crate) fn masked(mut value: Value, root: &[&str]) -> Value {
     let mut path: Vec<String> = root.iter().map(|s| (*s).to_owned()).collect();
     mask(&mut value, &mut path);
     value
 }
 
 /// Which provider owns each route, service and middleware (`name@provider`, else `file`).
-fn owners(config: &Value) -> Value {
+pub(crate) fn owners(config: &Value) -> Value {
     let mut out = Map::new();
     for section in ["routes", "services", "middlewares"] {
         let names = config[section].as_object().map(|m| {
@@ -123,7 +123,7 @@ fn with_etag(mut response: Response, etag: &str) -> Response {
     response
 }
 
-fn writes_allowed(state: &State) -> Result<(), Denied> {
+pub(crate) fn writes_allowed(state: &State) -> Result<(), Denied> {
     if state.api_writes {
         Ok(())
     } else {
@@ -134,7 +134,7 @@ fn writes_allowed(state: &State) -> Result<(), Denied> {
     }
 }
 
-fn if_match(headers: &HeaderMap) -> Result<String, Denied> {
+pub(crate) fn if_match(headers: &HeaderMap) -> Result<String, Denied> {
     headers
         .get(header::IF_MATCH)
         .and_then(|v| v.to_str().ok())
@@ -155,7 +155,7 @@ fn hash_of(etag: &str) -> String {
 
 /// Applies a candidate through [`crate::Control::write_api`] and answers it, auditing as
 /// `action`.
-async fn write(
+pub(crate) async fn write(
     state: &State,
     caller: &Caller,
     candidate: Value,
@@ -198,7 +198,7 @@ async fn write(
     }
 }
 
-async fn api_config(state: &State) -> Option<(Value, String)> {
+pub(crate) async fn api_config(state: &State) -> Option<(Value, String)> {
     let control = state.control.clone();
     state
         .main

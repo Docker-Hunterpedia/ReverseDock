@@ -787,4 +787,56 @@ impl rdock_admin::Control for Engine {
         let entry = entries.iter().find(|e| e.applied_at_ms == id)?;
         Some(entry.api.clone().unwrap_or_else(|| serde_json::json!({})))
     }
+
+    async fn backends(&self) -> Value {
+        let now = std::time::Instant::now();
+        let runtime = self.plane.runtime();
+        let services: Vec<Value> = runtime
+            .services
+            .iter()
+            .map(|(name, service)| {
+                let members: Vec<Value> = service
+                    .members()
+                    .iter()
+                    .map(|m| {
+                        let state = match m.state.breaker(now) {
+                            rdock_balancer::BreakerState::Closed => "up",
+                            rdock_balancer::BreakerState::Open => "down",
+                            rdock_balancer::BreakerState::HalfOpen => "trial",
+                        };
+                        serde_json::json!({
+                            "address": m.id,
+                            "weight": m.weight,
+                            "backup": m.backup,
+                            "in_flight": m.state.in_flight(),
+                            "state": state,
+                            "drained": m.state.is_drained(),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "service": name, "backends": members })
+            })
+            .collect();
+        Value::Array(services)
+    }
+
+    async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool {
+        let runtime = self.plane.runtime();
+        let Some(service) = runtime.services.get(&service) else {
+            return false;
+        };
+        let members = service.members();
+        let matching: Vec<_> = members.iter().filter(|m| m.id == backend).collect();
+        for member in &matching {
+            member.state.set_drained(drained);
+        }
+        if !matching.is_empty() {
+            tracing::info!(service = %service.name, %backend, drained, "backend drain changed through the admin API");
+        }
+        !matching.is_empty()
+    }
+
+    async fn renew_certificate(&self, name: String) -> bool {
+        self.acme.renew(&name)
+    }
 }

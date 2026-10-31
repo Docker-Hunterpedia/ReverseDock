@@ -37,6 +37,32 @@ api -X PUT http://localhost/api/v1/config/api \
 
 `PATCH` changes part of it: `Content-Type: application/merge-patch+json` (RFC 7396, `null` removes) or `application/json-patch+json` (RFC 6902 operations). A configuration that would not be applied is refused with `422` and the diagnostics, and nothing changes: unlike Docker objects, a broken API object is never just left out.
 
+## One object at a time
+
+`GET /api/v1/routes`, `/services` and `/middlewares` list every object with its `owner`; `GET /api/v1/routes/{name}` shows one. `PUT /api/v1/routes/shop` with the route as the body, or `DELETE`, changes one API object, with the same `If-Match` as above; objects owned by the file or Docker answer `403` with the provider to change them in.
+
+## Backends, certificates, providers and listeners
+
+- `GET /api/v1/backends` shows every service's backends: address, state (`up`, `down`, `trial`), requests in flight and whether they are drained. `POST /api/v1/backends/drain` with `{"service":"shop","backend":"10.0.0.5:8080"}` stops new requests to it while open ones finish; `/undrain` puts it back. A drained backend is out even when the service fails open; a restart forgets drains.
+- `GET /api/v1/certificates` lists configured and automatic certificates; `POST /api/v1/certificates/shop.example.com/renew` renews the automatic certificate covering that name now (still within the back-off after failures).
+- `GET /api/v1/providers` shows each provider's state with the diagnostics about its objects; `GET /api/v1/listeners` lists listeners, which only a restart changes ([ADR-0008](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0008-listener-changes-via-self-upgrade.md)).
+
+## The same from the command line
+
+On the server the CLI uses the admin socket; elsewhere it needs `--admin` and `RDOCK_ADMIN_TOKEN`.
+
+```sh
+rdock config history                 # applied configurations with their id
+rdock config diff candidate.yaml     # what a document would change, nothing applied
+rdock config rollback 1793479942801
+rdock users list | add NAME --role operator | set NAME --disable | passwd NAME | reset-mfa NAME | remove NAME
+rdock tokens list | create NAME --role metrics --days 365 --allow 10.0.0.0/8 | revoke ID
+rdock backends list | drain SERVICE ADDRESS | undrain SERVICE ADDRESS
+rdock audit list --limit 50
+```
+
+Passwords for `users add` and `users passwd` are read from standard input.
+
 ## Try first
 
 ```sh

@@ -209,6 +209,27 @@ impl Rdock {
             .unwrap()
     }
 
+    /// Runs the binary with `args` and `input` on standard input.
+    pub fn command_with_input(&self, args: &[&str], input: &str) -> std::process::Output {
+        use std::io::Write;
+        let mut child = Command::new(&self.binary)
+            .args(args)
+            .env("RDOCK_CONFIG", self.config_path())
+            .env("RDOCK_DATA_DIR", self.data_dir())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
+    }
+
     /// Path of a file in the test directory.
     pub fn path(&self, name: &str) -> PathBuf {
         self.dir.path().join(name)

@@ -46,6 +46,7 @@ tracing.workspace = true
 uuid = { workspace = true, features = ["v4"] }
 ring.workspace = true
 serde_path_to_error.workspace = true
+serde-saphyr.workspace = true
 
 [dev-dependencies]
 base64.workspace = true

@@ -10,7 +10,7 @@ use axum::routing::{get, post};
 use http::{StatusCode, header};
 
 use crate::caller::{self, Access, Caller};
-use crate::{State, Transport, account, auth, config_api, guard, manage};
+use crate::{State, Transport, account, auth, config_api, guard, manage, resources};
 
 /// Largest request body (ADR-0024); larger ones get 413.
 const MAX_BODY: usize = 1024 * 1024;
@@ -65,6 +65,20 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .route("/config/rollback", post(config_api::rollback))
         .route("/config/export", get(config_api::export))
         .route("/config/import", post(config_api::import))
+        .route("/certificates", get(resources::certificates))
+        .route("/certificates/{name}/renew", post(resources::renew))
+        .route("/backends", get(resources::backends))
+        .route("/backends/drain", post(resources::drain))
+        .route("/backends/undrain", post(resources::undrain))
+        .route("/providers", get(resources::providers))
+        .route("/listeners", get(resources::listeners))
+        .route("/{kind}", get(resources::list))
+        .route(
+            "/{kind}/{name}",
+            get(resources::get)
+                .put(resources::put)
+                .delete(resources::delete),
+        )
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             caller::authenticate,
