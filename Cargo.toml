@@ -58,6 +58,9 @@ rdock-tls = { path = "crates/rdock-tls" }
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
 ipnet = { version = "2.12.2", features = ["serde"] }
+# Configuration API (ADR-0024): line diffs with a deadline, RFC 6902 JSON Patch.
+similar = "3.2.1"
+json-patch = { version = "4.2.0", default-features = false }
 # The checksum in API tokens (ADR-0024); already in the tree through flate2.
 crc32fast = "1.5.0"
 regex = "1.13.1"

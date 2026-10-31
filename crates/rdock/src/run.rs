@@ -230,6 +230,7 @@ async fn start_admin(
         metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
         audit_dir: args.data_dir.join("audit"),
         audit: admin.audit,
+        api_writes: admin.api_writes,
     };
     let running = rdock_admin::start(settings, engine.clone(), stop)?;
     tracing::info!(%address, socket = %socket.display(), "admin API listening");

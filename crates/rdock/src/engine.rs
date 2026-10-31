@@ -22,6 +22,8 @@ use serde_json::Value;
 use crate::validate::load_error;
 use crate::zero_config::{self, Source};
 
+mod api;
+
 /// Where the applied configuration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -71,16 +73,19 @@ impl Report {
 struct Applied {
     config: Option<Config>,
     source: Option<Value>,
+    /// The API provider's objects as last applied, for the history.
+    api: Option<Value>,
     origin: Origin,
 }
 
 /// Providers whose snapshots the engine merges.
-const PROVIDERS: [&str; 1] = ["docker"];
+const PROVIDERS: [&str; 2] = ["docker", api::PROVIDER];
 
 /// Whether the file configuration enables `provider`.
 fn enabled(file: &Config, provider: &str) -> bool {
     match provider {
         "docker" => file.providers.docker.is_some(),
+        api::PROVIDER => true,
         _ => false,
     }
 }
@@ -113,6 +118,8 @@ pub(crate) struct Engine {
     /// Why a provider cannot reach its source, while it cannot.
     degraded: Mutex<BTreeMap<String, String>>,
     started_at: SystemTime,
+    /// One configuration write through the API at a time (version check and apply).
+    api_writes: tokio::sync::Mutex<()>,
 }
 
 /// What the certificate manager should do for an applied configuration: nothing when
@@ -163,6 +170,7 @@ impl Engine {
             applied: tokio::sync::Mutex::new(Applied {
                 config: None,
                 source: None,
+                api: None,
                 origin: Origin::File,
             }),
             ready: AtomicBool::new(false),
@@ -174,6 +182,7 @@ impl Engine {
             snapshots: Mutex::new(BTreeMap::new()),
             degraded: Mutex::new(BTreeMap::new()),
             started_at: SystemTime::now(),
+            api_writes: tokio::sync::Mutex::new(()),
         }
     }
 
@@ -374,16 +383,12 @@ impl Engine {
         }
         self.update_background(&config, acme_plan, local_names);
         let summary = summarize(applied.config.as_ref(), &config);
-        if applied.source.as_ref() != Some(&source) {
-            let entry = HistoryEntry {
-                applied_at_ms: unix_ms(),
-                generation,
-                summary: summary.clone(),
-                source: source.clone(),
-            };
-            if let Err(err) = self.state.record(&entry, HISTORY_LIMIT) {
-                tracing::warn!(error = %err, "cannot write the configuration history");
-            }
+        let api = snapshots
+            .iter()
+            .find(|s| s.provider == api::PROVIDER)
+            .and_then(|s| serde_json::to_value(&s.fragment).ok());
+        if applied.source.as_ref() != Some(&source) || applied.api != api {
+            self.record_history(generation, &summary, &source, api.as_ref());
         }
         if origin == Origin::File
             && let Err(err) = self.state.save_lkg(&source)
@@ -416,6 +421,7 @@ impl Engine {
             .store(config.observability.metrics.prometheus, Ordering::SeqCst);
         applied.config = Some(config);
         applied.source = Some(source);
+        applied.api = api;
         applied.origin = origin;
         drop(applied);
         for d in diagnostics.iter().filter(|d| !d.is_error()) {
@@ -438,6 +444,20 @@ impl Engine {
         };
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
         report
+    }
+
+    /// Adds an entry to the on-disk history; a failure is logged, never fatal.
+    fn record_history(&self, generation: u64, summary: &str, source: &Value, api: Option<&Value>) {
+        let entry = HistoryEntry {
+            applied_at_ms: unix_ms(),
+            generation,
+            summary: summary.to_owned(),
+            source: source.clone(),
+            api: api.cloned(),
+        };
+        if let Err(err) = self.state.record(&entry, HISTORY_LIMIT) {
+            tracing::warn!(error = %err, "cannot write the configuration history");
+        }
     }
 
     /// Merges the providers' objects into the file configuration and compiles it. Provider
@@ -703,5 +723,68 @@ impl rdock_admin::Control for Engine {
             report.applied(),
             serde_json::to_value(&report).unwrap_or(Value::Null),
         )
+    }
+
+    async fn effective_config(&self) -> Value {
+        let config = self.applied.lock().await.config.clone();
+        config
+            .and_then(|c| serde_json::to_value(c).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    async fn api_config(&self) -> (Value, String) {
+        let fragment = serde_json::to_value(self.api_fragment()).unwrap_or(Value::Null);
+        (fragment, self.api_etag())
+    }
+
+    async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {
+        let fragment = api::parse(candidate)?;
+        let (ok, diagnostics) = self.api_dry_run(fragment);
+        Ok((ok, serde_json::to_value(diagnostics).unwrap_or(Value::Null)))
+    }
+
+    async fn write_api(&self, candidate: Value, if_match: String) -> rdock_admin::ApiWrite {
+        let fragment = match api::parse(candidate) {
+            Ok(fragment) => fragment,
+            Err(err) => return rdock_admin::ApiWrite::Invalid(err),
+        };
+        let report = |r: &Report| serde_json::to_value(r).unwrap_or(Value::Null);
+        match self.api_write(fragment, &if_match).await {
+            api::Write::Applied(r) => rdock_admin::ApiWrite::Applied {
+                report: report(&r),
+                etag: self.api_etag(),
+            },
+            api::Write::Rejected(r) => rdock_admin::ApiWrite::Rejected { report: report(&r) },
+            api::Write::Stale => rdock_admin::ApiWrite::Stale {
+                etag: self.api_etag(),
+            },
+        }
+    }
+
+    async fn history(&self) -> Value {
+        let entries = self.state.history().unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "cannot read the configuration history");
+            Vec::new()
+        });
+        let list: Vec<Value> = entries
+            .iter()
+            .rev()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.applied_at_ms,
+                    "generation": e.generation,
+                    "applied_at": rdock_observability::rfc3339(UNIX_EPOCH + Duration::from_millis(e.applied_at_ms)),
+                    "summary": e.summary,
+                    "api": e.api.is_some(),
+                })
+            })
+            .collect();
+        Value::Array(list)
+    }
+
+    async fn history_api(&self, id: u64) -> Option<Value> {
+        let entries = self.state.history().ok()?;
+        let entry = entries.iter().find(|e| e.applied_at_ms == id)?;
+        Some(entry.api.clone().unwrap_or_else(|| serde_json::json!({})))
     }
 }

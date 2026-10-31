@@ -1,21 +1,36 @@
 //! The admin server on its own runtime: DNS-rebinding and cross-site checks, security headers,
 //! the token on TCP, the Unix socket and TLS (ADR-0024).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::too_many_lines
+)]
 
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rdock_admin::{Control, Running, Settings, TlsFiles};
+use rdock_admin::{ApiWrite, Control, Running, Settings, TlsFiles};
 use rdock_model::settings::{AdminAudit, AdminPasswords, AdminSessions, AdminTokens, MfaPolicy};
 use rdock_testkit::certs::TestCa;
 use rdock_testkit::client::{self, request};
 use rdock_testkit::free_port;
 use tokio::sync::watch;
 
-struct Fake;
+#[derive(Default)]
+struct Fake {
+    /// The API objects and the generation.
+    api: std::sync::Mutex<(serde_json::Value, u64)>,
+}
+
+impl Fake {
+    fn etag(generation: u64) -> String {
+        format!("\"g{generation}-0011223344556677\"")
+    }
+}
 
 #[async_trait]
 impl Control for Fake {
@@ -33,6 +48,54 @@ impl Control for Fake {
             true,
             serde_json::json!({ "result": "applied", "generation": 8 }),
         )
+    }
+    async fn effective_config(&self) -> serde_json::Value {
+        serde_json::json!({
+            "routes": { "web": {}, "app@docker": {} },
+            "services": { "web": { "sticky": { "cookie": { "secret": "plain" } } } }
+        })
+    }
+    async fn api_config(&self) -> (serde_json::Value, String) {
+        let api = self.api.lock().unwrap();
+        (api.0.clone(), Self::etag(api.1))
+    }
+    async fn dry_run(
+        &self,
+        candidate: serde_json::Value,
+    ) -> Result<(bool, serde_json::Value), String> {
+        if candidate.get("bad").is_some() {
+            return Err("bad: unknown field".into());
+        }
+        let rejected = candidate["routes"].get("reject").is_some();
+        Ok((!rejected, serde_json::json!([])))
+    }
+    async fn write_api(&self, candidate: serde_json::Value, if_match: String) -> ApiWrite {
+        let mut api = self.api.lock().unwrap();
+        if if_match != Self::etag(api.1) {
+            return ApiWrite::Stale {
+                etag: Self::etag(api.1),
+            };
+        }
+        if candidate.get("bad").is_some() {
+            return ApiWrite::Invalid("bad: unknown field".into());
+        }
+        if candidate["routes"].get("reject").is_some() {
+            return ApiWrite::Rejected {
+                report: serde_json::json!({ "result": "rejected" }),
+            };
+        }
+        api.0 = candidate;
+        api.1 += 1;
+        ApiWrite::Applied {
+            report: serde_json::json!({ "result": "applied", "generation": api.1 }),
+            etag: Self::etag(api.1),
+        }
+    }
+    async fn history(&self) -> serde_json::Value {
+        serde_json::json!([{ "id": 1_793_000_000_000_u64, "generation": 1, "summary": "start", "api": true }])
+    }
+    async fn history_api(&self, id: u64) -> Option<serde_json::Value> {
+        (id == 1_793_000_000_000).then(|| serde_json::json!({ "routes": {} }))
     }
 }
 
@@ -79,9 +142,10 @@ impl Admin {
             metrics_unauthenticated_on_loopback: false,
             audit_dir: dir.path().join("audit"),
             audit: AdminAudit::default(),
+            api_writes: true,
         };
         change(&mut settings);
-        let running = rdock_admin::start(settings, Arc::new(Fake), stop_rx).unwrap();
+        let running = rdock_admin::start(settings, Arc::new(Fake::default()), stop_rx).unwrap();
         Self {
             address,
             dir,
@@ -298,8 +362,9 @@ fn a_busy_port_fails_the_start() {
         metrics_unauthenticated_on_loopback: false,
         audit_dir: std::env::temp_dir().join("rdock-admin-unused-audit"),
         audit: AdminAudit::default(),
+        api_writes: true,
     };
-    let err = rdock_admin::start(settings, Arc::new(Fake), stop_rx)
+    let err = rdock_admin::start(settings, Arc::new(Fake::default()), stop_rx)
         .err()
         .unwrap();
     assert!(
@@ -893,4 +958,186 @@ async fn logins_writes_and_refusals_land_in_an_intact_audit_chain() {
         rdock_admin::audit::verify(&dir.path().join("audit")).unwrap(),
         rdock_admin::audit::Verdict::Intact { .. }
     ));
+}
+
+/// A JSON request with a bearer token and extra headers.
+fn bearer_json(
+    method: &str,
+    path: &str,
+    token: &str,
+    body: &serde_json::Value,
+    extra: &[(&str, &str)],
+) -> http::Request<http_body_util::Full<bytes::Bytes>> {
+    let auth = format!("Bearer {token}");
+    let mut headers = vec![
+        ("authorization", auth.as_str()),
+        ("content-type", "application/json"),
+    ];
+    headers.extend_from_slice(extra);
+    with(
+        request(method, "127.0.0.1", path, body.to_string()),
+        &headers,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn configuration_writes_are_conditional_dry_run_and_audited() {
+    let admin = Admin::start(None, Vec::new());
+    let operator = api_token(&admin, "operator");
+    let viewer = api_token(&admin, "viewer");
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config", &viewer)).await;
+    let body = json_body(&reply);
+    assert_eq!(body["owners"]["routes"]["app@docker"], "docker");
+    assert_eq!(body["owners"]["routes"]["web"], "file");
+    assert_eq!(
+        body["config"]["services"]["web"]["sticky"]["cookie"]["secret"],
+        "***"
+    );
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &viewer)).await;
+    let etag = reply.header("etag").unwrap().to_owned();
+    let candidate =
+        serde_json::json!({ "routes": { "a": { "match": "Host(`a.example`)", "service": "a" } } });
+
+    let put = |token: &str, extra: &[(&str, &str)]| {
+        bearer_json("PUT", "/api/v1/config/api", token, &candidate, extra)
+    };
+    assert_eq!(
+        client::http1(admin.address, put(&viewer, &[("if-match", &etag)]))
+            .await
+            .status,
+        403
+    );
+    assert_eq!(
+        client::http1(admin.address, put(&operator, &[]))
+            .await
+            .status,
+        428
+    );
+    let stale = client::http1(admin.address, put(&operator, &[("if-match", "\"g0-old\"")])).await;
+    assert_eq!(stale.status, 412);
+    assert_eq!(stale.header("etag"), Some(etag.as_str()));
+    let applied = client::http1(admin.address, put(&operator, &[("if-match", &etag)])).await;
+    assert_eq!(applied.status, 200);
+    let next = applied.header("etag").unwrap().to_owned();
+    assert_ne!(next, etag);
+    let again = client::http1(admin.address, put(&operator, &[("if-match", &etag)])).await;
+    assert_eq!(again.status, 412, "the old version cannot be written twice");
+
+    // Merge patch on top, then a rejected one leaves the version as it was.
+    let patch = with(
+        request(
+            "PATCH",
+            "127.0.0.1",
+            "/api/v1/config/api",
+            r#"{"routes":{"a":null,"b":{"match":"Host(`b`)","service":"b"}}}"#,
+        ),
+        &[
+            ("authorization", &format!("Bearer {operator}")),
+            ("content-type", "application/merge-patch+json"),
+            ("if-match", &next),
+        ],
+    );
+    let patched = client::http1(admin.address, patch).await;
+    assert_eq!(patched.status, 200);
+    let after_patch = patched.header("etag").unwrap().to_owned();
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &viewer)).await;
+    assert!(json_body(&reply)["routes"].get("a").is_none());
+    assert!(json_body(&reply)["routes"].get("b").is_some());
+    let wrong_type = with(
+        request("PATCH", "127.0.0.1", "/api/v1/config/api", "{}"),
+        &[
+            ("authorization", &format!("Bearer {operator}")),
+            ("content-type", "text/plain"),
+            ("if-match", &after_patch),
+        ],
+    );
+    assert_eq!(client::http1(admin.address, wrong_type).await.status, 415);
+    let reject = serde_json::json!({ "routes": { "reject": {} } });
+    let reply = client::http1(
+        admin.address,
+        bearer_json(
+            "PUT",
+            "/api/v1/config/api",
+            &operator,
+            &reject,
+            &[("if-match", &after_patch)],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+
+    // Dry run with a diff; nothing changes.
+    let reply = client::http1(
+        admin.address,
+        bearer_json("POST", "/api/v1/config/validate", &operator, &reject, &[]),
+    )
+    .await;
+    let body = json_body(&reply);
+    assert_eq!(body["valid"], false);
+    assert!(
+        body["diff"].as_str().unwrap().contains("+    \"reject\""),
+        "{body}"
+    );
+    let bad = serde_json::json!({ "bad": 1 });
+    let reply = client::http1(
+        admin.address,
+        bearer_json("POST", "/api/v1/config/validate", &operator, &bad, &[]),
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/history", &viewer)).await;
+    assert_eq!(json_body(&reply)[0]["generation"], 1);
+    let rollback = serde_json::json!({ "id": 1_793_000_000_000_u64 });
+    let reply = client::http1(
+        admin.address,
+        bearer_json(
+            "POST",
+            "/api/v1/config/rollback",
+            &operator,
+            &rollback,
+            &[("if-match", &after_patch)],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 200);
+    let export = client::http1(
+        admin.address,
+        bearer_get("/api/v1/config/export", &operator),
+    )
+    .await;
+    assert_eq!(export.status, 403, "exports are for admins");
+
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "GET /api/v1/audit HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.contains("\"config.apply\""));
+    assert!(response.contains("\"config.rollback\""));
+    assert!(response.contains("config_after"));
+    admin.stop().await;
+
+    let gitops = Admin::start_with(tempfile::tempdir().unwrap(), None, Vec::new(), |s| {
+        s.api_writes = false;
+    });
+    let operator = api_token(&gitops, "operator");
+    let reply = client::http1(
+        gitops.address,
+        bearer_json(
+            "PUT",
+            "/api/v1/config/api",
+            &operator,
+            &candidate,
+            &[("if-match", &Fake::etag(0))],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 403, "GitOps mode refuses writes");
+    gitops.stop().await;
 }

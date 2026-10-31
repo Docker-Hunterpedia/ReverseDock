@@ -5,6 +5,7 @@ pub mod audit;
 mod auth;
 mod bootstrap;
 mod caller;
+mod config_api;
 mod dashboard;
 mod guard;
 mod limits;
@@ -36,6 +37,46 @@ pub trait Control: Send + Sync {
     async fn status(&self) -> serde_json::Value;
     /// Reloads the configuration; returns whether it was applied, and the report.
     async fn reload(&self) -> (bool, serde_json::Value);
+    /// The applied configuration, providers merged (`name@provider`), secrets as written.
+    async fn effective_config(&self) -> serde_json::Value;
+    /// The API provider's objects and their version tag (`"g<generation>-<hash>"`).
+    async fn api_config(&self) -> (serde_json::Value, String);
+    /// Validates and compiles with `candidate` as the API objects, applying nothing: whether
+    /// it would be applied, and the diagnostics; `Err` when it is not a valid document.
+    async fn dry_run(
+        &self,
+        candidate: serde_json::Value,
+    ) -> Result<(bool, serde_json::Value), String>;
+    /// Replaces the API objects when `if_match` is the current version tag.
+    async fn write_api(&self, candidate: serde_json::Value, if_match: String) -> ApiWrite;
+    /// The configuration history, newest first; each entry has an `id`.
+    async fn history(&self) -> serde_json::Value;
+    /// The API objects recorded with the history entry `id`.
+    async fn history_api(&self, id: u64) -> Option<serde_json::Value>;
+}
+
+/// The outcome of a conditional write of the API provider's objects.
+#[derive(Debug)]
+pub enum ApiWrite {
+    /// Applied; the new version tag.
+    Applied {
+        /// The reload report.
+        report: serde_json::Value,
+        /// The version tag now current.
+        etag: String,
+    },
+    /// The configuration was rejected; nothing changed.
+    Rejected {
+        /// The reload report with the diagnostics.
+        report: serde_json::Value,
+    },
+    /// `If-Match` named an older version.
+    Stale {
+        /// The version tag now current.
+        etag: String,
+    },
+    /// Not a valid document.
+    Invalid(String),
 }
 
 /// Where and how the admin API listens (ADR-0024).
@@ -67,6 +108,8 @@ pub struct Settings {
     pub tokens: rdock_model::settings::AdminTokens,
     /// Serve `/metrics` without a token on a loopback listener.
     pub metrics_unauthenticated_on_loopback: bool,
+    /// Allow configuration writes through the API (`admin.api_writes`); off for `GitOps`.
+    pub api_writes: bool,
     /// Where the audit log is written: `$RDOCK_DATA_DIR/audit`.
     pub audit_dir: PathBuf,
     /// Audit log rotation, retention and forwarding.
@@ -110,6 +153,7 @@ struct State {
     /// `/metrics` answers without a token (loopback listener and the setting on).
     metrics_open: bool,
     audit: audit::Audit,
+    api_writes: bool,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
 }
