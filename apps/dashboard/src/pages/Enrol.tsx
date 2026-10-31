@@ -86,19 +86,15 @@ export function Enrol({ onCancel }: { onCancel: () => void }) {
   );
 }
 
-/** Shows the recovery codes once, with copy and download, until the user confirms saving them. */
-function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
-  const [saved, setSaved] = useState(false);
+/** The codes in two columns with copy and download. */
+export function CodeList({ codes }: { codes: string[] }) {
   const download = useMemo(() => {
     const text = `ReverseDock recovery codes\nEach code works once.\n\n${codes.join("\n")}\n`;
     return URL.createObjectURL(new Blob([text], { type: "text/plain" }));
   }, [codes]);
   useEffect(() => () => URL.revokeObjectURL(download), [download]);
   return (
-    <AuthLayout
-      title="Save your recovery codes"
-      intro="If you lose your phone, each of these codes lets you log in once. They are shown only now."
-    >
+    <>
       <ol className="grid grid-cols-2 gap-x-6 gap-y-1.5 rounded-sm border border-line bg-surface-2 p-4 font-mono text-[13px]">
         {codes.map((c) => <li key={c}>{c}</li>)}
       </ol>
@@ -112,6 +108,19 @@ function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void 
           Download
         </a>
       </div>
+    </>
+  );
+}
+
+/** Shows the recovery codes once, until the user confirms saving them. */
+function RecoveryCodes({ codes, onDone }: { codes: string[]; onDone: () => void }) {
+  const [saved, setSaved] = useState(false);
+  return (
+    <AuthLayout
+      title="Save your recovery codes"
+      intro="If you lose your phone, each of these codes lets you log in once. They are shown only now."
+    >
+      <CodeList codes={codes} />
       <label className="mt-5 flex items-center gap-2 text-[13px] text-fg-2">
         <input type="checkbox" checked={saved} onChange={(e) => setSaved(e.target.checked)} />
         I have stored these codes somewhere safe.

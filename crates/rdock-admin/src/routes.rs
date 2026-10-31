@@ -40,7 +40,14 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .route("/api/v1/setup", get(auth::setup_needed).post(auth::setup))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/session", get(account::session))
-        .route("/api/v1/auth/mfa", post(account::mfa))
+        .route(
+            "/api/v1/auth/mfa",
+            get(account::mfa_state).post(account::mfa),
+        )
+        .route(
+            "/api/v1/auth/recovery-codes",
+            post(account::new_recovery_codes),
+        )
         .route(
             "/api/v1/auth/totp",
             post(account::enrol).delete(account::unenrol),

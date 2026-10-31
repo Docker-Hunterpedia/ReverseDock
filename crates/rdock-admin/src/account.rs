@@ -293,6 +293,63 @@ pub(crate) async fn confirm(
     respond(StatusCode::OK, body, Some(&cookie))
 }
 
+/// `POST /api/v1/auth/recovery-codes`: replaces the caller's recovery codes with ten new
+/// ones, shown once. Needs the password (and code) confirmed in the last five minutes; the
+/// old codes stop working at once.
+pub(crate) async fn new_recovery_codes(
+    Extract(state): Extract<Arc<State>>,
+    method: Method,
+    headers: HeaderMap,
+) -> Response {
+    let (_, session) = match current(&state, &method, &headers, &[Stage::Full]) {
+        Ok(found) => found,
+        Err(refused) => return refused.into_response(),
+    };
+    if session.authenticated.elapsed() > REAUTH {
+        return error(
+            StatusCode::FORBIDDEN,
+            "confirm your password first: POST /api/v1/auth/reauth",
+        );
+    }
+    let Some((shown, stored)) = totp::recovery_codes() else {
+        return error(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "the random generator failed",
+        );
+    };
+    let replaced = state.users.update(&session.user, |u| {
+        u.mfa.as_mut().map(|mfa| mfa.recovery = stored)
+    });
+    match replaced {
+        Err(err) => internal(&err),
+        Ok(None) => error(StatusCode::CONFLICT, "set up an authenticator app first"),
+        Ok(Some(())) => {
+            tracing::info!(user = %session.user, "replaced the recovery codes");
+            axum::Json(serde_json::json!({ "recovery_codes": shown })).into_response()
+        }
+    }
+}
+
+/// `GET /api/v1/auth/mfa`: whether the caller has a second factor and how many recovery
+/// codes are left.
+pub(crate) async fn mfa_state(
+    Extract(state): Extract<Arc<State>>,
+    method: Method,
+    headers: HeaderMap,
+) -> Response {
+    let (_, session) = match current(&state, &method, &headers, &[Stage::Full]) {
+        Ok(found) => found,
+        Err(refused) => return refused.into_response(),
+    };
+    let mfa = state.users.find(&session.user).and_then(|u| u.mfa);
+    axum::Json(serde_json::json!({
+        "enrolled": mfa.is_some(),
+        "recovery_codes_left": mfa.map_or(0, |m| m.recovery.len()),
+        "required": mfa_required(state.mfa, session.role),
+    }))
+    .into_response()
+}
+
 /// `DELETE /api/v1/auth/totp`: removes the caller's second factor, when the policy allows
 /// it and the password was confirmed in the last five minutes.
 pub(crate) async fn unenrol(
