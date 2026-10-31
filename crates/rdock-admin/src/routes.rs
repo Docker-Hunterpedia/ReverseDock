@@ -3,22 +3,38 @@
 use std::sync::Arc;
 
 use axum::Router;
-use axum::extract::{Request, State as Extract};
-use axum::middleware::{self, Next};
+use axum::extract::{Extension, Request, State as Extract};
+use axum::middleware;
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
-use http::{HeaderValue, StatusCode, header};
-use subtle::ConstantTimeEq;
+use http::{StatusCode, header};
 
-use crate::sessions::Stage;
-use crate::users::Role;
-use crate::{State, Transport, account, auth, guard};
+use crate::caller::{self, Access, Caller};
+use crate::{State, Transport, account, auth, guard, manage};
 
 /// Largest request body (ADR-0024); larger ones get 413.
 const MAX_BODY: usize = 1024 * 1024;
 
 pub(crate) fn error(status: StatusCode, message: &str) -> Response {
     (status, axum::Json(serde_json::json!({ "error": message }))).into_response()
+}
+
+/// A refusal with a fixed message, kept small so `Result<_, Denied>` stays cheap; it becomes
+/// the JSON error, with `WWW-Authenticate: Bearer` on 401.
+#[derive(Debug)]
+pub(crate) struct Denied(pub(crate) StatusCode, pub(crate) &'static str);
+
+impl IntoResponse for Denied {
+    fn into_response(self) -> Response {
+        let mut response = error(self.0, self.1);
+        if self.0 == StatusCode::UNAUTHORIZED {
+            response.headers_mut().insert(
+                header::WWW_AUTHENTICATE,
+                http::HeaderValue::from_static("Bearer"),
+            );
+        }
+        response
+    }
 }
 
 fn text(status: StatusCode, content_type: &'static str, body: impl Into<String>) -> Response {
@@ -29,7 +45,17 @@ pub(crate) fn router(state: Arc<State>) -> Router {
     let api = Router::new()
         .route("/status", get(status))
         .route("/config/reload", post(reload))
-        .route_layer(middleware::from_fn_with_state(state.clone(), authenticate));
+        .route("/users", get(manage::users).post(manage::create_user))
+        .route(
+            "/users/{name}",
+            axum::routing::patch(manage::change_user).delete(manage::delete_user),
+        )
+        .route("/tokens", get(manage::tokens).post(manage::create_token))
+        .route("/tokens/{id}", axum::routing::delete(manage::revoke_token))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            caller::authenticate,
+        ));
     Router::new()
         .route(
             "/healthz",
@@ -84,46 +110,6 @@ async fn fallback(
     }
 }
 
-/// The Unix socket is trusted like the data directory; TCP needs the bearer token or a
-/// complete session, which for unsafe methods must also send its CSRF token and belong to an
-/// operator or admin.
-async fn authenticate(
-    Extract(state): Extract<Arc<State>>,
-    request: Request,
-    next: Next,
-) -> Response {
-    if request.extensions().get::<Transport>() == Some(&Transport::Socket) {
-        return next.run(request).await;
-    }
-    let session = account::cookie(request.headers())
-        .and_then(|value| state.sessions.get(value))
-        .filter(|s| s.stage == Stage::Full);
-    if let Some(session) = session {
-        let safe = matches!(*request.method(), http::Method::GET | http::Method::HEAD);
-        if !safe && !account::csrf_ok(request.headers(), &session) {
-            return error(StatusCode::FORBIDDEN, "missing or wrong X-CSRF-Token");
-        }
-        if !safe && session.role < Role::Operator {
-            return error(StatusCode::FORBIDDEN, "your role cannot do this");
-        }
-        return next.run(request).await;
-    }
-    let presented = request
-        .headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|v| v.to_str().ok())
-        .and_then(|v| v.strip_prefix("Bearer "))
-        .unwrap_or_default();
-    if !state.token.is_empty() && bool::from(presented.as_bytes().ct_eq(state.token.as_bytes())) {
-        return next.run(request).await;
-    }
-    let mut response = error(StatusCode::UNAUTHORIZED, "a valid admin token is required");
-    response
-        .headers_mut()
-        .insert(header::WWW_AUTHENTICATE, HeaderValue::from_static("Bearer"));
-    response
-}
-
 async fn ready(Extract(state): Extract<Arc<State>>) -> Response {
     if state.control.ready() {
         text(StatusCode::OK, "text/plain", "ready\n")
@@ -132,14 +118,32 @@ async fn ready(Extract(state): Extract<Arc<State>>) -> Response {
     }
 }
 
-async fn metrics(Extract(state): Extract<Arc<State>>) -> Response {
+/// `/metrics` needs a token with at least the `metrics` role, unless
+/// `admin.metrics_unauthenticated_on_loopback` opens it on a loopback listener.
+async fn metrics(Extract(state): Extract<Arc<State>>, request: Request) -> Response {
+    if !state.metrics_open {
+        let transport = request.extensions().get::<Transport>().copied();
+        let peer = request.extensions().get::<auth::Peer>().copied();
+        let allowed =
+            caller::identify(&state, request.method(), request.headers(), transport, peer)
+                .and_then(|caller| caller::need(&caller, Access::Metrics));
+        if let Err(denied) = allowed {
+            return denied.into_response();
+        }
+    }
     match state.control.metrics() {
         Some(body) => text(StatusCode::OK, "text/plain; version=0.0.4", body),
         None => error(StatusCode::NOT_FOUND, "metrics are disabled"),
     }
 }
 
-async fn status(Extract(state): Extract<Arc<State>>) -> Response {
+async fn status(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
+    if let Err(denied) = caller::need(&caller, Access::Viewer) {
+        return denied.into_response();
+    }
     let control = state.control.clone();
     match state
         .main
@@ -151,7 +155,13 @@ async fn status(Extract(state): Extract<Arc<State>>) -> Response {
     }
 }
 
-async fn reload(Extract(state): Extract<Arc<State>>) -> Response {
+async fn reload(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
+    if let Err(denied) = caller::need(&caller, Access::Operator) {
+        return denied.into_response();
+    }
     let control = state.control.clone();
     match state
         .main

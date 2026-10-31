@@ -33,35 +33,6 @@ pub(crate) fn run(args: &RunArgs) -> anyhow::Result<ExitCode> {
     runtime.block_on(serve(args))
 }
 
-/// The admin token: `RDOCK_ADMIN_TOKEN`, or `$RDOCK_DATA_DIR/admin/token` (created on first
-/// start, readable by the owner only).
-pub(crate) fn admin_token(data_dir: &Path, create: bool) -> anyhow::Result<String> {
-    if let Ok(token) = std::env::var("RDOCK_ADMIN_TOKEN")
-        && !token.is_empty()
-    {
-        return Ok(token);
-    }
-    let path = token_path(data_dir);
-    match std::fs::read_to_string(&path) {
-        Ok(token) if !token.trim().is_empty() => Ok(token.trim().to_owned()),
-        Err(err) if !create => {
-            Err(err).with_context(|| format!("reading the admin token {}", path.display()))
-        }
-        _ if !create => anyhow::bail!("the admin token {} is empty", path.display()),
-        _ => {
-            let token = format!(
-                "rdk_{}{}",
-                uuid::Uuid::new_v4().simple(),
-                uuid::Uuid::new_v4().simple()
-            );
-            rdock_config::state::write_atomic(&path, format!("{token}\n").as_bytes())
-                .with_context(|| format!("writing the admin token {}", path.display()))?;
-            tracing::info!(file = %path.display(), "created the admin API token");
-            Ok(token)
-        }
-    }
-}
-
 /// The key that signs sticky cookies of services without their own secret:
 /// `$RDOCK_DATA_DIR/sticky.key` (hex, created on first start, readable by the owner only), so
 /// cookies stay valid across restarts.
@@ -86,10 +57,6 @@ fn sticky_key(data_dir: &Path) -> anyhow::Result<Vec<u8>> {
             Err(err).with_context(|| format!("reading the sticky-cookie key {}", path.display()))
         }
     }
-}
-
-pub(crate) fn token_path(data_dir: &Path) -> PathBuf {
-    data_dir.join("admin").join("token")
 }
 
 /// The CLI's Unix socket when `admin.socket` is not set.
@@ -254,12 +221,13 @@ async fn start_admin(
         socket: Some(socket.clone()),
         allowed_hosts: admin.allowed_hosts,
         threads: usize::from(admin.threads),
-        token: admin_token(&args.data_dir, true)?,
         state_dir: args.data_dir.join("admin"),
         passwords: admin.passwords,
         sessions: admin.sessions,
         mfa: admin.mfa,
         dashboard: admin.dashboard,
+        tokens: admin.tokens,
+        metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
     };
     let running = rdock_admin::start(settings, engine.clone(), stop)?;
     tracing::info!(%address, socket = %socket.display(), "admin API listening");

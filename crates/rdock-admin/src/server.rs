@@ -22,6 +22,7 @@ use crate::bootstrap::Bootstrap;
 use crate::limits::LoginLimits;
 use crate::passwords::Policy;
 use crate::sessions::Sessions;
+use crate::tokens::Tokens;
 use crate::users::Users;
 use crate::{Control, Settings, State, Transport, guard, routes};
 
@@ -88,11 +89,19 @@ pub fn start(
         .and_then(|l| l.set_nonblocking(true).map(|()| l))
         .map_err(|source| StartError::Bind { address, source })?;
     let tls = settings.tls.as_ref().map(acceptor).transpose()?;
-    let socket = settings.socket.as_deref().map(bind_socket).transpose()?;
+    // Without the socket the CLI falls back to the listener with an API token; a path too
+    // long for a Unix socket (about 104 bytes on macOS) must not stop the proxy.
+    let socket = settings.socket.as_deref().and_then(|path| match bind_socket(path) {
+        Ok(socket) => Some(socket),
+        Err(err) => {
+            tracing::warn!(error = %err, "the CLI socket is off; `rdock reload` and `rdock status` need --admin and RDOCK_ADMIN_TOKEN");
+            None
+        }
+    });
     let allowed_hosts = if settings.allowed_hosts.is_empty() {
         guard::default_hosts(address.ip())
     } else {
-        settings.allowed_hosts.clone()
+        settings.allowed_hosts
     };
     let state_error = |source| StartError::State {
         path: settings.state_dir.clone(),
@@ -112,10 +121,11 @@ pub fn start(
         );
     }
     let policy = Policy::new(&settings.passwords).map_err(state_error)?;
+    let tokens = Tokens::open(&settings.state_dir).map_err(state_error)?;
+    remove_shared_token(&settings.state_dir);
     let state = Arc::new(State {
         control,
         main: tokio::runtime::Handle::current(),
-        token: settings.token,
         allowed_hosts,
         users,
         bootstrap,
@@ -127,6 +137,9 @@ pub fn start(
         ),
         mfa: settings.mfa,
         dashboard: settings.dashboard,
+        tokens,
+        token_rules: settings.tokens,
+        metrics_open: settings.metrics_unauthenticated_on_loopback && address.ip().is_loopback(),
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -155,6 +168,22 @@ pub fn start(
         })
         .map_err(StartError::Runtime)?;
     Ok(Running { thread })
+}
+
+/// Deletes the v0.1–v0.4 shared admin token (ADR-0024): API tokens replace it, and the CLI
+/// uses the socket.
+fn remove_shared_token(dir: &Path) {
+    let path = dir.join("token");
+    match std::fs::remove_file(&path) {
+        Ok(()) => tracing::info!(
+            file = %path.display(),
+            "removed the old shared admin token; create an API token for scripts (POST /api/v1/tokens)"
+        ),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => {
+            tracing::warn!(file = %path.display(), error = %err, "cannot remove the old shared admin token");
+        }
+    }
 }
 
 fn acceptor(files: &crate::TlsFiles) -> Result<TlsAcceptor, StartError> {

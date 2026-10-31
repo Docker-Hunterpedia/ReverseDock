@@ -146,24 +146,21 @@ impl Rdock {
         }
     }
 
-    /// A blocking request to the admin listener, with the admin token.
+    /// A blocking request to the admin API over its Unix socket, as the CLI makes it.
     pub fn get_admin(&self, path: &str) -> Option<(u16, String)> {
         self.admin_request("GET", path)
     }
 
     pub fn admin_request(&self, method: &str, path: &str) -> Option<(u16, String)> {
         use std::io::Write;
-        let token =
-            std::fs::read_to_string(self.data_dir().join("admin/token")).unwrap_or_default();
         let mut stream =
-            std::net::TcpStream::connect_timeout(&self.admin, Duration::from_millis(500)).ok()?;
+            std::os::unix::net::UnixStream::connect(self.data_dir().join("admin.sock")).ok()?;
         stream
             .set_read_timeout(Some(Duration::from_secs(20)))
             .ok()?;
         write!(
             stream,
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            token.trim()
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
         )
         .ok()?;
         let mut raw = String::new();

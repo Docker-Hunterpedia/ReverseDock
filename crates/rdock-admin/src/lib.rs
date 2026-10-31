@@ -3,13 +3,16 @@
 mod account;
 mod auth;
 mod bootstrap;
+mod caller;
 mod dashboard;
 mod guard;
 mod limits;
+mod manage;
 mod passwords;
 mod routes;
 mod server;
 mod sessions;
+mod tokens;
 mod totp;
 mod users;
 
@@ -49,8 +52,6 @@ pub struct Settings {
     pub allowed_hosts: Vec<String>,
     /// Worker threads of the admin runtime.
     pub threads: usize,
-    /// Bearer token for `/api/v1` on the TCP listener.
-    pub token: String,
     /// Where users and the bootstrap token are kept: `$RDOCK_DATA_DIR/admin`.
     pub state_dir: PathBuf,
     /// Password rules for users.
@@ -61,6 +62,10 @@ pub struct Settings {
     pub mfa: rdock_model::settings::MfaPolicy,
     /// Serve the embedded dashboard (`admin.dashboard`).
     pub dashboard: bool,
+    /// API token rules (`admin.tokens`).
+    pub tokens: rdock_model::settings::AdminTokens,
+    /// Serve `/metrics` without a token on a loopback listener.
+    pub metrics_unauthenticated_on_loopback: bool,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -87,7 +92,6 @@ struct State {
     /// The proxy's runtime: engine calls run there, so whatever they start (health checks,
     /// providers) lives with the data plane and never on the admin runtime.
     main: tokio::runtime::Handle,
-    token: String,
     allowed_hosts: Vec<String>,
     users: users::Users,
     bootstrap: bootstrap::Bootstrap,
@@ -96,6 +100,10 @@ struct State {
     sessions: sessions::Sessions,
     mfa: rdock_model::settings::MfaPolicy,
     dashboard: bool,
+    tokens: tokens::Tokens,
+    token_rules: rdock_model::settings::AdminTokens,
+    /// `/metrics` answers without a token (loopback listener and the setting on).
+    metrics_open: bool,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
 }

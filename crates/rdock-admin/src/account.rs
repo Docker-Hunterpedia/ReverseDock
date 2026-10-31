@@ -14,7 +14,7 @@ use subtle::ConstantTimeEq;
 
 use crate::auth::{Peer, client, hashing, too_many};
 use crate::passwords::Verified;
-use crate::routes::error;
+use crate::routes::{Denied, error};
 use crate::sessions::{COOKIE, REAUTH, Session, Stage};
 use crate::users::{Mfa, Role};
 use crate::{State, totp};
@@ -75,30 +75,21 @@ pub(crate) fn reply(status: StatusCode, session: &Session, new_cookie: Option<&s
     respond(status, describe(session), new_cookie)
 }
 
-/// Why a request has no usable session; it becomes a JSON error.
-struct Refused(StatusCode, &'static str);
-
-impl IntoResponse for Refused {
-    fn into_response(self) -> Response {
-        error(self.0, self.1)
-    }
-}
-
 /// The caller's session in one of `stages`, with the CSRF token checked on unsafe methods.
 fn current<'h>(
     state: &State,
     method: &Method,
     headers: &'h HeaderMap,
     stages: &[Stage],
-) -> Result<(&'h str, Session), Refused> {
+) -> Result<(&'h str, Session), Denied> {
     let Some((value, session)) =
         cookie(headers).and_then(|v| state.sessions.get(v).map(|s| (v, s)))
     else {
-        return Err(Refused(StatusCode::UNAUTHORIZED, "log in first"));
+        return Err(Denied(StatusCode::UNAUTHORIZED, "log in first"));
     };
     let safe = matches!(*method, Method::GET | Method::HEAD);
     if !safe && !csrf_ok(headers, &session) {
-        return Err(Refused(
+        return Err(Denied(
             StatusCode::FORBIDDEN,
             "missing or wrong X-CSRF-Token",
         ));
@@ -109,7 +100,7 @@ fn current<'h>(
             Stage::Enrol => "set up an authenticator app first",
             Stage::Full => "you are logged in already",
         };
-        return Err(Refused(StatusCode::CONFLICT, message));
+        return Err(Denied(StatusCode::CONFLICT, message));
     }
     Ok((value, session))
 }

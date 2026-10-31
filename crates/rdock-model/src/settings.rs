@@ -98,6 +98,11 @@ pub struct Admin {
     pub sessions: AdminSessions,
     /// Who must use a second factor (TOTP) to log in.
     pub mfa: MfaPolicy,
+    /// API tokens for scripts and Prometheus.
+    pub tokens: AdminTokens,
+    /// Serve `/metrics` without a token when the listener is a loopback address, as before
+    /// v0.5, for scrapers on the same machine that cannot send one.
+    pub metrics_unauthenticated_on_loopback: bool,
 }
 
 impl Default for Admin {
@@ -113,6 +118,27 @@ impl Default for Admin {
             passwords: AdminPasswords::default(),
             sessions: AdminSessions::default(),
             mfa: MfaPolicy::default(),
+            tokens: AdminTokens::default(),
+            metrics_unauthenticated_on_loopback: false,
+        }
+    }
+}
+
+/// API token rules (ADR-0024).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdminTokens {
+    /// Lifetime of a new token when its creator gives none, in days (1–365).
+    pub default_expiry_days: u16,
+    /// Allow tokens that never expire. Off by default: a leaked token should stop working.
+    pub allow_no_expiry: bool,
+}
+
+impl Default for AdminTokens {
+    fn default() -> Self {
+        Self {
+            default_expiry_days: 90,
+            allow_no_expiry: false,
         }
     }
 }

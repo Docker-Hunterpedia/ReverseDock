@@ -13,7 +13,7 @@ use anyhow::{Context, bail};
 use rdock_model::Diagnostic;
 use rdock_model::settings::Admin;
 
-use crate::run::{admin_address, admin_token, socket_path};
+use crate::run::{admin_address, socket_path};
 use crate::{CtlArgs, StatusArgs, print};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -39,11 +39,12 @@ fn address(args: &CtlArgs) -> SocketAddr {
 enum Target {
     /// The local socket: file permissions are the authentication.
     Socket(PathBuf),
-    /// The admin listener, with the admin token.
+    /// The admin listener, with an API token.
     Tcp(SocketAddr, String),
 }
 
-/// The socket when it exists and `--admin` is not given; otherwise the listener and token.
+/// The socket when it exists and `--admin` is not given; otherwise the listener and an API
+/// token.
 fn target(args: &CtlArgs) -> anyhow::Result<Target> {
     if args.admin.is_none() {
         let socket = admin_settings(args)
@@ -53,10 +54,20 @@ fn target(args: &CtlArgs) -> anyhow::Result<Target> {
             return Ok(Target::Socket(socket));
         }
     }
-    Ok(Target::Tcp(
-        address(args),
-        admin_token(&args.data_dir, false)?,
-    ))
+    Ok(Target::Tcp(address(args), api_token()?))
+}
+
+/// An API token for the listener: `RDOCK_ADMIN_TOKEN` (ADR-0024; the shared token file of
+/// v0.1–v0.4 is gone).
+fn api_token() -> anyhow::Result<String> {
+    match std::env::var("RDOCK_ADMIN_TOKEN") {
+        Ok(token) if !token.trim().is_empty() => Ok(token.trim().to_owned()),
+        _ => anyhow::bail!(
+            "set RDOCK_ADMIN_TOKEN to an API token to use the admin listener, or run this on the \
+             server, where the admin socket needs none (create tokens in the dashboard or with \
+             POST /api/v1/tokens)"
+        ),
+    }
 }
 
 fn send(target: &Target, method: &str, path: &str) -> anyhow::Result<(u16, String)> {
