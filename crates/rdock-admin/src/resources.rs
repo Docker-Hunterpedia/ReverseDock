@@ -365,3 +365,32 @@ mod tests {
         assert!(api_name("shop@docker").is_err());
     }
 }
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct Window {
+    /// Seconds, 1–900; 300 by default.
+    #[serde(default)]
+    window: Option<u64>,
+}
+
+/// `GET /api/v1/metrics/summary?window=300`: requests, rates, status classes, errors, bytes
+/// and p50/p95/p99 for the whole proxy (one point per second) and every route and service,
+/// from the 15-minute ring buffers.
+pub(crate) async fn metrics_summary(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+    axum::extract::Query(query): axum::extract::Query<Window>,
+) -> Response {
+    check!(need(&caller, Access::Viewer));
+    let window = query.window.unwrap_or(300).clamp(1, 900);
+    let control = state.control.clone();
+    match state
+        .main
+        .spawn(async move { control.metrics_summary(window).await })
+        .await
+    {
+        Ok(summary) => axum::Json(summary).into_response(),
+        Err(_) => gone(),
+    }
+}

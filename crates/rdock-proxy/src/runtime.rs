@@ -126,6 +126,8 @@ pub struct RouteRuntime {
     pub timeouts: RouteTimeouts,
     /// Copies of requests sent to another service.
     pub mirror: Option<MirrorRuntime>,
+    /// Live traffic of this route for the dashboard.
+    pub live: Arc<rdock_observability::live::Ring>,
     /// Translate gRPC-Web to gRPC (the `grpc_web` middleware).
     pub grpc_web: bool,
     /// Request body limit of this route, overriding `security.limits.max_body_bytes`.
@@ -160,6 +162,8 @@ pub struct ServiceRuntime {
     pub sticky: Option<StickyRuntime>,
     /// Per-backend state, shared with other generations.
     pub pool: Arc<Pool>,
+    /// Live traffic of this service for the dashboard.
+    pub live: Arc<rdock_observability::live::Ring>,
     /// Health checks and ejection.
     pub health: HealthRuntime,
     /// Weighted targets of a `split` service (then `backends` is empty).

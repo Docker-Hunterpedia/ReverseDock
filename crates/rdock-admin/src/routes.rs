@@ -72,6 +72,7 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .route("/backends/undrain", post(resources::undrain))
         .route("/providers", get(resources::providers))
         .route("/listeners", get(resources::listeners))
+        .route("/metrics/summary", get(resources::metrics_summary))
         .route("/{kind}", get(resources::list))
         .route(
             "/{kind}/{name}",

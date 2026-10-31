@@ -171,6 +171,8 @@ admin:
 
 An admin listener off loopback needs `tls`; without it `rdock validate` refuses the configuration. Point Prometheus at `https://10.0.0.2:2080/metrics` (with the CA that signed the certificate), allow only the Prometheus host to reach that port with a firewall or a private network, and keep the metrics token secret; give it an `allowed_from` network so it works only from the Prometheus host. When the listener is on all interfaces (`:2080`), list the names it is reached by in `admin.allowed_hosts`.
 
+The dashboard does not need Prometheus for its live charts <Status since="v0.5" />: rdock keeps the last 15 minutes of every route and service in memory (one-second counters and a latency histogram, about 190 KiB each) and serves them at `GET /api/v1/metrics/summary?window=300` with rates and p50/p95/p99. Percentiles there are estimates within about 19 %; use Prometheus for exact long-term data.
+
 Example queries:
 
 ```text

@@ -50,6 +50,8 @@ pub struct CompileEnv<'a> {
     pub backends: &'a Registry,
     /// Signs sticky cookies of services without their own `secret`.
     pub sticky_key: &'a [u8],
+    /// Live traffic rings by route and service, shared across generations (ADR-0024).
+    pub live: &'a rdock_observability::live::Live,
 }
 
 /// The result of compilation.
@@ -80,7 +82,14 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         requests: BTreeSet::new(),
         local: BTreeSet::new(),
     };
-    let listeners = compile_listeners(config, &services, &middlewares, &mut auto_tls, &mut out);
+    let listeners = compile_listeners(
+        config,
+        &services,
+        &middlewares,
+        &mut auto_tls,
+        &env.live.routes,
+        &mut out,
+    );
     let cert_requests = auto_tls.requests.into_iter().collect();
     let local_cert_names = auto_tls.local.into_iter().collect();
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
@@ -350,6 +359,7 @@ fn compile_service(
             None => None,
         },
         pool: env.backends.pool(name),
+        live: env.live.services.ring(name),
         members: ArcSwapOption::empty(),
         health: compile_health(service.health.as_ref())?,
         split,
@@ -636,6 +646,7 @@ fn compile_listeners(
     services: &HashMap<String, Arc<ServiceRuntime>>,
     middlewares: &HashMap<String, Arc<dyn Middleware>>,
     auto_tls: &mut AutoTls<'_>,
+    rings: &rdock_observability::live::Rings,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
     let effective = config.effective_listeners();
@@ -664,8 +675,12 @@ fn compile_listeners(
         let Some((expr, length)) = route_expr(route) else {
             continue;
         };
-        let Some(compiled) = compile_route(name, route, &expr, length, services, middlewares, out)
-        else {
+        let context = RouteContext {
+            services,
+            middlewares,
+            live: rings.ring(name),
+        };
+        let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
         };
         for listener_name in &config.route_listeners(route) {
@@ -745,15 +760,21 @@ fn client_auth(config: &rdock_model::config::ClientAuth) -> Result<rdock_tls::Cl
     .map_err(|e| e.to_string())
 }
 
+/// What a route refers to while it compiles.
+struct RouteContext<'a> {
+    services: &'a HashMap<String, Arc<ServiceRuntime>>,
+    middlewares: &'a HashMap<String, Arc<dyn Middleware>>,
+    live: Arc<rdock_observability::live::Ring>,
+}
+
 fn compile_route(
     name: &str,
     route: &Route,
-    expr: &Expr,
-    length: usize,
-    services: &HashMap<String, Arc<ServiceRuntime>>,
-    middlewares: &HashMap<String, Arc<dyn Middleware>>,
+    (expr, length): (&Expr, usize),
+    context: &RouteContext<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> Option<Arc<RouteRuntime>> {
+    let (services, middlewares) = (context.services, context.middlewares);
     let path = path_key("routes", name);
     let rule = match Rule::compile(expr) {
         Ok(rule) => rule,
@@ -807,6 +828,7 @@ fn compile_route(
         middlewares: chain.into(),
         timeouts: route.timeouts,
         mirror,
+        live: context.live.clone(),
     }))
 }
 

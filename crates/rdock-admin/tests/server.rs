@@ -106,6 +106,9 @@ impl Control for Fake {
     async fn renew_certificate(&self, name: String) -> bool {
         name == "example.com"
     }
+    async fn metrics_summary(&self, window_seconds: u64) -> serde_json::Value {
+        serde_json::json!({ "total": { "window_seconds": window_seconds }, "routes": {}, "services": {} })
+    }
 }
 
 /// A string shaped like a token but issued by no one.

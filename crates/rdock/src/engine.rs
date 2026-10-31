@@ -839,4 +839,37 @@ impl rdock_admin::Control for Engine {
     async fn renew_certificate(&self, name: String) -> bool {
         self.acme.renew(&name)
     }
+
+    async fn metrics_summary(&self, window_seconds: u64) -> Value {
+        use rdock_observability::live::{Summary, combined};
+        let live = self.plane.live();
+        let window = Duration::from_secs(window_seconds);
+        let now = SystemTime::now();
+        let without_series = |mut summary: Summary| {
+            summary.series.clear();
+            summary
+        };
+        let routes: Vec<_> = live.routes.all();
+        let services: Vec<_> = live.services.all();
+        let route_rings: Vec<&rdock_observability::live::Ring> =
+            routes.iter().map(|(_, ring)| ring.as_ref()).collect();
+        let total = combined(&route_rings, window, now);
+        let by_name = |list: &[(String, Arc<rdock_observability::live::Ring>)]| -> Value {
+            list.iter()
+                .map(|(name, ring)| {
+                    (
+                        name.clone(),
+                        serde_json::to_value(without_series(ring.summary(window, now)))
+                            .unwrap_or(Value::Null),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
+        serde_json::json!({
+            "total": total,
+            "routes": by_name(&routes),
+            "services": by_name(&services),
+        })
+    }
 }

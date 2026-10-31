@@ -1023,6 +1023,19 @@ impl ProxyHttp for RdockProxy {
             status,
             elapsed.as_secs_f64(),
         );
+        let sample = rdock_observability::live::Sample {
+            status,
+            elapsed,
+            bytes_in: session.body_bytes_read() as u64,
+            bytes_out: session.body_bytes_sent() as u64,
+        };
+        let now = std::time::SystemTime::now();
+        if let Some(route) = route {
+            route.live.record(sample, now);
+        }
+        if let Some(service) = &service {
+            service.live.record(sample, now);
+        }
         let log = &ctx.runtime.access_log;
         let req = session.req_header();
         let header = |name: &str| {
