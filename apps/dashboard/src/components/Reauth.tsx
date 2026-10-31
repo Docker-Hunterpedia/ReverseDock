@@ -1,5 +1,5 @@
 import { type FormEvent, type ReactNode, createContext, use, useRef, useState } from "react";
-import { ApiError, api, describe } from "../lib/api";
+import { ApiError, Cancelled, api, describe } from "../lib/api";
 import { Drawer } from "./Drawer";
 import { Alert, Button, Field } from "./ui";
 
@@ -50,7 +50,7 @@ export function ReauthProvider({ children }: { children: ReactNode }) {
   };
   const cancel = () => {
     setAsking(false);
-    waiting.current?.reject(new Error("cancelled"));
+    waiting.current?.reject(new Cancelled());
   };
 
   return (

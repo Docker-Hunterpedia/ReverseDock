@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Alert, Button, Card, Field, StatusPill } from "../components/ui";
+import { useToast } from "../components/Toast";
 import { AuditLog, Tokens, Users } from "./Access";
 import { CodeList } from "./Enrol";
 import { type Session, api, describe } from "../lib/api";
@@ -27,6 +28,7 @@ interface MfaState {
 /** Two-step verification status and new recovery codes after confirming the password. */
 function TwoStep() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const state = useQuery({ queryKey: ["mfa"], queryFn: () => api<MfaState>("/auth/mfa") });
   const [asking, setAsking] = useState(false);
   const [password, setPassword] = useState("");
@@ -37,6 +39,7 @@ function TwoStep() {
       return api<{ recovery_codes: string[] }>("/auth/recovery-codes", { method: "POST", body: {} });
     },
     onSuccess: () => {
+      toast("New recovery codes created; the old ones no longer work. Save them now.");
       setAsking(false);
       setPassword("");
       setCode("");
@@ -111,8 +114,11 @@ export function Security({ session }: { session: Session }) {
     queryFn: () => api<Listed[]>("/auth/sessions"),
     refetchInterval: 15000,
   });
+  const toast = useToast();
   const end = useMutation({
     mutationFn: (id: string) => api(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => toast("Session ended; that browser is logged out."),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
   return (

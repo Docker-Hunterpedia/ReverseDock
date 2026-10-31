@@ -62,6 +62,7 @@ pub(crate) fn parse(candidate: Value) -> Result<Fragment, String> {
 /// fail are normally left out with a warning (ADR-0009); a write through the API is all or
 /// nothing instead, so the API never applies less than it was asked to.
 fn api_object_left_out(diagnostic: &Diagnostic) -> bool {
+    // `skipped()` in rdock-config words provider objects that fail this way.
     diagnostic.message.starts_with("left out:")
         && owner(&diagnostic.path).is_some_and(|(_, name)| name.ends_with(&format!("@{PROVIDER}")))
 }
@@ -170,7 +171,9 @@ impl Engine {
             .is_ok();
         for d in &mut diagnostics {
             if api_object_left_out(d) {
+                // A provider object is "left out"; an API object is refused with the reason.
                 d.severity = rdock_model::Severity::Error;
+                d.message = d.message.trim_start_matches("left out: ").to_owned();
             }
         }
         (

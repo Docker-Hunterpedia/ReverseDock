@@ -47,11 +47,13 @@ export function Users({ session }: { session: Session }) {
     mutationFn: ({ name, body }: { name: string; body: object }) =>
       reauth(() => api(`/users/${encodeURIComponent(name)}`, { method: "PATCH", body })),
     onSuccess: (_, { name }) => toast(`${name} changed; their sessions ended.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: done,
   });
   const remove = useMutation({
     mutationFn: (name: string) => reauth(() => api(`/users/${encodeURIComponent(name)}`, { method: "DELETE" })),
     onSuccess: (_, name) => toast(`${name} removed, with their sessions and tokens.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: done,
   });
   const add = useMutation({
@@ -143,11 +145,15 @@ export function Tokens({ session }: { session: Session }) {
           },
         }),
       ),
-    onSuccess: () => void queryClient.invalidateQueries({ queryKey: ["tokens"] }),
+    onSuccess: (token) => {
+      toast(`Token ${token.name} created. Copy it now: it is shown only once.`);
+      void queryClient.invalidateQueries({ queryKey: ["tokens"] });
+    },
   });
   const revoke = useMutation({
     mutationFn: (id: string) => api(`/tokens/${id}`, { method: "DELETE" }),
     onSuccess: (_, id) => toast(`Token ${id} revoked; it stops working now.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["tokens"] }),
   });
   const roles = ["metrics", "viewer", "operator", "admin"].slice(0, { viewer: 2, operator: 3, admin: 4 }[session.role]);

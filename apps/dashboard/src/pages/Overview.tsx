@@ -52,6 +52,7 @@ export function Overview({ session }: { session: Session }) {
   const reload = useMutation({
     mutationFn: () => api<{ result?: string; generation?: number }>("/config/reload", { method: "POST", body: {} }),
     onSuccess: (report) => toast(`Configuration reloaded; generation ${report.generation ?? "?"} is live.`),
+    onError: (error) => toast(`Reload refused: ${describe(error)}. The running configuration stays in use.`, "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["status"] }),
   });
 

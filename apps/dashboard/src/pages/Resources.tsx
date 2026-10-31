@@ -5,7 +5,7 @@ import { Drawer, OwnerBadge } from "../components/Drawer";
 import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card } from "../components/ui";
-import { type Session, api, apiWithTag, describe } from "../lib/api";
+import { type Session, api, apiWithTag, describe, diagnostics } from "../lib/api";
 
 export type Kind = "routes" | "services" | "middlewares";
 
@@ -165,7 +165,24 @@ function Editor({ kind, item, onClose, canEdit }: { kind: Kind; item: Item | nul
           spellCheck={false}
         />
       </label>
-      {(problem || save.error) && <div className="mt-3"><Alert>{problem ?? describe(save.error)}</Alert></div>}
+      {(problem || save.error) && (
+        <div className="mt-3">
+          <Alert>
+            <p className="font-medium">{problem ?? `Not applied: ${describe(save.error)}`}</p>
+            {diagnostics(save.error).length > 0 && (
+              <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-4">
+                {diagnostics(save.error).map((d, i) => (
+                  <li key={i}>
+                    <span className="font-mono">{d.path}</span>: {d.message}
+                    {d.hint && <span className="text-fg-3"> ({d.hint})</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!problem && <p className="mt-1.5 text-fg-3">Nothing changed; the running configuration stays in use.</p>}
+          </Alert>
+        </div>
+      )}
       {editable && (
         <p className="mt-3 text-[13px] text-fg-3">
           Applied through the same validation as a file reload; a configuration that would be refused changes nothing.

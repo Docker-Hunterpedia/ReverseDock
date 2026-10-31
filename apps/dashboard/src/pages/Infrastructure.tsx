@@ -16,6 +16,7 @@ function BackendsCard({ session }: { session: Session }) {
       api(`/backends/${drained ? "undrain" : "drain"}`, { method: "POST", body: { service, backend } }),
     onSuccess: (_, { service, backend, drained }) =>
       toast(drained ? `${backend} is back in rotation for ${service}.` : `${backend} drained: no new requests; open ones finish.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["backends"] }),
   });
   const rows = (backends.data ?? []).flatMap((s) => s.backends.map((b) => ({ service: s.service, ...b })));
@@ -80,6 +81,7 @@ export function Certificates({ session }: { session: Session }) {
   const renew = useMutation({
     mutationFn: (name: string) => api(`/certificates/${encodeURIComponent(name)}/renew`, { method: "POST", body: {} }),
     onSuccess: (_, name) => toast(`Renewal of ${name} requested; it runs within a few seconds.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["certificates"] }),
   });
   const automatic = certs.data?.automatic ?? [];
