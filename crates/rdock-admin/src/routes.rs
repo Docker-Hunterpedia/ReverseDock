@@ -10,7 +10,9 @@ use axum::routing::{get, post};
 use http::{StatusCode, header};
 
 use crate::caller::{self, Access, Caller};
-use crate::{State, Transport, account, auth, config_api, guard, manage, resources};
+use crate::{
+    State, Transport, account, auth, config_api, guard, manage, resources, stream, telemetry,
+};
 
 /// Largest request body (ADR-0024); larger ones get 413.
 const MAX_BODY: usize = 1024 * 1024;
@@ -73,6 +75,8 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .route("/providers", get(resources::providers))
         .route("/listeners", get(resources::listeners))
         .route("/metrics/summary", get(resources::metrics_summary))
+        .route("/logs/stream", get(stream::logs))
+        .route("/events/stream", get(stream::events))
         .route("/{kind}", get(resources::list))
         .route(
             "/{kind}/{name}",
@@ -117,6 +121,10 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .nest("/api/v1", api)
         .fallback(fallback)
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
+        .route_layer(middleware::from_fn_with_state(
+            state.clone(),
+            telemetry::count,
+        ))
         .layer(middleware::from_fn_with_state(state.clone(), guard::checks))
         .with_state(state)
 }
@@ -160,7 +168,11 @@ async fn metrics(Extract(state): Extract<Arc<State>>, request: Request) -> Respo
         }
     }
     match state.control.metrics() {
-        Some(body) => text(StatusCode::OK, "text/plain; version=0.0.4", body),
+        Some(body) => text(
+            StatusCode::OK,
+            "text/plain; version=0.0.4",
+            body + &telemetry::render(&state),
+        ),
         None => error(StatusCode::NOT_FOUND, "metrics are disabled"),
     }
 }

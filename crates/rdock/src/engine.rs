@@ -198,6 +198,11 @@ impl Engine {
             .clone()
     }
 
+    /// The data plane's live feeds, for the admin API's streams.
+    pub(crate) fn feeds(&self) -> rdock_observability::feed::Feeds {
+        self.plane.metrics().feeds.clone()
+    }
+
     /// The applied configuration, if any.
     pub(crate) async fn config(&self) -> Option<Config> {
         self.applied.lock().await.config.clone()
@@ -443,6 +448,14 @@ impl Engine {
             diagnostics,
         };
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
+        self.plane.metrics().feeds.events.send(serde_json::json!({
+            "type": "reload",
+            "result": report.result,
+            "trigger": report.trigger,
+            "generation": report.generation,
+            "error": report.error,
+            "diagnostics": report.diagnostics.len(),
+        }));
         report
     }
 
@@ -536,6 +549,14 @@ impl Engine {
             }
         }
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
+        self.plane.metrics().feeds.events.send(serde_json::json!({
+            "type": "reload",
+            "result": report.result,
+            "trigger": report.trigger,
+            "generation": report.generation,
+            "error": report.error,
+            "diagnostics": report.diagnostics.len(),
+        }));
         report
     }
 }

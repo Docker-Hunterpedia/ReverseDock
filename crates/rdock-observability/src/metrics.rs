@@ -16,6 +16,8 @@ const KNOWN_METHODS: [&str; 9] = [
 #[derive(Debug, Clone)]
 pub struct Metrics {
     registry: Registry,
+    /// Live feeds for the admin API's log and event streams.
+    pub feeds: crate::feed::Feeds,
     /// Requests by listener, route, service, method and status class.
     pub requests: IntCounterVec,
     /// Request duration by listener and route.
@@ -221,6 +223,7 @@ impl Metrics {
         build_info.with_label_values(&[version, commit]).set(1);
         Ok(Self {
             registry,
+            feeds: crate::feed::Feeds::default(),
             requests,
             duration,
             upstream_errors,

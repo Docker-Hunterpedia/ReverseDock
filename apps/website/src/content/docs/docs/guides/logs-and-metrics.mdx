@@ -173,6 +173,17 @@ An admin listener off loopback needs `tls`; without it `rdock validate` refuses 
 
 The dashboard does not need Prometheus for its live charts <Status since="v0.5" />: rdock keeps the last 15 minutes of every route and service in memory (one-second counters and a latency histogram, about 190 KiB each) and serves them at `GET /api/v1/metrics/summary?window=300` with rates and p50/p95/p99. Percentiles there are estimates within about 19 %; use Prometheus for exact long-term data.
 
+### Live streams
+
+`GET /api/v1/logs/stream` and `GET /api/v1/events/stream` are server-sent events <Status since="v0.5" />, what the dashboard's Logs page uses:
+
+```sh
+curl -N --unix-socket /var/lib/rdock/admin.sock -H 'Host: localhost' \
+  'http://localhost/api/v1/logs/stream?status=5xx&route=shop'
+```
+
+Log filters: `route`, `service`, `status` (`404` or `5xx`), `client` (address prefix) and `q` (text). Events (`type`: `reload`, `backend`, `admin`) filter with `type`. Each entry has an increasing `id`; reconnect with `Last-Event-ID` to get what you missed from the last 10,000, or `event: reset` when it is older. A slow reader gets `event: lagged` with the number of entries it missed; the proxy never waits for it. At most 4 streams per user or token.
+
 Example queries:
 
 ```text

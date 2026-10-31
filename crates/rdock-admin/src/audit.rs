@@ -92,6 +92,8 @@ pub struct Audit {
     retention: Duration,
     writer: Mutex<Writer>,
     forward: Option<SyncSender<String>>,
+    /// The events stream, which shows admin actions as they happen.
+    events: std::sync::OnceLock<std::sync::Arc<crate::stream::Hub>>,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -171,7 +173,13 @@ impl Audit {
                 prev,
             }),
             forward: forward.map(syslog::start),
+            events: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Also publishes every record on the events stream (`type: admin`).
+    pub(crate) fn set_events(&self, hub: std::sync::Arc<crate::stream::Hub>) {
+        let _ = self.events.set(hub);
     }
 
     /// Appends a record. A failure to write is logged and never fails the request.
@@ -215,6 +223,11 @@ impl Audit {
         writer.size += line.len() as u64 + 1;
         writer.seq = seq;
         writer.prev = sha256_hex(line.as_bytes());
+        if let Some(hub) = self.events.get() {
+            let mut event = record;
+            event["type"] = json!("admin");
+            hub.publish(event);
+        }
         if let Some(forward) = &self.forward
             && let Err(TrySendError::Full(_)) = forward.try_send(line)
         {
