@@ -66,6 +66,10 @@ pub trait Control: Send + Sync {
     /// Live traffic of the last `window_seconds` (1–900): the whole proxy with one point per
     /// second, and every route and service without points.
     async fn metrics_summary(&self, window_seconds: u64) -> serde_json::Value;
+    /// How a request would be routed on `listener` (the first one when empty): every route
+    /// with why it does or does not match, the winner, its middlewares and the backends it
+    /// would consider. `Err` for an unknown listener or an invalid request.
+    async fn explain(&self, request: serde_json::Value) -> Result<serde_json::Value, String>;
 }
 
 /// The outcome of a conditional write of the API provider's objects.

@@ -14,6 +14,7 @@ interface Line {
   route?: string;
   service?: string;
   upstream?: string;
+  tried?: string[];
   request_id: string;
   error?: string;
 }
@@ -29,7 +30,7 @@ function tone(status: number): "ok" | "info" | "warn" | "danger" {
 
 /** The live access log with server-side filters, pause, row details and download. */
 export function Logs() {
-  const [draft, setDraft] = useState({ route: "", status: "", client: "", q: "" });
+  const [draft, setDraft] = useState({ route: "", service: "", status: "", client: "", q: "" });
   const [filter, setFilter] = useState(draft);
   const [paused, setPaused] = useState(false);
   const [open, setOpen] = useState<string | null>(null);
@@ -74,6 +75,7 @@ export function Logs() {
       </div>
       <form onSubmit={apply} className="mb-4 flex flex-wrap gap-2">
         <input aria-label="Route" placeholder="route" className={`${input} font-mono`} value={draft.route} onChange={(e) => setDraft({ ...draft, route: e.target.value })} />
+        <input aria-label="Service" placeholder="service" className={`${input} font-mono`} value={draft.service} onChange={(e) => setDraft({ ...draft, service: e.target.value })} />
         <input aria-label="Status" placeholder="status (404, 5xx)" className={`${input} w-36`} value={draft.status} onChange={(e) => setDraft({ ...draft, status: e.target.value })} />
         <input aria-label="Client address" placeholder="client IP prefix" className={`${input} font-mono`} value={draft.client} onChange={(e) => setDraft({ ...draft, client: e.target.value })} />
         <input aria-label="Text" placeholder="text" className={`${input} min-w-48 flex-1`} value={draft.q} onChange={(e) => setDraft({ ...draft, q: e.target.value })} />
@@ -98,7 +100,12 @@ export function Logs() {
                     <td className="px-2 py-1.5"><StatusPill tone={tone(line.status)}>{line.status}</StatusPill></td>
                     <td className="px-2 py-1.5 whitespace-nowrap">{line.method}</td>
                     <td className="max-w-[28rem] truncate px-2 py-1.5" title={line.path}>{line.host ? `${line.host}` : ""}{line.path}</td>
-                    <td className="px-2 py-1.5 whitespace-nowrap text-fg-2">{line.route ?? "—"}</td>
+                    <td className="px-2 py-1.5 whitespace-nowrap text-fg-2" title="route → service → backend">
+                      {line.route ?? "—"}
+                      {line.service && <span className="text-fg-3"> → {line.service}</span>}
+                      {line.upstream && <span className="text-fg-3"> → {line.upstream}</span>}
+                      {line.tried && line.tried.length > 0 && <span className="text-warn"> (retried after {line.tried.join(", ")})</span>}
+                    </td>
                     <td className="px-2 py-1.5 text-right whitespace-nowrap tabular-nums">{line.duration_ms.toFixed(1)} ms</td>
                     <td className="px-3 py-1.5 whitespace-nowrap text-fg-3">{line.client_ip}</td>
                   </tr>

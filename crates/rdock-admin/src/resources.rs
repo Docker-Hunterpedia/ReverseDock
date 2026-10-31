@@ -394,3 +394,22 @@ pub(crate) async fn metrics_summary(
         Err(_) => gone(),
     }
 }
+
+/// `POST /api/v1/routes/explain`: how a request would be routed, never sent (viewer role).
+pub(crate) async fn explain(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+    axum::Json(request): axum::Json<Value>,
+) -> Response {
+    check!(need(&caller, Access::Viewer));
+    let control = state.control.clone();
+    match state
+        .main
+        .spawn(async move { control.explain(request).await })
+        .await
+    {
+        Ok(Ok(answer)) => axum::Json(answer).into_response(),
+        Ok(Err(message)) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        Err(_) => gone(),
+    }
+}

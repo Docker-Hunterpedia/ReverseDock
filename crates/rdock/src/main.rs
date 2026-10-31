@@ -73,6 +73,9 @@ enum Command {
     /// Show backends and drain them.
     #[command(subcommand)]
     Backends(admin_cli::BackendsCommand),
+    /// Explain routing decisions.
+    #[command(subcommand)]
+    Routes(admin_cli::RoutesCommand),
     /// Print the JSON Schema of rdock.yaml.
     Schema,
     /// Print version and build information.
@@ -223,6 +226,7 @@ fn main() -> ExitCode {
         Command::Users(command) => admin_cli::users(&command),
         Command::Tokens(command) => admin_cli::tokens(&command),
         Command::Backends(command) => admin_cli::backends(&command),
+        Command::Routes(command) => admin_cli::routes(&command),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };

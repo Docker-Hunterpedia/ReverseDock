@@ -832,6 +832,7 @@ impl rdock_admin::Control for Engine {
                             "in_flight": m.state.in_flight(),
                             "state": state,
                             "drained": m.state.is_drained(),
+                            "reason": m.state.exclusion(now),
                         })
                     })
                     .collect();
@@ -859,6 +860,65 @@ impl rdock_admin::Control for Engine {
 
     async fn renew_certificate(&self, name: String) -> bool {
         self.acme.renew(&name)
+    }
+
+    async fn explain(&self, request: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Body {
+            #[serde(default)]
+            listener: String,
+            host: String,
+            #[serde(default)]
+            path: String,
+            #[serde(default)]
+            method: String,
+            #[serde(default)]
+            headers: BTreeMap<String, String>,
+            #[serde(default)]
+            client_ip: Option<std::net::IpAddr>,
+        }
+        let body: Body = serde_json::from_value(request).map_err(|e| e.to_string())?;
+        let mut headers = http::HeaderMap::new();
+        for (name, value) in &body.headers {
+            let name = http::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|e| format!("header `{name}`: {e}"))?;
+            let value =
+                http::HeaderValue::from_str(value).map_err(|e| format!("header `{name}`: {e}"))?;
+            headers.append(name, value);
+        }
+        let runtime = self.plane.runtime();
+        let listener = if body.listener.is_empty() {
+            runtime.listeners.keys().next().cloned().unwrap_or_default()
+        } else {
+            body.listener
+        };
+        let request = rdock_proxy::explain::Request {
+            host: body.host,
+            path: if body.path.is_empty() {
+                "/".to_owned()
+            } else {
+                body.path
+            },
+            method: body.method,
+            headers,
+            client_ip: body.client_ip,
+        };
+        let mut answer = rdock_proxy::explain::explain(&runtime, &listener, &request)?;
+        // Middleware names come from the configuration; the compiled chain has none.
+        let config = self.applied.lock().await.config.clone();
+        if let (Some(config), Some(route)) = (
+            config,
+            answer["outcome"]["route"].as_str().map(str::to_owned),
+        ) {
+            let middlewares = config
+                .routes
+                .get(&route)
+                .map(|r| r.middlewares.clone())
+                .unwrap_or_default();
+            answer["outcome"]["middlewares"] = serde_json::json!(middlewares);
+        }
+        Ok(answer)
     }
 
     async fn metrics_summary(&self, window_seconds: u64) -> Value {

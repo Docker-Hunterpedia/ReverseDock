@@ -47,6 +47,10 @@ api -X PUT http://localhost/api/v1/config/api \
 - `GET /api/v1/certificates` lists configured and automatic certificates; `POST /api/v1/certificates/shop.example.com/renew` renews the automatic certificate covering that name now (still within the back-off after failures).
 - `GET /api/v1/providers` shows each provider's state with the diagnostics about its objects; `GET /api/v1/listeners` lists listeners, which only a restart changes ([ADR-0008](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0008-listener-changes-via-self-upgrade.md)).
 
+## Why did a request go there?
+
+`POST /api/v1/routes/explain` with `{"host": "shop.example.com", "path": "/cart", "method": "GET"}` (optional `listener`, `headers`, `client_ip`) answers without sending anything: every route of the listener in evaluation order with `matched`, `shadowed` (it matches too, but an earlier route wins) or `no match` and the rule term that failed, then the winning route, its middlewares and its service's backends with `considered` or the reason they are out. `rdock routes explain --host shop.example.com --path /cart` prints the same; the dashboard's Routes page has **Test a request**.
+
 ## The same from the command line
 
 On the server the CLI uses the admin socket; elsewhere it needs `--admin` and `RDOCK_ADMIN_TOKEN`.
@@ -59,6 +63,7 @@ rdock users list | add NAME --role operator | set NAME --disable | passwd NAME |
 rdock tokens list | create NAME --role metrics --days 365 --allow 10.0.0.0/8 | revoke ID
 rdock backends list | drain SERVICE ADDRESS | undrain SERVICE ADDRESS
 rdock audit list --limit 50
+rdock routes explain --host shop.example.com --path /cart --header 'Authorization: Bearer x'
 ```
 
 Passwords for `users add` and `users passwd` are read from standard input.

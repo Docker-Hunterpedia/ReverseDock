@@ -172,6 +172,33 @@ impl Health {
         self.paused_until = Some(self.paused_until.map_or(until, |t| t.max(until)));
     }
 
+    /// Why the backend gets no requests now, in words for operators; `None` when it may.
+    pub(crate) fn exclusion(&self, now: Instant) -> Option<String> {
+        if self.probes_down {
+            return Some(format!(
+                "failed its health checks ({} in a row)",
+                self.fail_streak.max(1)
+            ));
+        }
+        if let Some(until) = self.paused_until.filter(|t| now < *t) {
+            return Some(format!(
+                "paused for {} s more: it answered 503 with Retry-After",
+                until.duration_since(now).as_secs().max(1)
+            ));
+        }
+        match self.ejected_until {
+            Some(until) if now < until => Some(format!(
+                "ejected after repeated failures ({} times so far), {} s left",
+                self.ejections,
+                until.duration_since(now).as_secs().max(1)
+            )),
+            Some(_) if self.availability(now) == Availability::Down => {
+                Some("ejection over; a trial request is testing it".to_owned())
+            }
+            _ => None,
+        }
+    }
+
     pub(crate) fn is_ejected(&self) -> bool {
         self.ejected_until.is_some()
     }

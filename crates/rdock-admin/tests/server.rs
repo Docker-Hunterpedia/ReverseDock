@@ -106,6 +106,12 @@ impl Control for Fake {
     async fn renew_certificate(&self, name: String) -> bool {
         name == "example.com"
     }
+    async fn explain(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+        if request["host"].is_null() {
+            return Err("missing field `host`".into());
+        }
+        Ok(serde_json::json!({ "outcome": { "result": "404" } }))
+    }
     async fn metrics_summary(&self, window_seconds: u64) -> serde_json::Value {
         serde_json::json!({ "total": { "window_seconds": window_seconds }, "routes": {}, "services": {} })
     }

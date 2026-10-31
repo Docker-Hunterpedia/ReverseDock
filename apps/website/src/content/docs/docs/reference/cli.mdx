@@ -28,6 +28,7 @@ Commands:
   users        Manage dashboard users
   tokens       Manage API tokens
   backends     Show backends and drain them
+  routes       Explain routing decisions
   schema       Print the JSON Schema of rdock.yaml
   version      Print version and build information
   help         Print this message or the help of the given subcommand(s)
@@ -274,6 +275,22 @@ Commands:
   list     List every service's backends and their state
   drain    Stop sending new requests to a backend; open ones finish
   undrain  Put a drained backend back in rotation
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock routes`
+
+```text
+Explain routing decisions
+
+Usage: rdock routes <COMMAND>
+
+Commands:
+  explain  Show how a request would be routed, without sending it: every route with why it matches or not, the winner and the backends it would use
   help     Print this message or the help of the given subcommand(s)
 
 Options:
