@@ -9,10 +9,10 @@ sidebar:
 
 ## [Unreleased]
 
+## [0.4.0-alpha.1] — v0.4 "Production reliability"
+
 ### Fixed
 - **Throughput collapsed under overload** ([#86](https://github.com/Docker-Hunterpedia/ReverseDock/issues/86), ADR-0023): each listener kept only 128 idle connections to backends, so with more requests in flight every extra request opened and closed its own backend connection. The pool is now 4096 and configurable with `security.limits.upstream_idle_connections` (M-LB-08). At a 40,000 req/s target the benchmark now holds about 14,900 req/s with 0.37 % failures instead of 1,925 req/s with 52 %.
-
-## [0.4.0-alpha.1] — v0.4 "Production reliability"
 
 ### Changed
 - `compress` offers `[zstd, br, gzip]` by default instead of `[gzip]`. Set `algorithms: [gzip]` to keep the old behaviour.
@@ -30,7 +30,7 @@ sidebar:
 - **DNS discovery** (M-LB-10): backend names are resolved with hickory and refreshed when their TTL expires (kept between 1 s and 5 min), with the system resolver as a fallback; `srv://_service._proto.name` backends use SRV records, the lowest priority as primaries and higher ones as backups.
 - **Ping endpoint** (W-CF-07): `listeners.<l>.ping: /path` answers `200 OK` for any host before routing, for Cloudflare Load Balancing and other monitors.
 - **Traefik labels** for v0.4: `healthcheck.mode/status/hostname/method/headers`, `passivehealthcheck.*`, `loadbalancer.strategy`, the `retry` middleware (moved onto the router's service as `retries`), `inFlightReq` and `passTLSClientCert`; `circuitBreaker` is reported with what to use instead. `rdock migrate traefik` translates them too.
-- **Chaos suite and benchmarks** (H-ENG-01, H-ENG-02): Toxiproxy-driven tests (a slow backend, resets, an outage and a flapping backend) run in CI; a test shows the retry budget holding an outage to 1.35× the client traffic against 5.9× without it. `benchmarks/` compares ReverseDock with NGINX, HAProxy, Caddy and Traefik under identical configurations and limits with open-model k6 load, with the first published results.
+- **Chaos suite and benchmarks** (H-ENG-01, H-ENG-02): Toxiproxy-driven tests (a slow backend, resets, an outage and a flapping backend) run in CI; a test shows the retry budget holding an outage to 1.35× the client traffic against 5.9× without it. `benchmarks/` compares ReverseDock with NGINX, HAProxy, Caddy and Traefik under identical configurations and limits with open-model k6 load, with the first published results. A nightly `bench` workflow checks ReverseDock against NGINX for regressions, and `benchmarks/soak/` runs a 24-hour soak with reloads, backend outages and certificate changes under load (H-ENG-03).
 - `rdock validate` warns about routes that never match because an earlier route on the same listener has the same rule or matches everything (M-RT-02).
 
 ## [0.3.0-alpha.2] — v0.3 "Automatic HTTPS"
