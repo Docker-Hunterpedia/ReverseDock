@@ -42,6 +42,9 @@ exceptions = [
   # Mozilla's root certificate list, used by rustls-platform-verifier <- hyper-rustls <- instant-acme
   # to reach ACME CAs (ADR-0020). CDLA-Permissive-2.0 is a permissive data licence.
   { crate = "webpki-root-certs", allow = ["CDLA-Permissive-2.0"] },
+  # Quoted-printable encoding for SMTP alert mail, via lettre (#106). 0BSD is public-domain-like
+  # with no patent clause, so it is allowed for this crate only.
+  { crate = "quoted_printable", allow = ["0BSD"] },
 ]
 
 [bans]

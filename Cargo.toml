@@ -60,6 +60,8 @@ clap = { version = "4.6.7", features = ["derive"] }
 ipnet = { version = "2.12.2", features = ["serde"] }
 # Configuration API (ADR-0024): line diffs with a deadline, RFC 6902 JSON Patch.
 similar = "3.2.1"
+# Alert e-mail (ADR-0024): no default features, which would pull native-tls (OpenSSL).
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "pool", "hostname", "builder", "tokio1", "tokio1-rustls", "ring", "rustls-platform-verifier", "tracing"] }
 json-patch = { version = "4.2.0", default-features = false }
 # The checksum in API tokens (ADR-0024); already in the tree through flate2.
 crc32fast = "1.5.0"

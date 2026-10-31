@@ -41,15 +41,243 @@ Share of successful requests (status below 400) that are logged, from 0 to 1. Er
 
 ## `observability.alerts`
 
-**Type:** object · **Default:** `{"webhook":null}`
+**Type:** object · **Default:** see the fields below
 
 Where certificate alerts (renewal failures, near expiry) are sent besides the log, the metrics and `rdock status`.
+
+### `observability.alerts.channels`
+
+**Type:** map of names to object, selected by `type`
+
+Where alerts go, by a name you choose.
+
+#### `type: slack`
+
+A Slack incoming-webhook URL.
+
+#### `observability.alerts.channels.<name>.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow private, loopback and link-local addresses (an internal relay).
+
+#### `observability.alerts.channels.<name>.rules`
+
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+
+Only these rules; all when empty.
+
+#### `observability.alerts.channels.<name>.url`
+
+**Type:** `string` · **Required**
+
+`https://hooks.slack.com/services/…`.
+
+#### `type: discord`
+
+A Discord webhook URL; mentions are disabled, so host names cannot ping anyone.
+
+#### `observability.alerts.channels.<name>.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow private, loopback and link-local addresses (an internal relay).
+
+#### `observability.alerts.channels.<name>.rules`
+
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+
+Only these rules; all when empty.
+
+#### `observability.alerts.channels.<name>.url`
+
+**Type:** `string` · **Required**
+
+`https://discord.com/api/webhooks/…`.
+
+#### `type: slack_compatible`
+
+Anything that takes Slack's payload: Discord's `/slack` endpoint, Mattermost, Rocket.Chat.
+
+#### `observability.alerts.channels.<name>.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow private, loopback and link-local addresses (an internal relay).
+
+#### `observability.alerts.channels.<name>.rules`
+
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+
+Only these rules; all when empty.
+
+#### `observability.alerts.channels.<name>.url`
+
+**Type:** `string` · **Required**
+
+The incoming-webhook URL.
+
+#### `type: webhook`
+
+JSON `POST`, signed with Standard Webhooks when `secret` is set.
+
+#### `observability.alerts.channels.<name>.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow private, loopback and link-local addresses (an internal relay).
+
+#### `observability.alerts.channels.<name>.rules`
+
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+
+Only these rules; all when empty.
+
+#### `observability.alerts.channels.<name>.secret`
+
+**Type:** `string`
+
+A `whsec_…` signing secret (Standard Webhooks).
+
+#### `observability.alerts.channels.<name>.token`
+
+**Type:** `string`
+
+A bearer token for `Authorization`.
+
+#### `observability.alerts.channels.<name>.url`
+
+**Type:** `string` · **Required**
+
+`https://…`.
+
+#### `type: smtp`
+
+E-mail through an SMTP server.
+
+#### `observability.alerts.channels.<name>.from`
+
+**Type:** `string` · **Required**
+
+Sender address.
+
+#### `observability.alerts.channels.<name>.host`
+
+**Type:** `string` · **Required**
+
+Server host name.
+
+#### `observability.alerts.channels.<name>.password`
+
+**Type:** `string`
+
+Login password.
+
+#### `observability.alerts.channels.<name>.port`
+
+**Type:** `integer` · **Default:** `587`
+
+Port: 587 for STARTTLS, 465 for implicit TLS.
+
+#### `observability.alerts.channels.<name>.rules`
+
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+
+Only these rules; all when empty.
+
+#### `observability.alerts.channels.<name>.tls`
+
+**Type:** `starttls` · `implicit` · `none` · **Default:** `starttls`
+
+`starttls` (default), `implicit`, or `none` (only to a loopback relay).
+
+- `starttls`: Plain connection upgraded with STARTTLS (port 587).
+- `implicit`: TLS from the first byte (port 465).
+- `none`: No encryption; refused unless the host is a loopback address.
+
+#### `observability.alerts.channels.<name>.to`
+
+**Type:** list of `string` · **Required**
+
+Recipients.
+
+#### `observability.alerts.channels.<name>.username`
+
+**Type:** `string`
+
+Login user.
+
+### `observability.alerts.min_interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `15m`
+
+The same alert is sent again at most this often while it keeps firing.
+
+### `observability.alerts.rules`
+
+**Type:** object · **Default:** `{"disabled":[],"error_rate":null,"latency":null}`
+
+What raises an alert.
+
+#### `observability.alerts.rules.disabled`
+
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+
+Rules that are off.
+
+#### `observability.alerts.rules.error_rate`
+
+**Type:** object
+
+Alert when a service's 5xx share over the window is above this, in percent.
+
+#### `observability.alerts.rules.error_rate.min_requests`
+
+**Type:** `integer` · **Default:** `20`
+
+Fewer requests than this in the window never alert.
+
+#### `observability.alerts.rules.error_rate.percent`
+
+**Type:** `integer` · **Required**
+
+Percent of responses that are 5xx (1–100).
+
+#### `observability.alerts.rules.error_rate.window`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5m`
+
+Window (1m–15m).
+
+#### `observability.alerts.rules.latency`
+
+**Type:** object
+
+Alert when a service's p99 over the window is above this.
+
+#### `observability.alerts.rules.latency.min_requests`
+
+**Type:** `integer` · **Default:** `20`
+
+Fewer requests than this in the window never alert.
+
+#### `observability.alerts.rules.latency.p99`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Required**
+
+The p99 above which a service alerts.
+
+#### `observability.alerts.rules.latency.window`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5m`
+
+Window (1m–15m).
 
 ### `observability.alerts.webhook`
 
 **Type:** object
 
-Receives each alert as a JSON `POST`.
+Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.
 
 #### `observability.alerts.webhook.timeout`
 

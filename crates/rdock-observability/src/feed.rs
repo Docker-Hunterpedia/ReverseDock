@@ -80,6 +80,8 @@ pub struct Feeds {
     pub logs: Arc<Feed>,
     /// Reloads, backend health changes, certificate events.
     pub events: Arc<Feed>,
+    /// Where alerts are raised (`observability.alerts`).
+    pub alerts: crate::alerts::AlertSink,
 }
 
 #[cfg(test)]

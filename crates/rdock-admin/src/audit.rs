@@ -94,6 +94,8 @@ pub struct Audit {
     forward: Option<SyncSender<String>>,
     /// The events stream, which shows admin actions as they happen.
     events: std::sync::OnceLock<std::sync::Arc<crate::stream::Hub>>,
+    /// Security-relevant records also raise an alert (`observability.alerts`, rule `security`).
+    alerts: std::sync::OnceLock<rdock_observability::alerts::AlertSink>,
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
@@ -174,12 +176,18 @@ impl Audit {
             }),
             forward: forward.map(syslog::start),
             events: std::sync::OnceLock::new(),
+            alerts: std::sync::OnceLock::new(),
         })
     }
 
     /// Also publishes every record on the events stream (`type: admin`).
     pub(crate) fn set_events(&self, hub: std::sync::Arc<crate::stream::Hub>) {
         let _ = self.events.set(hub);
+    }
+
+    /// Raises a `security` alert for the records that call for one.
+    pub(crate) fn set_alerts(&self, sink: rdock_observability::alerts::AlertSink) {
+        let _ = self.alerts.set(sink);
     }
 
     /// Appends a record. A failure to write is logged and never fails the request.
@@ -223,6 +231,20 @@ impl Audit {
         writer.size += line.len() as u64 + 1;
         writer.seq = seq;
         writer.prev = sha256_hex(line.as_bytes());
+        if let Some(sink) = self.alerts.get()
+            && let Some(summary) = security_summary(&record)
+        {
+            sink.raise(rdock_observability::alerts::Alert::firing(
+                rdock_model::settings::AlertRule::Security,
+                format!(
+                    "security:{}:{}",
+                    record["action"].as_str().unwrap_or_default(),
+                    record["seq"]
+                ),
+                summary,
+                record.clone(),
+            ));
+        }
         if let Some(hub) = self.events.get() {
             let mut event = record;
             event["type"] = json!("admin");
@@ -273,6 +295,28 @@ impl Audit {
             }
         }
         Ok(out)
+    }
+}
+
+/// The alert line for audit records that an operator should hear about at once.
+fn security_summary(record: &Value) -> Option<String> {
+    let text = |field: &str| record[field].as_str().unwrap_or("-").to_owned();
+    let (actor, resource, client) = (text("actor"), text("resource"), text("client"));
+    match (record["action"].as_str()?, record["result"].as_str()?) {
+        ("login", "denied") if record["reason"] == "rate limited" => Some(format!(
+            "Repeated failed admin logins for {actor} from {client}; logins are being slowed down"
+        )),
+        ("user.create", "ok") => Some(format!("{actor} created the admin user {resource}")),
+        ("user.change", "ok") => Some(format!(
+            "{actor} changed the admin user {resource} ({})",
+            text("reason")
+        )),
+        ("user.delete", "ok") => Some(format!("{actor} deleted the admin user {resource}")),
+        ("mfa.remove", "ok") => Some(format!("{actor} turned off their two-step verification")),
+        ("token.new_address", "ok") => Some(format!(
+            "API token {resource} was used from a new address, {client}"
+        )),
+        _ => None,
     }
 }
 

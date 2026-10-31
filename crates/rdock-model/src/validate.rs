@@ -1612,7 +1612,157 @@ impl Validator<'_> {
         }
     }
 
+    fn check_alerts(&mut self) {
+        use crate::settings::AlertChannel;
+        let alerts = &self.config.observability.alerts;
+        let minute = std::time::Duration::from_secs(60);
+        if !(minute..=std::time::Duration::from_secs(86_400))
+            .contains(&alerts.min_interval.as_std())
+        {
+            self.error(
+                "observability.alerts.min_interval",
+                "must be between 1m and 24h",
+            );
+        }
+        let window_ok = |w: crate::values::Duration| {
+            (minute..=std::time::Duration::from_secs(900)).contains(&w.as_std())
+        };
+        if let Some(rule) = alerts.rules.error_rate {
+            if !(1..=100).contains(&rule.percent) {
+                self.error(
+                    "observability.alerts.rules.error_rate.percent",
+                    "must be between 1 and 100",
+                );
+            }
+            if !window_ok(rule.window) {
+                self.error(
+                    "observability.alerts.rules.error_rate.window",
+                    "must be between 1m and 15m (the live data rdock keeps)",
+                );
+            }
+        }
+        if let Some(rule) = alerts.rules.latency
+            && !window_ok(rule.window)
+        {
+            self.error(
+                "observability.alerts.rules.latency.window",
+                "must be between 1m and 15m (the live data rdock keeps)",
+            );
+        }
+        let channels: Vec<(String, AlertChannel)> = alerts
+            .channels
+            .iter()
+            .map(|(n, c)| (n.clone(), c.clone()))
+            .collect();
+        for (name, channel) in channels {
+            self.check_alert_channel(&name, &channel);
+        }
+    }
+
+    fn check_alert_channel(&mut self, name: &str, channel: &crate::settings::AlertChannel) {
+        use crate::settings::{AlertChannel, SmtpTls};
+        {
+            let path = format!("observability.alerts.channels.{name}");
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            {
+                self.error(
+                    path.clone(),
+                    "use letters, digits, `-` and `_` in channel names",
+                );
+            }
+            let http = match channel {
+                AlertChannel::Slack {
+                    url,
+                    allow_private_targets,
+                    ..
+                }
+                | AlertChannel::Discord {
+                    url,
+                    allow_private_targets,
+                    ..
+                }
+                | AlertChannel::SlackCompatible {
+                    url,
+                    allow_private_targets,
+                    ..
+                }
+                | AlertChannel::Webhook {
+                    url,
+                    allow_private_targets,
+                    ..
+                } => Some((url.clone(), *allow_private_targets)),
+                AlertChannel::Smtp { .. } => None,
+            };
+            if let Some((url, allow_private)) = http
+                && !url.starts_with("${")
+            {
+                match url::Url::parse(&url) {
+                    Ok(parsed) if parsed.scheme() == "https" => {}
+                    Ok(parsed) if parsed.scheme() == "http" && allow_private => {}
+                    Ok(_) => self.push(
+                        Diagnostic::error(format!("{path}.url"), "use an https:// URL")
+                            .with_hint("plain http is accepted only with allow_private_targets: true, for a relay inside your network"),
+                    ),
+                    Err(err) => self.error(format!("{path}.url"), format!("not a URL: {err}")),
+                }
+                self.push(
+                    Diagnostic::warning(
+                        format!("{path}.url"),
+                        "the webhook URL is a secret written in the file",
+                    )
+                    .with_hint("write it as ${file:/run/secrets/…} or ${env:…}"),
+                );
+            }
+            if let AlertChannel::Webhook {
+                secret: Some(secret),
+                ..
+            } = &channel
+                && !secret.starts_with("${")
+                && !secret.starts_with("whsec_")
+            {
+                self.error(
+                    format!("{path}.secret"),
+                    "Standard Webhooks secrets start with `whsec_`",
+                );
+            }
+            if let AlertChannel::Smtp {
+                host,
+                tls,
+                username,
+                password,
+                from,
+                to,
+                ..
+            } = &channel
+            {
+                let loopback = host == "localhost"
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback());
+                if *tls == SmtpTls::None && !loopback {
+                    self.push(
+                        Diagnostic::error(format!("{path}.tls"), "plain SMTP sends passwords and alerts unencrypted")
+                            .with_hint("use starttls or implicit; `none` is allowed only for a relay on this machine"),
+                    );
+                }
+                if username.is_some() != password.is_some() {
+                    self.error(
+                        format!("{path}.password"),
+                        "set both username and password, or neither",
+                    );
+                }
+                if from.trim().is_empty() || to.is_empty() {
+                    self.error(path.clone(), "set `from` and at least one address in `to`");
+                }
+            }
+        }
+    }
+
     fn check_observability(&mut self) {
+        self.check_alerts();
         let observability = &self.config.observability;
         if !(0.0..=1.0).contains(&observability.access_log.sample) {
             self.error("observability.access_log.sample", "must be between 0 and 1");

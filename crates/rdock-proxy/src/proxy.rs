@@ -116,6 +116,7 @@ impl RdockProxy {
                     "type": "backend", "service": &*service.name, "backend": member.id, "state": "up",
                     "reason": "recovered",
                 }));
+                crate::alerting::backend_up(metrics, service, member);
                 metrics
                     .backend_up
                     .with_label_values(&[&*service.name, &member.id])
@@ -138,6 +139,12 @@ impl RdockProxy {
                     "type": "backend", "service": &*service.name, "backend": member.id, "state": "down",
                     "reason": "ejected after repeated failures", "seconds": time.as_secs(),
                 }));
+                crate::alerting::backend_down(
+                    metrics,
+                    service,
+                    member,
+                    "ejected after repeated failures",
+                );
                 metrics
                     .backend_ejections
                     .with_label_values(&[&*service.name, &member.id])

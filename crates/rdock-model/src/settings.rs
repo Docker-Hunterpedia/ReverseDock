@@ -308,11 +308,197 @@ pub struct Observability {
 }
 
 /// Alert delivery.
-#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Alerts {
-    /// Receives each alert as a JSON `POST`.
+    /// Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.
     pub webhook: Option<Webhook>,
+    /// Where alerts go, by a name you choose.
+    pub channels: std::collections::BTreeMap<String, AlertChannel>,
+    /// What raises an alert.
+    pub rules: AlertRules,
+    /// The same alert is sent again at most this often while it keeps firing.
+    pub min_interval: Duration,
+}
+
+/// One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as
+/// `${file:…}` or `${env:…}` references.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case", deny_unknown_fields)]
+pub enum AlertChannel {
+    /// A Slack incoming-webhook URL.
+    Slack {
+        /// `https://hooks.slack.com/services/…`.
+        url: String,
+        /// Only these rules; all when empty.
+        #[serde(default)]
+        rules: Vec<AlertRule>,
+        /// Allow private, loopback and link-local addresses (an internal relay).
+        #[serde(default)]
+        allow_private_targets: bool,
+    },
+    /// A Discord webhook URL; mentions are disabled, so host names cannot ping anyone.
+    Discord {
+        /// `https://discord.com/api/webhooks/…`.
+        url: String,
+        /// Only these rules; all when empty.
+        #[serde(default)]
+        rules: Vec<AlertRule>,
+        /// Allow private, loopback and link-local addresses (an internal relay).
+        #[serde(default)]
+        allow_private_targets: bool,
+    },
+    /// Anything that takes Slack's payload: Discord's `/slack` endpoint, Mattermost,
+    /// Rocket.Chat.
+    SlackCompatible {
+        /// The incoming-webhook URL.
+        url: String,
+        /// Only these rules; all when empty.
+        #[serde(default)]
+        rules: Vec<AlertRule>,
+        /// Allow private, loopback and link-local addresses (an internal relay).
+        #[serde(default)]
+        allow_private_targets: bool,
+    },
+    /// JSON `POST`, signed with Standard Webhooks when `secret` is set.
+    Webhook {
+        /// `https://…`.
+        url: String,
+        /// A `whsec_…` signing secret (Standard Webhooks).
+        #[serde(default)]
+        secret: Option<String>,
+        /// A bearer token for `Authorization`.
+        #[serde(default)]
+        token: Option<String>,
+        /// Only these rules; all when empty.
+        #[serde(default)]
+        rules: Vec<AlertRule>,
+        /// Allow private, loopback and link-local addresses (an internal relay).
+        #[serde(default)]
+        allow_private_targets: bool,
+    },
+    /// E-mail through an SMTP server.
+    Smtp {
+        /// Server host name.
+        host: String,
+        /// Port: 587 for STARTTLS, 465 for implicit TLS.
+        #[serde(default = "smtp_port")]
+        port: u16,
+        /// `starttls` (default), `implicit`, or `none` (only to a loopback relay).
+        #[serde(default)]
+        tls: SmtpTls,
+        /// Login user.
+        #[serde(default)]
+        username: Option<String>,
+        /// Login password.
+        #[serde(default)]
+        password: Option<String>,
+        /// Sender address.
+        from: String,
+        /// Recipients.
+        to: Vec<String>,
+        /// Only these rules; all when empty.
+        #[serde(default)]
+        rules: Vec<AlertRule>,
+    },
+}
+
+const fn smtp_port() -> u16 {
+    587
+}
+
+/// How the SMTP connection is protected.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SmtpTls {
+    /// Plain connection upgraded with STARTTLS (port 587).
+    #[default]
+    Starttls,
+    /// TLS from the first byte (port 465).
+    Implicit,
+    /// No encryption; refused unless the host is a loopback address.
+    None,
+}
+
+/// A kind of alert.
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, JsonSchema,
+)]
+#[serde(rename_all = "snake_case")]
+pub enum AlertRule {
+    /// Renewal keeps failing, or a certificate is about to expire.
+    Certificates,
+    /// A backend or a whole service is down.
+    Backends,
+    /// A service's 5xx share is above `error_rate`.
+    ErrorRate,
+    /// A service's p99 latency is above `latency`.
+    Latency,
+    /// A configuration was rejected.
+    Config,
+    /// Admin security events: login lockouts, user and second-factor changes, tokens used
+    /// from a new address.
+    Security,
+}
+
+/// What raises alerts. Certificates, backends, config and security are on; the thresholds are
+/// off until set.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AlertRules {
+    /// Rules that are off.
+    pub disabled: Vec<AlertRule>,
+    /// Alert when a service's 5xx share over the window is above this, in percent.
+    pub error_rate: Option<ErrorRateRule>,
+    /// Alert when a service's p99 over the window is above this.
+    pub latency: Option<LatencyRule>,
+}
+
+/// A 5xx-share threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct ErrorRateRule {
+    /// Percent of responses that are 5xx (1–100).
+    pub percent: u8,
+    /// Window (1m–15m).
+    #[serde(default = "five_minutes")]
+    pub window: Duration,
+    /// Fewer requests than this in the window never alert.
+    #[serde(default = "twenty")]
+    pub min_requests: u32,
+}
+
+/// A p99 latency threshold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct LatencyRule {
+    /// The p99 above which a service alerts.
+    pub p99: Duration,
+    /// Window (1m–15m).
+    #[serde(default = "five_minutes")]
+    pub window: Duration,
+    /// Fewer requests than this in the window never alert.
+    #[serde(default = "twenty")]
+    pub min_requests: u32,
+}
+
+impl Default for Alerts {
+    fn default() -> Self {
+        Self {
+            webhook: None,
+            channels: std::collections::BTreeMap::new(),
+            rules: AlertRules::default(),
+            min_interval: Duration::from_secs(15 * 60),
+        }
+    }
+}
+
+const fn five_minutes() -> Duration {
+    Duration::from_secs(300)
+}
+
+const fn twenty() -> u32 {
+    20
 }
 
 /// Access log settings.
