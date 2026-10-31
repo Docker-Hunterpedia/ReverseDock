@@ -3,6 +3,7 @@
 mod account;
 mod auth;
 mod bootstrap;
+mod dashboard;
 mod guard;
 mod limits;
 mod passwords;
@@ -58,6 +59,8 @@ pub struct Settings {
     pub sessions: rdock_model::settings::AdminSessions,
     /// Who must use a second factor.
     pub mfa: rdock_model::settings::MfaPolicy,
+    /// Serve the embedded dashboard (`admin.dashboard`).
+    pub dashboard: bool,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -92,6 +95,7 @@ struct State {
     limits: limits::LoginLimits,
     sessions: sessions::Sessions,
     mfa: rdock_model::settings::MfaPolicy,
+    dashboard: bool,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
 }

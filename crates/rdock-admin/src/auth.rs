@@ -109,6 +109,12 @@ fn bearer(headers: &HeaderMap) -> &str {
         .unwrap_or_default()
 }
 
+/// `GET /api/v1/setup`: whether the first admin still has to be created, so the dashboard
+/// can show the first-run page.
+pub(crate) async fn setup_needed(Extract(state): Extract<Arc<State>>) -> Response {
+    axum::Json(serde_json::json!({ "needed": !state.users.has_admin() })).into_response()
+}
+
 /// `POST /api/v1/setup`: creates the first admin. Over TCP it needs the bootstrap token as
 /// a bearer token; on the Unix socket the file permissions are the proof.
 pub(crate) async fn setup(

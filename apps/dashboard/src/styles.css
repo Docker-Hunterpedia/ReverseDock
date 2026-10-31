@@ -1,0 +1,63 @@
+@import "tailwindcss";
+@import "@reversedock/harbor-tokens/tokens.css";
+@import "@fontsource-variable/inter";
+@import "@fontsource-variable/jetbrains-mono";
+
+@custom-variant dark (&:where([data-theme="dark"], [data-theme="dark"] *));
+
+/* Harbor UI tokens (docs/08-design-system.md) as Tailwind colours. */
+@theme inline {
+  --color-canvas: var(--rd-bg);
+  --color-surface: var(--rd-surface);
+  --color-surface-2: var(--rd-surface-2);
+  --color-line: var(--rd-border);
+  --color-fg: var(--rd-text);
+  --color-fg-2: var(--rd-text-2);
+  --color-fg-3: var(--rd-text-3);
+  --color-accent: var(--rd-accent);
+  --color-accent-hover: var(--rd-accent-hover);
+  --color-accent-soft: var(--rd-accent-soft);
+  --color-accent-ink: var(--rd-accent-ink);
+  --color-accent-text: var(--rd-accent-text);
+  --color-link: var(--rd-link);
+  --color-ok: var(--rd-ok);
+  --color-warn: var(--rd-warn);
+  --color-danger: var(--rd-danger);
+  --color-info: var(--rd-info);
+  --color-focus: var(--rd-focus);
+  --font-sans: "Inter Variable", var(--rd-font-sans);
+  --font-mono: "JetBrains Mono Variable", var(--rd-font-mono);
+  --radius-sm: var(--rd-radius-sm);
+  --radius-md: var(--rd-radius-md);
+  --radius-lg: var(--rd-radius-lg);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  background: var(--rd-bg);
+  color: var(--rd-text);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 20px;
+  -webkit-font-smoothing: antialiased;
+}
+
+:focus-visible {
+  outline: 2px solid var(--rd-focus);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}

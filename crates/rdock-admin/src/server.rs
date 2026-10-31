@@ -126,6 +126,7 @@ pub fn start(
             settings.sessions.absolute.as_std(),
         ),
         mfa: settings.mfa,
+        dashboard: settings.dashboard,
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()

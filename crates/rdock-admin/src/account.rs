@@ -401,7 +401,7 @@ pub(crate) async fn logout(
     }
     response.headers_mut().insert(
         "clear-site-data",
-        HeaderValue::from_static("\"cache\", \"cookies\", \"storage\""),
+        HeaderValue::from_static("\"cache\", \"cookies\""),
     );
     response
 }

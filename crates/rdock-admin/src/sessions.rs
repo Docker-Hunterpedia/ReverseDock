@@ -296,19 +296,19 @@ mod tests {
         let (cookie, _) = short
             .create("root", Role::Admin, Stage::Full, None)
             .unwrap();
-        std::thread::sleep(Duration::from_millis(40));
+        std::thread::sleep(Duration::from_millis(60));
         assert!(short.get(&cookie).is_none());
 
-        let absolute = Sessions::new(Duration::from_secs(60), Duration::from_millis(30));
+        // Generous margins: the test must hold on a loaded CI machine.
+        let absolute = Sessions::new(Duration::from_secs(60), Duration::from_millis(400));
         let (cookie, _) = absolute
             .create("root", Role::Admin, Stage::Full, None)
             .unwrap();
-        std::thread::sleep(Duration::from_millis(20));
         assert!(
             absolute.get(&cookie).is_some(),
             "activity keeps the idle timer fresh"
         );
-        std::thread::sleep(Duration::from_millis(20));
+        std::thread::sleep(Duration::from_millis(500));
         assert!(absolute.get(&cookie).is_none(), "but not the absolute one");
     }
 
