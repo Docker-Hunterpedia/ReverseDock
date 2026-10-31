@@ -47,7 +47,9 @@ this:
 ```text
 /var/lib/rdock/
 ├── admin/
-│   └── token
+│   ├── bootstrap-token
+│   ├── token
+│   └── users.json
 └── state/
     ├── lkg.json
     └── history/
@@ -61,6 +63,18 @@ The bearer token of the admin API, created on first start as `rdk_` followed by 
 characters. `rdock status` and `rdock reload` read it from here. It is not created when
 `RDOCK_ADMIN_TOKEN` is set, and not when the admin API is turned off (`admin.enabled: false`).
 Delete the file and restart to get a new token.
+
+### `admin/bootstrap-token` <Status since="v0.5" />
+
+Written at every start while no admin user exists: `rdk_boot_` followed by 40 hexadecimal
+characters (160 random bits), mode 0600. The log prints the file's path, never its value. It
+does one thing, create the first admin user, then it is deleted; it stops working after 24
+hours, and the next start writes a new one. See [Security model](/docs/concepts/security-model/#admin-api).
+
+### `admin/users.json` <Status since="v0.5" />
+
+The dashboard users: name, role, Argon2id password hash and creation time, mode 0600, written
+atomically. Passwords are never stored. Back it up with the rest of the data directory.
 
 ### `admin.sock`
 

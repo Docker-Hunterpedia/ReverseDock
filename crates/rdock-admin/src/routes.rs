@@ -10,7 +10,10 @@ use axum::routing::{get, post};
 use http::{HeaderValue, StatusCode, header};
 use subtle::ConstantTimeEq;
 
-use crate::{State, Transport, guard};
+use crate::{State, Transport, auth, guard};
+
+/// Largest request body (ADR-0024); larger ones get 413.
+const MAX_BODY: usize = 1024 * 1024;
 
 pub(crate) fn error(status: StatusCode, message: &str) -> Response {
     (status, axum::Json(serde_json::json!({ "error": message }))).into_response()
@@ -32,8 +35,11 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         )
         .route("/readyz", get(ready))
         .route("/metrics", get(metrics))
+        .route("/api/v1/setup", post(auth::setup))
+        .route("/api/v1/auth/login", post(auth::login))
         .nest("/api/v1", api)
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not found") })
+        .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(state.clone(), guard::checks))
         .with_state(state)
 }

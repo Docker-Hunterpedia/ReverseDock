@@ -255,6 +255,8 @@ async fn start_admin(
         allowed_hosts: admin.allowed_hosts,
         threads: usize::from(admin.threads),
         token: admin_token(&args.data_dir, true)?,
+        state_dir: args.data_dir.join("admin"),
+        passwords: admin.passwords,
     };
     let running = rdock_admin::start(settings, engine.clone(), stop)?;
     tracing::info!(%address, socket = %socket.display(), "admin API listening");

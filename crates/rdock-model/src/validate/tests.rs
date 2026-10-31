@@ -508,3 +508,50 @@ fn a_network_admin_listener_needs_tls_and_known_hosts() {
     assert!(has(&found, "admin.threads", "between 1 and 16"));
     assert!(has(&found, "admin.allowed_hosts[0]", "not a host name"));
 }
+
+#[test]
+fn admin_passwords_refuse_weak_settings() {
+    let bad = with(
+        app(),
+        json!({ "admin": { "passwords": {
+            "min_length": 6,
+            "argon2": { "memory_kib": 4096, "iterations": 1, "parallelism": 0 },
+            "blocklist_file": ""
+        } } }),
+    );
+    let found: Vec<(String, String)> = validate(bad)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(
+        &found,
+        "admin.passwords.min_length",
+        "between 8 and 128"
+    ));
+    assert!(has(
+        &found,
+        "admin.passwords.argon2.memory_kib",
+        "between 19456"
+    ));
+    assert!(has(
+        &found,
+        "admin.passwords.argon2.iterations",
+        "between 2"
+    ));
+    assert!(has(
+        &found,
+        "admin.passwords.argon2.parallelism",
+        "between 1"
+    ));
+    assert!(has(&found, "admin.passwords.blocklist_file", "empty"));
+
+    let stronger = with(
+        app(),
+        json!({ "admin": { "passwords": { "min_length": 16, "argon2": { "memory_kib": 65536, "iterations": 3 } } } }),
+    );
+    assert!(
+        !validate(stronger)
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.path.starts_with("admin")),
+    );
+}

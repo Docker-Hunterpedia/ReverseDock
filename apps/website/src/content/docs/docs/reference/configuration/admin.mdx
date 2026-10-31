@@ -35,6 +35,48 @@ Serve the admin API.
 
 Address of the admin API. Loopback by default; any other address needs `tls`.
 
+## `admin.passwords`
+
+**Type:** object · **Default:** see the fields below
+
+Password rules for dashboard users.
+
+### `admin.passwords.argon2`
+
+**Type:** object · **Default:** `{"iterations":2,"memory_kib":19456,"parallelism":1}`
+
+Argon2id cost. Values below the OWASP minimum are refused; existing hashes are upgraded at the next login after a change.
+
+#### `admin.passwords.argon2.iterations`
+
+**Type:** `integer` · **Default:** `2`
+
+Passes over the memory (2–10).
+
+#### `admin.passwords.argon2.memory_kib`
+
+**Type:** `integer` · **Default:** `19456`
+
+Memory per hash in KiB (19456–262144).
+
+#### `admin.passwords.argon2.parallelism`
+
+**Type:** `integer` · **Default:** `1`
+
+Lanes (1–8).
+
+### `admin.passwords.blocklist_file`
+
+**Type:** `string`
+
+A file with one password per line (for example a breached-password list) refused in addition to the bundled list of common passwords. Read once at start, offline.
+
+### `admin.passwords.min_length`
+
+**Type:** `integer` · **Default:** `12`
+
+Shortest password accepted, in characters (8–128). The longest is 128.
+
 ## `admin.socket`
 
 **Type:** `string`

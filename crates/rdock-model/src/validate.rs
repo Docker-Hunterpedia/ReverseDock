@@ -1472,6 +1472,36 @@ impl Validator<'_> {
         );
     }
 
+    fn check_admin_passwords(&mut self) {
+        let passwords = &self.config.admin.passwords;
+        if !(8..=128).contains(&passwords.min_length) {
+            self.error("admin.passwords.min_length", "must be between 8 and 128");
+        }
+        let cost = passwords.argon2;
+        for (field, value, range) in [
+            ("memory_kib", cost.memory_kib, 19_456..=262_144),
+            ("iterations", cost.iterations, 2..=10),
+            ("parallelism", cost.parallelism, 1..=8),
+        ] {
+            if !range.contains(&value) {
+                self.push(
+                    Diagnostic::error(
+                        format!("admin.passwords.argon2.{field}"),
+                        format!("must be between {} and {}", range.start(), range.end()),
+                    )
+                    .with_hint("the minimum is the OWASP recommendation for Argon2id (ADR-0024)"),
+                );
+            }
+        }
+        if passwords
+            .blocklist_file
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            self.error("admin.passwords.blocklist_file", "path is empty");
+        }
+    }
+
     fn check_admin(&mut self) {
         let admin = &self.config.admin;
         if !admin.enabled {
@@ -1531,6 +1561,7 @@ impl Validator<'_> {
         if !(1..=16).contains(&admin.threads) {
             self.error("admin.threads", "must be between 1 and 16");
         }
+        self.check_admin_passwords();
         for (i, host) in admin.allowed_hosts.iter().enumerate() {
             if host.is_empty()
                 || (host.contains(['/', ' ', ':']) && host.parse::<std::net::Ipv6Addr>().is_err())

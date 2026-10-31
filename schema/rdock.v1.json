@@ -33,6 +33,15 @@
         "dashboard": true,
         "enabled": true,
         "listener": "127.0.0.1:2080",
+        "passwords": {
+          "argon2": {
+            "iterations": 2,
+            "memory_kib": 19456,
+            "parallelism": 1
+          },
+          "blocklist_file": null,
+          "min_length": 12
+        },
         "socket": null,
         "threads": 2,
         "tls": null
@@ -474,6 +483,19 @@
           "$ref": "#/$defs/ListenAddress",
           "default": "127.0.0.1:2080"
         },
+        "passwords": {
+          "description": "Password rules for dashboard users.",
+          "$ref": "#/$defs/AdminPasswords",
+          "default": {
+            "argon2": {
+              "iterations": 2,
+              "memory_kib": 19456,
+              "parallelism": 1
+            },
+            "blocklist_file": null,
+            "min_length": 12
+          }
+        },
         "socket": {
           "description": "Unix socket for the local CLI (`rdock reload`, `rdock status`), mode 0600. Default:\n`$RDOCK_DATA_DIR/admin.sock`.",
           "type": [
@@ -507,6 +529,38 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "AdminPasswords": {
+      "description": "Password rules for dashboard users (ADR-0024). There are no composition rules: length and\na list of common passwords are what protect a password (NIST SP 800-63B §3.1.1.2).",
+      "type": "object",
+      "properties": {
+        "argon2": {
+          "description": "Argon2id cost. Values below the OWASP minimum are refused; existing hashes are\nupgraded at the next login after a change.",
+          "$ref": "#/$defs/Argon2Cost",
+          "default": {
+            "iterations": 2,
+            "memory_kib": 19456,
+            "parallelism": 1
+          }
+        },
+        "blocklist_file": {
+          "description": "A file with one password per line (for example a breached-password list) refused in\naddition to the bundled list of common passwords. Read once at start, offline.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "min_length": {
+          "description": "Shortest password accepted, in characters (8–128). The longest is 128.",
+          "type": "integer",
+          "format": "uint8",
+          "default": 12,
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "AdminTls": {
       "description": "Certificate and key the admin listener presents.",
@@ -548,6 +602,34 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "Argon2Cost": {
+      "description": "Argon2id parameters. The default is the OWASP minimum, m=19456 KiB, t=2, p=1 (Password\nStorage Cheat Sheet, checked 2026-10-31).",
+      "type": "object",
+      "properties": {
+        "iterations": {
+          "description": "Passes over the memory (2–10).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
+        },
+        "memory_kib": {
+          "description": "Memory per hash in KiB (19456–262144).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 19456,
+          "minimum": 0
+        },
+        "parallelism": {
+          "description": "Lanes (1–8).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 1,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "Backend": {
       "description": "One backend server.",
