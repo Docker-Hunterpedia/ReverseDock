@@ -48,6 +48,23 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+/* Tailwind v4 gives buttons the default cursor; everything clickable shows the hand. */
+button:not(:disabled),
+[role="button"]:not([aria-disabled="true"]),
+[role="radio"],
+a[href],
+summary,
+select,
+label:has(> input[type="checkbox"]),
+input[type="checkbox"],
+input[type="radio"] {
+  cursor: pointer;
+}
+
+button:disabled {
+  cursor: not-allowed;
+}
+
 :focus-visible {
   outline: 2px solid var(--rd-focus);
   outline-offset: 2px;
