@@ -379,7 +379,7 @@ labels:
 - **Access log** (JSON, one line per request): `ts, request_id, trace_id, client_ip, method, host, path, query(len), proto, status, bytes_in, bytes_out, duration_ms, upstream_addr, upstream_connect_ms, upstream_ttfb_ms, route, service, listener, tls_version, tls_cipher, sni, user_agent, referer, cf_ray, retries, cache_status, error`. Redaction list applied before serialisation; sampling by status class.
 - **Metrics** (Prometheus): `rdock_http_requests_total{listener,route,service,method,status_class}`, `rdock_http_request_duration_seconds` (histogram), `rdock_upstream_duration_seconds`, `rdock_upstream_backend_healthy{service,backend}`, `rdock_upstream_connections{...}`, `rdock_tls_handshakes_total{version,resumed}`, `rdock_cert_expiry_timestamp_seconds{name}`, `rdock_cert_renewal_failed_total`, `rdock_ratelimit_rejected_total{middleware}`, `rdock_config_generation`, `rdock_provider_state{provider}`, process/Tokio runtime metrics. Label cardinality is bounded by config (route/service names), never by host/path values.
 - **Tracing:** `tracing` spans per request; OTLP export; `traceparent`/`tracestate` propagated to upstream; `baggage` optional.
-- **Dashboard feed:** a 15-minute ring buffer of per-second counters and a fixed 40-bucket logarithmic latency histogram per route (about 183 KiB per route; [ADR-0024](decisions/0024-management-api-and-dashboard.md) replaced the DDSketch plan) — no Prometheus needed for live charts.
+- **Dashboard feed:** a 15-minute ring buffer of per-second counters and a fixed 40-bucket logarithmic latency histogram per route (about 190 KiB per route; [ADR-0024](decisions/0024-management-api-and-dashboard.md) replaced the DDSketch plan) — no Prometheus needed for live charts.
 
 ## 15. Security model
 
