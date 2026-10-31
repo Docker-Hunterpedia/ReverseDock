@@ -1,5 +1,7 @@
 //! Security, admin, observability and lifecycle settings.
 
+use std::path::PathBuf;
+
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
@@ -69,16 +71,27 @@ impl Default for Limits {
     }
 }
 
-/// Admin API and dashboard.
+/// Admin API and dashboard (ADR-0024).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct Admin {
     /// Serve the admin API.
     pub enabled: bool,
-    /// Address of the admin API. Keep it on loopback unless it is protected.
+    /// Address of the admin API. Loopback by default; any other address needs `tls`.
     pub listener: ListenAddress,
     /// Serve the embedded dashboard on the admin listener.
     pub dashboard: bool,
+    /// TLS for the admin listener. Required when `listener` is not a loopback address.
+    pub tls: Option<AdminTls>,
+    /// Unix socket for the local CLI (`rdock reload`, `rdock status`), mode 0600. Default:
+    /// `$RDOCK_DATA_DIR/admin.sock`.
+    pub socket: Option<PathBuf>,
+    /// Host names the admin listener answers to; other `Host` headers get 421 (DNS-rebinding
+    /// defence). Default: `localhost`, `127.0.0.1` and `::1` on loopback, the listener's IP
+    /// otherwise. Required when `listener` is on all interfaces.
+    pub allowed_hosts: Vec<String>,
+    /// Worker threads of the admin runtime, kept apart from the proxy's (1–16).
+    pub threads: u8,
 }
 
 impl Default for Admin {
@@ -87,8 +100,22 @@ impl Default for Admin {
             enabled: true,
             listener: ListenAddress::new(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), 2080),
             dashboard: true,
+            tls: None,
+            socket: None,
+            allowed_hosts: Vec::new(),
+            threads: 2,
         }
     }
+}
+
+/// Certificate and key the admin listener presents.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminTls {
+    /// PEM certificate chain, leaf first.
+    pub cert_file: PathBuf,
+    /// PEM private key.
+    pub key_file: PathBuf,
 }
 
 /// Logs, metrics and traces.

@@ -12,12 +12,25 @@ publish.workspace = true
 
 [dependencies]
 async-trait.workspace = true
+axum.workspace = true
 http.workspace = true
-pingora.workspace = true
+hyper.workspace = true
+hyper-util.workspace = true
+rdock-model.workspace = true
+rdock-tls.workspace = true
+rustls.workspace = true
 serde_json.workspace = true
 subtle.workspace = true
+thiserror.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
 tracing.workspace = true
+
+[dev-dependencies]
+bytes.workspace = true
+http-body-util.workspace = true
+rdock-testkit.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

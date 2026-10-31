@@ -1,52 +1,108 @@
 //! `rdock reload`, `rdock status` and `rdock healthcheck`: requests to the admin API of the
-//! running proxy over plain HTTP/1.1 on its local admin listener.
+//! running proxy over plain HTTP/1.1, on its local Unix socket (no token needed, ADR-0024) or
+//! its admin listener.
 
 use std::io::{Read, Write};
 use std::net::{SocketAddr, TcpStream};
+use std::os::unix::net::UnixStream;
+use std::path::PathBuf;
 use std::process::ExitCode;
 use std::time::{Duration, SystemTime};
 
 use anyhow::{Context, bail};
 use rdock_model::Diagnostic;
+use rdock_model::settings::Admin;
 
-use crate::run::{admin_address, admin_token};
+use crate::run::{admin_address, admin_token, socket_path};
 use crate::{CtlArgs, StatusArgs, print};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
+
+/// The `admin` section of the configuration file, or the defaults when it cannot be read.
+fn admin_settings(args: &CtlArgs) -> Admin {
+    rdock_config::load_file(&args.config).map_or_else(|_| Admin::default(), |l| l.config.admin)
+}
 
 /// The admin address: `--admin`, or `admin.listener` from the configuration file.
 fn address(args: &CtlArgs) -> SocketAddr {
     if let Some(address) = args.admin {
         return address;
     }
-    let configured = rdock_config::load_file(&args.config).map_or_else(
-        |_| rdock_model::settings::Admin::default().listener,
-        |l| l.config.admin.listener,
-    );
-    let mut address = admin_address(&configured);
+    let mut address = admin_address(&admin_settings(args).listener);
     if address.ip().is_unspecified() {
         address.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
     }
     address
 }
 
-/// Sends one request and returns status and body.
-fn request(
+/// Where an authenticated command goes.
+enum Target {
+    /// The local socket: file permissions are the authentication.
+    Socket(PathBuf),
+    /// The admin listener, with the admin token.
+    Tcp(SocketAddr, String),
+}
+
+/// The socket when it exists and `--admin` is not given; otherwise the listener and token.
+fn target(args: &CtlArgs) -> anyhow::Result<Target> {
+    if args.admin.is_none() {
+        let socket = admin_settings(args)
+            .socket
+            .unwrap_or_else(|| socket_path(&args.data_dir));
+        if socket.exists() {
+            return Ok(Target::Socket(socket));
+        }
+    }
+    Ok(Target::Tcp(
+        address(args),
+        admin_token(&args.data_dir, false)?,
+    ))
+}
+
+fn send(target: &Target, method: &str, path: &str) -> anyhow::Result<(u16, String)> {
+    match target {
+        Target::Socket(socket) => {
+            let stream = UnixStream::connect(socket).with_context(|| {
+                format!(
+                    "cannot reach the admin socket {} (is rdock running?)",
+                    socket.display()
+                )
+            })?;
+            stream.set_read_timeout(Some(TIMEOUT))?;
+            stream.set_write_timeout(Some(TIMEOUT))?;
+            exchange(stream, method, path, "localhost", None)
+        }
+        Target::Tcp(address, token) => tcp_request(*address, method, path, Some(token)),
+    }
+}
+
+/// Sends one request to the admin listener and returns status and body.
+fn tcp_request(
     address: SocketAddr,
     method: &str,
     path: &str,
     token: Option<&str>,
 ) -> anyhow::Result<(u16, String)> {
-    let mut stream = TcpStream::connect_timeout(&address, TIMEOUT)
+    let stream = TcpStream::connect_timeout(&address, TIMEOUT)
         .with_context(|| format!("cannot reach the admin API at {address} (is rdock running?)"))?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
+    exchange(stream, method, path, &address.to_string(), token)
+}
+
+fn exchange(
+    mut stream: impl Read + Write,
+    method: &str,
+    path: &str,
+    host: &str,
+    token: Option<&str>,
+) -> anyhow::Result<(u16, String)> {
     let auth = token
         .map(|t| format!("Authorization: Bearer {t}\r\n"))
         .unwrap_or_default();
     write!(
         stream,
-        "{method} {path} HTTP/1.1\r\nHost: {address}\r\n{auth}Content-Length: 0\r\nConnection: close\r\n\r\n"
+        "{method} {path} HTTP/1.1\r\nHost: {host}\r\n{auth}Content-Length: 0\r\nConnection: close\r\n\r\n"
     )?;
     let mut raw = Vec::new();
     stream
@@ -63,8 +119,7 @@ fn request(
 }
 
 pub(crate) fn reload(args: &CtlArgs) -> anyhow::Result<ExitCode> {
-    let token = admin_token(&args.data_dir, false)?;
-    let (status, body) = request(address(args), "POST", "/api/v1/config/reload", Some(&token))?;
+    let (status, body) = send(&target(args)?, "POST", "/api/v1/config/reload")?;
     if status == 401 {
         bail!("the admin token was refused");
     }
@@ -107,8 +162,7 @@ fn diagnostic(value: &serde_json::Value) -> Option<Diagnostic> {
 }
 
 pub(crate) fn status(args: &StatusArgs) -> anyhow::Result<ExitCode> {
-    let token = admin_token(&args.ctl.data_dir, false)?;
-    let (status, body) = request(address(&args.ctl), "GET", "/api/v1/status", Some(&token))?;
+    let (status, body) = send(&target(&args.ctl)?, "GET", "/api/v1/status")?;
     if status != 200 {
         bail!("the admin API answered {status}: {}", body.trim());
     }
@@ -189,7 +243,7 @@ fn certificate_line(cert: &serde_json::Value) -> String {
 }
 
 pub(crate) fn healthcheck(args: &CtlArgs) -> ExitCode {
-    match request(address(args), "GET", "/readyz", None) {
+    match tcp_request(address(args), "GET", "/readyz", None) {
         Ok((200, _)) => ExitCode::SUCCESS,
         Ok((status, body)) => {
             eprintln!("not ready ({status}): {}", body.trim());

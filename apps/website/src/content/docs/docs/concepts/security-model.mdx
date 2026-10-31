@@ -48,7 +48,9 @@ That client IP is what `ClientIP`, `ip_allow`, `ip_deny`, `rate_limit`, `mainten
 
 ### Admin API
 
-- It listens on its own socket, `127.0.0.1:2080` by default, never on a proxy listener. `rdock validate` warns when `admin.listener` is not a loopback address and reports an error when it overlaps a listener.
+- It listens on its own port, `127.0.0.1:2080` by default, never on a proxy listener, and runs on threads of its own, so admin traffic cannot slow the proxy down. `rdock validate` refuses an `admin.listener` that is not a loopback address unless `admin.tls` is set (TLS 1.3 only), and reports an error when it overlaps a listener <Status since="v0.5" />.
+- It answers only to the host names in `admin.allowed_hosts` (by default `localhost`, `127.0.0.1` and `::1` on loopback) and refuses others with 421, so a web page cannot reach it by pointing its own name at your machine (DNS rebinding). It refuses cross-site `POST`, `PUT`, `PATCH` and `DELETE` requests from browsers (`Sec-Fetch-Site`, or `Origin` when that is missing) with 403. Every answer carries `Cache-Control: no-store`, a strict `Content-Security-Policy`, `X-Content-Type-Options: nosniff` and `Referrer-Policy: no-referrer`, and `Strict-Transport-Security` over TLS <Status since="v0.5" />.
+- The CLI talks to it over a Unix socket, `$RDOCK_DATA_DIR/admin.sock` (`admin.socket`), that only the owner of the data directory can open <Status since="v0.5" />.
 - `/healthz`, `/readyz` and `/metrics` answer without a token. Metrics include your route, service and certificate names, so keep the listener private.
 - `/api/v1/status` and `/api/v1/config/reload` need `Authorization: Bearer <token>`; anything else gets 401. The token comes from `RDOCK_ADMIN_TOKEN`, or from `$RDOCK_DATA_DIR/admin/token`, which rdock creates with a random value on first start, readable by the owner only. The comparison runs in constant time.
 - The v0.1 API cannot change the configuration; it can only reload the file that is already there. Users, scoped tokens, audit logs and the dashboard are <Status planned="v0.5" />.

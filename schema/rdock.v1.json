@@ -29,9 +29,13 @@
       "description": "Admin API and dashboard.",
       "$ref": "#/$defs/Admin",
       "default": {
+        "allowed_hosts": [],
         "dashboard": true,
         "enabled": true,
-        "listener": "127.0.0.1:2080"
+        "listener": "127.0.0.1:2080",
+        "socket": null,
+        "threads": 2,
+        "tls": null
       }
     },
     "certificates": {
@@ -444,9 +448,17 @@
       }
     },
     "Admin": {
-      "description": "Admin API and dashboard.",
+      "description": "Admin API and dashboard (ADR-0024).",
       "type": "object",
       "properties": {
+        "allowed_hosts": {
+          "description": "Host names the admin listener answers to; other `Host` headers get 421 (DNS-rebinding\ndefence). Default: `localhost`, `127.0.0.1` and `::1` on loopback, the listener's IP\notherwise. Required when `listener` is on all interfaces.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "dashboard": {
           "description": "Serve the embedded dashboard on the admin listener.",
           "type": "boolean",
@@ -458,15 +470,62 @@
           "default": true
         },
         "listener": {
-          "description": "Address of the admin API. Keep it on loopback unless it is protected.",
+          "description": "Address of the admin API. Loopback by default; any other address needs `tls`.",
           "$ref": "#/$defs/ListenAddress",
           "default": "127.0.0.1:2080"
+        },
+        "socket": {
+          "description": "Unix socket for the local CLI (`rdock reload`, `rdock status`), mode 0600. Default:\n`$RDOCK_DATA_DIR/admin.sock`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "threads": {
+          "description": "Worker threads of the admin runtime, kept apart from the proxy's (1–16).",
+          "type": "integer",
+          "format": "uint8",
+          "default": 2,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "tls": {
+          "description": "TLS for the admin listener. Required when `listener` is not a loopback address.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AdminTls"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
         }
       },
       "additionalProperties": false,
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "AdminTls": {
+      "description": "Certificate and key the admin listener presents.",
+      "type": "object",
+      "properties": {
+        "cert_file": {
+          "description": "PEM certificate chain, leaf first.",
+          "type": "string"
+        },
+        "key_file": {
+          "description": "PEM private key.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "cert_file",
+        "key_file"
+      ]
     },
     "Alerts": {
       "description": "Alert delivery.",

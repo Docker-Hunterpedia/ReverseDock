@@ -62,6 +62,10 @@ characters. `rdock status` and `rdock reload` read it from here. It is not creat
 `RDOCK_ADMIN_TOKEN` is set, and not when the admin API is turned off (`admin.enabled: false`).
 Delete the file and restart to get a new token.
 
+### `admin.sock`
+
+The Unix socket `rdock reload` and `rdock status` use, created at start with mode 0600 and removed at shutdown (`admin.socket` moves it). Requests on it need no token: being able to open it means being the owner of the data directory.
+
 ### `state/lkg.json`
 
 The **last-known-good** configuration: the most recent configuration loaded from the file and

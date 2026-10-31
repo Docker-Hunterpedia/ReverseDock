@@ -131,6 +131,10 @@ If `rdock reload` itself fails:
 | `cannot reach the admin API at 127.0.0.1:2080 (is rdock running?)` | rdock is not running, or its admin listener is elsewhere. Pass the same `--config`, or `--admin` |
 | `reading the admin token …/admin/token: No such file or directory` | Wrong `--data-dir`, or rdock never started with this data directory. With systemd use `sudo` |
 | `the admin token was refused` | The token differs from the running process, for example because `RDOCK_ADMIN_TOKEN` is set differently |
+| `cannot reach the admin socket …/admin.sock (is rdock running?)` | The socket is left from a process that did not stop cleanly, or belongs to another data directory; restart rdock, or pass `--admin` to use the listener |
+| `421` with `this host name is not served by the admin API` | The request used a host name that is not in `admin.allowed_hosts` |
+| `403` with `cross-site requests are refused` | A browser sent a write from another site; use the CLI, or the dashboard on the admin address itself |
+| `admin.listener: … reachable from the network without TLS` | Set `admin.tls`, or keep the listener on `127.0.0.1` |
 
 ## Port already in use
 

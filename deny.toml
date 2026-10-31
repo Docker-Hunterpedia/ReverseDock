@@ -48,6 +48,14 @@ exceptions = [
 multiple-versions = "warn"
 wildcards = "deny"
 allow-wildcard-paths = true
+# One TLS stack: rustls with ring (ADR-0013). A default feature must never bring another in (ADR-0024).
+deny = [
+  { name = "openssl", reason = "rustls with ring only (ADR-0013)" },
+  { name = "openssl-sys", reason = "rustls with ring only (ADR-0013)" },
+  { name = "native-tls", reason = "rustls with ring only (ADR-0013)" },
+  { name = "aws-lc-rs", reason = "ring is the only crypto provider (ADR-0013)" },
+  { name = "aws-lc-sys", reason = "ring is the only crypto provider (ADR-0013)" },
+]
 
 [sources]
 unknown-registry = "deny"

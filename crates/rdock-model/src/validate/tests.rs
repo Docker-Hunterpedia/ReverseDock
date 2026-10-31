@@ -451,8 +451,9 @@ fn flags_risky_security_and_admin_settings() {
     assert!(has(
         &as_pairs,
         "admin.listener",
-        "reachable from the network"
+        "reachable from the network without TLS"
     ));
+    assert!(has(&as_pairs, "admin.allowed_hosts", "list the host names"));
     assert!(has(
         &as_pairs,
         "acme.dns_providers.cf.api_token",
@@ -469,4 +470,41 @@ fn checks_names_and_version() {
     }));
     assert!(has(&found, "version", "unsupported"));
     assert!(has(&found, "services[\"bad@name\"]", "invalid name"));
+}
+
+#[test]
+fn a_network_admin_listener_needs_tls_and_known_hosts() {
+    let tls = json!({ "cert_file": "/etc/rdock/admin.pem", "key_file": "/etc/rdock/admin.key" });
+    let ok = with(
+        app(),
+        json!({ "admin": { "listener": "10.0.0.5:2080", "tls": tls } }),
+    );
+    let found = validate(ok);
+    assert!(
+        !found
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.path.starts_with("admin")),
+        "{found:?}"
+    );
+
+    let all = with(
+        app(),
+        json!({ "admin": { "listener": ":2080", "tls": tls, "allowed_hosts": ["admin.example.com"] } }),
+    );
+    assert!(
+        !validate(all)
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.path.starts_with("admin"))
+    );
+
+    let bad = with(
+        app(),
+        json!({ "admin": { "threads": 0, "allowed_hosts": ["a b"] } }),
+    );
+    let found: Vec<(String, String)> = validate(bad)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(&found, "admin.threads", "between 1 and 16"));
+    assert!(has(&found, "admin.allowed_hosts[0]", "not a host name"));
 }

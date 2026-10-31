@@ -92,6 +92,11 @@ pub(crate) fn token_path(data_dir: &Path) -> PathBuf {
     data_dir.join("admin").join("token")
 }
 
+/// The CLI's Unix socket when `admin.socket` is not set.
+pub(crate) fn socket_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("admin.sock")
+}
+
 /// Signals rdock reacts to.
 struct Signals {
     hangup: Signal,
@@ -210,7 +215,7 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         let _ = task.await;
     }
     if let Some(admin) = admin {
-        let _ = admin.await;
+        admin.stopped().await;
     }
     tracing::info!("rdock stopped");
     Ok(ExitCode::SUCCESS)
@@ -229,17 +234,31 @@ async fn start_admin(
     args: &RunArgs,
     engine: &Arc<Engine>,
     stop: watch::Receiver<bool>,
-) -> anyhow::Result<Option<tokio::task::JoinHandle<()>>> {
+) -> anyhow::Result<Option<rdock_admin::Running>> {
     let config = engine.config().await.unwrap_or_default();
-    if !config.admin.enabled {
+    let admin = config.admin;
+    if !admin.enabled {
         return Ok(None);
     }
-    let token = admin_token(&args.data_dir, true)?;
-    let address = admin_address(&config.admin.listener);
-    let handle = rdock_admin::serve(address, token, engine.clone(), stop)
-        .with_context(|| format!("cannot listen on the admin address {address}"))?;
-    tracing::info!(%address, "admin API listening");
-    Ok(Some(handle))
+    let address = admin_address(&admin.listener);
+    let socket = admin
+        .socket
+        .clone()
+        .unwrap_or_else(|| socket_path(&args.data_dir));
+    let settings = rdock_admin::Settings {
+        address,
+        tls: admin.tls.map(|tls| rdock_admin::TlsFiles {
+            cert_file: tls.cert_file,
+            key_file: tls.key_file,
+        }),
+        socket: Some(socket.clone()),
+        allowed_hosts: admin.allowed_hosts,
+        threads: usize::from(admin.threads),
+        token: admin_token(&args.data_dir, true)?,
+    };
+    let running = rdock_admin::start(settings, engine.clone(), stop)?;
+    tracing::info!(%address, socket = %socket.display(), "admin API listening");
+    Ok(Some(running))
 }
 
 fn start_watcher(engine: &Engine, changed: mpsc::Sender<()>) -> Option<FileWatcher> {
