@@ -61,4 +61,7 @@ skills-lock.json
 # ---- Scratch ----
 *.log
 /tmp/
+
+# Local and CI regression runs (bench.yml); published reports get their own folder.
+benchmarks/results/ci/
 benchmarks/soak/work/
