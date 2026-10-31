@@ -3,6 +3,7 @@ import { Plus } from "lucide-react";
 import { type FormEvent, useState } from "react";
 import { Drawer } from "../components/Drawer";
 import { useReauth } from "../components/Reauth";
+import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card, Field, StatusPill } from "../components/ui";
 import { type Role, type Session, api, describe } from "../lib/api";
@@ -37,6 +38,7 @@ function day(unix: number | null): string {
 export function Users({ session }: { session: Session }) {
   const queryClient = useQueryClient();
   const reauth = useReauth();
+  const toast = useToast();
   const users = useQuery({ queryKey: ["users"], queryFn: () => api<User[]>("/users") });
   const [adding, setAdding] = useState(false);
   const [draft, setDraft] = useState({ name: "", role: "viewer" as Role, password: "" });
@@ -44,15 +46,18 @@ export function Users({ session }: { session: Session }) {
   const change = useMutation({
     mutationFn: ({ name, body }: { name: string; body: object }) =>
       reauth(() => api(`/users/${encodeURIComponent(name)}`, { method: "PATCH", body })),
+    onSuccess: (_, { name }) => toast(`${name} changed; their sessions ended.`),
     onSettled: done,
   });
   const remove = useMutation({
     mutationFn: (name: string) => reauth(() => api(`/users/${encodeURIComponent(name)}`, { method: "DELETE" })),
+    onSuccess: (_, name) => toast(`${name} removed, with their sessions and tokens.`),
     onSettled: done,
   });
   const add = useMutation({
     mutationFn: () => reauth(() => api("/users", { method: "POST", body: draft })),
     onSuccess: () => {
+      toast(`${draft.name} added as ${draft.role}.`);
       setAdding(false);
       setDraft({ name: "", role: "viewer", password: "" });
       done();
@@ -121,6 +126,7 @@ export function Users({ session }: { session: Session }) {
 export function Tokens({ session }: { session: Session }) {
   const queryClient = useQueryClient();
   const reauth = useReauth();
+  const toast = useToast();
   const tokens = useQuery({ queryKey: ["tokens"], queryFn: () => api<Token[]>("/tokens") });
   const [creating, setCreating] = useState(false);
   const [draft, setDraft] = useState({ name: "", role: "viewer", days: "90", allow: "" });
@@ -141,6 +147,7 @@ export function Tokens({ session }: { session: Session }) {
   });
   const revoke = useMutation({
     mutationFn: (id: string) => api(`/tokens/${id}`, { method: "DELETE" }),
+    onSuccess: (_, id) => toast(`Token ${id} revoked; it stops working now.`),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["tokens"] }),
   });
   const roles = ["metrics", "viewer", "operator", "admin"].slice(0, { viewer: 2, operator: 3, admin: 4 }[session.role]);

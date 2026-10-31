@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Drawer, OwnerBadge } from "../components/Drawer";
+import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card } from "../components/ui";
 import { type Session, api, apiWithTag, describe } from "../lib/api";
@@ -78,6 +79,7 @@ const HEADS: Record<Kind, string[]> = {
 /** Edits or creates one API-owned object; changes go through If-Match on the API objects. */
 function Editor({ kind, item, onClose, canEdit }: { kind: Kind; item: Item | null; onClose: () => void; canEdit: boolean }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const creating = item === null;
   const editable = canEdit && (creating || item.owner === "api");
   const [name, setName] = useState(item?.name.replace(/@api$/, "") ?? "");
@@ -87,11 +89,20 @@ function Editor({ kind, item, onClose, canEdit }: { kind: Kind; item: Item | nul
     mutationFn: async (remove: boolean) => {
       const { etag } = await apiWithTag("/config/api");
       const path = `/${kind}/${encodeURIComponent(name.trim())}`;
-      if (remove) return api(path, { method: "DELETE", ifMatch: etag });
-      return api(path, { method: "PUT", ifMatch: etag, body: JSON.parse(text) as unknown });
+      const method = remove ? "DELETE" : "PUT";
+      const body = remove ? undefined : (JSON.parse(text) as unknown);
+      const report = await api<{ generation?: number }>(path, { method, ifMatch: etag, body });
+      return { remove, generation: report?.generation };
     },
-    onSuccess: () => {
+    onSuccess: ({ remove, generation }) => {
       void queryClient.invalidateQueries({ queryKey: [kind] });
+      const what = `${kind.slice(0, -1).replace(/^./, (c) => c.toUpperCase())} ${name.trim()}@api`;
+      toast(
+        <>
+          <strong className="font-medium">{what} {remove ? "deleted" : "validated and applied"}.</strong>
+          {generation != null && <span className="text-fg-2"> Configuration generation {generation} is live.</span>}
+        </>,
+      );
       onClose();
     },
   });

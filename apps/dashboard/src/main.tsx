@@ -20,6 +20,7 @@ import { Security } from "./pages/Security";
 import { Settings } from "./pages/Settings";
 import { Setup } from "./pages/Setup";
 import { ReauthProvider } from "./components/Reauth";
+import { ToastProvider } from "./components/Toast";
 
 let theme = storedTheme();
 applyTheme(theme);
@@ -150,9 +151,11 @@ function Gate() {
   };
   return (
     <AppContext value={{ session: data, theme: current, setTheme, logout }}>
-      <ReauthProvider>
-        <RouterProvider router={router} />
-      </ReauthProvider>
+      <ToastProvider>
+        <ReauthProvider>
+          <RouterProvider router={router} />
+        </ReauthProvider>
+      </ToastProvider>
     </AppContext>
   );
 }

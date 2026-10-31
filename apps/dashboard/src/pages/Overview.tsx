@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RefreshCw } from "lucide-react";
 import { useMemo } from "react";
 import { Chart } from "../components/Chart";
+import { useToast } from "../components/Toast";
 import { TD, TH, Table, Tile } from "../components/Table";
 import { Alert, Button, Card, StatusPill } from "../components/ui";
 import { type Session, api, describe } from "../lib/api";
@@ -39,6 +40,7 @@ function describeEvent(e: Event): string {
 
 export function Overview({ session }: { session: Session }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const status = useQuery({ queryKey: ["status"], queryFn: () => api<Status>("/status"), refetchInterval: 5000 });
   const metrics = useQuery({
     queryKey: ["metrics", 900],
@@ -48,7 +50,8 @@ export function Overview({ session }: { session: Session }) {
   const backends = useQuery({ queryKey: ["backends"], queryFn: () => api<Backends[]>("/backends"), refetchInterval: 5000 });
   const events = useEventStream<Event>("/api/v1/events/stream", 12);
   const reload = useMutation({
-    mutationFn: () => api<{ result?: string }>("/config/reload", { method: "POST", body: {} }),
+    mutationFn: () => api<{ result?: string; generation?: number }>("/config/reload", { method: "POST", body: {} }),
+    onSuccess: (report) => toast(`Configuration reloaded; generation ${report.generation ?? "?"} is live.`),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["status"] }),
   });
 
