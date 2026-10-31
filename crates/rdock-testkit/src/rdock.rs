@@ -26,7 +26,8 @@ impl Drop for Rdock {
 }
 
 impl Rdock {
-    /// Starts `binary` with `config` (the `admin` section is added) and waits until it is ready.
+    /// Starts `binary` with `config` (the `admin` section is added, see [`Self::write_config`])
+    /// and waits until it is ready.
     pub fn start(binary: &str, config: &str) -> Self {
         Self::try_start(binary, config)
             .unwrap_or_else(|log| panic!("rdock did not become ready:\n{log}"))
@@ -57,9 +58,14 @@ impl Rdock {
         self.dir.path().join("data")
     }
 
-    /// Replaces the configuration file (the admin section is added again).
+    /// Replaces the configuration file (the admin section is added again). A configuration
+    /// with its own `admin` section writes `{admin}` where the listener address goes.
     pub fn write_config(&self, config: &str) {
-        let full = format!("{config}\nadmin: {{ listener: \"{}\" }}\n", self.admin);
+        let full = if config.contains("{admin}") {
+            config.replace("{admin}", &self.admin.to_string())
+        } else {
+            format!("{config}\nadmin: {{ listener: \"{}\" }}\n", self.admin)
+        };
         let tmp = self.dir.path().join(".rdock.yaml.tmp");
         std::fs::write(&tmp, full).unwrap();
         std::fs::rename(tmp, self.config_path()).unwrap();

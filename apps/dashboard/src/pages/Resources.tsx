@@ -6,15 +6,12 @@ import { RouteTester } from "../components/RouteTester";
 import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card } from "../components/ui";
+import type { Owned } from "../api";
 import { type Session, api, apiWithTag, describe, diagnostics } from "../lib/api";
 
 export type Kind = "routes" | "services" | "middlewares";
 
-interface Item {
-  name: string;
-  owner: string;
-  spec: Record<string, unknown>;
-}
+type Item = Owned;
 
 const TITLES: Record<Kind, { title: string; intro: string; empty: string }> = {
   routes: {

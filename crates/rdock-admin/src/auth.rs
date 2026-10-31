@@ -9,6 +9,7 @@ use axum::extract::{Extension, State as Extract};
 use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use crate::account::{self, mfa_required};
 use crate::audit::{Event, Outcome};
@@ -22,7 +23,7 @@ use crate::{State, Transport};
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Peer(pub(crate) SocketAddr);
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Credentials {
     name: String,
@@ -112,12 +113,22 @@ fn bearer(headers: &HeaderMap) -> &str {
 
 /// `GET /api/v1/setup`: whether the first admin still has to be created, so the dashboard
 /// can show the first-run page.
+#[utoipa::path(get, path = "/api/v1/setup", tag = "auth",
+    responses((status = OK, description = "`needed`: whether no admin exists yet", body = Object)))]
 pub(crate) async fn setup_needed(Extract(state): Extract<Arc<State>>) -> Response {
     axum::Json(serde_json::json!({ "needed": !state.users.has_admin() })).into_response()
 }
 
 /// `POST /api/v1/setup`: creates the first admin. Over TCP it needs the bootstrap token as
 /// a bearer token; on the Unix socket the file permissions are the proof.
+#[utoipa::path(post, path = "/api/v1/setup", tag = "auth", request_body = Credentials,
+    responses(
+        (status = CREATED, description = "The admin; `name` and `role`", body = Object),
+        (status = UNAUTHORIZED, description = "Missing or wrong bootstrap token", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "An admin exists", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Invalid name or weak password", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn setup(
     Extract(state): Extract<Arc<State>>,
     Extension(transport): Extension<Transport>,
@@ -201,6 +212,13 @@ pub(crate) async fn setup(
 /// `POST /api/v1/auth/login`: checks a user name and password and starts a session.
 /// Unknown names, disabled users and wrong passwords get the same answer after the same
 /// Argon2 work.
+#[utoipa::path(post, path = "/api/v1/auth/login", tag = "auth", request_body = Credentials,
+    responses(
+        (status = OK, description = "A session; `stage` says whether a code or enrolment is next", body = crate::openapi::SessionInfo,
+            headers(("Set-Cookie" = String, description = "The session cookie"))),
+        (status = UNAUTHORIZED, description = "Wrong name or password", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn login(
     Extract(state): Extract<Arc<State>>,
     peer: Option<Extension<Peer>>,

@@ -22,7 +22,9 @@ use crate::{State, Transport, account};
 
 /// What a caller may do, in increasing order. `metrics` reads `/metrics` only, for
 /// Prometheus; the others are the user roles.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Access {
     /// `/metrics` only.

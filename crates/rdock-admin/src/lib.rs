@@ -10,6 +10,7 @@ mod dashboard;
 mod guard;
 mod limits;
 mod manage;
+mod openapi;
 mod passwords;
 mod resources;
 mod routes;
@@ -27,6 +28,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+pub use openapi::json as openapi_json;
 pub use server::{Running, StartError, start};
 
 /// What the admin API reads from and asks of the running process.

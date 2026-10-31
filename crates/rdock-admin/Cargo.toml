@@ -39,6 +39,8 @@ tokio.workspace = true
 tokio-rustls.workspace = true
 tower-service.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true

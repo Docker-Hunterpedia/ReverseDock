@@ -13,6 +13,7 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use rdock_model::interpolation::{FieldKind, field_kind};
 use serde::Deserialize;
 use serde_json::{Map, Value, json};
+use utoipa::ToSchema;
 
 use crate::audit::{Event, Outcome};
 use crate::caller::{Access, Caller, need, need_recent};
@@ -209,6 +210,8 @@ pub(crate) async fn api_config(state: &State) -> Option<(Value, String)> {
 
 /// `GET /api/v1/config`: the effective configuration, the owner of every object, secrets
 /// masked.
+#[utoipa::path(get, path = "/config", tag = "config",
+    responses((status = OK, description = "`config` and `owners`", body = Object)))]
 pub(crate) async fn effective(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -227,6 +230,9 @@ pub(crate) async fn effective(
 }
 
 /// `GET /api/v1/config/api`: the API provider's objects, with their `ETag`.
+#[utoipa::path(get, path = "/config/api", tag = "config",
+    responses((status = OK, description = "The API objects, secrets masked", body = Object,
+        headers(("ETag" = String, description = "Send it back in `If-Match` to change them")))))]
 pub(crate) async fn get_api(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -240,7 +246,15 @@ pub(crate) async fn get_api(
     }
 }
 
-/// `PUT /api/v1/config/api`: replaces the API provider's objects.
+/// `PUT /api/v1/config/api`: replaces the API provider's objects (operator role).
+#[utoipa::path(put, path = "/config/api", tag = "config", request_body = Object,
+    params(("If-Match" = String, Header, description = "The `ETag` from `GET /api/v1/config/api`")),
+    responses(
+        (status = OK, description = "Applied; the reload report", body = Object, headers(("ETag" = String, description = "The new version of the API objects"))),
+        (status = PRECONDITION_FAILED, description = "The API objects changed since they were read", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Rejected; the report or message says why", body = Object),
+        (status = PRECONDITION_REQUIRED, description = "`If-Match` is missing", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn put_api(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -256,8 +270,23 @@ pub(crate) async fn put_api(
     write(&state, &caller, candidate, if_match, "config.apply").await
 }
 
-/// `PATCH /api/v1/config/api` with `application/merge-patch+json` (RFC 7396) or
-/// `application/json-patch+json` (RFC 6902).
+/// `PATCH /api/v1/config/api`: changes some of the API provider's objects, as a JSON Merge
+/// Patch (`application/merge-patch+json`, RFC 7396) or a JSON Patch
+/// (`application/json-patch+json`, RFC 6902). Operator role.
+#[utoipa::path(patch, path = "/config/api", tag = "config",
+    request_body(content(
+        (Object = "application/merge-patch+json"),
+        (Vec<Object> = "application/json-patch+json"),
+    )),
+    params(("If-Match" = String, Header, description = "The `ETag` from `GET /api/v1/config/api`")),
+    responses(
+        (status = OK, description = "Applied; the reload report", body = Object, headers(("ETag" = String, description = "The new version of the API objects"))),
+        (status = PRECONDITION_FAILED, description = "The API objects changed since they were read", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Rejected; the report or message says why", body = Object),
+        (status = PRECONDITION_REQUIRED, description = "`If-Match` is missing", body = crate::openapi::ErrorBody),
+        (status = BAD_REQUEST, description = "The body is not JSON", body = crate::openapi::ErrorBody),
+        (status = UNSUPPORTED_MEDIA_TYPE, description = "Neither patch format", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn patch_api(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -313,7 +342,12 @@ pub(crate) async fn patch_api(
 }
 
 /// `POST /api/v1/config/validate`: a dry run of a candidate for the API objects, with the
-/// diagnostics and a line diff against the current ones.
+/// diagnostics and a line diff against the current ones. Nothing is applied.
+#[utoipa::path(post, path = "/config/validate", tag = "config", request_body = Object,
+    responses(
+        (status = OK, description = "`valid`, `diagnostics` and `diff`", body = Object),
+        (status = UNPROCESSABLE_ENTITY, description = "Not a configuration document", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn validate(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -340,6 +374,8 @@ pub(crate) async fn validate(
 }
 
 /// `GET /api/v1/config/history`: applied configurations, newest first.
+#[utoipa::path(get, path = "/config/history", tag = "config",
+    responses((status = OK, description = "History entries with their `id`", body = [Object])))]
 pub(crate) async fn history(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -356,7 +392,7 @@ pub(crate) async fn history(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Rollback {
     /// The `id` of a history entry.
@@ -365,6 +401,15 @@ pub(crate) struct Rollback {
 
 /// `POST /api/v1/config/rollback`: restores the API objects of a history entry, as a
 /// conditional write; people confirm their password first.
+#[utoipa::path(post, path = "/config/rollback", tag = "config", request_body = Rollback,
+    params(("If-Match" = String, Header, description = "The `ETag` from `GET /api/v1/config/api`")),
+    responses(
+        (status = OK, description = "Applied; the reload report", body = Object, headers(("ETag" = String, description = "The new version of the API objects"))),
+        (status = PRECONDITION_FAILED, description = "The API objects changed since they were read", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Rejected; the report or message says why", body = Object),
+        (status = PRECONDITION_REQUIRED, description = "`If-Match` is missing", body = crate::openapi::ErrorBody),
+        (status = NOT_FOUND, description = "No history entry with this id", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn rollback(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -394,6 +439,8 @@ pub(crate) async fn rollback(
 
 /// `GET /api/v1/config/export`: the API objects to move to another instance, secrets masked
 /// unless written as references. Admins, after a password check.
+#[utoipa::path(get, path = "/config/export", tag = "config",
+    responses((status = OK, description = "`version` and `api`", body = Import)))]
 pub(crate) async fn export(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -408,14 +455,27 @@ pub(crate) async fn export(
     with_etag(axum::Json(document).into_response(), &etag)
 }
 
-#[derive(Deserialize)]
+/// An exported document.
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Import {
+    /// Always `1`.
     version: u32,
+    /// The API objects.
+    #[schema(value_type = Object)]
     api: Value,
 }
 
 /// `POST /api/v1/config/import`: replaces the API objects with an exported document.
+/// Admins, after a password check.
+#[utoipa::path(post, path = "/config/import", tag = "config", request_body = Import,
+    params(("If-Match" = String, Header, description = "The `ETag` from `GET /api/v1/config/api`")),
+    responses(
+        (status = OK, description = "Applied; the reload report", body = Object, headers(("ETag" = String, description = "The new version of the API objects"))),
+        (status = PRECONDITION_FAILED, description = "The API objects changed since they were read", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Rejected; the report or message says why", body = Object),
+        (status = PRECONDITION_REQUIRED, description = "`If-Match` is missing", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn import(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,

@@ -4,17 +4,9 @@ import { Alert, Button, Card, Field, StatusPill } from "../components/ui";
 import { useToast } from "../components/Toast";
 import { AuditLog, Tokens, Users } from "./Access";
 import { CodeList } from "./Enrol";
+import type { Listed } from "../api";
 import { type Session, api, describe } from "../lib/api";
 import { ago } from "../lib/status";
-
-interface Listed {
-  id: string;
-  user: string;
-  created_at: number;
-  idle_seconds: number;
-  client: string | null;
-  current: boolean;
-}
 
 const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-3 uppercase";
 const TD = "border-t border-line px-3 py-2";
