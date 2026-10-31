@@ -1,0 +1,24 @@
+# The soak configuration. run.sh writes it to work/config/rdock.yaml with GENERATION replaced,
+# and rewrites it on every reload so each reload is a real change.
+listeners:
+  web: { address: ":8080" }
+  websecure: { address: ":8443", tls: {} }
+defaults: { listeners: [web], tls: off }
+certificates:
+  soak: { cert_file: /etc/rdock/certs/soak.pem, key_file: /etc/rdock/certs/soak.key }
+routes:
+  plain: { match: "PathPrefix(`/`)", service: app, middlewares: [stamp] }
+  secure: { match: "PathPrefix(`/`)", service: app, middlewares: [stamp], listeners: [websecure], tls: { certificate: soak } }
+services:
+  app:
+    backends: [{ address: "b1:80" }, { address: "b2:80" }, { address: "b3:80" }]
+    load_balancer: { policy: least_requests }
+    health:
+      active: { path: /, interval: 2s, timeout: 1s, healthy: 1, unhealthy: 2 }
+      passive: { failures: 3, window: 10s, ejection: 10s }
+    retries: { attempts: 2, on: [connect, reset] }
+middlewares:
+  stamp: { type: headers, response: { set: { X-Soak-Generation: "GENERATION" } } }
+observability:
+  access_log: { format: off }
+admin: { enabled: false }

@@ -61,3 +61,4 @@ skills-lock.json
 # ---- Scratch ----
 *.log
 /tmp/
+benchmarks/soak/work/
