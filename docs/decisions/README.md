@@ -27,3 +27,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0021](0021-plain-routes-use-plain-listeners.md) | Routes with `tls: off` and no `listeners` attach to the plain-HTTP listeners |
 | [0022](0022-production-reliability.md) | Production reliability: backend state shared across reloads, health with fail-open, retry budgets, verified-only client certificates, JWT on ring, OpenTelemetry over OTLP/HTTP |
 | [0023](0023-upstream-connection-pool.md) | Upstream keep-alive pool per listener sized for busy traffic (`upstream_idle_connections`, 4096) |
+| [0024](0024-management-api-and-dashboard.md) | Management: axum admin API on its own runtime, sessions with MFA, scoped tokens, roles, hash-chained audit log, mandatory If-Match, SSE and ring buffer, English-only dashboard |

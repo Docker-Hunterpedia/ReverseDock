@@ -45,7 +45,8 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 
 ## v0.5 — Management (P1 admin)
 **Scope:** M-ADM-01…04, F-UI-01…06, M-OBS-04, M-OBS-05 (Grafana dashboards), F-MGMT-01/04/05 (docs site v1), H-ENG-04, audit log, tokens/RBAC, SSE logs/events, ring-buffer charts, config editor with schema validation + diff + rollback, OpenAPI + generated TS client.
-**Done when:** Playwright suite covers all pages in light/dark/LTR/RTL at 400–1440 px; API conformance tests against OpenAPI; admin never on request path (verified by killing the admin task under load — H-ENG-04); security review checklist for the admin surface complete.
+**Status:** planned. Design: [ADR-0024](decisions/0024-management-api-and-dashboard.md); research: [v0.5 management](research/v0.5-management.md). Plan and issues: the [v0.5 milestone](https://github.com/Docker-Hunterpedia/ReverseDock/milestone/6). Order: admin server and security model → users, sessions, MFA and tokens → audit log → configuration API (If-Match, history, rollback, GitOps mode) → live data (ring buffer, SSE) → OpenAPI and clients → alerts and webhooks → dashboard shell and pages → Grafana and docs playground → isolation tests and security review → release. The dashboard is English only.
+**Done when:** Playwright suite covers all pages in light and dark mode at 400–1440 px, with axe checks and no request leaving the admin origin; API conformance tests against OpenAPI; admin never on request path (verified by killing the admin task under load — H-ENG-04); security review checklist for the admin surface complete.
 
 ## v0.6 — Swarm, L4, static (P1 breadth)
 **Scope:** W-SWM-01…03, M-L4-01…03, F-WEB-01, W-DNS-03, Traefik `tcp.*` label subset, PROXY protocol, SNI passthrough, static files with SPA fallback.

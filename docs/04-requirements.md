@@ -182,7 +182,7 @@ Tracked as W-SWM-01…03 below.
 ## F — Features and differentiators
 
 ### F-UI · Dashboard (P1) — see [design system](08-design-system.md)
-- [ ] F-UI-01 Embedded, responsive, light/dark, **RTL-ready (Arabic)**, keyboard-navigable, no external calls
+- [ ] F-UI-01 Embedded, responsive, light/dark, English only (ADR-0024; RTL/Arabic dropped), keyboard-navigable, no external calls
 - [ ] F-UI-02 Overview: traffic, error rate, p95, backend health, certificate status, provider status
 - [ ] F-UI-03 CRUD for routes/services/middlewares/certificates owned by the API provider; read-only view of file/Docker/K8s-owned objects with "where it comes from"
 - [ ] F-UI-04 Live request log (SSE) with filters; live traffic charts without Prometheus (15-minute ring buffer)
