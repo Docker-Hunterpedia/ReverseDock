@@ -1493,6 +1493,21 @@ impl Validator<'_> {
                 );
             }
         }
+        let sessions = self.config.admin.sessions;
+        let bounds =
+            std::time::Duration::from_secs(5 * 60)..=std::time::Duration::from_secs(12 * 60 * 60);
+        for (field, value) in [("idle", sessions.idle), ("absolute", sessions.absolute)] {
+            if !bounds.contains(&value.as_std()) {
+                self.error(
+                    format!("admin.sessions.{field}"),
+                    "must be between 5m and 12h",
+                );
+            }
+        }
+        if sessions.idle > sessions.absolute {
+            self.error("admin.sessions.idle", "must not be longer than `absolute`");
+        }
+        let passwords = &self.config.admin.passwords;
         if passwords
             .blocklist_file
             .as_ref()

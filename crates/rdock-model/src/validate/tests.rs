@@ -555,3 +555,27 @@ fn admin_passwords_refuse_weak_settings() {
             .any(|d| d.severity == Severity::Error && d.path.starts_with("admin")),
     );
 }
+
+#[test]
+fn admin_sessions_are_bounded() {
+    let bad = with(
+        app(),
+        json!({ "admin": { "sessions": { "idle": "1m", "absolute": "1d" } } }),
+    );
+    let found: Vec<(String, String)> = validate(bad)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(&found, "admin.sessions.idle", "between 5m and 12h"));
+    assert!(has(&found, "admin.sessions.absolute", "between 5m and 12h"));
+
+    let inverted = with(
+        app(),
+        json!({ "admin": { "sessions": { "idle": "2h", "absolute": "1h" }, "mfa": "required" } }),
+    );
+    let found: Vec<(String, String)> = validate(inverted)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(&found, "admin.sessions.idle", "not be longer"));
+}

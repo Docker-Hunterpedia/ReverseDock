@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod account;
 mod auth;
 mod bootstrap;
 mod guard;
@@ -7,6 +8,8 @@ mod limits;
 mod passwords;
 mod routes;
 mod server;
+mod sessions;
+mod totp;
 mod users;
 
 use std::net::SocketAddr;
@@ -51,6 +54,10 @@ pub struct Settings {
     pub state_dir: PathBuf,
     /// Password rules for users.
     pub passwords: rdock_model::settings::AdminPasswords,
+    /// Session lifetimes.
+    pub sessions: rdock_model::settings::AdminSessions,
+    /// Who must use a second factor.
+    pub mfa: rdock_model::settings::MfaPolicy,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -83,6 +90,17 @@ struct State {
     bootstrap: bootstrap::Bootstrap,
     policy: passwords::Policy,
     limits: limits::LoginLimits,
+    sessions: sessions::Sessions,
+    mfa: rdock_model::settings::MfaPolicy,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
+}
+
+/// Lower-case hexadecimal.
+fn hex(bytes: &[u8]) -> String {
+    use std::fmt::Write;
+    bytes.iter().fold(String::new(), |mut out, b| {
+        let _ = write!(out, "{b:02x}");
+        out
+    })
 }

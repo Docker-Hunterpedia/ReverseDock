@@ -35,6 +35,21 @@ pub struct User {
     /// A disabled user cannot log in.
     #[serde(default)]
     pub disabled: bool,
+    /// The user's second factor, once enrolled.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mfa: Option<Mfa>,
+}
+
+/// A user's TOTP secret and recovery codes.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Mfa {
+    /// Base32 TOTP secret. The users file is readable by its owner only.
+    pub secret: String,
+    /// The last time step a code was accepted for, so each code works once.
+    pub last_step: u64,
+    /// SHA-256 hashes of the unused recovery codes.
+    pub recovery: Vec<String>,
 }
 
 impl User {
@@ -50,6 +65,7 @@ impl User {
             password,
             created_at,
             disabled: false,
+            mfa: None,
         }
     }
 }
@@ -144,20 +160,20 @@ impl Users {
         Ok(())
     }
 
-    /// Replaces the stored hash of `name`, for example after a cost upgrade at login.
-    pub fn set_password(&self, name: &str, hash: String) -> io::Result<()> {
+    /// Changes the user called `name` with `change` and saves the file; on a failed save the
+    /// user is left as it was. Returns what `change` returned.
+    pub fn update<T>(&self, name: &str, change: impl FnOnce(&mut User) -> T) -> io::Result<T> {
         let mut list = self.lock();
-        let Some(user) = list.iter_mut().find(|u| u.name == name) else {
+        let Some(index) = list.iter().position(|u| u.name == name) else {
             return Err(io::Error::new(io::ErrorKind::NotFound, "no such user"));
         };
-        let old = std::mem::replace(&mut user.password, hash);
-        let saved = self.save(&list);
-        if saved.is_err()
-            && let Some(user) = list.iter_mut().find(|u| u.name == name)
-        {
-            user.password = old;
+        let before = list[index].clone();
+        let result = change(&mut list[index]);
+        if let Err(err) = self.save(&list) {
+            list[index] = before;
+            return Err(err);
         }
-        saved
+        Ok(result)
     }
 
     fn save(&self, list: &[User]) -> io::Result<()> {
@@ -209,7 +225,10 @@ mod tests {
             users.add_first_admin(User::new("two".into(), Role::Admin, "h".into())),
             Err(AddError::AdminExists)
         ));
-        users.set_password("root", "$argon2id$y".into()).unwrap();
+        users
+            .update("root", |u| u.password = "$argon2id$y".into())
+            .unwrap();
+        assert!(users.update("nobody", |_| ()).is_err());
 
         let path = dir.path().join("users.json");
         let mode = std::os::unix::fs::PermissionsExt::mode(

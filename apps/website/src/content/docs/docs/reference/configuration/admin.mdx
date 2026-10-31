@@ -35,6 +35,16 @@ Serve the admin API.
 
 Address of the admin API. Loopback by default; any other address needs `tls`.
 
+## `admin.mfa`
+
+**Type:** `required_for_admins` · `required` · `optional` · **Default:** `required_for_admins`
+
+Who must use a second factor (TOTP) to log in.
+
+- `required_for_admins`: Admins must enrol before they can do anything else; others may.
+- `required`: Every user must enrol.
+- `optional`: Nobody must; anyone may.
+
 ## `admin.passwords`
 
 **Type:** object · **Default:** see the fields below
@@ -76,6 +86,24 @@ A file with one password per line (for example a breached-password list) refused
 **Type:** `integer` · **Default:** `12`
 
 Shortest password accepted, in characters (8–128). The longest is 128.
+
+## `admin.sessions`
+
+**Type:** object · **Default:** `{"absolute":"8h","idle":"30m"}`
+
+How long a dashboard login lasts.
+
+### `admin.sessions.absolute`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `8h`
+
+A session ends this long after login, however active.
+
+### `admin.sessions.idle`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30m`
+
+A session without requests for this long ends.
 
 ## `admin.socket`
 

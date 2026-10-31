@@ -1,5 +1,5 @@
-//! First-admin setup with the bootstrap token, and password login (ADR-0024). Sessions,
-//! MFA and CSRF tokens build on this in the next step of the milestone.
+//! First-admin setup with the bootstrap token, and password login, which starts a session
+//! (ADR-0024).
 
 use std::net::{IpAddr, SocketAddr};
 use std::sync::Arc;
@@ -10,8 +10,10 @@ use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Deserialize;
 
+use crate::account::{self, mfa_required};
 use crate::passwords::Verified;
 use crate::routes::error;
+use crate::sessions::Stage;
 use crate::users::{AddError, Role, User, normalize_name};
 use crate::{State, Transport};
 
@@ -34,7 +36,7 @@ const SETUP_KEY: &str = "@setup";
 /// The client's address for limits and logs: the socket's peer, or, on a connection from
 /// loopback (ReverseDock forwarding a route to its own admin listener), the last
 /// `X-Forwarded-For` entry, which the proxy appended. Never a header from anyone else.
-fn client(peer: Option<Peer>, headers: &HeaderMap) -> Option<IpAddr> {
+pub(crate) fn client(peer: Option<Peer>, headers: &HeaderMap) -> Option<IpAddr> {
     let ip = peer?.0.ip();
     if !ip.is_loopback() {
         return Some(ip);
@@ -49,7 +51,7 @@ fn client(peer: Option<Peer>, headers: &HeaderMap) -> Option<IpAddr> {
     Some(forwarded.unwrap_or(ip))
 }
 
-fn too_many(wait: Duration) -> Response {
+pub(crate) fn too_many(wait: Duration) -> Response {
     let mut response = error(
         StatusCode::TOO_MANY_REQUESTS,
         "too many attempts; try again later",
@@ -71,7 +73,7 @@ fn busy() -> Response {
 
 /// Runs password hashing on a blocking thread, at most two at a time (19 MiB each by
 /// default); `None` when the queue is full or the runtime is stopping.
-async fn hashing<T: Send + 'static>(
+pub(crate) async fn hashing<T: Send + 'static>(
     state: &State,
     work: impl FnOnce() -> T + Send + 'static,
 ) -> Option<T> {
@@ -81,6 +83,22 @@ async fn hashing<T: Send + 'static>(
 
 fn account(user: &User) -> Response {
     axum::Json(serde_json::json!({ "name": user.name, "role": user.role })).into_response()
+}
+
+/// Starts a session after a correct password: complete, or waiting for the second factor or
+/// for enrolment when the user has none and the policy requires one.
+fn start_session(state: &State, user: &User, address: Option<IpAddr>) -> Response {
+    let step = if user.mfa.is_some() {
+        Stage::Mfa
+    } else if mfa_required(state.mfa, user.role) {
+        Stage::Enrol
+    } else {
+        Stage::Full
+    };
+    match state.sessions.create(&user.name, user.role, step, address) {
+        Some((cookie, session)) => account::reply(StatusCode::OK, &session, Some(&cookie)),
+        None => busy(),
+    }
 }
 
 fn bearer(headers: &HeaderMap) -> &str {
@@ -157,8 +175,9 @@ pub(crate) async fn setup(
     }
 }
 
-/// `POST /api/v1/auth/login`: checks a user name and password. Unknown names, disabled
-/// users and wrong passwords get the same answer after the same Argon2 work.
+/// `POST /api/v1/auth/login`: checks a user name and password and starts a session.
+/// Unknown names, disabled users and wrong passwords get the same answer after the same
+/// Argon2 work.
 pub(crate) async fn login(
     Extract(state): Extract<Arc<State>>,
     peer: Option<Extension<Peer>>,
@@ -185,7 +204,7 @@ pub(crate) async fn login(
                 .policy
                 .hash(&body.password)
                 .map_err(|err| std::io::Error::other(err.to_string()))
-                .and_then(|hash| worker.users.set_password(&user.name, hash));
+                .and_then(|hash| worker.users.update(&user.name, |u| u.password = hash));
             if let Err(err) = upgraded {
                 tracing::warn!(user = %user.name, error = %err, "cannot upgrade the password hash");
             }
@@ -195,7 +214,7 @@ pub(crate) async fn login(
     .await;
     match checked {
         None => busy(),
-        Some(Some(user)) => account(&user),
+        Some(Some(user)) => start_session(&state, &user, address),
         Some(None) => {
             tracing::info!(client = ?address, "admin login failed");
             error(StatusCode::UNAUTHORIZED, WRONG)

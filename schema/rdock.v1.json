@@ -33,6 +33,7 @@
         "dashboard": true,
         "enabled": true,
         "listener": "127.0.0.1:2080",
+        "mfa": "required_for_admins",
         "passwords": {
           "argon2": {
             "iterations": 2,
@@ -41,6 +42,10 @@
           },
           "blocklist_file": null,
           "min_length": 12
+        },
+        "sessions": {
+          "absolute": "8h",
+          "idle": "30m"
         },
         "socket": null,
         "threads": 2,
@@ -483,6 +488,11 @@
           "$ref": "#/$defs/ListenAddress",
           "default": "127.0.0.1:2080"
         },
+        "mfa": {
+          "description": "Who must use a second factor (TOTP) to log in.",
+          "$ref": "#/$defs/MfaPolicy",
+          "default": "required_for_admins"
+        },
         "passwords": {
           "description": "Password rules for dashboard users.",
           "$ref": "#/$defs/AdminPasswords",
@@ -494,6 +504,14 @@
             },
             "blocklist_file": null,
             "min_length": 12
+          }
+        },
+        "sessions": {
+          "description": "How long a dashboard login lasts.",
+          "$ref": "#/$defs/AdminSessions",
+          "default": {
+            "absolute": "8h",
+            "idle": "30m"
           }
         },
         "socket": {
@@ -558,6 +576,23 @@
           "default": 12,
           "maximum": 255,
           "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdminSessions": {
+      "description": "Dashboard session lifetimes (ADR-0024; OWASP Session Management Cheat Sheet, checked\n2026-10-31). Both are between 5 minutes and 12 hours.",
+      "type": "object",
+      "properties": {
+        "absolute": {
+          "description": "A session ends this long after login, however active.",
+          "$ref": "#/$defs/Duration",
+          "default": "8h"
+        },
+        "idle": {
+          "description": "A session without requests for this long ends.",
+          "$ref": "#/$defs/Duration",
+          "default": "30m"
         }
       },
       "additionalProperties": false
@@ -1727,6 +1762,26 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "MfaPolicy": {
+      "description": "Who must log in with a TOTP code besides the password.",
+      "oneOf": [
+        {
+          "description": "Admins must enrol before they can do anything else; others may.",
+          "type": "string",
+          "const": "required_for_admins"
+        },
+        {
+          "description": "Every user must enrol.",
+          "type": "string",
+          "const": "required"
+        },
+        {
+          "description": "Nobody must; anyone may.",
+          "type": "string",
+          "const": "optional"
+        }
+      ]
     },
     "Middleware": {
       "description": "A reusable request/response policy, selected by `type`.",

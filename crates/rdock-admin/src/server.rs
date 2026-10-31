@@ -21,6 +21,7 @@ use crate::auth::Peer;
 use crate::bootstrap::Bootstrap;
 use crate::limits::LoginLimits;
 use crate::passwords::Policy;
+use crate::sessions::Sessions;
 use crate::users::Users;
 use crate::{Control, Settings, State, Transport, guard, routes};
 
@@ -120,6 +121,11 @@ pub fn start(
         bootstrap,
         policy,
         limits: LoginLimits::default(),
+        sessions: Sessions::new(
+            settings.sessions.idle.as_std(),
+            settings.sessions.absolute.as_std(),
+        ),
+        mfa: settings.mfa,
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()

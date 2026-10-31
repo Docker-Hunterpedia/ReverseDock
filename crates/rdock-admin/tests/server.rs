@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rdock_admin::{Control, Running, Settings, TlsFiles};
-use rdock_model::settings::AdminPasswords;
+use rdock_model::settings::{AdminPasswords, AdminSessions, MfaPolicy};
 use rdock_testkit::certs::TestCa;
 use rdock_testkit::client::{self, request};
 use rdock_testkit::free_port;
@@ -63,6 +63,8 @@ impl Admin {
             token: TOKEN.into(),
             state_dir: dir.path().join("admin"),
             passwords: AdminPasswords::default(),
+            sessions: AdminSessions::default(),
+            mfa: MfaPolicy::default(),
         };
         let running = rdock_admin::start(settings, Arc::new(Fake), stop_rx).unwrap();
         Self {
@@ -275,6 +277,8 @@ fn a_busy_port_fails_the_start() {
         token: TOKEN.into(),
         state_dir: std::env::temp_dir().join("rdock-admin-unused"),
         passwords: AdminPasswords::default(),
+        sessions: AdminSessions::default(),
+        mfa: MfaPolicy::default(),
     };
     let err = rdock_admin::start(settings, Arc::new(Fake), stop_rx)
         .err()
@@ -423,5 +427,167 @@ async fn logins_hide_which_users_exist_and_are_rate_limited() {
     assert_eq!(reply.status, 429);
     let wait: u64 = reply.header("retry-after").unwrap().parse().unwrap();
     assert!((1..=60).contains(&wait), "{wait}");
+    admin.stop().await;
+}
+
+/// The current TOTP code for a base32 secret (RFC 6238, SHA-1, 6 digits, 30 s).
+fn totp_now(secret: &str) -> String {
+    let alphabet = b"ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    let (mut key, mut buffer, mut bits) = (Vec::new(), 0u32, 0u32);
+    for c in secret.bytes() {
+        let value = alphabet.iter().position(|&b| b == c).unwrap();
+        buffer = (buffer << 5) | u32::try_from(value).unwrap();
+        bits += 5;
+        if bits >= 8 {
+            bits -= 8;
+            key.push(u8::try_from((buffer >> bits) & 0xff).unwrap());
+        }
+    }
+    let step = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        / 30;
+    let tag = ring::hmac::sign(
+        &ring::hmac::Key::new(ring::hmac::HMAC_SHA1_FOR_LEGACY_USE_ONLY, &key),
+        &step.to_be_bytes(),
+    );
+    let mac = tag.as_ref();
+    let offset = (mac[19] & 0x0f) as usize;
+    let word = u32::from_be_bytes(mac[offset..offset + 4].try_into().unwrap()) & 0x7fff_ffff;
+    format!("{:06}", word % 1_000_000)
+}
+
+/// `name=value` of the session cookie a response sets.
+fn session_cookie(reply: &client::Reply) -> String {
+    let set = reply.header("set-cookie").unwrap();
+    assert!(
+        set.contains("; Path=/; Secure; HttpOnly; SameSite=Strict"),
+        "{set}"
+    );
+    set.split(';').next().unwrap().to_owned()
+}
+
+/// A JSON `POST` with a session cookie and its CSRF token.
+async fn session_post(
+    admin: &Admin,
+    path: &str,
+    body: &serde_json::Value,
+    cookie: &str,
+    csrf: &str,
+) -> client::Reply {
+    client::http1(
+        admin.address,
+        json_post(path, body, &[("cookie", cookie), ("x-csrf-token", csrf)]),
+    )
+    .await
+}
+
+async fn session_get(admin: &Admin, path: &str, cookie: &str) -> client::Reply {
+    let req = with(request("GET", "127.0.0.1", path, ""), &[("cookie", cookie)]);
+    client::http1(admin.address, req).await
+}
+
+fn csrf_of(reply: &client::Reply) -> String {
+    json_body(reply)["csrf_token"].as_str().unwrap().to_owned()
+}
+
+/// Creates `root`, logs in and enrols TOTP; returns the full session's cookie, its CSRF
+/// token and the recovery codes.
+async fn enrolled_admin(admin: &Admin, first: &serde_json::Value) -> (String, String, Vec<String>) {
+    assert!(socket_post(&admin.socket(), "/api/v1/setup", first).starts_with("HTTP/1.1 201"));
+    // Admins must enrol before anything else (admin.mfa: required_for_admins).
+    let reply = client::http1(admin.address, json_post("/api/v1/auth/login", first, &[])).await;
+    assert_eq!(reply.status, 200);
+    let enrolling = session_cookie(&reply);
+    assert!(enrolling.starts_with("__Host-rdock_session="));
+    assert_eq!(json_body(&reply)["stage"], "enrol");
+    let csrf = csrf_of(&reply);
+    let reply = session_get(admin, "/api/v1/status", &enrolling).await;
+    assert_eq!(reply.status, 401, "an unfinished login reaches no API");
+
+    let empty = serde_json::json!({});
+    let reply = session_post(admin, "/api/v1/auth/totp", &empty, &enrolling, "wrong").await;
+    assert_eq!(reply.status, 403, "no CSRF token");
+    let reply = session_post(admin, "/api/v1/auth/totp", &empty, &enrolling, &csrf).await;
+    assert_eq!(reply.status, 200);
+    let secret = json_body(&reply)["secret"].as_str().unwrap().to_owned();
+    let uri = json_body(&reply)["uri"].as_str().unwrap().to_owned();
+    assert!(uri.starts_with("otpauth://totp/ReverseDock:root?"), "{uri}");
+
+    let code = serde_json::json!({ "code": totp_now(&secret) });
+    let reply = session_post(admin, "/api/v1/auth/totp/confirm", &code, &enrolling, &csrf).await;
+    assert_eq!(reply.status, 200);
+    let full = session_cookie(&reply);
+    let full_csrf = csrf_of(&reply);
+    assert_eq!(json_body(&reply)["stage"], "full");
+    let recovery: Vec<String> =
+        serde_json::from_value(json_body(&reply)["recovery_codes"].clone()).unwrap();
+    assert_eq!(recovery.len(), 10);
+    let reply = session_get(admin, "/api/v1/auth/session", &enrolling).await;
+    assert_eq!(
+        reply.status, 401,
+        "the pre-enrolment session ID was replaced"
+    );
+    (full, full_csrf, recovery)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn an_admin_enrols_totp_then_logs_in_with_a_second_factor() {
+    let admin = Admin::start(None, Vec::new());
+    let first = serde_json::json!({ "name": "root", "password": "correct horse battery staple" });
+    let (full, csrf, recovery) = enrolled_admin(&admin, &first).await;
+    let empty = serde_json::json!({});
+
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &full).await.status,
+        200
+    );
+    let reply = session_post(&admin, "/api/v1/config/reload", &empty, &full, "").await;
+    assert_eq!(reply.status, 403, "writes need the CSRF token");
+    let reply = session_post(&admin, "/api/v1/config/reload", &empty, &full, &csrf).await;
+    assert_eq!(reply.status, 200);
+    let reply = session_get(&admin, "/api/v1/auth/sessions", &full).await;
+    assert_eq!(json_body(&reply).as_array().unwrap().len(), 1);
+
+    let reply = session_post(&admin, "/api/v1/auth/logout", &empty, &full, &csrf).await;
+    assert_eq!(reply.status, 204);
+    assert!(reply.header("clear-site-data").unwrap().contains("cookies"));
+    assert!(reply.header("set-cookie").unwrap().contains("Max-Age=0"));
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &full).await.status,
+        401
+    );
+
+    // Next login: the password alone is not enough; a recovery code works once.
+    let reply = client::http1(admin.address, json_post("/api/v1/auth/login", &first, &[])).await;
+    let pending = session_cookie(&reply);
+    let csrf = csrf_of(&reply);
+    assert_eq!(json_body(&reply)["stage"], "mfa");
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &pending).await.status,
+        401
+    );
+    let wrong = serde_json::json!({ "code": "000000" });
+    let reply = session_post(&admin, "/api/v1/auth/mfa", &wrong, &pending, &csrf).await;
+    assert_eq!(reply.status, 401);
+    let recovery_code = serde_json::json!({ "code": recovery[0] });
+    let reply = session_post(&admin, "/api/v1/auth/mfa", &recovery_code, &pending, &csrf).await;
+    assert_eq!(reply.status, 200);
+    assert_eq!(json_body(&reply)["stage"], "full");
+
+    let users = std::fs::read_to_string(admin.dir.path().join("admin/users.json")).unwrap();
+    assert!(
+        !users.contains(&recovery[0]),
+        "recovery codes are stored hashed"
+    );
+    let saved: serde_json::Value = serde_json::from_str(&users).unwrap();
+    assert_eq!(
+        saved["users"][0]["mfa"]["recovery"]
+            .as_array()
+            .unwrap()
+            .len(),
+        9
+    );
     admin.stop().await;
 }

@@ -10,7 +10,9 @@ use axum::routing::{get, post};
 use http::{HeaderValue, StatusCode, header};
 use subtle::ConstantTimeEq;
 
-use crate::{State, Transport, auth, guard};
+use crate::sessions::Stage;
+use crate::users::Role;
+use crate::{State, Transport, account, auth, guard};
 
 /// Largest request body (ADR-0024); larger ones get 413.
 const MAX_BODY: usize = 1024 * 1024;
@@ -37,6 +39,20 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .route("/metrics", get(metrics))
         .route("/api/v1/setup", post(auth::setup))
         .route("/api/v1/auth/login", post(auth::login))
+        .route("/api/v1/auth/session", get(account::session))
+        .route("/api/v1/auth/mfa", post(account::mfa))
+        .route(
+            "/api/v1/auth/totp",
+            post(account::enrol).delete(account::unenrol),
+        )
+        .route("/api/v1/auth/totp/confirm", post(account::confirm))
+        .route("/api/v1/auth/reauth", post(account::reauth))
+        .route("/api/v1/auth/logout", post(account::logout))
+        .route("/api/v1/auth/sessions", get(account::sessions))
+        .route(
+            "/api/v1/auth/sessions/{id}",
+            axum::routing::delete(account::end_session),
+        )
         .nest("/api/v1", api)
         .fallback(|| async { error(StatusCode::NOT_FOUND, "not found") })
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
@@ -44,13 +60,28 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .with_state(state)
 }
 
-/// The Unix socket is trusted like the data directory; TCP needs the bearer token.
+/// The Unix socket is trusted like the data directory; TCP needs the bearer token or a
+/// complete session, which for unsafe methods must also send its CSRF token and belong to an
+/// operator or admin.
 async fn authenticate(
     Extract(state): Extract<Arc<State>>,
     request: Request,
     next: Next,
 ) -> Response {
     if request.extensions().get::<Transport>() == Some(&Transport::Socket) {
+        return next.run(request).await;
+    }
+    let session = account::cookie(request.headers())
+        .and_then(|value| state.sessions.get(value))
+        .filter(|s| s.stage == Stage::Full);
+    if let Some(session) = session {
+        let safe = matches!(*request.method(), http::Method::GET | http::Method::HEAD);
+        if !safe && !account::csrf_ok(request.headers(), &session) {
+            return error(StatusCode::FORBIDDEN, "missing or wrong X-CSRF-Token");
+        }
+        if !safe && session.role < Role::Operator {
+            return error(StatusCode::FORBIDDEN, "your role cannot do this");
+        }
         return next.run(request).await;
     }
     let presented = request

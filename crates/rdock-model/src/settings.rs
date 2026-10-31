@@ -94,6 +94,10 @@ pub struct Admin {
     pub threads: u8,
     /// Password rules for dashboard users.
     pub passwords: AdminPasswords,
+    /// How long a dashboard login lasts.
+    pub sessions: AdminSessions,
+    /// Who must use a second factor (TOTP) to log in.
+    pub mfa: MfaPolicy,
 }
 
 impl Default for Admin {
@@ -107,8 +111,43 @@ impl Default for Admin {
             allowed_hosts: Vec::new(),
             threads: 2,
             passwords: AdminPasswords::default(),
+            sessions: AdminSessions::default(),
+            mfa: MfaPolicy::default(),
         }
     }
+}
+
+/// Dashboard session lifetimes (ADR-0024; OWASP Session Management Cheat Sheet, checked
+/// 2026-10-31). Both are between 5 minutes and 12 hours.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdminSessions {
+    /// A session without requests for this long ends.
+    pub idle: Duration,
+    /// A session ends this long after login, however active.
+    pub absolute: Duration,
+}
+
+impl Default for AdminSessions {
+    fn default() -> Self {
+        Self {
+            idle: Duration::from_secs(30 * 60),
+            absolute: Duration::from_secs(8 * 60 * 60),
+        }
+    }
+}
+
+/// Who must log in with a TOTP code besides the password.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum MfaPolicy {
+    /// Admins must enrol before they can do anything else; others may.
+    #[default]
+    RequiredForAdmins,
+    /// Every user must enrol.
+    Required,
+    /// Nobody must; anyone may.
+    Optional,
 }
 
 /// Password rules for dashboard users (ADR-0024). There are no composition rules: length and
