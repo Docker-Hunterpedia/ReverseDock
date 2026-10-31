@@ -17,7 +17,7 @@ reversedock/
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
 │   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary past the cap
-│   │   ├── bench.yml               # (v0.4+) nightly on a dedicated runner, publishes to benchmarks/results
+│   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only
 │   │   └── release.yml             # build → package (checksums, SBOM; also on PRs) → publish (tags: provenance, cosign, release)
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
 │   ├── PULL_REQUEST_TEMPLATE.md · CODEOWNERS · dependabot.yml · release.yml (release-note categories)
@@ -137,7 +137,7 @@ reversedock/
 | Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; Pebble and toxiproxy later) | `crates/rdock/tests/e2e_*.rs` | every PR |
 | Conformance | Traefik-label suite; Gateway API suite (kind) | `tests/conformance` | PRs touching providers; nightly |
 | Fuzz | `cargo-fuzz` (differential HTTP/1 framing vs httparse, rules parser, config loader) | `tests/fuzz` | weekly + parser PRs |
-| Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly on dedicated runner; results committed per release |
+| Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly rdock-vs-NGINX regression check on a shared runner (`bench.yml`); published results from fixed hardware, committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
 | UI | Vitest, Playwright (light/dark, LTR/RTL, 400 px–1440 px) | `apps/dashboard` | every PR |
 | Website | generated-page freshness, `rdock validate --strict` on every config snippet, status badges vs `rdock`, link check, `astro check`, axe (WCAG 2.2 AA) | `apps/website` | PRs touching the site, schema, CLI or changelog |

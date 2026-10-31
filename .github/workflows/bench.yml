@@ -1,0 +1,71 @@
+# Nightly benchmark regression check (H-ENG-01). Not a required check.
+# Runs ReverseDock and NGINX one after the other in the same job on a shared runner and fails
+# when ReverseDock falls clearly behind NGINX (benchmarks/compare.py). Shared runners are too
+# noisy for absolute numbers, so these results are never published; published reports come
+# from fixed hardware (benchmarks/README.md).
+name: bench
+
+on:
+  schedule:
+    - cron: "23 3 * * *"
+  workflow_dispatch:
+    inputs:
+      rates:
+        description: Target rates in req/s, separated by spaces
+        default: "2500 5000"
+      duration:
+        description: Time at each rate
+        default: 30s
+  pull_request:
+    paths:
+      - .github/workflows/bench.yml
+      - benchmarks/**
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench:
+    name: bench
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag rdock:bench .
+      - name: Machine
+        run: |
+          {
+            echo "Runner: $(nproc) CPUs, $(free -g | awk '/^Mem:/ {print $2}') GiB, $(uname -r), commit ${GITHUB_SHA::12}"
+            echo
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: ReverseDock and NGINX in the same job
+        env:
+          PROXIES: rdock nginx
+          RATES: ${{ inputs.rates || '2500 5000' }}
+          DURATION: ${{ inputs.duration || '30s' }}
+          VERSION: ci
+        run: benchmarks/run.sh
+      - name: Compare with NGINX
+        shell: bash
+        run: |
+          {
+            echo "## Results"
+            cat benchmarks/results/ci/report.md
+            echo
+            echo "## ReverseDock against NGINX"
+          } >> "$GITHUB_STEP_SUMMARY"
+          python3 -I benchmarks/compare.py benchmarks/results/ci | tee -a "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench-${{ github.run_id }}
+          path: benchmarks/results/ci/
+          if-no-files-found: ignore
+          retention-days: 30

@@ -12,6 +12,8 @@ VERSION=${VERSION:-dev}
 OUT="results/$VERSION"
 WARMUP=${WARMUP:-10s}
 mkdir -p "$OUT"
+# k6 runs as an unprivileged user in its container; on Linux it must be able to write here.
+chmod a+w "$OUT"
 docker compose up -d backend
 for proxy in $PROXIES; do
   docker compose --profile "$proxy" up -d "$proxy"
