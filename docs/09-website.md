@@ -8,7 +8,7 @@ The public site, later at `reversedock.dev`: a landing page and complete documen
 2. **Every feature has a page that answers three questions:** what it does, how to use it (a complete, valid example) and since when it is available.
 3. **Moving from NGINX, Traefik, Caddy or Nginx Proxy Manager is a guided, reversible procedure,** not guesswork.
 4. **Nothing is out of date.** Reference pages are generated, snippets are validated and links are checked.
-5. **Fast and accessible.** Lighthouse ≥ 95 in every category, WCAG 2.2 AA, no JavaScript on content pages except search and the theme toggle, light/dark/RTL.
+5. **Fast and accessible.** Lighthouse ≥ 95 in every category, WCAG 2.2 AA, no JavaScript on content pages except search and the theme toggle, light/dark.
 6. **Honest.** Planned features carry "planned for vX.Y" badges. Comparisons with other proxies cite their sources.
 
 ## 2. Repository layout
@@ -44,7 +44,7 @@ pnpm-workspace.yaml · package.json (root, private)
 | Install | Tabs: Docker · Compose · binary · systemd, each with a copy button |
 | Community | Contributing, Discussions, roadmap, and a "star on GitHub" link |
 
-The design uses Harbor UI tokens: amber `#F58F0A` accent, light/dark, logical CSS properties (RTL-ready) and the logo from `docs/assets/`.
+The design uses Harbor UI tokens: amber `#F58F0A` accent, light/dark, and the logo from `docs/assets/`.
 
 ## 4. Documentation map (Diátaxis)
 
@@ -109,7 +109,7 @@ Other outputs: a sitemap, OG images per page, `llms.txt` for AI assistants, "Edi
 
 - **Before 1.0**, the site documents the latest release, with status badges for anything newer. `main` deploys to a preview host for reviewing docs that are not released yet.
 - **From 1.0**, `starlight-versions` keeps one version per minor release.
-- **English** is the source language. **Arabic** comes next (Starlight RTL), starting with the landing page, Quickstart and Install. Untranslated pages fall back to English with a notice.
+- The site is **English only** (decided 2026-10-31, like the dashboard in [ADR-0024](decisions/0024-management-api-and-dashboard.md)).
 
 ## 7. Phases
 
@@ -117,7 +117,7 @@ Other outputs: a sitemap, OG images per page, `llms.txt` for AI assistants, "Edi
 |---|---|---|
 | **W0 — Launch** | before v0.2 | Workspace, tokens package, Starlight theme · landing page (approved design first, §9) · Get started, Install (all v0.1 methods + verification) · ⚙ config, ⚙ CLI, rules, middlewares, HTTP behaviour reference · v0.1 guides · migrate from NGINX and Traefik (file config) · troubleshooting · ⚙ changelog · CI job · Cloudflare deploy on its `workers.dev` address |
 | **W1** | v0.2 | Docker labels guides and ⚙ reference · Traefik labels migration with `rdock migrate traefik` · Compose examples (Dokploy, Coolify, Portainer) · migrate from Caddy and Nginx Proxy Manager |
-| **W2** | v0.3 | Automatic HTTPS, DNS-01 and Cloudflare guides · Arabic for core pages · blog with release posts |
+| **W2** | v0.3 | Automatic HTTPS, DNS-01 and Cloudflare guides · blog with release posts |
 | **W3** | v0.5 → v1.0 | Config playground (CodeMirror + JSON Schema in the browser; `rdock-config` compiled to WebAssembly for exact diagnostics, after a spike) · ⚙ admin API (OpenAPI) · benchmark pages · versioned docs from 1.0 |
 
 ## 8. Open decisions for the maintainer

@@ -2,7 +2,7 @@
 
 The dashboard follows the **structure** of the Cloudflare dashboard (left navigation, hairline cards, stat tiles, tabbed page headers, dense data tables, status pills, side drawers for editing) with ReverseDock's own brand: an **amber accent on warm neutrals**. Cloudflare's orange (`#ff5e1f`/`#f6821f`) and its typeface are not used.
 
-Goals: scan-and-operate (not read), summary before detail, every state visible, works at 400 px and 1440 px, light/dark, **RTL-ready**, keyboard-first, no external requests.
+Goals: scan-and-operate (not read), summary before detail, every state visible, works at 400 px and 1440 px, light/dark, English only ([ADR-0024](decisions/0024-management-api-and-dashboard.md)), keyboard-first, no external requests.
 
 ## 1. Tokens
 
@@ -32,7 +32,7 @@ Accent scale (for charts and gradients): `50 #FFF7E6 · 100 #FFECC2 · 200 #FFD9
 Semantic colours never double as the accent; charts use a categorical ramp (`amber, blue, teal, violet, rose, slate`) chosen for ≥ 3:1 contrast on both canvases.
 
 ### Typography
-- UI: **Inter** (variable, self-hosted, OFL) — `--rd-font-sans`. Arabic: **IBM Plex Sans Arabic** as the `ar` fallback in the same stack.
+- UI: **Inter** (variable, self-hosted, OFL) — `--rd-font-sans`.
 - Data/code: **JetBrains Mono** (OFL) — `--rd-font-mono`, used for hosts, paths, IPs, YAML, logs, metrics.
 - Scale (px / line-height / weight): `display 28/34/600 · h1 22/28/600 · h2 18/24/600 · h3 15/22/600 · body 14/20/400 · small 13/18/400 · caption 12/16/500 (uppercase labels get 0.04em tracking) · mono 13/20/400`.
 - Numbers in tables and tiles use `font-variant-numeric: tabular-nums`.
@@ -67,7 +67,7 @@ Semantic colours never double as the accent; charts use a categorical ramp (`amb
 └──────────────┴───────────────────────────────────────────────────────────┘
 ```
 
-- Sidebar collapses to icons at < 1024 px and to a sheet at < 768 px. In RTL the sidebar sits on the right; icons that imply direction (chevrons, back) flip; charts keep LTR time axes.
+- Sidebar collapses to icons at < 1024 px and to a sheet at < 768 px.
 - Page header carries: breadcrumb, title (+ owner badge: `file`, `docker`, `kubernetes`, `api`), actions (one primary), tabs.
 - Edit flows open a **right-side drawer** (480–640 px) over the list, never a new page; the list stays visible. Destructive actions confirm inline inside the drawer.
 - The top bar's **apply state** is global: `Applied · gen 142 · 12 s ago` / `Applying…` / `Rejected (3 diagnostics)` → click opens the diagnostics panel.
@@ -87,7 +87,7 @@ Semantic colours never double as the accent; charts use a categorical ramp (`amb
 | **Logs** | live stream (SSE) with pause, filters (route, status, client IP, text), row expand shows the full JSON line; export current filter | Pause · Clear · Download |
 | **Metrics** | prebuilt charts (RPS, latency percentiles, status classes, upstream health, TLS, certs) from the ring buffer; link to Prometheus/Grafana | Time range |
 | **Config** | YAML editor (CodeMirror 6, schema completion) for the API-owned snapshot; effective config viewer (read-only, with owner annotations per line); history list with diff viewer; validate → preview diff → apply; rollback | Validate · Apply · Rollback |
-| **Settings** | instance name, theme, language (en/ar), observability endpoints, ACME account, updates | Save |
+| **Settings** | instance name, theme, observability endpoints, ACME account, updates | Save |
 
 Empty states always explain the next step with one action (e.g. Routes empty: "No routes yet. Add a label `rdock.host=app.example.com` to a container, or create one here.").
 
@@ -100,7 +100,7 @@ Empty states always explain the next step with one action (e.g. Routes empty: "N
 | **StatusPill** | dot + text, pill radius, semantic colour on `soft` background; states: `healthy · degraded · down · pending · shadowed · rejected · valid · expiring · failed` |
 | **HealthDots** | n small dots per backend (ok/warn/danger/grey), tooltip with address + last check |
 | **DataTable** | TanStack Table; sticky header; column chooser; density toggle; row hover `surface-2`; selected row `accent-soft`; bulk action bar; keyboard row navigation; virtualised over 200 rows |
-| **Drawer** | right side (inline-end in RTL), 480/640, header with title + owner badge + close; footer with Cancel / Save; unsaved-changes guard |
+| **Drawer** | right side, 480/640, header with title + owner badge + close; footer with Cancel / Save; unsaved-changes guard |
 | **OwnerBadge** | monochrome badge `file · docker · swarm · k8s · api` with tooltip showing the source ref (file path / container / namespace) |
 | **DiagnosticsPanel** | list of `error/warn/info` with source, message, hint, "copy" and deep link to the object |
 | **DiffViewer** | side-by-side/inline YAML diff (added/removed lines on ok/danger soft backgrounds) |
@@ -118,16 +118,16 @@ Empty states always explain the next step with one action (e.g. Routes empty: "N
 - Live data degrades gracefully: when SSE drops, charts freeze with a "reconnecting" pill rather than showing zeros.
 - Danger zone pattern for destructive settings (delete route, rotate tokens): outlined danger card with typed confirmation.
 
-## 6. Accessibility and internationalisation
+## 6. Accessibility and language
 
 - WCAG 2.2 AA: text contrast ≥ 4.5:1 (accent text on canvas uses `accent-700` in light mode), focus visible everywhere, no colour-only status (pill text + icon), skip links, landmarks, `aria-live` for apply state and toasts, reduced motion respected.
 - Keyboard: `g r` go to routes, `n` new, `/` search, `?` shortcuts help, drawers trap focus.
-- i18n: ICU messages; `en` source, `ar` first; logical CSS properties (`margin-inline-start`) throughout; numerals follow locale but hosts/paths/logs stay LTR in `bdi` wrappers; date-times with absolute + relative.
+- Language: English only; dates show absolute and relative time; hosts, paths and log lines are monospace.
 - Theme: light/dark/system; the SPA sets `data-theme` and `color-scheme`; tokens defined once on `:root` and overridden under `[data-theme="dark"]` and `prefers-color-scheme`.
 
 ## 7. Technical stack
 
-Vite · React 19 · TypeScript · Tailwind v4 (tokens as CSS variables) · shadcn/ui · TanStack Query + Table · React Router · CodeMirror 6 · uPlot · lucide icons · Playwright/Vitest. Build output is embedded in the `rdock` binary; the UI calls only `/api/v1` and never loads anything from the internet.
+Vite · React 19 · TypeScript · Tailwind v4 (tokens as CSS variables from `packages/harbor-tokens`) · shadcn/ui on Base UI (ejected, no CLI dependency) · TanStack Query, Table, Virtual and Router · a typed client generated by `@hey-api/openapi-ts` from the OpenAPI document · CodeMirror 6 (YAML, merge view, JSON-Schema completion) · uPlot · lucide icons · Playwright, axe and Vitest. Versions and the reasons are in the [v0.5 research](research/v0.5-management.md#8-dashboard-frontend). Build output is embedded in the `rdock` binary; the UI calls only `/api/v1` and never loads anything from the internet.
 
 ## 8. Visual reference
 
