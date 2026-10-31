@@ -57,6 +57,9 @@ enum Command {
     /// Turn another proxy's configuration into rdock.yaml.
     #[command(subcommand)]
     Migrate(MigrateCommand),
+    /// Work with the admin audit log.
+    #[command(subcommand)]
+    Audit(AuditCommand),
     /// Print the JSON Schema of rdock.yaml.
     Schema,
     /// Print version and build information.
@@ -65,6 +68,19 @@ enum Command {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum AuditCommand {
+    /// Check that no audit record was changed or removed (the SHA-256 chain).
+    Verify(AuditArgs),
+}
+
+#[derive(Args)]
+struct AuditArgs {
+    /// Data directory holding `audit/`.
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -186,6 +202,7 @@ fn main() -> ExitCode {
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
+        Command::Audit(AuditCommand::Verify(args)) => audit_verify(&args),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };
@@ -201,6 +218,22 @@ fn print(text: &str) -> anyhow::Result<()> {
         .write_all(text.as_bytes())
         .context("writing to stdout")?;
     stdout.flush().context("writing to stdout")
+}
+
+/// `rdock audit verify`: exit 0 when the chain holds, 1 at the first broken link.
+fn audit_verify(args: &AuditArgs) -> anyhow::Result<ExitCode> {
+    use rdock_admin::audit::{Verdict, verify};
+    let dir = args.data_dir.join("audit");
+    match verify(&dir).with_context(|| format!("reading the audit log in {}", dir.display()))? {
+        Verdict::Intact { records, files } => {
+            println!("audit log intact: {records} records in {files} files");
+            Ok(ExitCode::SUCCESS)
+        }
+        Verdict::Broken { file, line, reason } => {
+            eprintln!("audit log broken at {}:{line}: {reason}", file.display());
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 fn schema() -> anyhow::Result<()> {

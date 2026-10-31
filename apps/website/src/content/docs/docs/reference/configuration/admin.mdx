@@ -17,6 +17,45 @@ Admin API and dashboard.
 
 Host names the admin listener answers to; other `Host` headers get 421 (DNS-rebinding defence). Default: `localhost`, `127.0.0.1` and `::1` on loopback, the listener's IP otherwise. Required when `listener` is on all interfaces.
 
+## `admin.audit`
+
+**Type:** object · **Default:** `{"forward":null,"max_file_size":"64MiB","retention":"400d"}`
+
+The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.
+
+### `admin.audit.forward`
+
+**Type:** object
+
+Also send each record to a syslog server.
+
+#### `admin.audit.forward.syslog`
+
+**Type:** `string` · **Required**
+
+Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as the message.
+
+#### `admin.audit.forward.transport`
+
+**Type:** `udp` · `tcp` · **Default:** `udp`
+
+`udp` (default) or `tcp` (octet counting, RFC 6587).
+
+- `udp`: One datagram per record.
+- `tcp`: A stream with octet-counted framing.
+
+### `admin.audit.max_file_size`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64MiB`
+
+A file is closed and a new one started at this size (1 MiB–1 GiB).
+
+### `admin.audit.retention`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `400d`
+
+How long rotated files are kept (1d–3650d).
+
 ## `admin.dashboard`
 
 **Type:** `boolean` · **Default:** `true`

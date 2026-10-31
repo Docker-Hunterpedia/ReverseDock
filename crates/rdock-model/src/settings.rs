@@ -103,6 +103,8 @@ pub struct Admin {
     /// Serve `/metrics` without a token when the listener is a loopback address, as before
     /// v0.5, for scrapers on the same machine that cannot send one.
     pub metrics_unauthenticated_on_loopback: bool,
+    /// The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.
+    pub audit: AdminAudit,
 }
 
 impl Default for Admin {
@@ -120,8 +122,55 @@ impl Default for Admin {
             mfa: MfaPolicy::default(),
             tokens: AdminTokens::default(),
             metrics_unauthenticated_on_loopback: false,
+            audit: AdminAudit::default(),
         }
     }
+}
+
+/// The audit log (ADR-0024): every admin write, login, MFA event, refusal and session end, as
+/// JSON lines that each carry the SHA-256 of the line before.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdminAudit {
+    /// How long rotated files are kept (1d–3650d).
+    pub retention: Duration,
+    /// A file is closed and a new one started at this size (1 MiB–1 GiB).
+    pub max_file_size: ByteSize,
+    /// Also send each record to a syslog server.
+    pub forward: Option<AuditForward>,
+}
+
+impl Default for AdminAudit {
+    fn default() -> Self {
+        Self {
+            retention: Duration::from_secs(400 * 86_400),
+            max_file_size: ByteSize::mib(64),
+            forward: None,
+        }
+    }
+}
+
+/// Where audit records are forwarded.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AuditForward {
+    /// Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as
+    /// the message.
+    pub syslog: String,
+    /// `udp` (default) or `tcp` (octet counting, RFC 6587).
+    #[serde(default)]
+    pub transport: SyslogTransport,
+}
+
+/// How syslog messages travel.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum SyslogTransport {
+    /// One datagram per record.
+    #[default]
+    Udp,
+    /// A stream with octet-counted framing.
+    Tcp,
 }
 
 /// API token rules (ADR-0024).

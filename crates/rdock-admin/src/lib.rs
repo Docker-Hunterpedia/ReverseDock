@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod account;
+pub mod audit;
 mod auth;
 mod bootstrap;
 mod caller;
@@ -66,6 +67,10 @@ pub struct Settings {
     pub tokens: rdock_model::settings::AdminTokens,
     /// Serve `/metrics` without a token on a loopback listener.
     pub metrics_unauthenticated_on_loopback: bool,
+    /// Where the audit log is written: `$RDOCK_DATA_DIR/audit`.
+    pub audit_dir: PathBuf,
+    /// Audit log rotation, retention and forwarding.
+    pub audit: rdock_model::settings::AdminAudit,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -104,6 +109,7 @@ struct State {
     token_rules: rdock_model::settings::AdminTokens,
     /// `/metrics` answers without a token (loopback listener and the setting on).
     metrics_open: bool,
+    audit: audit::Audit,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
 }

@@ -30,6 +30,11 @@
       "$ref": "#/$defs/Admin",
       "default": {
         "allowed_hosts": [],
+        "audit": {
+          "forward": null,
+          "max_file_size": "64MiB",
+          "retention": "400d"
+        },
         "dashboard": true,
         "enabled": true,
         "listener": "127.0.0.1:2080",
@@ -478,6 +483,15 @@
             "type": "string"
           }
         },
+        "audit": {
+          "description": "The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.",
+          "$ref": "#/$defs/AdminAudit",
+          "default": {
+            "forward": null,
+            "max_file_size": "64MiB",
+            "retention": "400d"
+          }
+        },
         "dashboard": {
           "description": "Serve the embedded dashboard on the admin listener.",
           "type": "boolean",
@@ -565,6 +579,35 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "AdminAudit": {
+      "description": "The audit log (ADR-0024): every admin write, login, MFA event, refusal and session end, as\nJSON lines that each carry the SHA-256 of the line before.",
+      "type": "object",
+      "properties": {
+        "forward": {
+          "description": "Also send each record to a syslog server.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuditForward"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_file_size": {
+          "description": "A file is closed and a new one started at this size (1 MiB–1 GiB).",
+          "$ref": "#/$defs/ByteSize",
+          "default": "64MiB"
+        },
+        "retention": {
+          "description": "How long rotated files are kept (1d–3650d).",
+          "$ref": "#/$defs/Duration",
+          "default": "400d"
+        }
+      },
+      "additionalProperties": false
     },
     "AdminPasswords": {
       "description": "Password rules for dashboard users (ADR-0024). There are no composition rules: length and\na list of common passwords are what protect a password (NIST SP 800-63B §3.1.1.2).",
@@ -703,6 +746,25 @@
         }
       },
       "additionalProperties": false
+    },
+    "AuditForward": {
+      "description": "Where audit records are forwarded.",
+      "type": "object",
+      "properties": {
+        "syslog": {
+          "description": "Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as\nthe message.",
+          "type": "string"
+        },
+        "transport": {
+          "description": "`udp` (default) or `tcp` (octet counting, RFC 6587).",
+          "$ref": "#/$defs/SyslogTransport",
+          "default": "udp"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "syslog"
+      ]
     },
     "Backend": {
       "description": "One backend server.",
@@ -3603,6 +3665,21 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "SyslogTransport": {
+      "description": "How syslog messages travel.",
+      "oneOf": [
+        {
+          "description": "One datagram per record.",
+          "type": "string",
+          "const": "udp"
+        },
+        {
+          "description": "A stream with octet-counted framing.",
+          "type": "string",
+          "const": "tcp"
+        }
+      ]
     },
     "TcpRoute": {
       "description": "A TCP route.",

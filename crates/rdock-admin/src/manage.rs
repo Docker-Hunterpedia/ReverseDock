@@ -12,6 +12,7 @@ use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
 
 use crate::State;
+use crate::audit::Event;
 use crate::auth::hashing;
 use crate::caller::{Access, Caller, need, need_recent};
 use crate::routes::error;
@@ -108,6 +109,10 @@ pub(crate) async fn create_user(
         None => error(StatusCode::SERVICE_UNAVAILABLE, "busy; try again"),
         Some(Ok(user)) => {
             tracing::info!(user = %user.name, by = caller.name(), "created a user");
+            state.audit.record(Event {
+                resource: Some(user.name.clone()),
+                ..caller.event("user.create")
+            });
             (StatusCode::CREATED, axum::Json(UserView::from(user))).into_response()
         }
         Some(Err(AddError::Exists | AddError::AdminExists)) => {
@@ -182,6 +187,18 @@ pub(crate) async fn change_user(
         Ok(Some(true)) => {
             state.sessions.end_user(&name, None);
             tracing::info!(user = %name, by = caller.name(), "changed a user");
+            let what = [
+                body.role.map(|r| format!("role={r:?}").to_lowercase()),
+                body.disabled.map(|d| format!("disabled={d}")),
+                body.password.as_ref().map(|_| "password".to_owned()),
+                body.reset_mfa.then(|| "reset_mfa".to_owned()),
+            ];
+            let what: Vec<String> = what.into_iter().flatten().collect();
+            state.audit.record(Event {
+                resource: Some(name.clone()),
+                reason: Some(what.join(",")),
+                ..caller.event("user.change")
+            });
             match state.users.find(&name) {
                 Some(user) => axum::Json(UserView::from(user)).into_response(),
                 None => error(StatusCode::NOT_FOUND, "no such user"),
@@ -212,6 +229,10 @@ pub(crate) async fn delete_user(
                 return internal(&err);
             }
             tracing::info!(user = %name, by = caller.name(), "deleted a user");
+            state.audit.record(Event {
+                resource: Some(name.clone()),
+                ..caller.event("user.delete")
+            });
             StatusCode::NO_CONTENT.into_response()
         }
     }
@@ -325,6 +346,10 @@ pub(crate) async fn create_token(
         Err(err) => internal(&err),
         Ok((value, token)) => {
             tracing::info!(token = %token.id, by = caller.name(), "created an API token");
+            state.audit.record(Event {
+                resource: Some(token.id.clone()),
+                ..caller.event("token.create")
+            });
             let mut view = serde_json::to_value(TokenView::from(token)).unwrap_or_default();
             view["token"] = serde_json::Value::String(value);
             (StatusCode::CREATED, axum::Json(view)).into_response()
@@ -349,7 +374,35 @@ pub(crate) async fn revoke_token(
         Ok(false) => error(StatusCode::NOT_FOUND, "no such token"),
         Ok(true) => {
             tracing::info!(token = %id, by = caller.name(), "revoked an API token");
+            state.audit.record(Event {
+                resource: Some(id.clone()),
+                ..caller.event("token.revoke")
+            });
             StatusCode::NO_CONTENT.into_response()
         }
     }
+}
+
+/// `GET /api/v1/audit?limit=100&before=<seq>`: recent audit records, newest first. Admins
+/// only.
+pub(crate) async fn audit(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+    axum::extract::Query(query): axum::extract::Query<AuditQuery>,
+) -> Response {
+    check!(need(&caller, Access::Admin));
+    let limit = query.limit.unwrap_or(100).clamp(1, 1000);
+    match state.audit.recent(limit, query.before) {
+        Ok(records) => axum::Json(records).into_response(),
+        Err(err) => internal(&err),
+    }
+}
+
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct AuditQuery {
+    #[serde(default)]
+    limit: Option<usize>,
+    #[serde(default)]
+    before: Option<u64>,
 }

@@ -206,8 +206,9 @@ impl Tokens {
     }
 
     /// The token record for a presented value, if it is valid, unexpired and allowed from
-    /// `client`. Records the use; the file is updated at most once a minute per token.
-    pub fn verify(&self, presented: &str, client: Option<IpAddr>) -> Option<Token> {
+    /// `client`, and whether it was last used from another address. Records the use; the
+    /// file is updated at most once a minute per token.
+    pub fn verify(&self, presented: &str, client: Option<IpAddr>) -> Option<(Token, bool)> {
         let (id, secret) = parse(presented)?;
         let presented_hash = hash(secret);
         let mut inner = self.lock();
@@ -224,6 +225,7 @@ impl Tokens {
         if !(matches && fresh && allowed) {
             return None;
         }
+        let moved = token.last_used_from.is_some() && token.last_used_from != client;
         token.last_used_at = Some(now());
         token.last_used_from = client;
         let found = token.clone();
@@ -237,7 +239,7 @@ impl Tokens {
                 tracing::warn!(error = %err, "cannot record the token's last use");
             }
         }
-        Some(found)
+        Some((found, moved))
     }
 
     /// All tokens, or those `created_by` one user.
@@ -322,7 +324,20 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let tokens = Tokens::open(dir.path()).unwrap();
         let (value, _) = tokens.create(new(Access::Operator)).unwrap();
-        assert_eq!(tokens.verify(&value, None).unwrap().role, Access::Operator);
+        assert_eq!(
+            tokens.verify(&value, None).unwrap().0.role,
+            Access::Operator
+        );
+        let (_, moved) = tokens
+            .verify(&value, Some("192.0.2.9".parse().unwrap()))
+            .unwrap();
+        assert!(!moved, "no earlier address");
+        assert!(
+            tokens
+                .verify(&value, Some("192.0.2.10".parse().unwrap()))
+                .unwrap()
+                .1
+        );
         assert!(tokens.verify("rdk_pat_nope", None).is_none());
 
         let (expired, _) = tokens

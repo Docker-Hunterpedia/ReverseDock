@@ -11,6 +11,7 @@ use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Deserialize;
 
 use crate::account::{self, mfa_required};
+use crate::audit::{Event, Outcome};
 use crate::passwords::Verified;
 use crate::routes::error;
 use crate::sessions::Stage;
@@ -127,10 +128,8 @@ pub(crate) async fn setup(
     if state.users.has_admin() {
         return error(StatusCode::CONFLICT, "an admin user exists; log in instead");
     }
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), SETUP_KEY)
-    {
+    let address = client(peer.map(|p| p.0), &headers);
+    if let Err(wait) = state.limits.attempt(address, SETUP_KEY) {
         return too_many(wait);
     }
     if transport != Transport::Socket && !state.bootstrap.accepts(bearer(&headers)) {
@@ -169,6 +168,24 @@ pub(crate) async fn setup(
                 tracing::warn!(error = %err, file = %state.bootstrap.file().display(), "cannot delete the bootstrap token");
             }
             tracing::info!(user = %user.name, "created the first admin user");
+            let method = if transport == Transport::Socket {
+                "socket"
+            } else {
+                "bootstrap"
+            };
+            state.audit.record(Event {
+                client: address,
+                resource: Some(user.name.clone()),
+                ..Event::new(
+                    if transport == Transport::Socket {
+                        "cli"
+                    } else {
+                        "bootstrap"
+                    },
+                    method,
+                    "user.create_first_admin",
+                )
+            });
             (StatusCode::CREATED, account(&user)).into_response()
         }
         Some(Err(AddError::AdminExists | AddError::Exists)) => {
@@ -192,7 +209,19 @@ pub(crate) async fn login(
 ) -> Response {
     let address = client(peer.map(|p| p.0), &headers);
     let name = normalize_name(&body.name).unwrap_or_default();
+    // Only well-formed names are recorded: a password typed into the name field never is.
+    let actor = if name.is_empty() {
+        "-".to_owned()
+    } else {
+        name.clone()
+    };
     if let Err(wait) = state.limits.attempt(address, &name) {
+        state.audit.record(Event {
+            client: address,
+            outcome: Outcome::Denied,
+            reason: Some("rate limited".into()),
+            ..Event::new(actor, "password", "login")
+        });
         return too_many(wait);
     }
     let worker = state.clone();
@@ -220,9 +249,21 @@ pub(crate) async fn login(
     .await;
     match checked {
         None => busy(),
-        Some(Some(user)) => start_session(&state, &user, address),
+        Some(Some(user)) => {
+            state.audit.record(Event {
+                client: address,
+                ..Event::new(user.name.clone(), "password", "login")
+            });
+            start_session(&state, &user, address)
+        }
         Some(None) => {
             tracing::info!(client = ?address, "admin login failed");
+            state.audit.record(Event {
+                client: address,
+                outcome: Outcome::Denied,
+                reason: Some("wrong user name or password".into()),
+                ..Event::new(actor, "password", "login")
+            });
             error(StatusCode::UNAUTHORIZED, WRONG)
         }
     }

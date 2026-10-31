@@ -23,6 +23,7 @@ ipnet.workspace = true
 rdock-config.workspace = true
 rdock-limits.workspace = true
 rdock-model.workspace = true
+rdock-observability.workspace = true
 rdock-tls.workspace = true
 ring.workspace = true
 rust-embed.workspace = true

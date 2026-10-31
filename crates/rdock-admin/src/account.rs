@@ -12,6 +12,7 @@ use rdock_model::settings::MfaPolicy;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
 
+use crate::audit::{Event, Outcome};
 use crate::auth::{Peer, client, hashing, too_many};
 use crate::passwords::Verified;
 use crate::routes::{Denied, error};
@@ -105,6 +106,20 @@ fn current<'h>(
     Ok((value, session))
 }
 
+/// An audit event by the session's user, from the address they logged in from.
+fn event(session: &Session, method: &'static str, action: &'static str) -> Event {
+    Event {
+        client: session.client,
+        ..Event::new(session.user.clone(), method, action)
+    }
+}
+
+fn denied(mut event: Event, reason: &str) -> Event {
+    event.outcome = Outcome::Denied;
+    event.reason = Some(reason.to_owned());
+    event
+}
+
 fn now_unix() -> u64 {
     SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -177,9 +192,17 @@ pub(crate) async fn mfa(
     }
     match second_factor(&state, &session.user, &body.code) {
         Err(err) => internal(&err),
-        Ok(false) => error(StatusCode::UNAUTHORIZED, "wrong code"),
+        Ok(false) => {
+            state
+                .audit
+                .record(denied(event(&session, "totp", "login.mfa"), "wrong code"));
+            error(StatusCode::UNAUTHORIZED, "wrong code")
+        }
         Ok(true) => match state.sessions.rotate(value, |s| s.stage = Stage::Full) {
-            Some((cookie, session)) => reply(StatusCode::OK, &session, Some(&cookie)),
+            Some((cookie, session)) => {
+                state.audit.record(event(&session, "totp", "login.mfa"));
+                reply(StatusCode::OK, &session, Some(&cookie))
+            }
             None => error(StatusCode::UNAUTHORIZED, "log in first"),
         },
     }
@@ -242,6 +265,10 @@ pub(crate) async fn confirm(
         return too_many(wait);
     }
     let Some(step) = totp::verify(&secret, &body.code, now_unix(), 0) else {
+        state.audit.record(denied(
+            event(&session, "session", "mfa.enrol"),
+            "wrong code",
+        ));
         return error(StatusCode::UNAUTHORIZED, "wrong code");
     };
     let Some((shown, stored)) = totp::recovery_codes() else {
@@ -279,6 +306,7 @@ pub(crate) async fn confirm(
         return error(StatusCode::UNAUTHORIZED, "log in first");
     };
     tracing::info!(user = %session.user, "enrolled an authenticator app");
+    state.audit.record(event(&session, "session", "mfa.enrol"));
     let mut body = describe(&session);
     body["recovery_codes"] = serde_json::json!(shown);
     respond(StatusCode::OK, body, Some(&cookie))
@@ -316,6 +344,9 @@ pub(crate) async fn new_recovery_codes(
         Ok(None) => error(StatusCode::CONFLICT, "set up an authenticator app first"),
         Ok(Some(())) => {
             tracing::info!(user = %session.user, "replaced the recovery codes");
+            state
+                .audit
+                .record(event(&session, "session", "mfa.recovery_codes"));
             axum::Json(serde_json::json!({ "recovery_codes": shown })).into_response()
         }
     }
@@ -367,6 +398,7 @@ pub(crate) async fn unenrol(
     if let Err(err) = state.users.update(&session.user, |u| u.mfa = None) {
         return internal(&err);
     }
+    state.audit.record(event(&session, "session", "mfa.remove"));
     state.sessions.end_user(&session.user, Some(value));
     match state.sessions.rotate(value, |_| {}) {
         Some((cookie, session)) => reply(StatusCode::OK, &session, Some(&cookie)),
@@ -420,9 +452,16 @@ pub(crate) async fn reauth(
             state
                 .sessions
                 .modify(value, |s| s.authenticated = Instant::now());
+            state.audit.record(event(&session, "password", "reauth"));
             StatusCode::NO_CONTENT.into_response()
         }
-        Some(_) => error(StatusCode::UNAUTHORIZED, "wrong password or code"),
+        Some(_) => {
+            state.audit.record(denied(
+                event(&session, "password", "reauth"),
+                "wrong password or code",
+            ));
+            error(StatusCode::UNAUTHORIZED, "wrong password or code")
+        }
     }
 }
 
@@ -432,7 +471,7 @@ pub(crate) async fn logout(
     method: Method,
     headers: HeaderMap,
 ) -> Response {
-    let (value, _) = match current(
+    let (value, session) = match current(
         &state,
         &method,
         &headers,
@@ -442,6 +481,7 @@ pub(crate) async fn logout(
         Err(refused) => return refused.into_response(),
     };
     state.sessions.remove(value);
+    state.audit.record(event(&session, "session", "logout"));
     let mut response = StatusCode::NO_CONTENT.into_response();
     let expired = format!("{COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0");
     if let Ok(value) = HeaderValue::from_str(&expired) {
@@ -484,6 +524,10 @@ pub(crate) async fn end_session(
         session.role == Role::Admin || s.user == session.user
     });
     if ended {
+        state.audit.record(Event {
+            resource: Some(id),
+            ..event(&session, "session", "session.end")
+        });
         StatusCode::NO_CONTENT.into_response()
     } else {
         error(StatusCode::NOT_FOUND, "no such session")
