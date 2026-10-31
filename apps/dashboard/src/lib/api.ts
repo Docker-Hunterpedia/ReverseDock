@@ -30,26 +30,39 @@ export function readCsrfFrom(source: () => string): void {
 }
 
 interface Options {
-  method?: "GET" | "POST" | "DELETE";
+  method?: "GET" | "POST" | "PUT" | "PATCH" | "DELETE";
   body?: unknown;
   /** A bearer token, used only for the bootstrap token at first run. */
   bearer?: string;
+  /** The version a change is based on (`If-Match`). */
+  ifMatch?: string;
 }
 
 export async function api<T>(path: string, options: Options = {}): Promise<T> {
+  return (await request<T>(path, options)).data;
+}
+
+/** Like [`api`], with the response's `ETag`. */
+export async function apiWithTag<T>(path: string, options: Options = {}): Promise<{ data: T; etag: string }> {
+  return request<T>(path, options);
+}
+
+async function request<T>(path: string, options: Options): Promise<{ data: T; etag: string }> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   const csrf = method === "GET" ? "" : csrfSource();
   if (csrf) headers["X-CSRF-Token"] = csrf;
   if (options.bearer) headers.Authorization = `Bearer ${options.bearer}`;
+  if (options.ifMatch) headers["If-Match"] = options.ifMatch;
   const response = await fetch(`/api/v1${path}`, {
     method,
     headers,
     credentials: "same-origin",
     body: options.body === undefined ? undefined : JSON.stringify(options.body),
   });
-  if (response.status === 204) return undefined as T;
+  const etag = response.headers.get("etag") ?? "";
+  if (response.status === 204) return { data: undefined as T, etag };
   const text = await response.text();
   let data: unknown;
   try {
@@ -63,7 +76,7 @@ export async function api<T>(path: string, options: Options = {}): Promise<T> {
     const retry = Number(response.headers.get("retry-after"));
     throw new ApiError(response.status, message, retry > 0 ? retry : undefined);
   }
-  return data as T;
+  return { data: data as T, etag };
 }
 
 /** A message for the user from any error. */

@@ -11,9 +11,11 @@ import { type Theme, applyTheme, storedTheme, watchSystemTheme } from "./lib/the
 import { Enrol } from "./pages/Enrol";
 import { Login } from "./pages/Login";
 import { Mfa } from "./pages/Mfa";
+import { Certificates, Listeners, Providers, Services } from "./pages/Infrastructure";
 import { Logs } from "./pages/Logs";
 import { Metrics } from "./pages/Metrics";
 import { Overview } from "./pages/Overview";
+import { Resources } from "./pages/Resources";
 import { Security } from "./pages/Security";
 import { Setup } from "./pages/Setup";
 
@@ -64,6 +66,12 @@ const router = createRouter({
     createRoute({ getParentRoute: () => root, path: "/", component: () => <Overview session={useApp().session} /> }),
     createRoute({ getParentRoute: () => root, path: "/security", component: () => <Security session={useApp().session} /> }),
     createRoute({ getParentRoute: () => root, path: "/traffic", component: Metrics }),
+    createRoute({ getParentRoute: () => root, path: "/routes", component: () => <Resources kind="routes" session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/services", component: () => <Services session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/middlewares", component: () => <Resources kind="middlewares" session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/certificates", component: () => <Certificates session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/listeners", component: Listeners }),
+    createRoute({ getParentRoute: () => root, path: "/providers", component: Providers }),
     createRoute({ getParentRoute: () => root, path: "/logs", component: Logs }),
   ]),
 });
