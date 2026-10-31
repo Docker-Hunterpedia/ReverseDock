@@ -367,6 +367,8 @@ labels:
 
 ## 13. Admin API and dashboard (`rdock-admin`)
 
+[ADR-0024](decisions/0024-management-api-and-dashboard.md) is the authoritative design for v0.5 and refines this section: own 2-thread runtime, loopback by default with TLS required elsewhere, optional mTLS remote admin and a Unix socket for the CLI, Host/Origin checks, single-use bootstrap token, TOTP MFA, `__Host-` session cookies, `rdk_` tokens stored hashed, the role matrix, a hash-chained audit log and mandatory `If-Match` on writes.
+
 - Separate `axum` server on `admin.listener` (default `127.0.0.1:2080`); exposing it on a proxy route requires an explicit route + middleware (e.g. `forward_auth`) — never implicit.
 - **Auth:** bootstrap token printed/written at first start (`$RDOCK_DATA_DIR/admin/bootstrap-token`); users with argon2id passwords (dashboard sessions: `SameSite=Strict` cookie + CSRF token); API tokens with scopes `read`, `write`, `admin`, optional expiry and IP allow-list; roles `viewer`, `operator`, `admin`. Every write is audit-logged (`who, when, what, diff hash, result`).
 - **Resources (`/api/v1`):** `config` (GET effective, PUT replace API snapshot, PATCH, `POST /config/validate`, `/config/apply`, `/config/history`, `/config/rollback/{id}`), `routes`, `services`, `middlewares`, `certificates` (`POST /certificates/{name}/renew`), `listeners`, `providers` (status + diagnostics), `backends` (health, drain/undrain), `logs/stream` (SSE), `events/stream` (SSE), `metrics/summary` (ring buffer), `cache/purge` (P2), `users`, `tokens`, `audit`. OpenAPI 3.1 served at `/api/openapi.json`.
@@ -377,7 +379,7 @@ labels:
 - **Access log** (JSON, one line per request): `ts, request_id, trace_id, client_ip, method, host, path, query(len), proto, status, bytes_in, bytes_out, duration_ms, upstream_addr, upstream_connect_ms, upstream_ttfb_ms, route, service, listener, tls_version, tls_cipher, sni, user_agent, referer, cf_ray, retries, cache_status, error`. Redaction list applied before serialisation; sampling by status class.
 - **Metrics** (Prometheus): `rdock_http_requests_total{listener,route,service,method,status_class}`, `rdock_http_request_duration_seconds` (histogram), `rdock_upstream_duration_seconds`, `rdock_upstream_backend_healthy{service,backend}`, `rdock_upstream_connections{...}`, `rdock_tls_handshakes_total{version,resumed}`, `rdock_cert_expiry_timestamp_seconds{name}`, `rdock_cert_renewal_failed_total`, `rdock_ratelimit_rejected_total{middleware}`, `rdock_config_generation`, `rdock_provider_state{provider}`, process/Tokio runtime metrics. Label cardinality is bounded by config (route/service names), never by host/path values.
 - **Tracing:** `tracing` spans per request; OTLP export; `traceparent`/`tracestate` propagated to upstream; `baggage` optional.
-- **Dashboard feed:** a 15-minute ring buffer of per-second counters and latency sketches (DDSketch) per route — no Prometheus needed for live charts.
+- **Dashboard feed:** a 15-minute ring buffer of per-second counters and a fixed 40-bucket logarithmic latency histogram per route (about 183 KiB per route; [ADR-0024](decisions/0024-management-api-and-dashboard.md) replaced the DDSketch plan) — no Prometheus needed for live charts.
 
 ## 15. Security model
 

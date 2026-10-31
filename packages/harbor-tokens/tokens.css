@@ -25,7 +25,7 @@
   --rd-code-fg: #e7e5e4;
   --rd-code-border: #2e2a27;
 
-  --rd-font-sans: Inter, "IBM Plex Sans Arabic", system-ui, -apple-system, "Segoe UI", sans-serif;
+  --rd-font-sans: Inter, system-ui, -apple-system, "Segoe UI", sans-serif;
   --rd-font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace;
 
   --rd-radius-sm: 6px;
