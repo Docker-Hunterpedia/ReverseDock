@@ -40,6 +40,31 @@ The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on dema
 
 GitHub's shared runners are virtual machines whose speed changes from run to run, so these numbers are a regression check only and are never published. Running both proxies in one job cancels most of that noise. Published reports below come from fixed hardware.
 
+## Soak test
+
+[`soak/`](soak/) runs ReverseDock for a long time under steady load and checks that it does not leak or slow down (H-ENG-02, H-ENG-03). By default it runs for 24 hours at 1,000 req/s, alternating plain HTTP and HTTPS. ReverseDock sits in front of three backends with active and passive health checks and retries, limited to 2 CPUs and 1 GiB. While the load runs:
+
+- the configuration is rewritten and reloaded every 5 minutes;
+- one backend is stopped every 15 minutes and started again a minute later;
+- the certificate is replaced every 30 minutes.
+
+A probe container shares ReverseDock's process namespace and records its memory, threads, file descriptors and TCP connections every 30 seconds. k6 records latency and failures in 10-minute windows.
+
+[`analyze.py`](soak/analyze.py) treats the first tenth of the run as warm-up and fits a straight line through the rest. The run fails when:
+
+- memory grows by more than 16 MiB, or 10 % of its warm size;
+- file descriptors grow by more than 64;
+- more than 0.1 % of requests fail or are dropped;
+- a reload is rejected or missing, or the log shows a panic.
+
+```sh
+docker build -t rdock:bench ..
+soak/run.sh                                                    # 24 h
+DURATION=20m RELOAD_EVERY=60 FLAP_EVERY=180 CERT_EVERY=240 WINDOW=120 PROBE_EVERY=10 soak/run.sh   # a quick check
+```
+
+For a 24-hour run, copy `backend/` and `soak/` to a folder outside the checkout and start it there: bash reads `run.sh` while it runs, so switching branches in the checkout would break the run. Everything goes to `soak/work/`: `probe.csv`, the k6 windows, `events.csv`, ReverseDock's log and `report.md`. Requirements: Docker with Compose, Python 3 and `openssl`.
+
 ## Results
 
 | Version | Machine | Report |
