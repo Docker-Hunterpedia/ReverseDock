@@ -57,6 +57,6 @@ observability:
 - **`smtp`** sends e-mail with STARTTLS (port 587, default) or implicit TLS (`tls: implicit`, port 465); `tls: none` is accepted only for a relay on the same machine.
 - `rules` on a channel limits it to those rules.
 - URLs, secrets, tokens and passwords are secrets: write them as `${file:…}` or `${env:…}`; `rdock validate` warns about a webhook URL written in the file.
-- **No internal targets by default.** A channel whose host resolves to a private, loopback or link-local address (for example a cloud metadata address) is refused, checked at connection time; set `allow_private_targets: true` on a channel for a relay inside your network (plain `http://` is accepted only then).
+- **No internal targets by default.** A channel whose host is, or resolves to, a private, loopback or link-local address (for example the cloud metadata address `169.254.169.254`) is refused, checked at connection time; set `allow_private_targets: true` on a channel for a relay inside your network (plain `http://` is accepted only then).
 
 `rdock_alerts_sent_total{channel,result}` counts deliveries; a failed delivery is logged with the reason.

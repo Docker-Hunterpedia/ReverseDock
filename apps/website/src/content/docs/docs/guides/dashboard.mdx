@@ -37,9 +37,13 @@ Admins must set up an authenticator app before they can do anything else (`admin
 
 A session ends after 30 minutes without activity or 8 hours after login (`admin.sessions`), and when rdock restarts. **Security** lists your sessions; admins see everyone's and can end any of them.
 
+## Your password
+
+**Security → Password** changes your own password <Status since="v0.5" />: enter the current one and the new one twice. Your other sessions end; the one you are using stays. The same rules apply as for a first password (at least 12 characters, not a common password).
+
 ## Sensitive changes
 
-Adding or changing users, creating tokens and similar changes need your password (and code) from the last five minutes. When it is older, the dashboard asks for it and then makes the change.
+Adding or changing users, creating tokens and similar changes need your password (and code) from the last five minutes. When it is older, the dashboard asks for it and then makes the change. API tokens cannot create other tokens <Status since="v0.5" />: a token is made by a person in the dashboard or with `rdock tokens create` on the server.
 
 ## Turn it off
 

@@ -22,7 +22,7 @@ api http://localhost/api/v1/config          # everything in use, with the owner 
 api -i http://localhost/api/v1/config/api   # only the API's objects; note the ETag header
 ```
 
-Secret values written in place are shown as `***`; `${file:…}` and `${env:…}` references are shown as written.
+Secret values written in place are shown as `***`, and basic-auth `users` entries as `name:***`; `${file:…}` and `${env:…}` references are shown as written <Status since="v0.5" />. Writing a document back with `***` keeps the current secret, so you can read, edit and save without retyping secrets; a `***` where there is no current value is refused with `422`.
 
 ## Change, always with If-Match
 
@@ -36,6 +36,8 @@ api -X PUT http://localhost/api/v1/config/api \
 ```
 
 `PATCH` changes part of it: `Content-Type: application/merge-patch+json` (RFC 7396, `null` removes) or `application/json-patch+json` (RFC 6902 operations). A configuration that would not be applied is refused with `422` and the diagnostics, and nothing changes: unlike Docker objects, a broken API object is never just left out.
+
+Every write and dry run compiles the whole configuration, so at most 5 a second are accepted across all callers, in bursts of up to 10 <Status since="v0.5" />; beyond that the answer is `429` with `Retry-After`. This keeps a runaway script from slowing the proxy down. Change many objects in one `PUT` or `PATCH` rather than one request each.
 
 ## One object at a time
 
@@ -53,7 +55,7 @@ api -X PUT http://localhost/api/v1/config/api \
 
 ## The same from the command line
 
-On the server the CLI uses the admin socket; elsewhere it needs `--admin` and `RDOCK_ADMIN_TOKEN`.
+On the server the CLI uses the admin socket; elsewhere it needs `--admin` and `RDOCK_ADMIN_TOKEN`. The CLI speaks plain HTTP, so it sends the token only to a loopback address <Status since="v0.5" />; for a remote rdock, forward the admin port first (`ssh -L 2080:127.0.0.1:2080 server`) and use `--admin 127.0.0.1:2080`.
 
 ```sh
 rdock config history                 # applied configurations with their id
