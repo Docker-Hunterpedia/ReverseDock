@@ -155,6 +155,11 @@ fn add_security(document: &mut Value) {
         "Unauthenticated": { "description": "No valid session or token.", "content": error_content() },
         "Forbidden": { "description": "The caller's role does not allow this, or a password check is due.", "content": error_content() },
         "WrongStage": { "description": "The session is not at the stage this step needs, for example already logged in.", "content": error_content() },
+        "RateLimited": {
+            "description": "More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.",
+            "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next request is accepted" } },
+            "content": error_content(),
+        },
         "ConfigBusy": {
             "description": "More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.",
             "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next write is accepted" } },
@@ -180,8 +185,13 @@ fn add_security(document: &mut Value) {
             if stage_gated && responses.get("409").is_none() {
                 responses["409"] = json!({ "$ref": "#/components/responses/WrongStage" });
             }
-            if config_work && responses.get("429").is_none() {
-                responses["429"] = json!({ "$ref": "#/components/responses/ConfigBusy" });
+            if responses.get("429").is_none() {
+                let name = if config_work {
+                    "ConfigBusy"
+                } else {
+                    "RateLimited"
+                };
+                responses["429"] = json!({ "$ref": format!("#/components/responses/{name}") });
             }
             for (status, name) in [("401", "Unauthenticated"), ("403", "Forbidden")] {
                 if responses.get(status).is_none() {

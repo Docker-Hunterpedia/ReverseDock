@@ -29,6 +29,24 @@
         },
         "description": "The caller's role does not allow this, or a password check is due."
       },
+      "RateLimited": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        },
+        "description": "More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until the next request is accepted",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
       "Unauthenticated": {
         "content": {
           "application/json": {
@@ -5010,6 +5028,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5072,6 +5093,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5164,6 +5188,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5200,6 +5227,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5436,6 +5466,9 @@
               }
             },
             "description": "No authenticator app set up"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5472,6 +5505,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5511,6 +5547,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5561,6 +5600,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5597,6 +5639,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5638,6 +5683,9 @@
               }
             },
             "description": "Already enrolled"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5698,6 +5746,9 @@
               }
             },
             "description": "No enrolment started"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5734,6 +5785,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5790,6 +5844,9 @@
               }
             },
             "description": "No such backend"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5846,6 +5903,9 @@
               }
             },
             "description": "No such backend"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5882,6 +5942,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5939,6 +6002,9 @@
               }
             },
             "description": "No automatic certificate covers the name"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5975,6 +6041,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6019,6 +6088,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6275,6 +6347,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6314,6 +6389,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6458,6 +6536,9 @@
               }
             },
             "description": "Rejected; the report has the diagnostics"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "content": {
@@ -6791,6 +6872,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6957,6 +7041,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6993,6 +7080,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7049,6 +7139,9 @@
               }
             },
             "description": "Not a valid request description"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7178,6 +7271,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -7226,6 +7322,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7280,6 +7379,9 @@
               }
             },
             "description": "Invalid name or expiry"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7330,6 +7432,9 @@
               }
             },
             "description": "No such token"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7369,6 +7474,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7433,6 +7541,9 @@
               }
             },
             "description": "Invalid name or weak password"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "content": {
@@ -7503,6 +7614,9 @@
               }
             },
             "description": "No enabled admin would remain"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7588,6 +7702,9 @@
               }
             },
             "description": "Weak password"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7654,6 +7771,9 @@
               }
             },
             "description": "Not a section"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7752,6 +7872,9 @@
               }
             },
             "description": "The API objects changed since they were read"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7822,6 +7945,9 @@
               }
             },
             "description": "No such object"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7928,6 +8054,9 @@
               }
             },
             "description": "Rejected"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7996,6 +8125,9 @@
               }
             },
             "description": "Metrics are disabled"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [

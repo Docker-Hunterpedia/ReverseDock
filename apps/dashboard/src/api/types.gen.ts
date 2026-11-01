@@ -2359,6 +2359,10 @@ export type OpenapiDocumentErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type OpenapiDocumentError = OpenapiDocumentErrors[keyof OpenapiDocumentErrors];
@@ -2399,6 +2403,10 @@ export type AuditErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type AuditError = AuditErrors[keyof AuditErrors];
@@ -2461,6 +2469,10 @@ export type LogoutErrors = {
      * The session is not at the stage this step needs, for example already logged in.
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type LogoutError = LogoutErrors[keyof LogoutErrors];
@@ -2494,6 +2506,10 @@ export type MfaStateErrors = {
      * The session is not at the stage this step needs, for example already logged in.
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type MfaStateError = MfaStateErrors[keyof MfaStateErrors];
@@ -2648,6 +2664,10 @@ export type NewRecoveryCodesErrors = {
      * No authenticator app set up
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type NewRecoveryCodesError = NewRecoveryCodesErrors[keyof NewRecoveryCodesErrors];
@@ -2683,6 +2703,10 @@ export type SessionErrors = {
      * The session is not at the stage this step needs, for example already logged in.
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type SessionError = SessionErrors[keyof SessionErrors];
@@ -2716,6 +2740,10 @@ export type SessionsErrors = {
      * The session is not at the stage this step needs, for example already logged in.
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type SessionsError = SessionsErrors[keyof SessionsErrors];
@@ -2758,6 +2786,10 @@ export type EndSessionErrors = {
      * The session is not at the stage this step needs, for example already logged in.
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type EndSessionError = EndSessionErrors[keyof EndSessionErrors];
@@ -2791,6 +2823,10 @@ export type UnenrolErrors = {
      * The session is not at the stage this step needs, for example already logged in.
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type UnenrolError = UnenrolErrors[keyof UnenrolErrors];
@@ -2824,6 +2860,10 @@ export type EnrolErrors = {
      * Already enrolled
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type EnrolError = EnrolErrors[keyof EnrolErrors];
@@ -2859,6 +2899,10 @@ export type ConfirmErrors = {
      * No enrolment started
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ConfirmError = ConfirmErrors[keyof ConfirmErrors];
@@ -2890,6 +2934,10 @@ export type BackendsErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type BackendsError = BackendsErrors[keyof BackendsErrors];
@@ -2925,6 +2973,10 @@ export type DrainErrors = {
      * No such backend
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type DrainError = DrainErrors[keyof DrainErrors];
@@ -2960,6 +3012,10 @@ export type UndrainErrors = {
      * No such backend
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type UndrainError = UndrainErrors[keyof UndrainErrors];
@@ -2991,6 +3047,10 @@ export type CertificatesErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type CertificatesError = CertificatesErrors[keyof CertificatesErrors];
@@ -3031,6 +3091,10 @@ export type RenewErrors = {
      * No automatic certificate covers the name
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type RenewError = RenewErrors[keyof RenewErrors];
@@ -3062,6 +3126,10 @@ export type EffectiveErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type EffectiveError = EffectiveErrors[keyof EffectiveErrors];
@@ -3093,6 +3161,10 @@ export type GetApiErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type GetApiError = GetApiErrors[keyof GetApiErrors];
@@ -3154,6 +3226,10 @@ export type PatchApiErrors = {
      * `If-Match` is missing
      */
     428: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type PatchApiError = PatchApiErrors[keyof PatchApiErrors];
@@ -3207,6 +3283,10 @@ export type PutApiErrors = {
      * `If-Match` is missing
      */
     428: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type PutApiError = PutApiErrors[keyof PutApiErrors];
@@ -3238,6 +3318,10 @@ export type ExportErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ExportError = ExportErrors[keyof ExportErrors];
@@ -3267,6 +3351,10 @@ export type HistoryErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type HistoryError = HistoryErrors[keyof HistoryErrors];
@@ -3318,6 +3406,10 @@ export type ImportErrors = {
      * `If-Match` is missing
      */
     428: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ImportError = ImportErrors[keyof ImportErrors];
@@ -3355,6 +3447,10 @@ export type ReloadErrors = {
     422: {
         [key: string]: unknown;
     };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
     /**
      * Shutting down
      */
@@ -3414,6 +3510,10 @@ export type RollbackErrors = {
      * `If-Match` is missing
      */
     428: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type RollbackError = RollbackErrors[keyof RollbackErrors];
@@ -3451,6 +3551,10 @@ export type ValidateErrors = {
      * Not a configuration document
      */
     422: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ValidateError = ValidateErrors[keyof ValidateErrors];
@@ -3550,6 +3654,10 @@ export type ListenersErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ListenersError = ListenersErrors[keyof ListenersErrors];
@@ -3654,6 +3762,10 @@ export type MetricsSummaryErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type MetricsSummaryError = MetricsSummaryErrors[keyof MetricsSummaryErrors];
@@ -3685,6 +3797,10 @@ export type ProvidersErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ProvidersError = ProvidersErrors[keyof ProvidersErrors];
@@ -3722,6 +3838,10 @@ export type ExplainErrors = {
      * Not a valid request description
      */
     422: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ExplainError = ExplainErrors[keyof ExplainErrors];
@@ -3811,6 +3931,10 @@ export type StatusErrors = {
      */
     403: ErrorBody;
     /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+    /**
      * Shutting down
      */
     503: ErrorBody;
@@ -3845,6 +3969,10 @@ export type TokensErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type TokensError = TokensErrors[keyof TokensErrors];
@@ -3878,6 +4006,10 @@ export type CreateTokenErrors = {
      * Invalid name or expiry
      */
     422: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type CreateTokenError = CreateTokenErrors[keyof CreateTokenErrors];
@@ -3916,6 +4048,10 @@ export type RevokeTokenErrors = {
      * No such token
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type RevokeTokenError = RevokeTokenErrors[keyof RevokeTokenErrors];
@@ -3945,6 +4081,10 @@ export type UsersErrors = {
      * The caller's role does not allow this, or a password check is due.
      */
     403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type UsersError = UsersErrors[keyof UsersErrors];
@@ -3982,6 +4122,10 @@ export type CreateUserErrors = {
      * Invalid name or weak password
      */
     422: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
     /**
      * Too many password hashes at once
      */
@@ -4028,6 +4172,10 @@ export type DeleteUserErrors = {
      * No enabled admin would remain
      */
     409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type DeleteUserError = DeleteUserErrors[keyof DeleteUserErrors];
@@ -4074,6 +4222,10 @@ export type ChangeUserErrors = {
      * Weak password
      */
     422: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ChangeUserError = ChangeUserErrors[keyof ChangeUserErrors];
@@ -4112,6 +4264,10 @@ export type ListObjectsErrors = {
      * Not a section
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type ListObjectsError = ListObjectsErrors[keyof ListObjectsErrors];
@@ -4164,6 +4320,10 @@ export type DeleteObjectErrors = {
      * The API objects changed since they were read
      */
     412: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type DeleteObjectError = DeleteObjectErrors[keyof DeleteObjectErrors];
@@ -4208,6 +4368,10 @@ export type GetObjectErrors = {
      * No such object
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type GetObjectError = GetObjectErrors[keyof GetObjectErrors];
@@ -4264,6 +4428,10 @@ export type PutObjectErrors = {
     422: {
         [key: string]: unknown;
     };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type PutObjectError = PutObjectErrors[keyof PutObjectErrors];
@@ -4315,6 +4483,10 @@ export type MetricsErrors = {
      * Metrics are disabled
      */
     404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
 };
 
 export type MetricsError = MetricsErrors[keyof MetricsErrors];

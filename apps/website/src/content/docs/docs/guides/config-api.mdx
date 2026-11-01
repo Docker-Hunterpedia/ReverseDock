@@ -37,7 +37,7 @@ api -X PUT http://localhost/api/v1/config/api \
 
 `PATCH` changes part of it: `Content-Type: application/merge-patch+json` (RFC 7396, `null` removes) or `application/json-patch+json` (RFC 6902 operations). A configuration that would not be applied is refused with `422` and the diagnostics, and nothing changes: unlike Docker objects, a broken API object is never just left out.
 
-Every write and dry run compiles the whole configuration, so at most 5 a second are accepted across all callers, in bursts of up to 10 <Status since="v0.5" />; beyond that the answer is `429` with `Retry-After`. This keeps a runaway script from slowing the proxy down. Change many objects in one `PUT` or `PATCH` rather than one request each.
+Every write and dry run compiles the whole configuration, so at most 5 a second are accepted across all callers, in bursts of up to 10 <Status since="v0.5" />; beyond that the answer is `429` with `Retry-After`. Every caller (each API token, each user across their sessions, the CLI socket) may also make at most 20 requests of any kind a second, in bursts of up to 100, and the admin listener holds at most 256 connections. The admin side shares its CPU with the proxy, and these limits keep a runaway script from slowing the proxy down. Change many objects in one `PUT` or `PATCH` rather than one request each.
 
 ## One object at a time
 

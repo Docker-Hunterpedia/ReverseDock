@@ -788,6 +788,25 @@ async fn people_change_their_own_password_and_their_other_sessions_end() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn each_caller_has_its_own_request_budget() {
+    let admin = Admin::start(None, Vec::new());
+    let (busy, calm) = (api_token(&admin, "viewer"), api_token(&admin, "viewer"));
+    let mut limited = None;
+    for _ in 0..200 {
+        let reply = client::http1(admin.address, bearer_get("/api/v1/status", &busy)).await;
+        if reply.status == 429 {
+            limited = Some(reply);
+            break;
+        }
+    }
+    let limited = limited.expect("a burst of 200 runs out of the budget of 100");
+    assert!(limited.header("retry-after").is_some());
+    let reply = client::http1(admin.address, bearer_get("/api/v1/status", &calm)).await;
+    assert_eq!(reply.status, 200, "another caller is not affected");
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn configuration_work_is_rate_limited_for_everyone() {
     let admin = Admin::start(None, Vec::new());
     let candidate = serde_json::json!({});
