@@ -1,0 +1,11 @@
+# Loads every dashboard in /var/lib/grafana/dashboards, including rdock.json.
+apiVersion: 1
+
+providers:
+  - name: ReverseDock
+    folder: ReverseDock
+    type: file
+    disableDeletion: true
+    allowUiUpdates: false
+    options:
+      path: /var/lib/grafana/dashboards

@@ -67,3 +67,5 @@ benchmarks/results/ci/
 benchmarks/soak/work/
 benchmarks/configs/tls/certs/
 benchmarks/configs/routes/
+__pycache__/
+apps/dashboard/e2e/screenshots/

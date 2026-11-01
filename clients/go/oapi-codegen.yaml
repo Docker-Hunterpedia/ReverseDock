@@ -1,0 +1,6 @@
+# Generates client.gen.go from ../../schema/openapi.json; run `go generate ./...` (or `just clients`).
+package: rdock
+output: client.gen.go
+generate:
+  client: true
+  models: true

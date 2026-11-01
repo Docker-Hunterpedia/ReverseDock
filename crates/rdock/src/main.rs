@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+mod admin_cli;
 mod ctl;
 mod engine;
 mod hash;
@@ -57,14 +58,51 @@ enum Command {
     /// Turn another proxy's configuration into rdock.yaml.
     #[command(subcommand)]
     Migrate(MigrateCommand),
+    /// Work with the admin audit log.
+    #[command(subcommand)]
+    Audit(AuditCommand),
+    /// The configuration history, diffs and rollback of the API provider.
+    #[command(subcommand)]
+    Config(admin_cli::ConfigCommand),
+    /// Manage dashboard users.
+    #[command(subcommand)]
+    Users(admin_cli::UsersCommand),
+    /// Manage API tokens.
+    #[command(subcommand)]
+    Tokens(admin_cli::TokensCommand),
+    /// Show backends and drain them.
+    #[command(subcommand)]
+    Backends(admin_cli::BackendsCommand),
+    /// Explain routing decisions.
+    #[command(subcommand)]
+    Routes(admin_cli::RoutesCommand),
     /// Print the JSON Schema of rdock.yaml.
-    Schema,
+    Schema {
+        /// Print the OpenAPI 3.1 document of the admin API instead.
+        #[arg(long)]
+        openapi: bool,
+    },
     /// Print version and build information.
     Version {
         /// Print as JSON.
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Subcommand)]
+enum AuditCommand {
+    /// Check that no audit record was changed or removed (the SHA-256 chain).
+    Verify(AuditArgs),
+    /// Show recent records from the running proxy.
+    List(admin_cli::AuditList),
+}
+
+#[derive(Args)]
+struct AuditArgs {
+    /// Data directory holding `audit/`.
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
 }
 
 #[derive(Subcommand)]
@@ -161,7 +199,7 @@ struct CtlArgs {
     /// Configuration file, to find the admin listener.
     #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
     config: PathBuf,
-    /// Data directory, to find the admin socket and token.
+    /// Data directory, to find the admin socket.
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
 }
@@ -186,7 +224,17 @@ fn main() -> ExitCode {
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
-        Command::Schema => schema().map(|()| ExitCode::SUCCESS),
+        Command::Audit(AuditCommand::Verify(args)) => audit_verify(&args),
+        Command::Audit(AuditCommand::List(args)) => admin_cli::audit_list(&args),
+        Command::Config(command) => admin_cli::config(&command),
+        Command::Users(command) => admin_cli::users(&command),
+        Command::Tokens(command) => admin_cli::tokens(&command),
+        Command::Backends(command) => admin_cli::backends(&command),
+        Command::Routes(command) => admin_cli::routes(&command),
+        Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: true } => {
+            print(rdock_admin::openapi_json()).map(|()| ExitCode::SUCCESS)
+        }
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };
     result.unwrap_or_else(|err| {
@@ -201,6 +249,22 @@ fn print(text: &str) -> anyhow::Result<()> {
         .write_all(text.as_bytes())
         .context("writing to stdout")?;
     stdout.flush().context("writing to stdout")
+}
+
+/// `rdock audit verify`: exit 0 when the chain holds, 1 at the first broken link.
+fn audit_verify(args: &AuditArgs) -> anyhow::Result<ExitCode> {
+    use rdock_admin::audit::{Verdict, verify};
+    let dir = args.data_dir.join("audit");
+    match verify(&dir).with_context(|| format!("reading the audit log in {}", dir.display()))? {
+        Verdict::Intact { records, files } => {
+            println!("audit log intact: {records} records in {files} files");
+            Ok(ExitCode::SUCCESS)
+        }
+        Verdict::Broken { file, line, reason } => {
+            eprintln!("audit log broken at {}:{line}: {reason}", file.display());
+            Ok(ExitCode::FAILURE)
+        }
+    }
 }
 
 fn schema() -> anyhow::Result<()> {

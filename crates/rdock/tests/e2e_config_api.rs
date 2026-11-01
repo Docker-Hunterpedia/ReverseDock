@@ -1,0 +1,470 @@
+//! End-to-end: routes written through the configuration API are served, conditional on the
+//! version, survive a file reload and a restart, and roll back (ADR-0024).
+
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+
+use std::net::SocketAddr;
+
+use rdock_testkit::backend::Backend;
+use rdock_testkit::client::{self, get};
+use rdock_testkit::free_port;
+use rdock_testkit::rdock::Rdock;
+
+const RDOCK: &str = env!("CARGO_BIN_EXE_rdock");
+
+fn etag(head: &str) -> String {
+    head.lines()
+        .find_map(|l| {
+            l.strip_prefix("etag: ")
+                .or_else(|| l.strip_prefix("ETag: "))
+        })
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn api_routes_are_served_and_roll_back() {
+    let backend = Backend::start("api-backend").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  file: {{ match: \"Host(`file.test`)\", service: file }}\nservices:\n  file: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let mut rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+
+    let (status, head, body) = rdock
+        .admin_send("GET", "/api/v1/config/api", &[], "")
+        .unwrap();
+    assert_eq!(status, 200, "{body}");
+    let first = etag(&head);
+    let document = serde_json::json!({
+        "routes": { "app": { "match": "Host(`api.test`)", "service": "app" } },
+        "services": { "app": { "backends": [{ "address": backend.addr.to_string() }] } }
+    })
+    .to_string();
+    let json = [("Content-Type", "application/json")];
+
+    let (status, _, _) = rdock
+        .admin_send("PUT", "/api/v1/config/api", &json, &document)
+        .unwrap();
+    assert_eq!(status, 428);
+    let with_tag = [
+        ("Content-Type", "application/json"),
+        ("If-Match", first.as_str()),
+    ];
+    let (status, head, body) = rdock
+        .admin_send("PUT", "/api/v1/config/api", &with_tag, &document)
+        .unwrap();
+    assert_eq!(status, 200, "{body}");
+    let second = etag(&head);
+    let reply = client::http1(proxy, get("api.test", "/")).await;
+    assert_eq!(reply.status, 200, "the API route is served");
+
+    // A configuration that does not compile is refused and changes nothing.
+    let broken = serde_json::json!({ "routes": { "x": { "match": "Host(`x.test`)", "service": "missing" } } }).to_string();
+    let tag = [
+        ("Content-Type", "application/json"),
+        ("If-Match", second.as_str()),
+    ];
+    let (status, _, body) = rdock
+        .admin_send("PUT", "/api/v1/config/api", &tag, &broken)
+        .unwrap();
+    assert_eq!(status, 422, "{body}\n{}", rdock.log());
+    let (status, _, body) = rdock
+        .admin_send("POST", "/api/v1/config/validate", &json, &broken)
+        .unwrap();
+    assert_eq!(status, 200);
+    let checked: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(checked["valid"], false, "{body}");
+    assert_eq!(checked["diagnostics"][0]["severity"], "error", "{body}");
+    assert_eq!(client::http1(proxy, get("api.test", "/")).await.status, 200);
+
+    // The objects show their owner and survive a file reload and a restart.
+    let (_, _, body) = rdock.admin_send("GET", "/api/v1/config", &[], "").unwrap();
+    assert!(body.contains("\"app@api\":\"api\""), "{body}");
+    let (status, _) = rdock.reload();
+    assert_eq!(status, 200);
+    assert_eq!(client::http1(proxy, get("api.test", "/")).await.status, 200);
+    rdock.restart().unwrap();
+    assert_eq!(
+        client::http1(proxy, get("api.test", "/")).await.status,
+        200,
+        "restored after a restart"
+    );
+
+    // Roll back to the start, before the API route existed.
+    let (_, _, history) = rdock
+        .admin_send("GET", "/api/v1/config/history", &[], "")
+        .unwrap();
+    let history: serde_json::Value = serde_json::from_str(&history).unwrap();
+    let oldest = history.as_array().unwrap().last().unwrap()["id"]
+        .as_u64()
+        .unwrap();
+    let (_, head, _) = rdock
+        .admin_send("GET", "/api/v1/config/api", &[], "")
+        .unwrap();
+    let current = etag(&head);
+    let tag = [
+        ("Content-Type", "application/json"),
+        ("If-Match", current.as_str()),
+    ];
+    let body = serde_json::json!({ "id": oldest }).to_string();
+    let (status, _, text) = rdock
+        .admin_send("POST", "/api/v1/config/rollback", &tag, &body)
+        .unwrap();
+    assert_eq!(status, 200, "{text}");
+    assert_eq!(
+        client::http1(proxy, get("api.test", "/")).await.status,
+        404,
+        "rolled back"
+    );
+    assert_eq!(
+        client::http1(proxy, get("file.test", "/")).await.status,
+        200
+    );
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_drained_backend_gets_no_new_requests() {
+    let first = Backend::start("first").await;
+    let second = Backend::start("second").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"PathPrefix(`/`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}, {{ address: \"{}\" }}] }}\n",
+        first.addr, second.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    let body =
+        serde_json::json!({ "service": "app", "backend": first.addr.to_string() }).to_string();
+    let json = [("Content-Type", "application/json")];
+    let (status, _, text) = rdock
+        .admin_send("POST", "/api/v1/backends/drain", &json, &body)
+        .unwrap();
+    assert_eq!(status, 200, "{text}");
+    let (_, _, list) = rdock
+        .admin_send("GET", "/api/v1/backends", &[], "")
+        .unwrap();
+    assert!(list.contains("\"drained\":true"), "{list}");
+    for _ in 0..20 {
+        let reply = client::http1(proxy, get("app.test", "/")).await;
+        assert_eq!(reply.status, 200);
+        assert_eq!(
+            reply.json()["backend"],
+            "second",
+            "only the other backend answers"
+        );
+    }
+    let (status, _, _) = rdock
+        .admin_send("POST", "/api/v1/backends/undrain", &json, &body)
+        .unwrap();
+    assert_eq!(status, 200);
+    let mut seen_first = false;
+    for _ in 0..20 {
+        seen_first |= client::http1(proxy, get("app.test", "/")).await.json()["backend"] == "first";
+    }
+    assert!(seen_first, "back in rotation");
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_cli_manages_users_tokens_backends_and_history() {
+    let backend = Backend::start("cli").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"PathPrefix(`/`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let ok = |output: std::process::Output| {
+        let out = String::from_utf8_lossy(&output.stdout).into_owned();
+        assert!(
+            output.status.success(),
+            "{out}{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        out
+    };
+
+    // The first admin over the socket, then an operator.
+    let setup = serde_json::json!({ "name": "root", "password": "correct horse battery staple" })
+        .to_string();
+    let (status, _, _) = rdock
+        .admin_send(
+            "POST",
+            "/api/v1/setup",
+            &[("Content-Type", "application/json")],
+            &setup,
+        )
+        .unwrap();
+    assert_eq!(status, 201);
+    ok(rdock.command_with_input(
+        &["users", "add", "ops", "--role", "operator"],
+        "another long passphrase\n",
+    ));
+    let listed = ok(rdock.command(&["users", "list"]));
+    assert!(
+        listed.contains("ops") && listed.contains("operator"),
+        "{listed}"
+    );
+    let weak = rdock.command_with_input(&["users", "add", "weak"], "password1234\n");
+    assert!(!weak.status.success(), "common passwords are refused");
+    ok(rdock.command(&["users", "set", "ops", "--disable"]));
+    assert!(ok(rdock.command(&["users", "list"])).contains("disabled"));
+    ok(rdock.command(&["users", "remove", "ops"]));
+
+    let created = ok(rdock.command(&["tokens", "create", "ci", "--role", "viewer", "--days", "7"]));
+    assert!(created.starts_with("rdk_pat_"), "{created}");
+    let id = created.split('_').nth(2).unwrap().to_owned();
+    assert!(ok(rdock.command(&["tokens", "list"])).contains(&id));
+    ok(rdock.command(&["tokens", "revoke", &id]));
+
+    let backends = ok(rdock.command(&["backends", "list"]));
+    assert!(backends.contains(&backend.addr.to_string()), "{backends}");
+    let addr = backend.addr.to_string();
+    ok(rdock.command(&["backends", "drain", "app", &addr]));
+    assert!(ok(rdock.command(&["backends", "list"])).contains("drained"));
+    ok(rdock.command(&["backends", "undrain", "app", &addr]));
+
+    let history = ok(rdock.command(&["config", "history"]));
+    assert!(history.contains("gen"), "{history}");
+    let candidate = rdock.path("candidate.yaml");
+    std::fs::write(
+        &candidate,
+        "routes:\n  x: { match: \"Host(`x.test`)\", service: app@file }\n",
+    )
+    .unwrap();
+    let diff = rdock.command(&["config", "diff", candidate.to_str().unwrap()]);
+    let text = String::from_utf8_lossy(&diff.stdout);
+    assert!(text.contains("+++ candidate"), "{text}");
+
+    let audit = ok(rdock.command(&["audit", "list", "--limit", "100"]));
+    for action in [
+        "user.create",
+        "user.delete",
+        "token.create",
+        "token.revoke",
+        "backend.drain",
+    ] {
+        assert!(audit.contains(action), "{action} missing:\n{audit}");
+    }
+    ok(rdock.command(&["audit", "verify"]));
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_metrics_count_requests_per_route_and_service() {
+    let backend = Backend::start("live").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"Host(`app.test`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    for _ in 0..25 {
+        assert_eq!(client::http1(proxy, get("app.test", "/")).await.status, 200);
+    }
+    let (status, _, body) = rdock
+        .admin_send("GET", "/api/v1/metrics/summary?window=60", &[], "")
+        .unwrap();
+    assert_eq!(status, 200, "{body}");
+    let summary: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(summary["total"]["requests"], 25, "{summary}");
+    assert_eq!(summary["total"]["classes"][1], 25);
+    assert_eq!(summary["total"]["series"].as_array().unwrap().len(), 60);
+    assert_eq!(summary["routes"]["app"]["requests"], 25);
+    assert_eq!(summary["services"]["app"]["requests"], 25);
+    assert!(summary["routes"]["app"]["p99"].as_f64().unwrap() > 0.0);
+    // A reload keeps the counts: the ring belongs to the route name, not the generation.
+    assert_eq!(rdock.reload().0, 200);
+    let (_, _, body) = rdock
+        .admin_send("GET", "/api/v1/metrics/summary?window=60", &[], "")
+        .unwrap();
+    let summary: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(summary["routes"]["app"]["requests"], 25);
+}
+
+/// Opens a server-sent events stream over the admin socket.
+fn open_stream(rdock: &Rdock, path: &str, last_id: Option<&str>) -> std::os::unix::net::UnixStream {
+    use std::io::Write;
+    let mut stream =
+        std::os::unix::net::UnixStream::connect(rdock.data_dir().join("admin.sock")).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let resume = last_id
+        .map(|id| format!("Last-Event-ID: {id}\r\n"))
+        .unwrap_or_default();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n{resume}\r\n"
+    )
+    .unwrap();
+    stream
+}
+
+/// Reads until `count` events with data arrived; returns (id, data) pairs.
+fn read_events(stream: &mut std::os::unix::net::UnixStream, count: usize) -> Vec<(String, String)> {
+    use std::io::Read;
+    let mut raw = String::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let events: Vec<(String, String)> = raw
+            .split("\n\n")
+            .filter_map(|block| {
+                let id = block
+                    .lines()
+                    .find_map(|l| l.strip_prefix("id: ").or_else(|| l.strip_prefix("id:")))?;
+                let data = block
+                    .lines()
+                    .find_map(|l| l.strip_prefix("data: ").or_else(|| l.strip_prefix("data:")))?;
+                Some((id.trim().to_owned(), data.to_owned()))
+            })
+            .collect();
+        if events.len() >= count {
+            return events;
+        }
+        let n = stream.read(&mut buffer).expect("the stream stalled");
+        assert!(n > 0, "the stream closed early:\n{raw}");
+        raw.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn logs_and_events_stream_live_with_replay() {
+    let backend = Backend::start("sse").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"Host(`app.test`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+
+    let mut logs = open_stream(&rdock, "/api/v1/logs/stream?status=2xx", None);
+    let mut events = open_stream(&rdock, "/api/v1/events/stream?type=reload", None);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    for path in ["/one", "/two", "/three"] {
+        assert_eq!(
+            client::http1(proxy, get("app.test", path)).await.status,
+            200
+        );
+    }
+    assert_eq!(
+        client::http1(proxy, get("nothing.test", "/")).await.status,
+        404
+    );
+    let lines = tokio::task::spawn_blocking(move || read_events(&mut logs, 3))
+        .await
+        .unwrap();
+    let paths: Vec<String> = lines
+        .iter()
+        .map(|(_, data)| {
+            serde_json::from_str::<serde_json::Value>(data).unwrap()["path"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        ["/one", "/two", "/three"],
+        "the 404 is filtered out on the server"
+    );
+    let ids: Vec<u64> = lines.iter().map(|(id, _)| id.parse().unwrap()).collect();
+    assert!(ids.windows(2).all(|w| w[1] > w[0]), "ids increase: {ids:?}");
+
+    assert_eq!(rdock.reload().0, 200);
+    let reload = tokio::task::spawn_blocking(move || read_events(&mut events, 1))
+        .await
+        .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&reload[0].1).unwrap();
+    assert_eq!(event["type"], "reload");
+    assert_eq!(event["result"], "applied");
+
+    // A reconnect with Last-Event-ID gets what came after it.
+    let first = ids[0].to_string();
+    let mut resumed = open_stream(&rdock, "/api/v1/logs/stream?status=2xx", Some(&first));
+    let replayed = tokio::task::spawn_blocking(move || read_events(&mut resumed, 2))
+        .await
+        .unwrap();
+    assert_eq!(replayed[0].0, ids[1].to_string());
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn explain_shows_why_routes_match_and_backends_are_excluded() {
+    let backend = Backend::start("explain").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  api: {{ match: \"Host(`app.test`) && PathPrefix(`/api`)\", service: app, middlewares: [tag] }}\n  site: {{ match: \"Host(`app.test`)\", service: app }}\n  other: {{ match: \"Host(`other.test`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}, {{ address: \"127.0.0.1:9\" }}] }}\nmiddlewares:\n  tag: {{ type: headers, response: {{ set: {{ X-Tag: \"1\" }} }} }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let drain = serde_json::json!({ "service": "app", "backend": "127.0.0.1:9" }).to_string();
+    let json = [("Content-Type", "application/json")];
+    assert_eq!(
+        rdock
+            .admin_send("POST", "/api/v1/backends/drain", &json, &drain)
+            .unwrap()
+            .0,
+        200
+    );
+
+    let ask = serde_json::json!({ "host": "app.test", "path": "/api/users?x=1" }).to_string();
+    let (status, _, body) = rdock
+        .admin_send("POST", "/api/v1/routes/explain", &json, &ask)
+        .unwrap();
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let results: Vec<(&str, &str)> = answer["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["result"].as_str().unwrap()))
+        .collect();
+    assert!(results.contains(&("api", "matched")), "{answer}");
+    assert!(
+        results.contains(&("site", "shadowed")),
+        "the shorter rule matches too: {answer}"
+    );
+    let other = answer["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "other")
+        .unwrap();
+    assert!(
+        other["reason"]
+            .as_str()
+            .unwrap()
+            .contains("the host is `app.test`"),
+        "{other}"
+    );
+    assert_eq!(answer["outcome"]["route"], "api");
+    assert_eq!(answer["outcome"]["middlewares"], serde_json::json!(["tag"]));
+    let excluded = answer["outcome"]["backends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["address"] == "127.0.0.1:9")
+        .unwrap();
+    assert_eq!(excluded["considered"], false);
+    assert_eq!(excluded["reason"], "drained by an operator");
+
+    let none = serde_json::json!({ "host": "nothing.test" }).to_string();
+    let (_, _, body) = rdock
+        .admin_send("POST", "/api/v1/routes/explain", &json, &none)
+        .unwrap();
+    assert!(body.contains("\"result\":\"404\""), "{body}");
+
+    let output = rdock.command(&[
+        "routes", "explain", "--host", "app.test", "--path", "/api/x",
+    ]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("route api → service app") && text.contains("excluded: drained"),
+        "{text}"
+    );
+}

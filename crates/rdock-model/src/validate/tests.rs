@@ -508,3 +508,135 @@ fn a_network_admin_listener_needs_tls_and_known_hosts() {
     assert!(has(&found, "admin.threads", "between 1 and 16"));
     assert!(has(&found, "admin.allowed_hosts[0]", "not a host name"));
 }
+
+#[test]
+fn admin_passwords_refuse_weak_settings() {
+    let bad = with(
+        app(),
+        json!({ "admin": { "passwords": {
+            "min_length": 6,
+            "argon2": { "memory_kib": 4096, "iterations": 1, "parallelism": 0 },
+            "blocklist_file": ""
+        } } }),
+    );
+    let found: Vec<(String, String)> = validate(bad)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(
+        &found,
+        "admin.passwords.min_length",
+        "between 8 and 128"
+    ));
+    assert!(has(
+        &found,
+        "admin.passwords.argon2.memory_kib",
+        "between 19456"
+    ));
+    assert!(has(
+        &found,
+        "admin.passwords.argon2.iterations",
+        "between 2"
+    ));
+    assert!(has(
+        &found,
+        "admin.passwords.argon2.parallelism",
+        "between 1"
+    ));
+    assert!(has(&found, "admin.passwords.blocklist_file", "empty"));
+
+    let stronger = with(
+        app(),
+        json!({ "admin": { "passwords": { "min_length": 16, "argon2": { "memory_kib": 65536, "iterations": 3 } } } }),
+    );
+    assert!(
+        !validate(stronger)
+            .iter()
+            .any(|d| d.severity == Severity::Error && d.path.starts_with("admin")),
+    );
+}
+
+#[test]
+fn admin_sessions_are_bounded() {
+    let bad = with(
+        app(),
+        json!({ "admin": { "sessions": { "idle": "1m", "absolute": "1d" } } }),
+    );
+    let found: Vec<(String, String)> = validate(bad)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(&found, "admin.sessions.idle", "between 5m and 12h"));
+    assert!(has(&found, "admin.sessions.absolute", "between 5m and 12h"));
+
+    let inverted = with(
+        app(),
+        json!({ "admin": { "sessions": { "idle": "2h", "absolute": "1h" }, "mfa": "required" } }),
+    );
+    let found: Vec<(String, String)> = validate(inverted)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(&found, "admin.sessions.idle", "not be longer"));
+}
+
+#[test]
+fn alert_channels_need_safe_urls_and_smtp_needs_tls() {
+    let bad = with(
+        app(),
+        json!({ "observability": { "alerts": {
+            "min_interval": "10s",
+            "channels": {
+                "plain": { "type": "slack", "url": "http://hooks.example.com/x" },
+                "mail": { "type": "smtp", "host": "mail.example.com", "tls": "none", "from": "rdock@example.com", "to": ["ops@example.com"], "username": "u" },
+                "signed": { "type": "webhook", "url": "https://hooks.example.com", "secret": "not-a-whsec" },
+                "bad name": { "type": "discord", "url": "${env:DISCORD}" }
+            },
+            "rules": { "error_rate": { "percent": 0, "window": "1h" } }
+        } } }),
+    );
+    let found: Vec<(String, String)> = validate(bad)
+        .into_iter()
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(has(
+        &found,
+        "observability.alerts.min_interval",
+        "between 1m"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.channels.plain.url",
+        "https://"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.channels.mail.tls",
+        "unencrypted"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.channels.mail.password",
+        "both"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.channels.signed.secret",
+        "whsec_"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.channels.bad name",
+        "channel names"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.rules.error_rate.percent",
+        "between 1 and 100"
+    ));
+    assert!(has(
+        &found,
+        "observability.alerts.rules.error_rate.window",
+        "15m"
+    ));
+}

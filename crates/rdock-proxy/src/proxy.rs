@@ -112,6 +112,11 @@ impl RdockProxy {
         if ok {
             if member.state.success(now) {
                 tracing::info!(service = %service.name, backend = %member.id, "backend recovered");
+                metrics.feeds.events.send(serde_json::json!({
+                    "type": "backend", "service": &*service.name, "backend": member.id, "state": "up",
+                    "reason": "recovered",
+                }));
+                crate::alerting::backend_up(metrics, service, member);
                 metrics
                     .backend_up
                     .with_label_values(&[&*service.name, &member.id])
@@ -129,6 +134,16 @@ impl RdockProxy {
                     backend = %member.id,
                     seconds = time.as_secs(),
                     "backend ejected after repeated failures"
+                );
+                metrics.feeds.events.send(serde_json::json!({
+                    "type": "backend", "service": &*service.name, "backend": member.id, "state": "down",
+                    "reason": "ejected after repeated failures", "seconds": time.as_secs(),
+                }));
+                crate::alerting::backend_down(
+                    metrics,
+                    service,
+                    member,
+                    "ejected after repeated failures",
                 );
                 metrics
                     .backend_ejections
@@ -1023,6 +1038,19 @@ impl ProxyHttp for RdockProxy {
             status,
             elapsed.as_secs_f64(),
         );
+        let sample = rdock_observability::live::Sample {
+            status,
+            elapsed,
+            bytes_in: session.body_bytes_read() as u64,
+            bytes_out: session.body_bytes_sent() as u64,
+        };
+        let now = std::time::SystemTime::now();
+        if let Some(route) = route {
+            route.live.record(sample, now);
+        }
+        if let Some(service) = &service {
+            service.live.record(sample, now);
+        }
         let log = &ctx.runtime.access_log;
         let req = session.req_header();
         let header = |name: &str| {
@@ -1059,6 +1087,14 @@ impl ProxyHttp for RdockProxy {
             route: route.map(|r| r.name.to_string()),
             service: service.as_ref().map(|s| s.name.to_string()),
             upstream: ctx.upstream.as_ref().map(ToString::to_string),
+            tried: {
+                let current = ctx.member.as_ref().map(|m| m.id.as_str());
+                ctx.tried
+                    .iter()
+                    .filter(|t| Some(t.as_str()) != current)
+                    .cloned()
+                    .collect()
+            },
             tls_version: ssl.as_ref().map(|s| s.version.to_string()),
             tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
             sni: ssl
@@ -1072,6 +1108,12 @@ impl ProxyHttp for RdockProxy {
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
         };
         log.write(&record);
+        let feed = &self.shared.metrics.feeds.logs;
+        if feed.watched()
+            && let Ok(entry) = serde_json::to_value(&record)
+        {
+            feed.send(entry);
+        }
     }
 }
 

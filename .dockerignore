@@ -7,9 +7,10 @@ target/
 docs/
 benchmarks/
 graphify-out/
-node_modules/
-apps/
-packages/
+**/node_modules/
+apps/website/
+!apps/website/package.json
+apps/dashboard/dist/
 *.md
 !README.md
 !crates/**/README.md

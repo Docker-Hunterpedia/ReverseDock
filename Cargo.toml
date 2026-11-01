@@ -57,7 +57,14 @@ rdock-tls = { path = "crates/rdock-tls" }
 # External crates (versions verified on crates.io, 2026-10-26)
 anyhow = "1.0.104"
 clap = { version = "4.6.7", features = ["derive"] }
-ipnet = "2.12.2"
+ipnet = { version = "2.12.2", features = ["serde"] }
+# Configuration API (ADR-0024): line diffs with a deadline, RFC 6902 JSON Patch.
+similar = "3.2.1"
+# Alert e-mail (ADR-0024): no default features, which would pull native-tls (OpenSSL).
+lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "pool", "hostname", "builder", "tokio1", "tokio1-rustls", "ring", "rustls-platform-verifier", "tracing"] }
+json-patch = { version = "4.2.0", default-features = false }
+# The checksum in API tokens (ADR-0024); already in the tree through flate2.
+crc32fast = "1.5.0"
 regex = "1.13.1"
 schemars = "1.2.3"
 serde = { version = "1.0.229", features = ["derive"] }
@@ -111,7 +118,13 @@ bollard = { version = "0.21.1", default-features = false, features = ["http", "p
 futures-util = { version = "0.3.34", default-features = false }
 
 # Admin API (ADR-0024): axum on its own runtime; hyper and hyper-util are already in the tree.
+tower-service = "0.3.3"
+# The dashboard, embedded at build time (ADR-0024). debug-embed: debug builds embed too, never reading from disk at run time.
+rust-embed = { version = "8.13.0", default-features = false, features = ["debug-embed", "include-exclude", "mime-guess"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
+# OpenAPI 3.1 generated from the handlers (F-MGMT-01); utoipa 6.0.0 and utoipa-axum 0.3.0 released 2026-09-22.
+utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
+utoipa-axum = "0.3.0"
 
 # Operations
 notify = "8.2.1"

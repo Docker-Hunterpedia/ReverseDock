@@ -83,6 +83,26 @@ DURATION=20m RELOAD_EVERY=60 FLAP_EVERY=180 CERT_EVERY=240 WINDOW=120 PROBE_EVER
 
 For a 24-hour run, copy `backend/` and `soak/` to a folder outside the checkout and start it there: bash reads `run.sh` while it runs, so switching branches in the checkout would break the run. Everything goes to `soak/work/`: `probe.csv`, the k6 windows, `events.csv`, ReverseDock's log and `report.md`. Requirements: Docker with Compose, Python 3 and `openssl`.
 
+## Admin isolation test
+
+[`isolation/`](isolation/) checks that the admin side cannot slow the proxy (H-ENG-04). Under a fixed 4,000 req/s on the proxy, each 60-second phase does one thing to the admin side:
+
+- **login:** a flood of failed logins;
+- **sse:** 10,000 log streams that never read;
+- **apply:** configuration writes and rollbacks in a tight loop;
+- **write-lock:** the configuration-write lock held, with writers waiting;
+- **stall:** every admin thread blocked;
+- **abort:** the admin runtime panics and stops.
+
+A phase passes when the proxy's p99 stays within 25 % plus 2 ms of the baseline, failures do not rise and at most 0.1 % of requests are dropped. The stall, abort and write-lock faults come from the `fault-injection` Cargo feature, which release builds never have.
+
+```sh
+docker build -t rdock:fault --build-arg CARGO_FEATURES=fault-injection ..
+isolation/run.sh
+```
+
+The first runs found that the admin side's own threads do not protect the proxy on their own: both share the container's CPU quota, and when the admin side uses too much of it the kernel pauses the whole process. One script making about 500 requests a second took the proxy's p99 from 0.65 to 92 ms. Limits on connections, on requests per caller and on configuration writes fixed it: [results](results/2026-11-01-isolation/report.md).
+
 ## Results
 
 | Version | Machine | Report |

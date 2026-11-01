@@ -26,7 +26,8 @@ impl Drop for Rdock {
 }
 
 impl Rdock {
-    /// Starts `binary` with `config` (the `admin` section is added) and waits until it is ready.
+    /// Starts `binary` with `config` (the `admin` section is added, see [`Self::write_config`])
+    /// and waits until it is ready.
     pub fn start(binary: &str, config: &str) -> Self {
         Self::try_start(binary, config)
             .unwrap_or_else(|log| panic!("rdock did not become ready:\n{log}"))
@@ -57,9 +58,14 @@ impl Rdock {
         self.dir.path().join("data")
     }
 
-    /// Replaces the configuration file (the admin section is added again).
+    /// Replaces the configuration file (the admin section is added again). A configuration
+    /// with its own `admin` section writes `{admin}` where the listener address goes.
     pub fn write_config(&self, config: &str) {
-        let full = format!("{config}\nadmin: {{ listener: \"{}\" }}\n", self.admin);
+        let full = if config.contains("{admin}") {
+            config.replace("{admin}", &self.admin.to_string())
+        } else {
+            format!("{config}\nadmin: {{ listener: \"{}\" }}\n", self.admin)
+        };
         let tmp = self.dir.path().join(".rdock.yaml.tmp");
         std::fs::write(&tmp, full).unwrap();
         std::fs::rename(tmp, self.config_path()).unwrap();
@@ -146,31 +152,48 @@ impl Rdock {
         }
     }
 
-    /// A blocking request to the admin listener, with the admin token.
+    /// A blocking request to the admin API over its Unix socket, as the CLI makes it.
     pub fn get_admin(&self, path: &str) -> Option<(u16, String)> {
         self.admin_request("GET", path)
     }
 
     pub fn admin_request(&self, method: &str, path: &str) -> Option<(u16, String)> {
+        self.admin_send(method, path, &[], "")
+            .map(|(status, _, body)| (status, body))
+    }
+
+    /// A request over the admin socket with extra headers and a body; returns the status,
+    /// the response head and the body.
+    pub fn admin_send(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Option<(u16, String, String)> {
+        use std::fmt::Write as _;
         use std::io::Write;
-        let token =
-            std::fs::read_to_string(self.data_dir().join("admin/token")).unwrap_or_default();
         let mut stream =
-            std::net::TcpStream::connect_timeout(&self.admin, Duration::from_millis(500)).ok()?;
+            std::os::unix::net::UnixStream::connect(self.data_dir().join("admin.sock")).ok()?;
         stream
             .set_read_timeout(Some(Duration::from_secs(20)))
             .ok()?;
-        write!(
-            stream,
-            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-            token.trim()
-        )
-        .ok()?;
+        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
+        for (name, value) in headers {
+            let _ = write!(head, "{name}: {value}\r\n");
+        }
+        let _ = write!(
+            head,
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).ok()?;
+        stream.write_all(body.as_bytes()).ok()?;
         let mut raw = String::new();
         stream.read_to_string(&mut raw).ok()?;
         let (head, body) = raw.split_once("\r\n\r\n")?;
         let status = head.split_whitespace().nth(1)?.parse().ok()?;
-        Some((status, body.to_owned()))
+        Some((status, head.to_owned(), body.to_owned()))
     }
 
     /// Asks the running process to reload, as `rdock reload` does.
@@ -190,6 +213,27 @@ impl Rdock {
             .env("RDOCK_DATA_DIR", self.data_dir())
             .output()
             .unwrap()
+    }
+
+    /// Runs the binary with `args` and `input` on standard input.
+    pub fn command_with_input(&self, args: &[&str], input: &str) -> std::process::Output {
+        use std::io::Write;
+        let mut child = Command::new(&self.binary)
+            .args(args)
+            .env("RDOCK_CONFIG", self.config_path())
+            .env("RDOCK_DATA_DIR", self.data_dir())
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::piped())
+            .spawn()
+            .unwrap();
+        child
+            .stdin
+            .take()
+            .unwrap()
+            .write_all(input.as_bytes())
+            .unwrap();
+        child.wait_with_output().unwrap()
     }
 
     /// Path of a file in the test directory.

@@ -89,6 +89,7 @@ pub struct DataPlane {
     backends: rdock_balancer::Registry,
     checkers: crate::health::Checkers,
     sticky_key: Vec<u8>,
+    live: Arc<rdock_observability::live::Live>,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -120,6 +121,7 @@ impl DataPlane {
             backends: rdock_balancer::Registry::default(),
             checkers: crate::health::Checkers::default(),
             sticky_key: random_key(),
+            live: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
             }),
@@ -178,8 +180,15 @@ impl DataPlane {
                 cloudflare: &self.cloudflare,
                 backends: &self.backends,
                 sticky_key: &self.sticky_key,
+                live: &self.live,
             },
         )
+    }
+
+    /// Live traffic rings of the routes and services in use (ADR-0024).
+    #[must_use]
+    pub fn live(&self) -> Arc<rdock_observability::live::Live> {
+        self.live.clone()
     }
 
     /// Applies `runtime`. New listener sockets are bound first; if any bind fails, nothing

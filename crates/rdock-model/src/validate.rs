@@ -1472,6 +1472,74 @@ impl Validator<'_> {
         );
     }
 
+    fn check_admin_passwords(&mut self) {
+        let passwords = &self.config.admin.passwords;
+        if !(8..=128).contains(&passwords.min_length) {
+            self.error("admin.passwords.min_length", "must be between 8 and 128");
+        }
+        let cost = passwords.argon2;
+        for (field, value, range) in [
+            ("memory_kib", cost.memory_kib, 19_456..=262_144),
+            ("iterations", cost.iterations, 2..=10),
+            ("parallelism", cost.parallelism, 1..=8),
+        ] {
+            if !range.contains(&value) {
+                self.push(
+                    Diagnostic::error(
+                        format!("admin.passwords.argon2.{field}"),
+                        format!("must be between {} and {}", range.start(), range.end()),
+                    )
+                    .with_hint("the minimum is the OWASP recommendation for Argon2id (ADR-0024)"),
+                );
+            }
+        }
+        let sessions = self.config.admin.sessions;
+        let bounds =
+            std::time::Duration::from_secs(5 * 60)..=std::time::Duration::from_secs(12 * 60 * 60);
+        for (field, value) in [("idle", sessions.idle), ("absolute", sessions.absolute)] {
+            if !bounds.contains(&value.as_std()) {
+                self.error(
+                    format!("admin.sessions.{field}"),
+                    "must be between 5m and 12h",
+                );
+            }
+        }
+        if sessions.idle > sessions.absolute {
+            self.error("admin.sessions.idle", "must not be longer than `absolute`");
+        }
+        if !(1..=365).contains(&self.config.admin.tokens.default_expiry_days) {
+            self.error(
+                "admin.tokens.default_expiry_days",
+                "must be between 1 and 365",
+            );
+        }
+        let audit = &self.config.admin.audit;
+        let days = audit.retention.as_std().as_secs() / 86_400;
+        if !(1..=3650).contains(&days) {
+            self.error("admin.audit.retention", "must be between 1d and 3650d");
+        }
+        let size = audit.max_file_size.as_u64();
+        if !(1 << 20..=1 << 30).contains(&size) {
+            self.error("admin.audit.max_file_size", "must be between 1MiB and 1GiB");
+        }
+        if let Some(forward) = &audit.forward
+            && forward
+                .syslog
+                .rsplit_once(':')
+                .is_none_or(|(host, port)| host.is_empty() || port.parse::<u16>().is_err())
+        {
+            self.error("admin.audit.forward.syslog", "write it as `host:port`");
+        }
+        let passwords = &self.config.admin.passwords;
+        if passwords
+            .blocklist_file
+            .as_ref()
+            .is_some_and(|path| path.as_os_str().is_empty())
+        {
+            self.error("admin.passwords.blocklist_file", "path is empty");
+        }
+    }
+
     fn check_admin(&mut self) {
         let admin = &self.config.admin;
         if !admin.enabled {
@@ -1531,6 +1599,7 @@ impl Validator<'_> {
         if !(1..=16).contains(&admin.threads) {
             self.error("admin.threads", "must be between 1 and 16");
         }
+        self.check_admin_passwords();
         for (i, host) in admin.allowed_hosts.iter().enumerate() {
             if host.is_empty()
                 || (host.contains(['/', ' ', ':']) && host.parse::<std::net::Ipv6Addr>().is_err())
@@ -1543,7 +1612,157 @@ impl Validator<'_> {
         }
     }
 
+    fn check_alerts(&mut self) {
+        use crate::settings::AlertChannel;
+        let alerts = &self.config.observability.alerts;
+        let minute = std::time::Duration::from_secs(60);
+        if !(minute..=std::time::Duration::from_secs(86_400))
+            .contains(&alerts.min_interval.as_std())
+        {
+            self.error(
+                "observability.alerts.min_interval",
+                "must be between 1m and 24h",
+            );
+        }
+        let window_ok = |w: crate::values::Duration| {
+            (minute..=std::time::Duration::from_secs(900)).contains(&w.as_std())
+        };
+        if let Some(rule) = alerts.rules.error_rate {
+            if !(1..=100).contains(&rule.percent) {
+                self.error(
+                    "observability.alerts.rules.error_rate.percent",
+                    "must be between 1 and 100",
+                );
+            }
+            if !window_ok(rule.window) {
+                self.error(
+                    "observability.alerts.rules.error_rate.window",
+                    "must be between 1m and 15m (the live data rdock keeps)",
+                );
+            }
+        }
+        if let Some(rule) = alerts.rules.latency
+            && !window_ok(rule.window)
+        {
+            self.error(
+                "observability.alerts.rules.latency.window",
+                "must be between 1m and 15m (the live data rdock keeps)",
+            );
+        }
+        let channels: Vec<(String, AlertChannel)> = alerts
+            .channels
+            .iter()
+            .map(|(n, c)| (n.clone(), c.clone()))
+            .collect();
+        for (name, channel) in channels {
+            self.check_alert_channel(&name, &channel);
+        }
+    }
+
+    fn check_alert_channel(&mut self, name: &str, channel: &crate::settings::AlertChannel) {
+        use crate::settings::{AlertChannel, SmtpTls};
+        {
+            let path = format!("observability.alerts.channels.{name}");
+            if name.is_empty()
+                || !name
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'))
+            {
+                self.error(
+                    path.clone(),
+                    "use letters, digits, `-` and `_` in channel names",
+                );
+            }
+            let http = match channel {
+                AlertChannel::Slack {
+                    url,
+                    allow_private_targets,
+                    ..
+                }
+                | AlertChannel::Discord {
+                    url,
+                    allow_private_targets,
+                    ..
+                }
+                | AlertChannel::SlackCompatible {
+                    url,
+                    allow_private_targets,
+                    ..
+                }
+                | AlertChannel::Webhook {
+                    url,
+                    allow_private_targets,
+                    ..
+                } => Some((url.clone(), *allow_private_targets)),
+                AlertChannel::Smtp { .. } => None,
+            };
+            if let Some((url, allow_private)) = http
+                && !url.starts_with("${")
+            {
+                match url::Url::parse(&url) {
+                    Ok(parsed) if parsed.scheme() == "https" => {}
+                    Ok(parsed) if parsed.scheme() == "http" && allow_private => {}
+                    Ok(_) => self.push(
+                        Diagnostic::error(format!("{path}.url"), "use an https:// URL")
+                            .with_hint("plain http is accepted only with allow_private_targets: true, for a relay inside your network"),
+                    ),
+                    Err(err) => self.error(format!("{path}.url"), format!("not a URL: {err}")),
+                }
+                self.push(
+                    Diagnostic::warning(
+                        format!("{path}.url"),
+                        "the webhook URL is a secret written in the file",
+                    )
+                    .with_hint("write it as ${file:/run/secrets/…} or ${env:…}"),
+                );
+            }
+            if let AlertChannel::Webhook {
+                secret: Some(secret),
+                ..
+            } = &channel
+                && !secret.starts_with("${")
+                && !secret.starts_with("whsec_")
+            {
+                self.error(
+                    format!("{path}.secret"),
+                    "Standard Webhooks secrets start with `whsec_`",
+                );
+            }
+            if let AlertChannel::Smtp {
+                host,
+                tls,
+                username,
+                password,
+                from,
+                to,
+                ..
+            } = &channel
+            {
+                let loopback = host == "localhost"
+                    || host
+                        .parse::<std::net::IpAddr>()
+                        .is_ok_and(|ip| ip.is_loopback());
+                if *tls == SmtpTls::None && !loopback {
+                    self.push(
+                        Diagnostic::error(format!("{path}.tls"), "plain SMTP sends passwords and alerts unencrypted")
+                            .with_hint("use starttls or implicit; `none` is allowed only for a relay on this machine"),
+                    );
+                }
+                if username.is_some() != password.is_some() {
+                    self.error(
+                        format!("{path}.password"),
+                        "set both username and password, or neither",
+                    );
+                }
+                if from.trim().is_empty() || to.is_empty() {
+                    self.error(path.clone(), "set `from` and at least one address in `to`");
+                }
+            }
+        }
+    }
+
     fn check_observability(&mut self) {
+        self.check_alerts();
         let observability = &self.config.observability;
         if !(0.0..=1.0).contains(&observability.access_log.sample) {
             self.error("observability.access_log.sample", "must be between 0 and 1");
