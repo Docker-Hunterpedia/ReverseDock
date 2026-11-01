@@ -105,7 +105,7 @@ opentelemetry_sdk = { version = "0.33.1", default-features = false, features = [
 opentelemetry-otlp = { version = "0.33.1", default-features = false, features = ["http-proto", "trace"] }
 opentelemetry-http = { version = "0.33.1", default-features = false }
 # Response compression, at the versions pingora-core already builds.
-brotli = "3.5.0"
+brotli = "9.1.1"
 zstd = "0.14.3"
 # `Retry-After` dates (already built for hyper).
 httpdate = "1.0.3"
