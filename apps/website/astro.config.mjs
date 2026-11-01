@@ -27,20 +27,11 @@ export default defineConfig({
       lastUpdated: true,
       // Wrapped lines keep code blocks free of horizontal scrolling, which keyboards cannot reach.
       expressiveCode: { defaultProps: { wrap: true, preserveIndent: true } },
-      customCss: ['@reversedock/harbor-tokens/tokens.css', './src/styles/starlight.css'],
+      customCss: ['@reversedock/harbor-tokens/tokens.css', './src/styles/fonts.css', './src/styles/starlight.css'],
       head: [
         { tag: 'link', attrs: { rel: 'icon', href: '/favicon.ico', sizes: '48x48' } },
         { tag: 'link', attrs: { rel: 'apple-touch-icon', href: '/apple-touch-icon.png' } },
         { tag: 'link', attrs: { rel: 'manifest', href: '/site.webmanifest' } },
-        { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.googleapis.com' } },
-        { tag: 'link', attrs: { rel: 'preconnect', href: 'https://fonts.gstatic.com', crossorigin: '' } },
-        {
-          tag: 'link',
-          attrs: {
-            rel: 'stylesheet',
-            href: 'https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap',
-          },
-        },
       ],
       sidebar: [
         section('Get started', 'start'),
