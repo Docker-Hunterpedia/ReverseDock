@@ -64,6 +64,11 @@ pub(crate) fn socket_path(data_dir: &Path) -> PathBuf {
     data_dir.join("admin.sock")
 }
 
+/// The CLI's Unix socket when `admin.socket` is not set.
+pub(crate) fn socket_path(data_dir: &Path) -> PathBuf {
+    data_dir.join("admin.sock")
+}
+
 /// Signals rdock reacts to.
 struct Signals {
     hangup: Signal,
