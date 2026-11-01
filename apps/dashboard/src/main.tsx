@@ -17,7 +17,10 @@ import { Metrics } from "./pages/Metrics";
 import { Overview } from "./pages/Overview";
 import { Resources } from "./pages/Resources";
 import { Security } from "./pages/Security";
+import { Settings } from "./pages/Settings";
 import { Setup } from "./pages/Setup";
+import { ReauthProvider } from "./components/Reauth";
+import { ToastProvider } from "./components/Toast";
 
 let theme = storedTheme();
 applyTheme(theme);
@@ -72,6 +75,14 @@ const router = createRouter({
     createRoute({ getParentRoute: () => root, path: "/certificates", component: () => <Certificates session={useApp().session} /> }),
     createRoute({ getParentRoute: () => root, path: "/listeners", component: Listeners }),
     createRoute({ getParentRoute: () => root, path: "/providers", component: Providers }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/settings",
+      component: () => {
+        const app = useApp();
+        return <Settings theme={app.theme} setTheme={app.setTheme} />;
+      },
+    }),
     createRoute({ getParentRoute: () => root, path: "/logs", component: Logs }),
   ]),
 });
@@ -140,7 +151,11 @@ function Gate() {
   };
   return (
     <AppContext value={{ session: data, theme: current, setTheme, logout }}>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <ReauthProvider>
+          <RouterProvider router={router} />
+        </ReauthProvider>
+      </ToastProvider>
     </AppContext>
   );
 }

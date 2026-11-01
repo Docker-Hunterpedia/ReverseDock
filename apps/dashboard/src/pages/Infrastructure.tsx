@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { TD, TH, Table } from "../components/Table";
+import { useToast } from "../components/Toast";
 import { Alert, Button, Card, StatusPill } from "../components/ui";
 import { type Session, api, describe } from "../lib/api";
 import type { Backends } from "../lib/metrics";
@@ -8,10 +9,14 @@ import { Resources } from "./Resources";
 /** Backends of every service, with drain and undrain for operators. */
 function BackendsCard({ session }: { session: Session }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const backends = useQuery({ queryKey: ["backends"], queryFn: () => api<Backends[]>("/backends"), refetchInterval: 3000 });
   const drain = useMutation({
     mutationFn: ({ service, backend, drained }: { service: string; backend: string; drained: boolean }) =>
       api(`/backends/${drained ? "undrain" : "drain"}`, { method: "POST", body: { service, backend } }),
+    onSuccess: (_, { service, backend, drained }) =>
+      toast(drained ? `${backend} is back in rotation for ${service}.` : `${backend} drained: no new requests; open ones finish.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["backends"] }),
   });
   const rows = (backends.data ?? []).flatMap((s) => s.backends.map((b) => ({ service: s.service, ...b })));
@@ -67,6 +72,7 @@ function date(unix: number | null): string {
 
 export function Certificates({ session }: { session: Session }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const certs = useQuery({
     queryKey: ["certificates"],
     queryFn: () => api<{ configured: Record<string, Record<string, unknown>> | null; automatic: Automatic[] }>("/certificates"),
@@ -74,6 +80,8 @@ export function Certificates({ session }: { session: Session }) {
   });
   const renew = useMutation({
     mutationFn: (name: string) => api(`/certificates/${encodeURIComponent(name)}/renew`, { method: "POST", body: {} }),
+    onSuccess: (_, name) => toast(`Renewal of ${name} requested; it runs within a few seconds.`),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["certificates"] }),
   });
   const automatic = certs.data?.automatic ?? [];
@@ -83,7 +91,6 @@ export function Certificates({ session }: { session: Session }) {
       <h1 className="mb-1 text-[22px] leading-7 font-semibold">Certificates</h1>
       <p className="mb-6 text-fg-2">Automatic certificates renew by themselves; files you configured are reloaded when they change.</p>
       {(certs.error || renew.error) && <div className="mb-4"><Alert>{describe(certs.error ?? renew.error)}</Alert></div>}
-      {renew.isSuccess && <div className="mb-4"><Alert tone="info">Renewal requested; it runs within a few seconds unless the CA asked to wait.</Alert></div>}
       <Card title="Automatic (ACME and local CA)">
         <Table
           head={<><th className={TH}>Names</th><th className={TH}>Expires</th><th className={TH}>Renews</th><th className={TH}>State</th><th className={TH}><span className="sr-only">Actions</span></th></>}

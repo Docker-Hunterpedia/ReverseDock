@@ -28,7 +28,7 @@ const NAV: { label: string; to?: string; icon: Icon }[][] = [
     { label: "Metrics", to: "/traffic", icon: Gauge },
     { label: "Config", icon: FileCode2 },
   ],
-  [{ label: "Settings", icon: Settings }],
+  [{ label: "Settings", to: "/settings", icon: Settings }],
 ];
 
 const THEMES: { value: Theme; label: string; icon: Icon }[] = [

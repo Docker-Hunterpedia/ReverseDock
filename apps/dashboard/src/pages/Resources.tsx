@@ -2,9 +2,10 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Drawer, OwnerBadge } from "../components/Drawer";
+import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card } from "../components/ui";
-import { type Session, api, apiWithTag, describe } from "../lib/api";
+import { type Session, api, apiWithTag, describe, diagnostics } from "../lib/api";
 
 export type Kind = "routes" | "services" | "middlewares";
 
@@ -78,6 +79,7 @@ const HEADS: Record<Kind, string[]> = {
 /** Edits or creates one API-owned object; changes go through If-Match on the API objects. */
 function Editor({ kind, item, onClose, canEdit }: { kind: Kind; item: Item | null; onClose: () => void; canEdit: boolean }) {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const creating = item === null;
   const editable = canEdit && (creating || item.owner === "api");
   const [name, setName] = useState(item?.name.replace(/@api$/, "") ?? "");
@@ -87,11 +89,20 @@ function Editor({ kind, item, onClose, canEdit }: { kind: Kind; item: Item | nul
     mutationFn: async (remove: boolean) => {
       const { etag } = await apiWithTag("/config/api");
       const path = `/${kind}/${encodeURIComponent(name.trim())}`;
-      if (remove) return api(path, { method: "DELETE", ifMatch: etag });
-      return api(path, { method: "PUT", ifMatch: etag, body: JSON.parse(text) as unknown });
+      const method = remove ? "DELETE" : "PUT";
+      const body = remove ? undefined : (JSON.parse(text) as unknown);
+      const report = await api<{ generation?: number }>(path, { method, ifMatch: etag, body });
+      return { remove, generation: report?.generation };
     },
-    onSuccess: () => {
+    onSuccess: ({ remove, generation }) => {
       void queryClient.invalidateQueries({ queryKey: [kind] });
+      const what = `${kind.slice(0, -1).replace(/^./, (c) => c.toUpperCase())} ${name.trim()}@api`;
+      toast(
+        <>
+          <strong className="font-medium">{what} {remove ? "deleted" : "validated and applied"}.</strong>
+          {generation != null && <span className="text-fg-2"> Configuration generation {generation} is live.</span>}
+        </>,
+      );
       onClose();
     },
   });
@@ -154,7 +165,24 @@ function Editor({ kind, item, onClose, canEdit }: { kind: Kind; item: Item | nul
           spellCheck={false}
         />
       </label>
-      {(problem || save.error) && <div className="mt-3"><Alert>{problem ?? describe(save.error)}</Alert></div>}
+      {(problem || save.error) && (
+        <div className="mt-3">
+          <Alert>
+            <p className="font-medium">{problem ?? `Not applied: ${describe(save.error)}`}</p>
+            {diagnostics(save.error).length > 0 && (
+              <ul className="mt-1.5 flex list-disc flex-col gap-1 pl-4">
+                {diagnostics(save.error).map((d, i) => (
+                  <li key={i}>
+                    <span className="font-mono">{d.path}</span>: {d.message}
+                    {d.hint && <span className="text-fg-3"> ({d.hint})</span>}
+                  </li>
+                ))}
+              </ul>
+            )}
+            {!problem && <p className="mt-1.5 text-fg-3">Nothing changed; the running configuration stays in use.</p>}
+          </Alert>
+        </div>
+      )}
       {editable && (
         <p className="mt-3 text-[13px] text-fg-3">
           Applied through the same validation as a file reload; a configuration that would be refused changes nothing.

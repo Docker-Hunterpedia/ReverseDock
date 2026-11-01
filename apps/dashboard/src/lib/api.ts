@@ -17,6 +17,8 @@ export class ApiError extends Error {
     readonly status: number,
     message: string,
     readonly retryAfter?: number,
+    /** The response body, for example a rejected reload's diagnostics. */
+    readonly details?: unknown,
   ) {
     super(message);
   }
@@ -74,13 +76,35 @@ async function request<T>(path: string, options: Options): Promise<{ data: T; et
     const message =
       (data as { error?: string } | undefined)?.error ?? response.statusText;
     const retry = Number(response.headers.get("retry-after"));
-    throw new ApiError(response.status, message, retry > 0 ? retry : undefined);
+    throw new ApiError(response.status, message, retry > 0 ? retry : undefined, data);
   }
   return { data: data as T, etag };
 }
 
+/** Thrown when someone cancels a step (for example the password check); nothing was changed. */
+export class Cancelled extends Error {
+  constructor() {
+    super("Cancelled; nothing was changed.");
+  }
+}
+
+export interface Diagnostic {
+  severity: "error" | "warning" | "info";
+  path: string;
+  message: string;
+  hint?: string;
+}
+
+/** The error diagnostics a refused configuration came back with. */
+export function diagnostics(error: unknown): Diagnostic[] {
+  if (!(error instanceof ApiError)) return [];
+  const list = (error.details as { diagnostics?: Diagnostic[] } | undefined)?.diagnostics;
+  return Array.isArray(list) ? list.filter((d) => d.severity === "error") : [];
+}
+
 /** A message for the user from any error. */
 export function describe(error: unknown): string {
+  if (error instanceof Cancelled) return error.message;
   if (error instanceof ApiError) {
     if (error.status === 429 && error.retryAfter) {
       return `Too many attempts. Try again in ${error.retryAfter} s.`;

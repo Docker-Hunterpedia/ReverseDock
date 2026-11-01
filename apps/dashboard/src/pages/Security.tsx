@@ -1,6 +1,8 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Alert, Button, Card, Field, StatusPill } from "../components/ui";
+import { useToast } from "../components/Toast";
+import { AuditLog, Tokens, Users } from "./Access";
 import { CodeList } from "./Enrol";
 import { type Session, api, describe } from "../lib/api";
 import { ago } from "../lib/status";
@@ -26,6 +28,7 @@ interface MfaState {
 /** Two-step verification status and new recovery codes after confirming the password. */
 function TwoStep() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const state = useQuery({ queryKey: ["mfa"], queryFn: () => api<MfaState>("/auth/mfa") });
   const [asking, setAsking] = useState(false);
   const [password, setPassword] = useState("");
@@ -36,6 +39,7 @@ function TwoStep() {
       return api<{ recovery_codes: string[] }>("/auth/recovery-codes", { method: "POST", body: {} });
     },
     onSuccess: () => {
+      toast("New recovery codes created; the old ones no longer work. Save them now.");
       setAsking(false);
       setPassword("");
       setCode("");
@@ -102,7 +106,7 @@ function TwoStep() {
   );
 }
 
-/** Two-step verification and sessions; users, tokens and the audit log follow (#111). */
+/** Two-step verification, users, sessions, API tokens and the audit log. */
 export function Security({ session }: { session: Session }) {
   const queryClient = useQueryClient();
   const sessions = useQuery({
@@ -110,19 +114,22 @@ export function Security({ session }: { session: Session }) {
     queryFn: () => api<Listed[]>("/auth/sessions"),
     refetchInterval: 15000,
   });
+  const toast = useToast();
   const end = useMutation({
     mutationFn: (id: string) => api(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => toast("Session ended; that browser is logged out."),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
   return (
     <>
       <h1 className="mb-1 text-[22px] leading-7 font-semibold">Security</h1>
       <p className="mb-6 text-fg-2">
-        {session.role === "admin" ? "Everyone's sessions." : "Your sessions."} A session ends after 30 minutes
-        without activity or 8 hours after login.
+        Two-step verification, {session.role === "admin" ? "users, everyone's sessions, API tokens and the audit log" : "your sessions and API tokens"}.
       </p>
       <TwoStep />
-      <Card title="Sessions">
+      {session.role === "admin" && <Users session={session} />}
+      <Card title="Sessions" className={session.role === "admin" ? "mt-6" : ""}>
         {sessions.error && <Alert>{describe(sessions.error)}</Alert>}
         {end.error && <Alert>{describe(end.error)}</Alert>}
         <div className="-m-4 overflow-x-auto">
@@ -155,6 +162,8 @@ export function Security({ session }: { session: Session }) {
           </table>
         </div>
       </Card>
+      <Tokens session={session} />
+      {session.role === "admin" && <AuditLog />}
     </>
   );
 }
