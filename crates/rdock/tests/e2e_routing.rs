@@ -94,7 +94,10 @@ services:
         );
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
-    assert_eq!(shadow.targets(), vec!["/flaky", "/orders"]);
+    // Copies are sent in the background, so they may arrive in either order.
+    let mut targets = shadow.targets();
+    targets.sort();
+    assert_eq!(targets, vec!["/flaky", "/orders"]);
 }
 
 #[tokio::test]
