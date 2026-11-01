@@ -1,0 +1,110 @@
+---
+title: Change the configuration through the API
+description: Add routes, services and middlewares through the admin API with versioned writes, dry runs, diffs, history and rollback, or turn API writes off for GitOps.
+sidebar:
+  order: 12
+---
+
+import Status from '../../../../components/Status.astro';
+
+Besides the file and Docker, the admin API is a provider of its own <Status since="v0.5" />: routes, services and middlewares written through it are merged into the configuration as `name@api`, validated and applied exactly like a file reload, stored in `$RDOCK_DATA_DIR/state/`, and restored after a restart. Objects from the file or Docker stay read-only through the API.
+
+The examples run on the server, over the admin socket. From elsewhere, use `http://127.0.0.1:2080` with `-H "Authorization: Bearer $TOKEN"` and a token with the `operator` role (see [Security model](/docs/concepts/security-model/#admin-api)).
+
+```sh
+api() { curl -s --unix-socket /var/lib/rdock/admin.sock -H 'Host: localhost' "$@"; }
+```
+
+## Read
+
+```sh
+api http://localhost/api/v1/config          # everything in use, with the owner of each object
+api -i http://localhost/api/v1/config/api   # only the API's objects; note the ETag header
+```
+
+Secret values written in place are shown as `***`, and basic-auth `users` entries as `name:***`; `${file:…}` and `${env:…}` references are shown as written <Status since="v0.5" />. Writing a document back with `***` keeps the current secret, so you can read, edit and save without retyping secrets; a `***` where there is no current value is refused with `422`.
+
+## Change, always with If-Match
+
+Every change names the version it was based on, so two people cannot overwrite each other: without `If-Match` the answer is `428`, with an older version `412` and the current `ETag`.
+
+```sh
+api -X PUT http://localhost/api/v1/config/api \
+  -H 'Content-Type: application/json' -H 'If-Match: "g7-3f2a9c1b0e4d5a6f"' \
+  -d '{"routes":{"shop":{"match":"Host(`shop.example.com`)","service":"shop"}},
+       "services":{"shop":{"backends":[{"address":"10.0.0.5:8080"}]}}}'
+```
+
+`PATCH` changes part of it: `Content-Type: application/merge-patch+json` (RFC 7396, `null` removes) or `application/json-patch+json` (RFC 6902 operations). A configuration that would not be applied is refused with `422` and the diagnostics, and nothing changes: unlike Docker objects, a broken API object is never just left out.
+
+Every write and dry run compiles the whole configuration, so at most 5 a second are accepted across all callers, in bursts of up to 10 <Status since="v0.5" />; beyond that the answer is `429` with `Retry-After`. Every caller (each API token, each user across their sessions, the CLI socket) may also make at most 20 requests of any kind a second, in bursts of up to 100, and the admin listener holds at most 256 connections. The admin side shares its CPU with the proxy, and these limits keep a runaway script from slowing the proxy down. Change many objects in one `PUT` or `PATCH` rather than one request each.
+
+## One object at a time
+
+`GET /api/v1/routes`, `/services` and `/middlewares` list every object with its `owner`; `GET /api/v1/routes/{name}` shows one. `PUT /api/v1/routes/shop` with the route as the body, or `DELETE`, changes one API object, with the same `If-Match` as above; objects owned by the file or Docker answer `403` with the provider to change them in.
+
+## Backends, certificates, providers and listeners
+
+- `GET /api/v1/backends` shows every service's backends: address, state (`up`, `down`, `trial`), requests in flight and whether they are drained. `POST /api/v1/backends/drain` with `{"service":"shop","backend":"10.0.0.5:8080"}` stops new requests to it while open ones finish; `/undrain` puts it back. A drained backend is out even when the service fails open; a restart forgets drains.
+- `GET /api/v1/certificates` lists configured and automatic certificates; `POST /api/v1/certificates/shop.example.com/renew` renews the automatic certificate covering that name now (still within the back-off after failures).
+- `GET /api/v1/providers` shows each provider's state with the diagnostics about its objects; `GET /api/v1/listeners` lists listeners, which only a restart changes ([ADR-0008](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0008-listener-changes-via-self-upgrade.md)).
+
+## Why did a request go there?
+
+`POST /api/v1/routes/explain` with `{"host": "shop.example.com", "path": "/cart", "method": "GET"}` (optional `listener`, `headers`, `client_ip`) answers without sending anything: every route of the listener in evaluation order with `matched`, `shadowed` (it matches too, but an earlier route wins) or `no match` and the rule term that failed, then the winning route, its middlewares and its service's backends with `considered` or the reason they are out. `rdock routes explain --host shop.example.com --path /cart` prints the same; the dashboard's Routes page has **Test a request**.
+
+## The same from the command line
+
+On the server the CLI uses the admin socket; elsewhere it needs `--admin` and `RDOCK_ADMIN_TOKEN`. The CLI speaks plain HTTP, so it sends the token only to a loopback address <Status since="v0.5" />; for a remote rdock, forward the admin port first (`ssh -L 2080:127.0.0.1:2080 server`) and use `--admin 127.0.0.1:2080`.
+
+```sh
+rdock config history                 # applied configurations with their id
+rdock config diff candidate.yaml     # what a document would change, nothing applied
+rdock config rollback 1793479942801
+rdock users list | add NAME --role operator | set NAME --disable | passwd NAME | reset-mfa NAME | remove NAME
+rdock tokens list | create NAME --role metrics --days 365 --allow 10.0.0.0/8 | revoke ID
+rdock backends list | drain SERVICE ADDRESS | undrain SERVICE ADDRESS
+rdock audit list --limit 50
+rdock routes explain --host shop.example.com --path /cart --header 'Authorization: Bearer x'
+```
+
+Passwords for `users add` and `users passwd` are read from standard input.
+
+## Try first
+
+```sh
+api -X POST http://localhost/api/v1/config/validate -H 'Content-Type: application/json' -d @candidate.json
+```
+
+The answer has `valid`, the `diagnostics` and a unified `diff` against the current API objects. Nothing is applied.
+
+Checking a candidate needs the operator role, like changing one.
+
+## History and rollback
+
+`GET /api/v1/config/history` lists applied configurations, newest first, each with an `id`. `POST /api/v1/config/rollback` with `{"id": …}` and `If-Match` restores the API objects of that entry; people confirm their password first (`POST /api/v1/auth/reauth`). The file part is never rolled back by the API: the file is its own source of truth.
+
+## Export and import
+
+`GET /api/v1/config/export` (admins, after a password check) returns `{"version":1,"api":{…}}`; `POST /api/v1/config/import` with that document and `If-Match` replaces the API objects on another instance. Write secrets as references: a document with masked `***` values is refused.
+
+## GitOps
+
+```yaml title="rdock.yaml (excerpt)"
+admin:
+  api_writes: false
+```
+
+Every configuration write through the API and the dashboard is then refused with `403`; reading, history and dry runs keep working. Every write and rollback is in the [audit log](/docs/concepts/security-model/#admin-api) with the version hashes before and after.
+
+## OpenAPI and clients
+
+The whole admin API is described by an OpenAPI 3.1 document <Status since="v0.5" />, generated from the code, so it always matches the running version. Any authenticated caller can read it:
+
+```sh
+api http://localhost/api/openapi.json > openapi.json
+rdock schema --openapi > openapi.json   # the same, without a running rdock
+```
+
+A copy is in the repository as `schema/openapi.json`, together with a Go client in `clients/go` (generated with oapi-codegen) and the TypeScript types the dashboard uses (`apps/dashboard/src/api`). A test calls every operation in the document against a running rdock and checks each answer against it.
+

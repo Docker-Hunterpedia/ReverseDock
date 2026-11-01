@@ -1,0 +1,10 @@
+# Caddy: round-robin over three backends on :8080; access logs are off unless `log` is set.
+{
+  auto_https off
+  admin off
+}
+:8080 {
+  reverse_proxy backend:80 backend-2:80 backend-3:80 {
+    lb_policy round_robin
+  }
+}

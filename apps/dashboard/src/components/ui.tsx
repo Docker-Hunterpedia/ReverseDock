@@ -101,8 +101,8 @@ export function StatusPill({ tone, children }: { tone: Tone; children: ReactNode
   );
 }
 
-export function Alert({ tone = "danger", children }: { tone?: "danger" | "warn" | "info"; children: ReactNode }) {
-  const border = { danger: "border-danger", warn: "border-warn", info: "border-info" }[tone];
+export function Alert({ tone = "danger", children }: { tone?: "danger" | "warn" | "info" | "ok"; children: ReactNode }) {
+  const border = { danger: "border-danger", warn: "border-warn", info: "border-info", ok: "border-ok" }[tone];
   return (
     <div role="alert" className={`rounded-sm border-l-4 ${border} bg-surface-2 px-3 py-2 text-[13px] text-fg`}>
       {children}

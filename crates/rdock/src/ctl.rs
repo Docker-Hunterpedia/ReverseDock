@@ -13,7 +13,7 @@ use anyhow::{Context, bail};
 use rdock_model::Diagnostic;
 use rdock_model::settings::Admin;
 
-use crate::run::{admin_address, admin_token, socket_path};
+use crate::run::{admin_address, socket_path};
 use crate::{CtlArgs, StatusArgs, print};
 
 const TIMEOUT: Duration = Duration::from_secs(30);
@@ -39,11 +39,12 @@ fn address(args: &CtlArgs) -> SocketAddr {
 enum Target {
     /// The local socket: file permissions are the authentication.
     Socket(PathBuf),
-    /// The admin listener, with the admin token.
+    /// The admin listener, with an API token.
     Tcp(SocketAddr, String),
 }
 
-/// The socket when it exists and `--admin` is not given; otherwise the listener and token.
+/// The socket when it exists and `--admin` is not given; otherwise the listener and an API
+/// token.
 fn target(args: &CtlArgs) -> anyhow::Result<Target> {
     if args.admin.is_none() {
         let socket = admin_settings(args)
@@ -53,13 +54,81 @@ fn target(args: &CtlArgs) -> anyhow::Result<Target> {
             return Ok(Target::Socket(socket));
         }
     }
-    Ok(Target::Tcp(
-        address(args),
-        admin_token(&args.data_dir, false)?,
-    ))
+    Ok(Target::Tcp(address(args), api_token()?))
+}
+
+/// An API token for the listener: `RDOCK_ADMIN_TOKEN` (ADR-0024; the shared token file of
+/// v0.1–v0.4 is gone).
+fn api_token() -> anyhow::Result<String> {
+    match std::env::var("RDOCK_ADMIN_TOKEN") {
+        Ok(token) if !token.trim().is_empty() => Ok(token.trim().to_owned()),
+        _ => anyhow::bail!(
+            "set RDOCK_ADMIN_TOKEN to an API token to use the admin listener, or run this on the \
+             server, where the admin socket needs none (create tokens in the dashboard or with \
+             POST /api/v1/tokens)"
+        ),
+    }
+}
+
+/// One request to the admin API: method, path, extra headers and an optional JSON body.
+pub(crate) struct Call<'a> {
+    pub method: &'a str,
+    pub path: &'a str,
+    pub headers: Vec<(&'a str, String)>,
+    pub body: Option<String>,
+}
+
+impl<'a> Call<'a> {
+    pub(crate) fn new(method: &'a str, path: &'a str) -> Self {
+        Self {
+            method,
+            path,
+            headers: Vec::new(),
+            body: None,
+        }
+    }
+
+    /// With a JSON body.
+    pub(crate) fn json(mut self, body: &serde_json::Value) -> Self {
+        self.headers
+            .push(("Content-Type", "application/json".into()));
+        self.body = Some(body.to_string());
+        self
+    }
+}
+
+/// The answer: status, response head and body.
+pub(crate) struct Answer {
+    pub status: u16,
+    pub head: String,
+    pub body: String,
+}
+
+impl Answer {
+    /// The body as JSON (`null` when it is not JSON).
+    pub(crate) fn json(&self) -> serde_json::Value {
+        serde_json::from_str(&self.body).unwrap_or(serde_json::Value::Null)
+    }
+
+    /// A response header, by lower-case name.
+    pub(crate) fn header(&self, name: &str) -> Option<&str> {
+        self.head.lines().find_map(|line| {
+            let (key, value) = line.split_once(':')?;
+            key.eq_ignore_ascii_case(name).then(|| value.trim())
+        })
+    }
+}
+
+/// Sends `call` to the running proxy (socket, or listener with an API token).
+pub(crate) fn call(args: &CtlArgs, call: &Call<'_>) -> anyhow::Result<Answer> {
+    send_call(&target(args)?, call)
 }
 
 fn send(target: &Target, method: &str, path: &str) -> anyhow::Result<(u16, String)> {
+    send_call(target, &Call::new(method, path)).map(|a| (a.status, a.body))
+}
+
+fn send_call(target: &Target, call: &Call<'_>) -> anyhow::Result<Answer> {
     match target {
         Target::Socket(socket) => {
             let stream = UnixStream::connect(socket).with_context(|| {
@@ -70,40 +139,62 @@ fn send(target: &Target, method: &str, path: &str) -> anyhow::Result<(u16, Strin
             })?;
             stream.set_read_timeout(Some(TIMEOUT))?;
             stream.set_write_timeout(Some(TIMEOUT))?;
-            exchange(stream, method, path, "localhost", None)
+            exchange(stream, call, "localhost", None)
         }
-        Target::Tcp(address, token) => tcp_request(*address, method, path, Some(token)),
+        Target::Tcp(address, token) => tcp_request(*address, call, Some(token)),
     }
 }
 
-/// Sends one request to the admin listener and returns status and body.
+/// Sends one request to the admin listener.
 fn tcp_request(
     address: SocketAddr,
-    method: &str,
-    path: &str,
+    call: &Call<'_>,
     token: Option<&str>,
-) -> anyhow::Result<(u16, String)> {
+) -> anyhow::Result<Answer> {
+    if token.is_some() {
+        refuse_plain_token(address)?;
+    }
     let stream = TcpStream::connect_timeout(&address, TIMEOUT)
         .with_context(|| format!("cannot reach the admin API at {address} (is rdock running?)"))?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
-    exchange(stream, method, path, &address.to_string(), token)
+    exchange(stream, call, &address.to_string(), token)
+}
+
+/// The CLI speaks plain HTTP, so it sends a token only to a loopback address; anywhere else
+/// the token would cross the network in clear text (ASVS V12).
+fn refuse_plain_token(address: SocketAddr) -> anyhow::Result<()> {
+    if address.ip().is_loopback() {
+        return Ok(());
+    }
+    bail!(
+        "not sending the API token to {address} over plain HTTP; run the command on the server \
+         (it uses the admin socket) or forward the admin port: ssh -L 2080:127.0.0.1:2080 <server>"
+    )
 }
 
 fn exchange(
     mut stream: impl Read + Write,
-    method: &str,
-    path: &str,
+    call: &Call<'_>,
     host: &str,
     token: Option<&str>,
-) -> anyhow::Result<(u16, String)> {
-    let auth = token
-        .map(|t| format!("Authorization: Bearer {t}\r\n"))
-        .unwrap_or_default();
-    write!(
-        stream,
-        "{method} {path} HTTP/1.1\r\nHost: {host}\r\n{auth}Content-Length: 0\r\nConnection: close\r\n\r\n"
-    )?;
+) -> anyhow::Result<Answer> {
+    use std::fmt::Write as _;
+    let mut head = format!("{} {} HTTP/1.1\r\nHost: {host}\r\n", call.method, call.path);
+    if let Some(token) = token {
+        let _ = write!(head, "Authorization: Bearer {token}\r\n");
+    }
+    for (name, value) in &call.headers {
+        let _ = write!(head, "{name}: {value}\r\n");
+    }
+    let body = call.body.as_deref().unwrap_or_default();
+    let _ = write!(
+        head,
+        "Content-Length: {}\r\nConnection: close\r\n\r\n",
+        body.len()
+    );
+    stream.write_all(head.as_bytes())?;
+    stream.write_all(body.as_bytes())?;
     let mut raw = Vec::new();
     stream
         .read_to_end(&mut raw)
@@ -115,7 +206,11 @@ fn exchange(
         .nth(1)
         .and_then(|s| s.parse().ok())
         .context("invalid response from the admin API")?;
-    Ok((status, body.to_owned()))
+    Ok(Answer {
+        status,
+        head: head.to_owned(),
+        body: body.to_owned(),
+    })
 }
 
 pub(crate) fn reload(args: &CtlArgs) -> anyhow::Result<ExitCode> {
@@ -242,16 +337,72 @@ fn certificate_line(cert: &serde_json::Value) -> String {
     )
 }
 
+/// Exit 0 when the running proxy is ready: `/readyz` on the admin socket or listener, or, with
+/// the admin side turned off, every listener accepting connections.
 pub(crate) fn healthcheck(args: &CtlArgs) -> ExitCode {
-    match tcp_request(address(args), "GET", "/readyz", None) {
-        Ok((200, _)) => ExitCode::SUCCESS,
-        Ok((status, body)) => {
-            eprintln!("not ready ({status}): {}", body.trim());
-            ExitCode::FAILURE
-        }
+    if args.admin.is_none()
+        && let Ok(loaded) = rdock_config::load_file(&args.config)
+        && !loaded.config.admin.enabled
+    {
+        return report(listeners_accept(&loaded.config));
+    }
+    report(ready(args))
+}
+
+fn report(checked: anyhow::Result<()>) -> ExitCode {
+    match checked {
+        Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("not ready: {err:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+/// `/readyz`, on the socket when there is one: it needs no token and works whatever TLS the
+/// listener has, while this client speaks plain HTTP.
+fn ready(args: &CtlArgs) -> anyhow::Result<()> {
+    let call = Call::new("GET", "/readyz");
+    let socket = admin_settings(args)
+        .socket
+        .unwrap_or_else(|| socket_path(&args.data_dir));
+    let answer = if args.admin.is_none() && socket.exists() {
+        send_call(&Target::Socket(socket), &call)?
+    } else {
+        tcp_request(address(args), &call, None)?
+    };
+    if answer.status != 200 {
+        bail!("{}: {}", answer.status, answer.body.trim());
+    }
+    Ok(())
+}
+
+fn listeners_accept(config: &rdock_model::Config) -> anyhow::Result<()> {
+    for (name, listener) in &config.listeners {
+        let mut address = admin_address(&listener.address);
+        if address.ip().is_unspecified() {
+            address.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        TcpStream::connect_timeout(&address, Duration::from_secs(2))
+            .with_context(|| format!("listener {name} at {address}"))?;
+    }
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_go_only_to_loopback_over_plain_http() {
+        for ok in ["127.0.0.1:2080", "[::1]:2080"] {
+            assert!(refuse_plain_token(ok.parse().unwrap()).is_ok(), "{ok}");
+        }
+        for refused in ["10.0.0.2:2080", "203.0.113.7:2080", "[2001:db8::1]:2080"] {
+            assert!(
+                refuse_plain_token(refused.parse().unwrap()).is_err(),
+                "{refused}"
+            );
         }
     }
 }

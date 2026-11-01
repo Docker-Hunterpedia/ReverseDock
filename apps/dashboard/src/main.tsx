@@ -2,7 +2,7 @@ import "./styles.css";
 
 import { MutationCache, QueryCache, QueryClient, QueryClientProvider, useQuery, useQueryClient } from "@tanstack/react-query";
 import { RouterProvider, createRootRoute, createRoute, createRouter } from "@tanstack/react-router";
-import { StrictMode, createContext, use, useEffect, useRef, useState } from "react";
+import { StrictMode, Suspense, createContext, lazy, use, useEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { Shell } from "./components/Shell";
 import { Alert } from "./components/ui";
@@ -11,9 +11,19 @@ import { type Theme, applyTheme, storedTheme, watchSystemTheme } from "./lib/the
 import { Enrol } from "./pages/Enrol";
 import { Login } from "./pages/Login";
 import { Mfa } from "./pages/Mfa";
+import { Certificates, Listeners, Providers, Services } from "./pages/Infrastructure";
+import { Logs } from "./pages/Logs";
+
+// CodeMirror and the schema load only when the Config page opens (ADR-0024 budget).
+const Config = lazy(() => import("./pages/Config").then((m) => ({ default: m.Config })));
+import { Metrics } from "./pages/Metrics";
 import { Overview } from "./pages/Overview";
+import { Resources } from "./pages/Resources";
 import { Security } from "./pages/Security";
+import { Settings } from "./pages/Settings";
 import { Setup } from "./pages/Setup";
+import { ReauthProvider } from "./components/Reauth";
+import { ToastProvider } from "./components/Toast";
 
 let theme = storedTheme();
 applyTheme(theme);
@@ -61,6 +71,31 @@ const router = createRouter({
   routeTree: root.addChildren([
     createRoute({ getParentRoute: () => root, path: "/", component: () => <Overview session={useApp().session} /> }),
     createRoute({ getParentRoute: () => root, path: "/security", component: () => <Security session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/traffic", component: Metrics }),
+    createRoute({ getParentRoute: () => root, path: "/routes", component: () => <Resources kind="routes" session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/services", component: () => <Services session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/middlewares", component: () => <Resources kind="middlewares" session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/certificates", component: () => <Certificates session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/listeners", component: Listeners }),
+    createRoute({ getParentRoute: () => root, path: "/providers", component: Providers }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/config",
+      component: () => (
+        <Suspense fallback={<p className="text-fg-3">Loading the editor…</p>}>
+          <Config session={useApp().session} />
+        </Suspense>
+      ),
+    }),
+    createRoute({
+      getParentRoute: () => root,
+      path: "/settings",
+      component: () => {
+        const app = useApp();
+        return <Settings theme={app.theme} setTheme={app.setTheme} />;
+      },
+    }),
+    createRoute({ getParentRoute: () => root, path: "/logs", component: Logs }),
   ]),
 });
 
@@ -128,7 +163,11 @@ function Gate() {
   };
   return (
     <AppContext value={{ session: data, theme: current, setTheme, logout }}>
-      <RouterProvider router={router} />
+      <ToastProvider>
+        <ReauthProvider>
+          <RouterProvider router={router} />
+        </ReauthProvider>
+      </ToastProvider>
     </AppContext>
   );
 }

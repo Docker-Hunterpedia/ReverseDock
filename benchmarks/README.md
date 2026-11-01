@@ -12,6 +12,23 @@ One route forwards every request to one backend, an NGINX serving a fixed 1 KiB 
 
 Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](compose.yaml).
 
+### Scenarios
+
+`SCENARIO=<name> ./run.sh` measures something other than the bare proxy. Results go to `results/<version>/<name>/`.
+
+| Scenario | What changes | What it shows |
+|---|---|---|
+| `single` (default) | One route, one backend, plain HTTP | The cost of the proxy itself |
+| `lb` | Three backends, round-robin; they share the same 4 CPUs (1.33 each) | The load balancer |
+| `tls` | HTTPS with kept-alive connections, HTTP/1.1, a P-256 certificate | Encryption per request |
+| `tls-new` | Like `tls`, with a new connection and TLS handshake for every request | Handshakes, the most expensive thing a proxy does. Latency here is k6's `iteration_duration`, because `http_req_duration` leaves out connecting and the handshake |
+| `slow` | The backend answers after 100 ms ([traefik/whoami](https://github.com/traefik/whoami) `?wait=100ms`) | Holding many requests open at once. Subtract the 100 ms when reading latency |
+| `routes` | 1,000 hosts, each with its own route, one chosen per request; [`gen-routes.py`](gen-routes.py) writes the configurations | Routing as a configuration grows. HAProxy uses plain ACLs in order, the way a hand-written configuration does; a map file would be faster |
+
+For `lb`, each proxy uses its own round-robin: rdock `policy: round_robin`, NGINX's default weighted round-robin ([upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)), HAProxy `balance roundrobin` ([configuration manual](https://docs.haproxy.org/3.2/configuration.html#4.2-balance)), Caddy `lb_policy round_robin` ([reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#lb_policy)) and Traefik's default weighted round-robin ([services](https://doc.traefik.io/traefik/routing/services/)), all checked 2026-11-01. A check with 30 requests per proxy found each backend getting a third of them (NGINX 11/10/9, the others 10/10/10).
+
+For the `tls` scenarios, k6 runs with `GODEBUG=http2client=0`, so every proxy is measured on HTTP/1.1; not all of them offer HTTP/2 by default.
+
 ## How load is generated
 
 [k6](https://grafana.com/docs/k6/latest/) runs an **open model**: the `constant-arrival-rate` executor starts requests at a fixed rate whatever the latency ([k6 executors](https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/constant-arrival-rate/), checked 2026-10-29). A closed-loop tool waits for each answer before sending the next request, so a stalling proxy slows the load down and hides its own tail latency, which is called coordinated omission ([wrk2](https://github.com/giltene/wrk2), checked 2026-10-29). With an open model, a stall shows up in p99 and p99.9 as it would for real users.
@@ -24,9 +41,10 @@ Each proxy gets a 10-second warm-up at 2,000 req/s, then 30 seconds at each targ
 docker build -t rdock:bench ..             # or RDOCK_IMAGE=ghcr.io/docker-hunterpedia/rdock:<version>
 VERSION=0.4.0-alpha.1 ./run.sh             # all proxies at 5k, 10k, 20k, 40k req/s
 PROXIES="rdock nginx" RATES="20000" DURATION=60s ./run.sh
+SCENARIO=lb VERSION=0.4.0-alpha.1 ./run.sh # another scenario, see above
 ```
 
-Results go to `results/<version>/<proxy>-<rate>.json`, and `results/<version>/report.md` sums them up. Requirements: Docker with Compose and Python 3.
+Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/<scenario>/` for the other scenarios), and `report.md` in the same folder sums them up. Requirements: Docker with Compose and Python 3.
 
 ## Reading the results
 
@@ -64,6 +82,26 @@ DURATION=20m RELOAD_EVERY=60 FLAP_EVERY=180 CERT_EVERY=240 WINDOW=120 PROBE_EVER
 ```
 
 For a 24-hour run, copy `backend/` and `soak/` to a folder outside the checkout and start it there: bash reads `run.sh` while it runs, so switching branches in the checkout would break the run. Everything goes to `soak/work/`: `probe.csv`, the k6 windows, `events.csv`, ReverseDock's log and `report.md`. Requirements: Docker with Compose, Python 3 and `openssl`.
+
+## Admin isolation test
+
+[`isolation/`](isolation/) checks that the admin side cannot slow the proxy (H-ENG-04). Under a fixed 4,000 req/s on the proxy, each 60-second phase does one thing to the admin side:
+
+- **login:** a flood of failed logins;
+- **sse:** 10,000 log streams that never read;
+- **apply:** configuration writes and rollbacks in a tight loop;
+- **write-lock:** the configuration-write lock held, with writers waiting;
+- **stall:** every admin thread blocked;
+- **abort:** the admin runtime panics and stops.
+
+A phase passes when the proxy's p99 stays within 25 % plus 2 ms of the baseline, failures do not rise and at most 0.1 % of requests are dropped. The stall, abort and write-lock faults come from the `fault-injection` Cargo feature, which release builds never have.
+
+```sh
+docker build -t rdock:fault --build-arg CARGO_FEATURES=fault-injection ..
+isolation/run.sh
+```
+
+The first runs found that the admin side's own threads do not protect the proxy on their own: both share the container's CPU quota, and when the admin side uses too much of it the kernel pauses the whole process. One script making about 500 requests a second took the proxy's p99 from 0.65 to 92 ms. Limits on connections, on requests per caller and on configuration writes fixed it: [results](results/2026-11-01-isolation/report.md).
 
 ## Results
 

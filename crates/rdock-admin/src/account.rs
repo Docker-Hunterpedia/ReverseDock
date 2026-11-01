@@ -11,10 +11,12 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use rdock_model::settings::MfaPolicy;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
+use utoipa::ToSchema;
 
+use crate::audit::{Event, Outcome};
 use crate::auth::{Peer, client, hashing, too_many};
 use crate::passwords::Verified;
-use crate::routes::error;
+use crate::routes::{Denied, error};
 use crate::sessions::{COOKIE, REAUTH, Session, Stage};
 use crate::users::{Mfa, Role};
 use crate::{State, totp};
@@ -75,30 +77,26 @@ pub(crate) fn reply(status: StatusCode, session: &Session, new_cookie: Option<&s
     respond(status, describe(session), new_cookie)
 }
 
-/// Why a request has no usable session; it becomes a JSON error.
-struct Refused(StatusCode, &'static str);
-
-impl IntoResponse for Refused {
-    fn into_response(self) -> Response {
-        error(self.0, self.1)
-    }
-}
-
 /// The caller's session in one of `stages`, with the CSRF token checked on unsafe methods.
 fn current<'h>(
     state: &State,
     method: &Method,
     headers: &'h HeaderMap,
     stages: &[Stage],
-) -> Result<(&'h str, Session), Refused> {
-    let Some((value, session)) =
-        cookie(headers).and_then(|v| state.sessions.get(v).map(|s| (v, s)))
-    else {
-        return Err(Refused(StatusCode::UNAUTHORIZED, "log in first"));
+) -> Result<(&'h str, Session), Denied> {
+    let Some((value, session)) = cookie(headers).and_then(|v| {
+        let found = if headers.contains_key(crate::sessions::BACKGROUND_HEADER) {
+            state.sessions.peek(v)
+        } else {
+            state.sessions.get(v)
+        };
+        found.map(|s| (v, s))
+    }) else {
+        return Err(Denied(StatusCode::UNAUTHORIZED, "log in first"));
     };
     let safe = matches!(*method, Method::GET | Method::HEAD);
     if !safe && !csrf_ok(headers, &session) {
-        return Err(Refused(
+        return Err(Denied(
             StatusCode::FORBIDDEN,
             "missing or wrong X-CSRF-Token",
         ));
@@ -109,9 +107,23 @@ fn current<'h>(
             Stage::Enrol => "set up an authenticator app first",
             Stage::Full => "you are logged in already",
         };
-        return Err(Refused(StatusCode::CONFLICT, message));
+        return Err(Denied(StatusCode::CONFLICT, message));
     }
     Ok((value, session))
+}
+
+/// An audit event by the session's user, from the address they logged in from.
+fn event(session: &Session, method: &'static str, action: &'static str) -> Event {
+    Event {
+        client: session.client,
+        ..Event::new(session.user.clone(), method, action)
+    }
+}
+
+fn denied(mut event: Event, reason: &str) -> Event {
+    event.outcome = Outcome::Denied;
+    event.reason = Some(reason.to_owned());
+    event
 }
 
 fn now_unix() -> u64 {
@@ -143,13 +155,15 @@ fn internal(err: &std::io::Error) -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save the user")
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Code {
     code: String,
 }
 
 /// `GET /api/v1/auth/session`: who is logged in, how far, and the CSRF token.
+#[utoipa::path(get, path = "/api/v1/auth/session", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "The session", body = crate::openapi::SessionInfo)))]
 pub(crate) async fn session(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -167,6 +181,12 @@ pub(crate) async fn session(
 }
 
 /// `POST /api/v1/auth/mfa`: the second step of a login, with a TOTP or recovery code.
+#[utoipa::path(post, path = "/api/v1/auth/mfa", tag = "auth", security(("session" = [])), request_body = Code,
+    responses(
+        (status = OK, description = "Logged in; a new session cookie", body = crate::openapi::SessionInfo),
+        (status = UNAUTHORIZED, description = "Wrong code", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn mfa(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -178,17 +198,24 @@ pub(crate) async fn mfa(
         Ok(found) => found,
         Err(refused) => return refused.into_response(),
     };
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
+    if let Err(wait) = state.limits.attempt(address, &session.user) {
         return too_many(wait);
     }
     match second_factor(&state, &session.user, &body.code) {
         Err(err) => internal(&err),
-        Ok(false) => error(StatusCode::UNAUTHORIZED, "wrong code"),
+        Ok(false) => {
+            state
+                .audit
+                .record(denied(event(&session, "totp", "login.mfa"), "wrong code"));
+            error(StatusCode::UNAUTHORIZED, "wrong code")
+        }
         Ok(true) => match state.sessions.rotate(value, |s| s.stage = Stage::Full) {
-            Some((cookie, session)) => reply(StatusCode::OK, &session, Some(&cookie)),
+            Some((cookie, session)) => {
+                state.limits.succeeded(address, &session.user);
+                state.audit.record(event(&session, "totp", "login.mfa"));
+                reply(StatusCode::OK, &session, Some(&cookie))
+            }
             None => error(StatusCode::UNAUTHORIZED, "log in first"),
         },
     }
@@ -196,6 +223,11 @@ pub(crate) async fn mfa(
 
 /// `POST /api/v1/auth/totp`: a new TOTP secret to enrol, confirmed with
 /// `POST /api/v1/auth/totp/confirm`.
+#[utoipa::path(post, path = "/api/v1/auth/totp", tag = "auth", security(("session" = [])),
+    responses(
+        (status = OK, description = "`secret` and an `otpauth://` `uri`", body = Object),
+        (status = CONFLICT, description = "Already enrolled", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn enrol(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -230,6 +262,12 @@ pub(crate) async fn enrol(
 
 /// `POST /api/v1/auth/totp/confirm`: saves the secret once the app shows a matching code,
 /// returns ten recovery codes (shown once) and ends the user's other sessions.
+#[utoipa::path(post, path = "/api/v1/auth/totp/confirm", tag = "auth", security(("session" = [])), request_body = Code,
+    responses(
+        (status = OK, description = "The session and `recovery_codes`", body = Object),
+        (status = UNAUTHORIZED, description = "Wrong code", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "No enrolment started", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn confirm(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -244,13 +282,17 @@ pub(crate) async fn confirm(
     let Some(secret) = session.pending_totp.clone() else {
         return error(StatusCode::CONFLICT, "start with POST /api/v1/auth/totp");
     };
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    if let Err(wait) = state.limits.attempt(
+        client(state.trust_forwarded, peer.map(|p| p.0), &headers),
+        &session.user,
+    ) {
         return too_many(wait);
     }
     let Some(step) = totp::verify(&secret, &body.code, now_unix(), 0) else {
+        state.audit.record(denied(
+            event(&session, "session", "mfa.enrol"),
+            "wrong code",
+        ));
         return error(StatusCode::UNAUTHORIZED, "wrong code");
     };
     let Some((shown, stored)) = totp::recovery_codes() else {
@@ -288,6 +330,7 @@ pub(crate) async fn confirm(
         return error(StatusCode::UNAUTHORIZED, "log in first");
     };
     tracing::info!(user = %session.user, "enrolled an authenticator app");
+    state.audit.record(event(&session, "session", "mfa.enrol"));
     let mut body = describe(&session);
     body["recovery_codes"] = serde_json::json!(shown);
     respond(StatusCode::OK, body, Some(&cookie))
@@ -296,6 +339,11 @@ pub(crate) async fn confirm(
 /// `POST /api/v1/auth/recovery-codes`: replaces the caller's recovery codes with ten new
 /// ones, shown once. Needs the password (and code) confirmed in the last five minutes; the
 /// old codes stop working at once.
+#[utoipa::path(post, path = "/api/v1/auth/recovery-codes", tag = "auth", security(("session" = [])),
+    responses(
+        (status = OK, description = "`recovery_codes`", body = Object),
+        (status = CONFLICT, description = "No authenticator app set up", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn new_recovery_codes(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -325,6 +373,9 @@ pub(crate) async fn new_recovery_codes(
         Ok(None) => error(StatusCode::CONFLICT, "set up an authenticator app first"),
         Ok(Some(())) => {
             tracing::info!(user = %session.user, "replaced the recovery codes");
+            state
+                .audit
+                .record(event(&session, "session", "mfa.recovery_codes"));
             axum::Json(serde_json::json!({ "recovery_codes": shown })).into_response()
         }
     }
@@ -332,6 +383,8 @@ pub(crate) async fn new_recovery_codes(
 
 /// `GET /api/v1/auth/mfa`: whether the caller has a second factor and how many recovery
 /// codes are left.
+#[utoipa::path(get, path = "/api/v1/auth/mfa", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "`enrolled`, `recovery_codes_left` and `required`", body = Object)))]
 pub(crate) async fn mfa_state(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -352,6 +405,8 @@ pub(crate) async fn mfa_state(
 
 /// `DELETE /api/v1/auth/totp`: removes the caller's second factor, when the policy allows
 /// it and the password was confirmed in the last five minutes.
+#[utoipa::path(delete, path = "/api/v1/auth/totp", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "The session, with a new cookie", body = crate::openapi::SessionInfo)))]
 pub(crate) async fn unenrol(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -376,6 +431,7 @@ pub(crate) async fn unenrol(
     if let Err(err) = state.users.update(&session.user, |u| u.mfa = None) {
         return internal(&err);
     }
+    state.audit.record(event(&session, "session", "mfa.remove"));
     state.sessions.end_user(&session.user, Some(value));
     match state.sessions.rotate(value, |_| {}) {
         Some((cookie, session)) => reply(StatusCode::OK, &session, Some(&cookie)),
@@ -383,7 +439,7 @@ pub(crate) async fn unenrol(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Reauth {
     password: String,
@@ -393,6 +449,12 @@ pub(crate) struct Reauth {
 
 /// `POST /api/v1/auth/reauth`: confirms the password (and code) again before a sensitive
 /// change (ASVS 7.5.1).
+#[utoipa::path(post, path = "/api/v1/auth/reauth", tag = "auth", security(("session" = [])), request_body = Reauth,
+    responses(
+        (status = NO_CONTENT, description = "Confirmed for five minutes"),
+        (status = UNAUTHORIZED, description = "Wrong password or code", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn reauth(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -404,10 +466,8 @@ pub(crate) async fn reauth(
         Ok(found) => found,
         Err(refused) => return refused.into_response(),
     };
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
+    if let Err(wait) = state.limits.attempt(address, &session.user) {
         return too_many(wait);
     }
     let worker = state.clone();
@@ -429,19 +489,125 @@ pub(crate) async fn reauth(
             state
                 .sessions
                 .modify(value, |s| s.authenticated = Instant::now());
+            state.limits.succeeded(address, &session.user);
+            state.audit.record(event(&session, "password", "reauth"));
             StatusCode::NO_CONTENT.into_response()
         }
-        Some(_) => error(StatusCode::UNAUTHORIZED, "wrong password or code"),
+        Some(_) => {
+            state.audit.record(denied(
+                event(&session, "password", "reauth"),
+                "wrong password or code",
+            ));
+            error(StatusCode::UNAUTHORIZED, "wrong password or code")
+        }
+    }
+}
+
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PasswordChange {
+    current: String,
+    new: String,
+}
+
+/// What a password change found, decided off the async runtime.
+enum Changed {
+    Done,
+    WrongPassword,
+    Failed(String),
+}
+
+/// `POST /api/v1/auth/password`: changes the caller's own password after checking the current
+/// one (ASVS 6.2.2, 6.2.3); the caller's other sessions end (ASVS 7.4.3).
+#[utoipa::path(post, path = "/api/v1/auth/password", tag = "auth", security(("session" = [])), request_body = PasswordChange,
+    responses(
+        (status = NO_CONTENT, description = "Changed; the caller's other sessions ended"),
+        (status = UNAUTHORIZED, description = "The current password is wrong", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "The new password is too weak or unchanged", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+        (status = SERVICE_UNAVAILABLE, description = "Too many password hashes at once", body = crate::openapi::ErrorBody),
+    ))]
+pub(crate) async fn change_password(
+    Extract(state): Extract<Arc<State>>,
+    method: Method,
+    peer: Option<Extension<Peer>>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<PasswordChange>,
+) -> Response {
+    let (value, session) = match current(&state, &method, &headers, &[Stage::Full]) {
+        Ok(found) => found,
+        Err(refused) => return refused.into_response(),
+    };
+    if let Err(weak) = state.policy.check(&body.new) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, &weak.to_string());
+    }
+    if body.new == body.current {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "choose a different password",
+        );
+    }
+    if let Err(wait) = state.limits.attempt(
+        client(state.trust_forwarded, peer.map(|p| p.0), &headers),
+        &session.user,
+    ) {
+        return too_many(wait);
+    }
+    let worker = state.clone();
+    let name = session.user.clone();
+    let changed = hashing(&state, move || {
+        let Some(user) = worker.users.find(&name) else {
+            return Changed::WrongPassword;
+        };
+        if worker.policy.verify(&body.current, &user.password) == Verified::No {
+            return Changed::WrongPassword;
+        }
+        let hash = match worker.policy.hash(&body.new) {
+            Ok(hash) => hash,
+            Err(err) => return Changed::Failed(err.to_string()),
+        };
+        match worker.users.update(&name, |u| u.password = hash) {
+            Ok(()) => Changed::Done,
+            Err(err) => Changed::Failed(err.to_string()),
+        }
+    })
+    .await;
+    match changed {
+        None => error(StatusCode::SERVICE_UNAVAILABLE, "busy; try again"),
+        Some(Changed::Done) => {
+            state.sessions.end_user(&session.user, Some(value));
+            tracing::info!(user = %session.user, "changed their password");
+            state
+                .audit
+                .record(event(&session, "password", "password.change"));
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Some(Changed::WrongPassword) => {
+            state.audit.record(denied(
+                event(&session, "password", "password.change"),
+                "wrong current password",
+            ));
+            error(StatusCode::UNAUTHORIZED, "the current password is wrong")
+        }
+        Some(Changed::Failed(message)) => {
+            tracing::error!(user = %session.user, error = %message, "cannot change a password");
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the password could not be saved",
+            )
+        }
     }
 }
 
 /// `POST /api/v1/auth/logout`: ends the session and tells the browser to forget it.
+#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "auth", security(("session" = [])),
+    responses((status = NO_CONTENT, description = "Logged out")))]
 pub(crate) async fn logout(
     Extract(state): Extract<Arc<State>>,
     method: Method,
     headers: HeaderMap,
 ) -> Response {
-    let (value, _) = match current(
+    let (value, session) = match current(
         &state,
         &method,
         &headers,
@@ -451,6 +617,7 @@ pub(crate) async fn logout(
         Err(refused) => return refused.into_response(),
     };
     state.sessions.remove(value);
+    state.audit.record(event(&session, "session", "logout"));
     let mut response = StatusCode::NO_CONTENT.into_response();
     let expired = format!("{COOKIE}=; Path=/; Secure; HttpOnly; SameSite=Strict; Max-Age=0");
     if let Ok(value) = HeaderValue::from_str(&expired) {
@@ -464,6 +631,8 @@ pub(crate) async fn logout(
 }
 
 /// `GET /api/v1/auth/sessions`: the caller's sessions, or everyone's for an admin.
+#[utoipa::path(get, path = "/api/v1/auth/sessions", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "The sessions", body = [crate::sessions::Listed])))]
 pub(crate) async fn sessions(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -479,6 +648,12 @@ pub(crate) async fn sessions(
 
 /// `DELETE /api/v1/auth/sessions/{id}`: ends one of the caller's sessions, or anyone's for
 /// an admin.
+#[utoipa::path(delete, path = "/api/v1/auth/sessions/{id}", tag = "auth", security(("session" = [])),
+    params(("id" = String, Path, description = "Session ID")),
+    responses(
+        (status = NO_CONTENT, description = "Ended"),
+        (status = NOT_FOUND, description = "No such session", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn end_session(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -493,6 +668,10 @@ pub(crate) async fn end_session(
         session.role == Role::Admin || s.user == session.user
     });
     if ended {
+        state.audit.record(Event {
+            resource: Some(id),
+            ..event(&session, "session", "session.end")
+        });
         StatusCode::NO_CONTENT.into_response()
     } else {
         error(StatusCode::NOT_FOUND, "no such session")

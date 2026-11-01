@@ -17,11 +17,14 @@ use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
 use tower_service::Service;
 
+use crate::audit::Audit;
 use crate::auth::Peer;
 use crate::bootstrap::Bootstrap;
 use crate::limits::LoginLimits;
 use crate::passwords::Policy;
 use crate::sessions::Sessions;
+use crate::stream::Hub;
+use crate::tokens::Tokens;
 use crate::users::Users;
 use crate::{Control, Settings, State, Transport, guard, routes};
 
@@ -76,6 +79,20 @@ impl Running {
     }
 }
 
+/// The user store and the bootstrap token, which is issued only while no admin exists.
+fn open_users(state_dir: &std::path::Path) -> std::io::Result<(Users, Bootstrap)> {
+    let users = Users::open(state_dir)?;
+    if users.has_admin() {
+        return Ok((users, Bootstrap::inactive(state_dir)?));
+    }
+    let bootstrap = Bootstrap::issue(state_dir)?;
+    tracing::warn!(
+        file = %bootstrap.file().display(),
+        "no admin user yet: create one with the single-use bootstrap token in this file (valid 24 hours)"
+    );
+    Ok((users, bootstrap))
+}
+
 /// Binds the listeners and serves them on a dedicated runtime until `stop` turns `true`.
 /// Engine calls are sent to the caller's runtime, which must be a tokio runtime.
 pub fn start(
@@ -88,34 +105,46 @@ pub fn start(
         .and_then(|l| l.set_nonblocking(true).map(|()| l))
         .map_err(|source| StartError::Bind { address, source })?;
     let tls = settings.tls.as_ref().map(acceptor).transpose()?;
-    let socket = settings.socket.as_deref().map(bind_socket).transpose()?;
+    // Without the socket the CLI falls back to the listener with an API token; a path too
+    // long for a Unix socket (about 104 bytes on macOS) must not stop the proxy.
+    let socket = settings.socket.as_deref().and_then(|path| match bind_socket(path) {
+        Ok(socket) => Some(socket),
+        Err(err) => {
+            tracing::warn!(error = %err, "the CLI socket is off; `rdock reload` and `rdock status` need --admin and RDOCK_ADMIN_TOKEN");
+            None
+        }
+    });
     let allowed_hosts = if settings.allowed_hosts.is_empty() {
         guard::default_hosts(address.ip())
     } else {
-        settings.allowed_hosts.clone()
+        settings.allowed_hosts
     };
     let state_error = |source| StartError::State {
         path: settings.state_dir.clone(),
         source,
     };
-    let users = Users::open(&settings.state_dir).map_err(state_error)?;
-    let bootstrap = if users.has_admin() {
-        Bootstrap::inactive(&settings.state_dir)
-    } else {
-        Bootstrap::issue(&settings.state_dir)
-    }
-    .map_err(state_error)?;
-    if !users.has_admin() {
-        tracing::warn!(
-            file = %bootstrap.file().display(),
-            "no admin user yet: create one with the single-use bootstrap token in this file (valid 24 hours)"
-        );
-    }
+    let (users, bootstrap) = open_users(&settings.state_dir).map_err(state_error)?;
     let policy = Policy::new(&settings.passwords).map_err(state_error)?;
+    let tokens = Tokens::open(&settings.state_dir).map_err(state_error)?;
+    let audit = Audit::open(
+        &settings.audit_dir,
+        settings.audit.max_file_size.as_u64(),
+        settings.audit.retention.as_std(),
+        settings.audit.forward.as_ref(),
+    )
+    .map_err(|source| StartError::State {
+        path: settings.audit_dir.clone(),
+        source,
+    })?;
+    remove_shared_token(&settings.state_dir);
+    let events = Hub::start(settings.feeds.as_ref().map(|f| f.events.clone()), "events");
+    audit.set_events(events.clone());
+    if let Some(feeds) = &settings.feeds {
+        audit.set_alerts(feeds.alerts.clone());
+    }
     let state = Arc::new(State {
         control,
         main: tokio::runtime::Handle::current(),
-        token: settings.token,
         allowed_hosts,
         users,
         bootstrap,
@@ -127,10 +156,23 @@ pub fn start(
         ),
         mfa: settings.mfa,
         dashboard: settings.dashboard,
+        tokens,
+        token_rules: settings.tokens,
+        metrics_open: settings.metrics_unauthenticated_on_loopback && address.ip().is_loopback(),
+        trust_forwarded: settings.trust_forwarded_on_loopback,
+        audit,
+        api_writes: settings.api_writes,
+        logs: Hub::start(settings.feeds.as_ref().map(|f| f.logs.clone()), "logs"),
+        events: events.clone(),
+        quota: crate::stream::Quota::default(),
+        telemetry: crate::telemetry::Telemetry::default(),
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
+        config_work: crate::config_api::work_limiter(),
+        api_rate: crate::caller::request_limiter(),
     });
+    let threads = settings.threads.max(1);
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(settings.threads.max(1))
+        .worker_threads(threads)
         .thread_name("rdock-admin")
         .enable_all()
         .build()
@@ -150,11 +192,43 @@ pub fn start(
                         .ok()
                         .map(|l| (l, path))
                 });
-                serve(router, tcp, tls, socket, stop).await;
+                let served = serve(router, tcp, tls, socket, stop);
+                #[cfg(feature = "fault-injection")]
+                let served = with_fault(served, threads);
+                served.await;
             });
         })
         .map_err(StartError::Runtime)?;
     Ok(Running { thread })
+}
+
+/// Serves until `served` ends, interrupted by the fault `RDOCK_FAULT` asks for, if any.
+#[cfg(feature = "fault-injection")]
+async fn with_fault(served: impl std::future::Future<Output = ()>, threads: usize) {
+    let mut served = std::pin::pin!(served);
+    if let Some(fault) = crate::fault::from_env() {
+        tokio::select! {
+            () = &mut served => return,
+            () = crate::fault::strike(fault, threads) => {}
+        }
+    }
+    served.await;
+}
+
+/// Deletes the v0.1–v0.4 shared admin token (ADR-0024): API tokens replace it, and the CLI
+/// uses the socket.
+fn remove_shared_token(dir: &Path) {
+    let path = dir.join("token");
+    match std::fs::remove_file(&path) {
+        Ok(()) => tracing::info!(
+            file = %path.display(),
+            "removed the old shared admin token; create an API token for scripts (POST /api/v1/tokens)"
+        ),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+        Err(err) => {
+            tracing::warn!(file = %path.display(), error = %err, "cannot remove the old shared admin token");
+        }
+    }
 }
 
 fn acceptor(files: &crate::TlsFiles) -> Result<TlsAcceptor, StartError> {
@@ -189,6 +263,14 @@ fn bind_socket(path: &Path) -> Result<(std::os::unix::net::UnixListener, PathBuf
 
 type Socket = (tokio::net::UnixListener, PathBuf);
 
+/// Open TCP connections to the admin listener; more are closed as they arrive. Dashboards,
+/// scripts and Prometheus need a handful; four streams per identity are allowed.
+const MAX_CONNECTIONS: usize = 256;
+
+/// Time to finish a TLS handshake or a request's headers, including the next request on a
+/// kept-alive connection.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+
 async fn serve(
     router: Router,
     tcp: tokio::net::TcpListener,
@@ -200,24 +282,36 @@ async fn serve(
         .clone()
         .layer(Extension(Transport::Tcp { tls: tls.is_some() }));
     let socket_router = router.layer(Extension(Transport::Socket));
+    let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     loop {
         tokio::select! {
             changed = stop.changed() => if changed.is_err() || *stop.borrow() { break },
             accepted = tcp.accept() => match accepted {
                 Ok((stream, address)) => {
+                    // Over the cap the connection is closed at once: holding thousands of
+                    // them would spend CPU the proxy shares (H-ENG-04, ASVS finding 11).
+                    let Ok(permit) = open.clone().try_acquire_owned() else {
+                        tracing::debug!(%address, "admin connection refused: too many open");
+                        continue;
+                    };
                     let router = tcp_router.clone();
                     let peer = Some(Peer(address));
                     match tls.clone() {
                         Some(acceptor) => {
                             tokio::spawn(async move {
-                                match acceptor.accept(stream).await {
-                                    Ok(stream) => connection(stream, router, peer).await,
-                                    Err(err) => tracing::debug!(error = %err, "admin TLS handshake failed"),
+                                let _permit = permit;
+                                match tokio::time::timeout(HEADER_TIMEOUT, acceptor.accept(stream)).await {
+                                    Ok(Ok(stream)) => connection(stream, router, peer).await,
+                                    Ok(Err(err)) => tracing::debug!(error = %err, "admin TLS handshake failed"),
+                                    Err(_) => tracing::debug!("admin TLS handshake timed out"),
                                 }
                             });
                         }
                         None => {
-                            tokio::spawn(connection(stream, router, peer));
+                            tokio::spawn(async move {
+                                let _permit = permit;
+                                connection(stream, router, peer).await;
+                            });
                         }
                     }
                 }
@@ -259,7 +353,12 @@ where
         }
         router.clone().call(request)
     });
-    if let Err(err) = Builder::new(TokioExecutor::new())
+    let mut builder = Builder::new(TokioExecutor::new());
+    builder
+        .http1()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(HEADER_TIMEOUT);
+    if let Err(err) = builder
         .serve_connection(TokioIo::new(stream), service)
         .await
     {

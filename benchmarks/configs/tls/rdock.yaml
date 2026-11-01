@@ -1,0 +1,14 @@
+# ReverseDock: HTTPS on one listener, one route, one backend, no access log.
+listeners:
+  web: { address: ":8080", tls: {} }
+defaults: { listeners: [web], tls: off }
+certificates:
+  bench: { cert_file: /certs/cert.pem, key_file: /certs/key.pem }
+routes:
+  app: { match: "PathPrefix(`/`)", service: app, listeners: [web], tls: { certificate: bench } }
+services:
+  app:
+    backends: [{ address: "backend:80" }]
+observability:
+  access_log: { format: off }
+admin: { enabled: false }

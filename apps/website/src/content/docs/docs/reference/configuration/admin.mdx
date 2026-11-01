@@ -17,6 +17,58 @@ Admin API and dashboard.
 
 Host names the admin listener answers to; other `Host` headers get 421 (DNS-rebinding defence). Default: `localhost`, `127.0.0.1` and `::1` on loopback, the listener's IP otherwise. Required when `listener` is on all interfaces.
 
+## `admin.api_writes`
+
+**Type:** `boolean` · **Default:** `true`
+
+Allow configuration changes through the admin API and the dashboard. Set `false` (`GitOps`) when Git and the file provider are the only source of truth.
+
+## `admin.audit`
+
+**Type:** object · **Default:** `{"forward":null,"max_file_size":"64MiB","retention":"400d"}`
+
+The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.
+
+### `admin.audit.forward`
+
+**Type:** object
+
+Also send each record to a syslog server.
+
+#### `admin.audit.forward.ca_file`
+
+**Type:** `string`
+
+CA that signed the syslog server's certificate, for `tls`; the system's CAs when unset.
+
+#### `admin.audit.forward.syslog`
+
+**Type:** `string` · **Required**
+
+Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as the message.
+
+#### `admin.audit.forward.transport`
+
+**Type:** `udp` · `tcp` · `tls` · **Default:** `udp`
+
+`udp` (default), `tcp` (octet counting, RFC 6587) or `tls` (RFC 5425). Only `tls` protects records on the network.
+
+- `udp`: One datagram per record.
+- `tcp`: A stream with octet-counted framing.
+- `tls`: The same stream over TLS, with the server's certificate and name verified.
+
+### `admin.audit.max_file_size`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64MiB`
+
+A file is closed and a new one started at this size (1 MiB–1 GiB).
+
+### `admin.audit.retention`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `400d`
+
+How long rotated files are kept (1d–3650d).
+
 ## `admin.dashboard`
 
 **Type:** `boolean` · **Default:** `true`
@@ -34,6 +86,12 @@ Serve the admin API.
 **Type:** [`ListenAddress`](/docs/reference/configuration/#listenaddress) · **Default:** `127.0.0.1:2080`
 
 Address of the admin API. Loopback by default; any other address needs `tls`.
+
+## `admin.metrics_unauthenticated_on_loopback`
+
+**Type:** `boolean` · **Default:** `false`
+
+Serve `/metrics` without a token when the listener is a loopback address, as before v0.5, for scrapers on the same machine that cannot send one.
 
 ## `admin.mfa`
 
@@ -134,3 +192,27 @@ PEM certificate chain, leaf first.
 **Type:** `string` · **Required**
 
 PEM private key.
+
+## `admin.tokens`
+
+**Type:** object · **Default:** `{"allow_no_expiry":false,"default_expiry_days":90}`
+
+API tokens for scripts and Prometheus.
+
+### `admin.tokens.allow_no_expiry`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow tokens that never expire. Off by default: a leaked token should stop working.
+
+### `admin.tokens.default_expiry_days`
+
+**Type:** `integer` · **Default:** `90`
+
+Lifetime of a new token when its creator gives none, in days (1–365).
+
+## `admin.trust_forwarded_on_loopback`
+
+**Type:** `boolean` · **Default:** `false`
+
+Take the client's address from `X-Forwarded-For` on connections from loopback. Turn it on only when a route of this rdock forwards to the admin listener, so rate limits and token networks see real clients; any local process could otherwise claim an address.

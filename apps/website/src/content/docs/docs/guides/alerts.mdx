@@ -1,0 +1,62 @@
+---
+title: Get alerts
+description: Send alerts about certificates, backends, error rates, latency, rejected configurations and admin security events to Slack, Discord, Mattermost, signed webhooks or e-mail.
+sidebar:
+  order: 13
+---
+
+import Status from '../../../../components/Status.astro';
+
+rdock raises an alert when something needs a person <Status since="v0.5" />, sends it to the channels you list, and says again when it is over:
+
+| Rule | Fires when | Resolves when |
+|---|---|---|
+| `certificates` | renewal failed 3 times, or less than 7 days are left | (reminds daily while it lasts) |
+| `backends` | a backend fails its health checks or is ejected; a whole service has no healthy backend | it is back |
+| `error_rate` | a service's 5xx share over the window is above the threshold (off until set) | it drops below |
+| `latency` | a service's p99 over the window is above the threshold (off until set) | it drops below |
+| `config` | a configuration is rejected (the previous one keeps running) | a configuration is applied |
+| `security` | repeated failed admin logins, admin users created, changed or deleted, two-step verification turned off, an API token used from a new address | |
+
+A firing alert is sent once and again at most every `min_interval` (15 minutes) while it lasts. Delivery runs beside the proxy, never on a request: from a bounded queue, with up to three attempts about 1 s and 3 s apart, 5 seconds per attempt, and no redirects followed.
+
+```yaml title="rdock.yaml (excerpt)"
+observability:
+  alerts:
+    channels:
+      ops:
+        type: slack
+        url: ${file:/run/secrets/slack-webhook}
+      team:
+        type: discord
+        url: ${env:DISCORD_WEBHOOK}
+        rules: [backends, certificates]
+      mattermost:
+        type: slack_compatible
+        url: ${file:/run/secrets/mattermost}
+      pager:
+        type: webhook
+        url: https://alerts.example.com/rdock
+        secret: ${file:/run/secrets/whsec}
+      mail:
+        type: smtp
+        host: smtp.example.com
+        port: 587
+        username: ${env:SMTP_USER}
+        password: ${file:/run/secrets/smtp}
+        from: rdock@example.com
+        to: [ops@example.com]
+    rules:
+      error_rate: { percent: 5, window: 5m, min_requests: 50 }
+      latency: { p99: 800ms, window: 5m }
+      disabled: [security]
+```
+
+- **`slack`**, **`discord`** and **`slack_compatible`** (Discord's `/slack` endpoint, Mattermost, Rocket.Chat) post one line such as `[FIRING] Backend 10.0.0.5:8080 of service shop is down: failed its health checks`. Discord messages allow no mentions, so a host name can never ping `@everyone`.
+- **`webhook`** posts JSON with `type` (`rdock.alert.firing` or `rdock.alert.resolved`), `timestamp` and `alert` (`rule`, `key`, `state`, `summary`, `details`). With a `whsec_…` `secret` it is signed with [Standard Webhooks](https://www.standardwebhooks.com/) (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which their libraries verify; `token` adds `Authorization: Bearer`. The v0.3 `alerts.webhook` keeps working as a channel named `webhook`, with the same fields as before at the top level.
+- **`smtp`** sends e-mail with STARTTLS (port 587, default) or implicit TLS (`tls: implicit`, port 465); `tls: none` is accepted only for a relay on the same machine.
+- `rules` on a channel limits it to those rules.
+- URLs, secrets, tokens and passwords are secrets: write them as `${file:…}` or `${env:…}`; `rdock validate` warns about a webhook URL written in the file.
+- **No internal targets by default.** A channel whose host is, or resolves to, a private, loopback or link-local address (for example the cloud metadata address `169.254.169.254`) is refused, checked at connection time; set `allow_private_targets: true` on a channel for a relay inside your network (plain `http://` is accepted only then).
+
+`rdock_alerts_sent_total{channel,result}` counts deliveries; a failed delivery is logged with the reason.

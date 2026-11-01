@@ -26,6 +26,9 @@ pub struct HistoryEntry {
     pub summary: String,
     /// The document as written.
     pub source: Value,
+    /// The API provider's objects at the time (ADR-0024), restored by a rollback.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api: Option<Value>,
 }
 
 /// The `state` directory.
@@ -92,6 +95,7 @@ impl StateDir {
         let dir = self.history_dir();
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         entry.source.to_string().hash(&mut hasher);
+        entry.api.as_ref().map(Value::to_string).hash(&mut hasher);
         let path = dir.join(format!(
             "{:013}-{:016x}.json",
             entry.applied_at_ms,
@@ -158,6 +162,7 @@ mod tests {
             generation: n,
             summary: format!("generation {n}"),
             source: serde_json::json!({ "routes": { format!("r{n}"): {} } }),
+            api: None,
         }
     }
 

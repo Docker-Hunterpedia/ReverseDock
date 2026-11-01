@@ -1,0 +1,13 @@
+tls:
+  certificates:
+    - { certFile: /certs/cert.pem, keyFile: /certs/key.pem }
+  stores:
+    default:
+      defaultCertificate: { certFile: /certs/cert.pem, keyFile: /certs/key.pem }
+http:
+  routers:
+    app: { rule: "PathPrefix(`/`)", service: app, entryPoints: [web], tls: {} }
+  services:
+    app:
+      loadBalancer:
+        servers: [{ url: "http://backend:80" }]

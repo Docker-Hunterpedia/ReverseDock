@@ -28,7 +28,7 @@ The official image is `ghcr.io/docker-hunterpedia/rdock`. It contains the static
 | `80`, `443` | Exposed ports; your listeners decide what is actually bound |
 | `127.0.0.1:2080` | Admin API inside the container, used by the health check |
 
-The entrypoint is `rdock` and the default command is `run`. The image has a `HEALTHCHECK` that runs `rdock healthcheck` every 10 seconds, so `docker ps` shows `healthy` once the proxy is ready.
+The entrypoint is `rdock` and the default command is `run`. The image has a `HEALTHCHECK` that runs `rdock healthcheck` every 10 seconds, so `docker ps` shows `healthy` once the proxy is ready. With `admin.enabled: false` it checks instead that every listener accepts connections.
 
 ## Run it
 

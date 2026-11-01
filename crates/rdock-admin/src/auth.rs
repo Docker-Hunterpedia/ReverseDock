@@ -9,8 +9,10 @@ use axum::extract::{Extension, State as Extract};
 use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, HeaderValue, StatusCode, header};
 use serde::Deserialize;
+use utoipa::ToSchema;
 
 use crate::account::{self, mfa_required};
+use crate::audit::{Event, Outcome};
 use crate::passwords::Verified;
 use crate::routes::error;
 use crate::sessions::Stage;
@@ -21,7 +23,7 @@ use crate::{State, Transport};
 #[derive(Debug, Clone, Copy)]
 pub(crate) struct Peer(pub(crate) SocketAddr);
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Credentials {
     name: String,
@@ -33,12 +35,17 @@ const WRONG: &str = "wrong user name or password";
 /// The rate-limit key for setup attempts; `@` keeps it apart from every user name.
 const SETUP_KEY: &str = "@setup";
 
-/// The client's address for limits and logs: the socket's peer, or, on a connection from
-/// loopback (ReverseDock forwarding a route to its own admin listener), the last
-/// `X-Forwarded-For` entry, which the proxy appended. Never a header from anyone else.
-pub(crate) fn client(peer: Option<Peer>, headers: &HeaderMap) -> Option<IpAddr> {
+/// The client's address for limits and logs: the socket's peer. With
+/// `admin.trust_forwarded_on_loopback`, for a dashboard reached through a route of this rdock,
+/// a connection from loopback counts as the last `X-Forwarded-For` entry, which the proxy
+/// appended. It is off by default, because any local process could otherwise claim an address.
+pub(crate) fn client(
+    trust_forwarded: bool,
+    peer: Option<Peer>,
+    headers: &HeaderMap,
+) -> Option<IpAddr> {
     let ip = peer?.0.ip();
-    if !ip.is_loopback() {
+    if !trust_forwarded || !ip.is_loopback() {
         return Some(ip);
     }
     let forwarded = headers
@@ -95,6 +102,9 @@ fn start_session(state: &State, user: &User, address: Option<IpAddr>) -> Respons
     } else {
         Stage::Full
     };
+    if step == Stage::Full {
+        state.limits.succeeded(address, &user.name);
+    }
     match state.sessions.create(&user.name, user.role, step, address) {
         Some((cookie, session)) => account::reply(StatusCode::OK, &session, Some(&cookie)),
         None => busy(),
@@ -111,12 +121,22 @@ fn bearer(headers: &HeaderMap) -> &str {
 
 /// `GET /api/v1/setup`: whether the first admin still has to be created, so the dashboard
 /// can show the first-run page.
+#[utoipa::path(get, path = "/api/v1/setup", tag = "auth",
+    responses((status = OK, description = "`needed`: whether no admin exists yet", body = Object)))]
 pub(crate) async fn setup_needed(Extract(state): Extract<Arc<State>>) -> Response {
     axum::Json(serde_json::json!({ "needed": !state.users.has_admin() })).into_response()
 }
 
 /// `POST /api/v1/setup`: creates the first admin. Over TCP it needs the bootstrap token as
 /// a bearer token; on the Unix socket the file permissions are the proof.
+#[utoipa::path(post, path = "/api/v1/setup", tag = "auth", request_body = Credentials,
+    responses(
+        (status = CREATED, description = "The admin; `name` and `role`", body = Object),
+        (status = UNAUTHORIZED, description = "Missing or wrong bootstrap token", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "An admin exists", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Invalid name or weak password", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn setup(
     Extract(state): Extract<Arc<State>>,
     Extension(transport): Extension<Transport>,
@@ -127,10 +147,8 @@ pub(crate) async fn setup(
     if state.users.has_admin() {
         return error(StatusCode::CONFLICT, "an admin user exists; log in instead");
     }
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), SETUP_KEY)
-    {
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
+    if let Err(wait) = state.limits.attempt(address, SETUP_KEY) {
         return too_many(wait);
     }
     if transport != Transport::Socket && !state.bootstrap.accepts(bearer(&headers)) {
@@ -169,6 +187,24 @@ pub(crate) async fn setup(
                 tracing::warn!(error = %err, file = %state.bootstrap.file().display(), "cannot delete the bootstrap token");
             }
             tracing::info!(user = %user.name, "created the first admin user");
+            let method = if transport == Transport::Socket {
+                "socket"
+            } else {
+                "bootstrap"
+            };
+            state.audit.record(Event {
+                client: address,
+                resource: Some(user.name.clone()),
+                ..Event::new(
+                    if transport == Transport::Socket {
+                        "cli"
+                    } else {
+                        "bootstrap"
+                    },
+                    method,
+                    "user.create_first_admin",
+                )
+            });
             (StatusCode::CREATED, account(&user)).into_response()
         }
         Some(Err(AddError::AdminExists | AddError::Exists)) => {
@@ -184,15 +220,34 @@ pub(crate) async fn setup(
 /// `POST /api/v1/auth/login`: checks a user name and password and starts a session.
 /// Unknown names, disabled users and wrong passwords get the same answer after the same
 /// Argon2 work.
+#[utoipa::path(post, path = "/api/v1/auth/login", tag = "auth", request_body = Credentials,
+    responses(
+        (status = OK, description = "A session; `stage` says whether a code or enrolment is next", body = crate::openapi::SessionInfo,
+            headers(("Set-Cookie" = String, description = "The session cookie"))),
+        (status = UNAUTHORIZED, description = "Wrong name or password", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn login(
     Extract(state): Extract<Arc<State>>,
     peer: Option<Extension<Peer>>,
     headers: HeaderMap,
     axum::Json(body): axum::Json<Credentials>,
 ) -> Response {
-    let address = client(peer.map(|p| p.0), &headers);
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
     let name = normalize_name(&body.name).unwrap_or_default();
+    // Only well-formed names are recorded: a password typed into the name field never is.
+    let actor = if name.is_empty() {
+        "-".to_owned()
+    } else {
+        name.clone()
+    };
     if let Err(wait) = state.limits.attempt(address, &name) {
+        state.audit.record(Event {
+            client: address,
+            outcome: Outcome::Denied,
+            reason: Some("rate limited".into()),
+            ..Event::new(actor, "password", "login")
+        });
         return too_many(wait);
     }
     let worker = state.clone();
@@ -220,9 +275,22 @@ pub(crate) async fn login(
     .await;
     match checked {
         None => busy(),
-        Some(Some(user)) => start_session(&state, &user, address),
+        Some(Some(user)) => {
+            state.audit.record(Event {
+                client: address,
+                ..Event::new(user.name.clone(), "password", "login")
+            });
+            start_session(&state, &user, address)
+        }
         Some(None) => {
             tracing::info!(client = ?address, "admin login failed");
+            state.telemetry.login_failed();
+            state.audit.record(Event {
+                client: address,
+                outcome: Outcome::Denied,
+                reason: Some("wrong user name or password".into()),
+                ..Event::new(actor, "password", "login")
+            });
             error(StatusCode::UNAUTHORIZED, WRONG)
         }
     }
@@ -244,17 +312,22 @@ mod tests {
             HeaderValue::from_static("203.0.113.9, 198.51.100.7"),
         );
         assert_eq!(
-            client(peer("127.0.0.1:5000"), &headers),
+            client(true, peer("127.0.0.1:5000"), &headers),
             Some("198.51.100.7".parse().unwrap())
         );
         assert_eq!(
-            client(peer("192.0.2.4:5000"), &headers),
+            client(true, peer("192.0.2.4:5000"), &headers),
             Some("192.0.2.4".parse().unwrap())
         );
         assert_eq!(
-            client(peer("[::1]:5000"), &HeaderMap::new()),
+            client(true, peer("[::1]:5000"), &HeaderMap::new()),
             Some("::1".parse().unwrap())
         );
-        assert_eq!(client(None, &headers), None);
+        assert_eq!(client(true, None, &headers), None);
+        assert_eq!(
+            client(false, peer("127.0.0.1:5000"), &headers),
+            "127.0.0.1".parse().ok(),
+            "off by default: a local process cannot claim an address"
+        );
     }
 }

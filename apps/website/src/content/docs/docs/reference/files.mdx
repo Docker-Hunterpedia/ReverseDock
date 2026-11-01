@@ -48,7 +48,7 @@ this:
 /var/lib/rdock/
 ├── admin/
 │   ├── bootstrap-token
-│   ├── token
+│   ├── tokens.json
 │   └── users.json
 └── state/
     ├── lkg.json
@@ -57,12 +57,11 @@ this:
         └── …
 ```
 
-### `admin/token`
+### `admin/tokens.json` <Status since="v0.5" />
 
-The bearer token of the admin API, created on first start as `rdk_` followed by 64 hexadecimal
-characters. `rdock status` and `rdock reload` read it from here. It is not created when
-`RDOCK_ADMIN_TOKEN` is set, and not when the admin API is turned off (`admin.enabled: false`).
-Delete the file and restart to get a new token.
+API tokens: ID, name, role, creator, expiry, allowed networks, last use, and the SHA-256 of each
+secret, never the secret itself; mode 0600. The shared token file `admin/token` of v0.1–v0.4 is
+deleted at the first start of v0.5.
 
 ### `admin/bootstrap-token` <Status since="v0.5" />
 
@@ -77,6 +76,10 @@ The dashboard users: name, role, Argon2id password hash, creation time and, once
 TOTP secret and the SHA-256 hashes of unused recovery codes; mode 0600, written atomically.
 Passwords are never stored. Back it up with the rest of the data directory, and protect the
 backup like the file: the TOTP secrets are in it. Sessions are kept in memory only.
+
+### `audit/` <Status since="v0.5" />
+
+The admin audit log: `audit-<first sequence number>.jsonl` files, mode 0600 in a 0700 directory, each line linked to the previous one by its SHA-256. `rdock audit verify` checks the chain. Rotated files older than `admin.audit.retention` are deleted.
 
 ### `admin.sock`
 
@@ -117,7 +120,7 @@ under `acme/` in the data directory by default (`acme.storage`).
 
 ## Permissions
 
-- Files ReverseDock writes (`admin/token`, `lkg.json`, history entries) are created with mode
+- Files ReverseDock writes (`admin/users.json`, `admin/tokens.json`, `lkg.json`, history entries) are created with mode
   **0600**, readable by their owner only. Each is written to a temporary file, flushed to disk
   and renamed into place, so a crash never leaves a half-written file.
 - Directories are created with the process's default permissions. Make the data directory

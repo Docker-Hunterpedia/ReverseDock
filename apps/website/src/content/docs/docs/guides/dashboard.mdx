@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock has a dashboard built into the `rdock` binary <Status since="v0.5" />. It is served by the admin listener (`127.0.0.1:2080` by default), loads nothing from the internet, and works in light and dark mode. This first version has the login, two-step verification, the Overview page and your sessions; routes, services, certificates, logs, metrics and the configuration editor follow in later v0.5 steps.
+ReverseDock has a dashboard built into the `rdock` binary <Status since="v0.5" />. It is served by the admin listener (`127.0.0.1:2080` by default), loads nothing from the internet, and works in light and dark mode. It has the login with two-step verification, **Overview** (requests per second, error rate, p95, healthy backends, a 15-minute traffic chart, top routes and live events), **Metrics** (charts and per-route and per-service numbers for the last 1, 5 or 15 minutes), **Logs** (requests as they happen, filtered by route, status, client or text, with pause and download) **Routes**, **Services** (with backend drain), **Middlewares**, **Certificates** (with renew now), **Listeners**, **Providers**, **Config** (the API's objects in an editor with completion and checks from the JSON Schema, Validate with the problems and a diff, Apply, the effective configuration, and the history with roll back), **Security** (two-step verification and recovery codes, users for admins, sessions, API tokens and the audit log) and **Settings** (theme and the admin settings in use). Every object shows its owner (`file`, `docker`, `api`); objects created in the dashboard belong to the API and are the only ones it changes, through the same validation as a reload.
 
 ## Open it
 
@@ -35,7 +35,19 @@ Admins must set up an authenticator app before they can do anything else (`admin
 
 ## Sessions
 
-A session ends after 30 minutes without activity or 8 hours after login (`admin.sessions`), and when rdock restarts. **Security** lists your sessions; admins see everyone's and can end any of them.
+A session ends after 30 minutes without activity or 8 hours after login (`admin.sessions`), and when rdock restarts. Activity means you using the page: an open tab that only refreshes its data on its own still reaches the idle timeout <Status since="v0.5" />. **Security** lists your sessions; admins see everyone's and can end any of them.
+
+## Your password
+
+**Security → Password** changes your own password <Status since="v0.5" />: enter the current one and the new one twice. Your other sessions end; the one you are using stays. The same rules apply as for a first password (at least 12 characters, not a common password).
+
+## Sensitive changes
+
+Adding or changing users, creating tokens and similar changes need your password (and code) from the last five minutes. When it is older, the dashboard asks for it and then makes the change. API tokens cannot create other tokens <Status since="v0.5" />: a token is made by a person in the dashboard or with `rdock tokens create` on the server.
+
+## Behind a route
+
+If a route of this rdock forwards to the admin listener, every visitor arrives from loopback. Set `admin.trust_forwarded_on_loopback: true` <Status since="v0.5" /> so rate limits and token networks see real client addresses, and add the domain to `admin.allowed_hosts`. Leave it off otherwise: with it on, any process on the machine can claim any address.
 
 ## Turn it off
 

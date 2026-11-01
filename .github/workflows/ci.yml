@@ -1,5 +1,5 @@
-# Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker.
-# semgrep reports only.
+# Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker,
+# clients. semgrep reports only.
 name: ci
 
 on:
@@ -157,6 +157,72 @@ jobs:
           tool: cargo-deny
       - name: Licenses, advisories, bans and sources
         run: cargo deny check
+
+  clients:
+    name: clients
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: clients/go/go.mod
+          cache-dependency-path: clients/go/go.sum
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --filter @reversedock/dashboard...
+      - name: Generated clients match schema/openapi.json (F-MGMT-01)
+        run: |
+          pnpm --dir apps/dashboard gen:api
+          (cd clients/go && go generate ./... && go vet ./...)
+          git diff --exit-code -- apps/dashboard/src/api clients/go || { echo "::error::Run 'just clients' and commit the result"; exit 1; }
+
+  dashboard:
+    name: dashboard
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+          cache: pnpm
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install dependencies
+        run: |
+          pnpm install --frozen-lockfile --filter @reversedock/dashboard...
+          pnpm --dir apps/dashboard exec playwright install --with-deps chromium
+      - name: Build the dashboard, then rdock, which embeds it
+        run: |
+          pnpm --dir apps/dashboard build
+          cargo build --locked -p rdock
+      - name: Bundle budget and licences
+        run: |
+          pnpm --dir apps/dashboard check:budget
+          pnpm --dir apps/dashboard check:licenses
+      - name: Known vulnerabilities in production npm dependencies
+        run: pnpm --dir apps/dashboard audit --prod
+      - name: Every page, both themes, 400 to 1440 px (axe, no requests off the origin)
+        run: pnpm --dir apps/dashboard check:pages
+      - name: Lighthouse on Overview
+        run: pnpm --dir apps/dashboard check:lighthouse
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: dashboard-screenshots
+          path: apps/dashboard/e2e/screenshots/
+          retention-days: 14
 
   docker:
     name: docker

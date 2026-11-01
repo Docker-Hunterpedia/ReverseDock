@@ -75,9 +75,19 @@ fn record(
     match member.state.probe(ok, check.policy, now) {
         Some(true) => {
             tracing::info!(service = %service.name, backend = %member.id, "backend is healthy");
+            metrics.feeds.events.send(serde_json::json!({
+                "type": "backend", "service": &*service.name, "backend": member.id, "state": "up",
+                "reason": "passed its health checks",
+            }));
+            crate::alerting::backend_up(metrics, service, member);
         }
         Some(false) => {
             tracing::warn!(service = %service.name, backend = %member.id, "backend failed its health checks");
+            metrics.feeds.events.send(serde_json::json!({
+                "type": "backend", "service": &*service.name, "backend": member.id, "state": "down",
+                "reason": "failed its health checks",
+            }));
+            crate::alerting::backend_down(metrics, service, member, "failed its health checks");
         }
         None => {}
     }

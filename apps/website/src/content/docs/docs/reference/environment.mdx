@@ -19,7 +19,7 @@ command-line flag; when both are given, **the flag wins**. Everything else is co
 | `RDOCK_DATA_DIR` | `--data-dir` | `run`, `reload`, `status` | `/var/lib/rdock` |
 | `RDOCK_LOG` | `--log` | `run` | `info` |
 | `RDOCK_LOG_FORMAT` | `--log-format` | `run` | `auto` |
-| `RDOCK_ADMIN_TOKEN` | none | `run`, `reload`, `status` | the token file in the data directory |
+| `RDOCK_ADMIN_TOKEN` | none | `reload`, `status` | the admin socket |
 | `RDOCK_ADMIN` | `--admin` | `reload`, `status`, `healthcheck` | `admin.listener` from the configuration file |
 
 ### `RDOCK_CONFIG`
@@ -55,13 +55,12 @@ The systemd unit in `deploy/systemd/rdock.service` sets `RDOCK_LOG_FORMAT=json`.
 
 ### `RDOCK_ADMIN_TOKEN`
 
-The bearer token of the admin API (`/api/v1/status` and `/api/v1/config/reload`). When it is set
-and not empty, `rdock run` uses it and does not create a token file, and `rdock reload` and
-`rdock status` send it. Set the same value for the proxy and for the commands that talk to it.
-
-When it is not set, `rdock run` reads `$RDOCK_DATA_DIR/admin/token`, creating it on first start,
-and the other commands read the same file. Pass the token as a secret of your platform, not in
-a file that is committed anywhere.
+An API token (`rdk_pat_…`) that `rdock reload` and `rdock status` send when they use the admin
+listener instead of the admin socket (with `--admin`, or where the socket does not exist). Create
+it in the dashboard or with `POST /api/v1/tokens`; `status` needs the `viewer` role, `reload`
+`operator`. Pass it as a secret of your platform, not in a file that is committed anywhere.
+Before v0.5 this variable replaced the shared token file `$RDOCK_DATA_DIR/admin/token`, which
+v0.5 deletes at its first start.
 
 ### `RDOCK_ADMIN`
 

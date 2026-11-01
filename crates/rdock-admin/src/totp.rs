@@ -97,14 +97,22 @@ pub fn verify(secret: &str, code: &str, now_unix: u64, last_step: u64) -> Option
     matched
 }
 
-/// Ten recovery codes as shown once to the user (`xxxxx-xxxxx`, 50 bits each), and their
-/// SHA-256 hashes as stored.
+/// Ten recovery codes as shown once to the user (five groups of five letters and digits, 125
+/// random bits each), and their SHA-256 hashes as stored. At that strength a fast hash is enough:
+/// ASVS 6.5 asks for a salted slow hash only below 112 bits.
 pub fn recovery_codes() -> Option<(Vec<String>, Vec<String>)> {
     let mut shown = Vec::new();
     let mut stored = Vec::new();
     for _ in 0..10 {
-        let code = base32(&random::<7>()?).to_lowercase();
-        let code = format!("{}-{}", &code[..5], &code[5..10]);
+        let code = base32(&random::<16>()?).to_lowercase();
+        let code = format!(
+            "{}-{}-{}-{}-{}",
+            &code[..5],
+            &code[5..10],
+            &code[10..15],
+            &code[15..20],
+            &code[20..25]
+        );
         stored.push(recovery_hash(&code));
         shown.push(code);
     }
