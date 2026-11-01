@@ -92,6 +92,8 @@ pub struct Admin {
     pub allowed_hosts: Vec<String>,
     /// Worker threads of the admin runtime, kept apart from the proxy's (1–16).
     pub threads: u8,
+    /// Password rules for dashboard users.
+    pub passwords: AdminPasswords,
 }
 
 impl Default for Admin {
@@ -104,6 +106,55 @@ impl Default for Admin {
             socket: None,
             allowed_hosts: Vec::new(),
             threads: 2,
+            passwords: AdminPasswords::default(),
+        }
+    }
+}
+
+/// Password rules for dashboard users (ADR-0024). There are no composition rules: length and
+/// a list of common passwords are what protect a password (NIST SP 800-63B §3.1.1.2).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdminPasswords {
+    /// Shortest password accepted, in characters (8–128). The longest is 128.
+    pub min_length: u8,
+    /// Argon2id cost. Values below the OWASP minimum are refused; existing hashes are
+    /// upgraded at the next login after a change.
+    pub argon2: Argon2Cost,
+    /// A file with one password per line (for example a breached-password list) refused in
+    /// addition to the bundled list of common passwords. Read once at start, offline.
+    pub blocklist_file: Option<PathBuf>,
+}
+
+impl Default for AdminPasswords {
+    fn default() -> Self {
+        Self {
+            min_length: 12,
+            argon2: Argon2Cost::default(),
+            blocklist_file: None,
+        }
+    }
+}
+
+/// Argon2id parameters. The default is the OWASP minimum, m=19456 KiB, t=2, p=1 (Password
+/// Storage Cheat Sheet, checked 2026-10-31).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Argon2Cost {
+    /// Memory per hash in KiB (19456–262144).
+    pub memory_kib: u32,
+    /// Passes over the memory (2–10).
+    pub iterations: u32,
+    /// Lanes (1–8).
+    pub parallelism: u32,
+}
+
+impl Default for Argon2Cost {
+    fn default() -> Self {
+        Self {
+            memory_kib: 19_456,
+            iterations: 2,
+            parallelism: 1,
         }
     }
 }

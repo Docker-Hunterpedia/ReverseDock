@@ -3284,6 +3284,7 @@ dependencies = [
 name = "rdock-admin"
 version = "0.4.0-alpha.1"
 dependencies = [
+ "argon2",
  "async-trait",
  "axum",
  "bytes",
@@ -3291,16 +3292,21 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "rdock-config",
+ "rdock-limits",
  "rdock-model",
  "rdock-testkit",
  "rdock-tls",
+ "ring",
  "rustls",
+ "serde",
  "serde_json",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tokio-rustls",
+ "tower-service",
  "tracing",
 ]
 

@@ -10,6 +10,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 - `rdock reload` and `rdock status` use a Unix socket, `$RDOCK_DATA_DIR/admin.sock` (`admin.socket`, mode 0600), and need no token there; with `--admin` they use the listener and token as before.
 - `cargo-deny` bans OpenSSL, native-tls and aws-lc, so no dependency can bring another TLS stack in.
 
+### Added
+- **Admin users** (#97, ADR-0024): no default account; while no admin exists, each start writes a single-use bootstrap token to `$RDOCK_DATA_DIR/admin/bootstrap-token` (mode 0600, valid 24 hours) and logs its path. `POST /api/v1/setup` creates the first admin with it (or over the CLI socket without it). Users live in `$RDOCK_DATA_DIR/admin/users.json` with Argon2id hashes (`admin.passwords.argon2`, at least the OWASP minimum m=19456 KiB, t=2, p=1, upgraded at login). Passwords need 12–128 characters (`admin.passwords.min_length`) and may not be on the bundled list of common passwords or in `admin.passwords.blocklist_file`. `POST /api/v1/auth/login` answers unknown users and wrong passwords alike after the same work, and allows 5 attempts per minute per address and 10 per 15 minutes per user name (429 with `Retry-After`). Sessions follow in #98.
+
 ## [0.4.0-alpha.1] — v0.4 "Production reliability"
 
 ### Fixed

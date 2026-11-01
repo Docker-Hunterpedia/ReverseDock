@@ -111,6 +111,7 @@ bollard = { version = "0.21.1", default-features = false, features = ["http", "p
 futures-util = { version = "0.3.34", default-features = false }
 
 # Admin API (ADR-0024): axum on its own runtime; hyper and hyper-util are already in the tree.
+tower-service = "0.3.3"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
 
 # Operations

@@ -5,16 +5,23 @@
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::{Extension, Router};
+use hyper::body::Incoming;
 use hyper_util::rt::{TokioExecutor, TokioIo};
 use hyper_util::server::conn::auto::Builder;
-use hyper_util::service::TowerToHyperService;
 use rdock_model::config::TlsPolicy;
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
+use tower_service::Service;
 
+use crate::auth::Peer;
+use crate::bootstrap::Bootstrap;
+use crate::limits::LoginLimits;
+use crate::passwords::Policy;
+use crate::users::Users;
 use crate::{Control, Settings, State, Transport, guard, routes};
 
 /// Why the admin API could not start.
@@ -45,6 +52,15 @@ pub enum StartError {
     /// The admin runtime or its thread could not start.
     #[error("cannot start the admin runtime: {0}")]
     Runtime(io::Error),
+    /// The users file, the bootstrap token or the password blocklist could not be read or
+    /// written.
+    #[error("admin state in {path}: {source}")]
+    State {
+        /// The admin state directory.
+        path: PathBuf,
+        /// What went wrong.
+        source: io::Error,
+    },
 }
 
 /// The running admin API. Dropping it does not stop it; send `true` on the stop channel.
@@ -77,11 +93,34 @@ pub fn start(
     } else {
         settings.allowed_hosts.clone()
     };
+    let state_error = |source| StartError::State {
+        path: settings.state_dir.clone(),
+        source,
+    };
+    let users = Users::open(&settings.state_dir).map_err(state_error)?;
+    let bootstrap = if users.has_admin() {
+        Bootstrap::inactive(&settings.state_dir)
+    } else {
+        Bootstrap::issue(&settings.state_dir)
+    }
+    .map_err(state_error)?;
+    if !users.has_admin() {
+        tracing::warn!(
+            file = %bootstrap.file().display(),
+            "no admin user yet: create one with the single-use bootstrap token in this file (valid 24 hours)"
+        );
+    }
+    let policy = Policy::new(&settings.passwords).map_err(state_error)?;
     let state = Arc::new(State {
         control,
         main: tokio::runtime::Handle::current(),
         token: settings.token,
         allowed_hosts,
+        users,
+        bootstrap,
+        policy,
+        limits: LoginLimits::default(),
+        hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()
         .worker_threads(settings.threads.max(1))
@@ -158,19 +197,20 @@ async fn serve(
         tokio::select! {
             changed = stop.changed() => if changed.is_err() || *stop.borrow() { break },
             accepted = tcp.accept() => match accepted {
-                Ok((stream, _)) => {
+                Ok((stream, address)) => {
                     let router = tcp_router.clone();
+                    let peer = Some(Peer(address));
                     match tls.clone() {
                         Some(acceptor) => {
                             tokio::spawn(async move {
                                 match acceptor.accept(stream).await {
-                                    Ok(stream) => connection(stream, router).await,
+                                    Ok(stream) => connection(stream, router, peer).await,
                                     Err(err) => tracing::debug!(error = %err, "admin TLS handshake failed"),
                                 }
                             });
                         }
                         None => {
-                            tokio::spawn(connection(stream, router));
+                            tokio::spawn(connection(stream, router, peer));
                         }
                     }
                 }
@@ -181,7 +221,7 @@ async fn serve(
             },
             accepted = accept_socket(socket.as_ref()) => match accepted {
                 Ok(stream) => {
-                    tokio::spawn(connection(stream, socket_router.clone()));
+                    tokio::spawn(connection(stream, socket_router.clone(), None));
                 }
                 Err(err) => {
                     tracing::warn!(error = %err, "admin socket accept failed");
@@ -202,11 +242,16 @@ async fn accept_socket(socket: Option<&Socket>) -> io::Result<tokio::net::UnixSt
     }
 }
 
-async fn connection<S>(stream: S, router: Router)
+async fn connection<S>(stream: S, router: Router, peer: Option<Peer>)
 where
     S: AsyncRead + AsyncWrite + Send + Unpin + 'static,
 {
-    let service = TowerToHyperService::new(router);
+    let service = hyper::service::service_fn(move |mut request: http::Request<Incoming>| {
+        if let Some(peer) = peer {
+            request.extensions_mut().insert(peer);
+        }
+        router.clone().call(request)
+    });
     if let Err(err) = Builder::new(TokioExecutor::new())
         .serve_connection(TokioIo::new(stream), service)
         .await

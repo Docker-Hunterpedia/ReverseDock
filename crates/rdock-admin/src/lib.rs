@@ -1,8 +1,13 @@
 #![doc = include_str!("../README.md")]
 
+mod auth;
+mod bootstrap;
 mod guard;
+mod limits;
+mod passwords;
 mod routes;
 mod server;
+mod users;
 
 use std::net::SocketAddr;
 use std::path::PathBuf;
@@ -42,6 +47,10 @@ pub struct Settings {
     pub threads: usize,
     /// Bearer token for `/api/v1` on the TCP listener.
     pub token: String,
+    /// Where users and the bootstrap token are kept: `$RDOCK_DATA_DIR/admin`.
+    pub state_dir: PathBuf,
+    /// Password rules for users.
+    pub passwords: rdock_model::settings::AdminPasswords,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -70,4 +79,10 @@ struct State {
     main: tokio::runtime::Handle,
     token: String,
     allowed_hosts: Vec<String>,
+    users: users::Users,
+    bootstrap: bootstrap::Bootstrap,
+    policy: passwords::Policy,
+    limits: limits::LoginLimits,
+    /// Password hashes in progress: two at a time, sixteen waiting at most.
+    hashing: rdock_limits::ConcurrencyLimiter,
 }
