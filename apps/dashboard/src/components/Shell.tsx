@@ -26,7 +26,7 @@ const NAV: { label: string; to?: string; icon: Icon }[][] = [
   [
     { label: "Logs", to: "/logs", icon: ScrollText },
     { label: "Metrics", to: "/traffic", icon: Gauge },
-    { label: "Config", icon: FileCode2 },
+    { label: "Config", to: "/config", icon: FileCode2 },
   ],
   [{ label: "Settings", to: "/settings", icon: Settings }],
 ];
