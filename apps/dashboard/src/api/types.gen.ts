@@ -118,6 +118,11 @@ export type Owned = {
     };
 };
 
+export type PasswordChange = {
+    current: string;
+    new: string;
+};
+
 export type Reauth = {
     code?: string | null;
     password: string;
@@ -2540,6 +2545,51 @@ export type MfaResponses = {
 };
 
 export type MfaResponse = MfaResponses[keyof MfaResponses];
+
+export type ChangePasswordData = {
+    body: PasswordChange;
+    path?: never;
+    query?: never;
+    url: '/api/v1/auth/password';
+};
+
+export type ChangePasswordErrors = {
+    /**
+     * The current password is wrong
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * The session is not at the stage this step needs, for example already logged in.
+     */
+    409: ErrorBody;
+    /**
+     * The new password is too weak or unchanged
+     */
+    422: ErrorBody;
+    /**
+     * Too many attempts; see `Retry-After`
+     */
+    429: ErrorBody;
+    /**
+     * Too many password hashes at once
+     */
+    503: ErrorBody;
+};
+
+export type ChangePasswordError = ChangePasswordErrors[keyof ChangePasswordErrors];
+
+export type ChangePasswordResponses = {
+    /**
+     * Changed; the caller's other sessions ended
+     */
+    204: void;
+};
+
+export type ChangePasswordResponse = ChangePasswordResponses[keyof ChangePasswordResponses];
 
 export type ReauthData = {
     body: Reauth;

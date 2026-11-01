@@ -500,6 +500,102 @@ pub(crate) async fn reauth(
     }
 }
 
+#[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub(crate) struct PasswordChange {
+    current: String,
+    new: String,
+}
+
+/// What a password change found, decided off the async runtime.
+enum Changed {
+    Done,
+    WrongPassword,
+    Failed(String),
+}
+
+/// `POST /api/v1/auth/password`: changes the caller's own password after checking the current
+/// one (ASVS 6.2.2, 6.2.3); the caller's other sessions end (ASVS 7.4.3).
+#[utoipa::path(post, path = "/api/v1/auth/password", tag = "auth", security(("session" = [])), request_body = PasswordChange,
+    responses(
+        (status = NO_CONTENT, description = "Changed; the caller's other sessions ended"),
+        (status = UNAUTHORIZED, description = "The current password is wrong", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "The new password is too weak or unchanged", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+        (status = SERVICE_UNAVAILABLE, description = "Too many password hashes at once", body = crate::openapi::ErrorBody),
+    ))]
+pub(crate) async fn change_password(
+    Extract(state): Extract<Arc<State>>,
+    method: Method,
+    peer: Option<Extension<Peer>>,
+    headers: HeaderMap,
+    axum::Json(body): axum::Json<PasswordChange>,
+) -> Response {
+    let (value, session) = match current(&state, &method, &headers, &[Stage::Full]) {
+        Ok(found) => found,
+        Err(refused) => return refused.into_response(),
+    };
+    if let Err(weak) = state.policy.check(&body.new) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, &weak.to_string());
+    }
+    if body.new == body.current {
+        return error(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "choose a different password",
+        );
+    }
+    if let Err(wait) = state
+        .limits
+        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
+    {
+        return too_many(wait);
+    }
+    let worker = state.clone();
+    let name = session.user.clone();
+    let changed = hashing(&state, move || {
+        let Some(user) = worker.users.find(&name) else {
+            return Changed::WrongPassword;
+        };
+        if worker.policy.verify(&body.current, &user.password) == Verified::No {
+            return Changed::WrongPassword;
+        }
+        let hash = match worker.policy.hash(&body.new) {
+            Ok(hash) => hash,
+            Err(err) => return Changed::Failed(err.to_string()),
+        };
+        match worker.users.update(&name, |u| u.password = hash) {
+            Ok(()) => Changed::Done,
+            Err(err) => Changed::Failed(err.to_string()),
+        }
+    })
+    .await;
+    match changed {
+        None => error(StatusCode::SERVICE_UNAVAILABLE, "busy; try again"),
+        Some(Changed::Done) => {
+            state.sessions.end_user(&session.user, Some(value));
+            tracing::info!(user = %session.user, "changed their password");
+            state
+                .audit
+                .record(event(&session, "password", "password.change"));
+            StatusCode::NO_CONTENT.into_response()
+        }
+        Some(Changed::WrongPassword) => {
+            state.audit.record(denied(
+                event(&session, "password", "password.change"),
+                "wrong current password",
+            ));
+            error(StatusCode::UNAUTHORIZED, "the current password is wrong")
+        }
+        Some(Changed::Failed(message)) => {
+            tracing::error!(user = %session.user, error = %message, "cannot change a password");
+            error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "the password could not be saved",
+            )
+        }
+    }
+}
+
 /// `POST /api/v1/auth/logout`: ends the session and tells the browser to forget it.
 #[utoipa::path(post, path = "/api/v1/auth/logout", tag = "auth", security(("session" = [])),
     responses((status = NO_CONTENT, description = "Logged out")))]

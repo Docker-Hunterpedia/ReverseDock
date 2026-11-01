@@ -221,6 +221,11 @@ fn session_operations(rdock: &Rdock, check: &mut Checker, admin: &str) {
         ("GET", "/api/v1/auth/mfa", ""),
         ("POST", "/api/v1/auth/mfa", r#"{"code":"000000"}"#),
         ("POST", "/api/v1/auth/reauth", reauth.as_str()),
+        (
+            "POST",
+            "/api/v1/auth/password",
+            r#"{"current":"not the password","new":"a different long passphrase 42"}"#,
+        ),
         ("POST", "/api/v1/auth/totp", ""),
         ("POST", "/api/v1/auth/totp/confirm", r#"{"code":"000000"}"#),
         ("POST", "/api/v1/auth/recovery-codes", ""),

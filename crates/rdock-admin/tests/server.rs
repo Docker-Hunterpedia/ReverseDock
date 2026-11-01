@@ -697,6 +697,125 @@ async fn an_admin_enrols_totp_then_logs_in_with_a_second_factor() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn people_change_their_own_password_and_their_other_sessions_end() {
+    let admin = Admin::start(None, Vec::new());
+    let old = "first password for ann 1";
+    let created = socket_post(
+        &admin.socket(),
+        "/api/v1/users",
+        &serde_json::json!({ "name": "ann", "role": "viewer", "password": old }),
+    );
+    assert!(created.starts_with("HTTP/1.1 201"), "{created}");
+    let credentials = |password: &str| serde_json::json!({ "name": "ann", "password": password });
+    let login = |password: &'static str| {
+        let address = admin.address;
+        async move {
+            client::http1(
+                address,
+                json_post("/api/v1/auth/login", &credentials(password), &[]),
+            )
+            .await
+        }
+    };
+    let stored = || std::fs::read_to_string(admin.dir.path().join("admin/users.json")).unwrap();
+    let before = stored();
+    let here = login(old).await;
+    let (cookie, csrf) = (session_cookie(&here), csrf_of(&here));
+    let elsewhere = session_cookie(&login(old).await);
+
+    let change = |current: &str, new: &str| serde_json::json!({ "current": current, "new": new });
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change("wrong one here", "a new long passphrase 7"),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 401);
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, "short"),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, old),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 422, "the same password again is refused");
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, "a new long passphrase 7"),
+        &cookie,
+        "",
+    )
+    .await;
+    assert_eq!(reply.status, 403, "needs the CSRF token");
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, "a new long passphrase 7"),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 204);
+
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &cookie).await.status,
+        200,
+        "this session stays"
+    );
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &elsewhere)
+            .await
+            .status,
+        401,
+        "the other one ends"
+    );
+    assert_eq!(login(old).await.status, 401);
+    assert_ne!(stored(), before, "the new hash is saved");
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn configuration_work_is_rate_limited_for_everyone() {
+    let admin = Admin::start(None, Vec::new());
+    let candidate = serde_json::json!({});
+    let answers: Vec<String> = (0..12)
+        .map(|_| socket_post(&admin.socket(), "/api/v1/config/validate", &candidate))
+        .collect();
+    let accepted = answers
+        .iter()
+        .filter(|a| a.starts_with("HTTP/1.1 200"))
+        .count();
+    let limited: Vec<&String> = answers
+        .iter()
+        .filter(|a| a.starts_with("HTTP/1.1 429"))
+        .collect();
+    assert!(accepted >= 10, "a burst of 10 passes: {answers:?}");
+    assert!(
+        !limited.is_empty(),
+        "then the shared budget runs out: {answers:?}"
+    );
+    assert!(
+        limited[0].to_ascii_lowercase().contains("retry-after:"),
+        "{}",
+        limited[0]
+    );
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pages_get_the_dashboard_and_the_api_stays_json() {
     let admin = Admin::start(None, Vec::new());
     let reply = client::http1(
@@ -795,6 +914,20 @@ async fn roles_limit_tokens_and_metrics_needs_one() {
         &[("authorization", &format!("Bearer {viewer}"))],
     );
     assert_eq!(client::http1(admin.address, escalate).await.status, 403);
+    // Nor a token of the same role: a token never mints its successor.
+    let successor = json_post(
+        "/api/v1/tokens",
+        &serde_json::json!({ "name": "y", "role": "viewer" }),
+        &[("authorization", &format!("Bearer {viewer}"))],
+    );
+    let reply = client::http1(admin.address, successor).await;
+    assert_eq!(reply.status, 403);
+    assert!(
+        json_body(&reply)["error"]
+            .as_str()
+            .unwrap()
+            .contains("cannot create tokens")
+    );
     let reply = client::http1(admin.address, bearer_get("/api/v1/tokens", &viewer)).await;
     assert_eq!(
         json_body(&reply).as_array().unwrap().len(),

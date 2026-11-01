@@ -52,6 +52,19 @@ fn private(ip: IpAddr) -> bool {
     }
 }
 
+/// Whether `url` names its host by a private IP address. The connector skips the resolver
+/// for IP literals, so `Guarded` never sees them and they are checked here instead.
+fn private_literal(url: &str) -> bool {
+    url.parse::<http::Uri>()
+        .ok()
+        .and_then(|uri| {
+            let host = uri.host()?;
+            let bare = host.strip_prefix('[').and_then(|h| h.strip_suffix(']'));
+            bare.unwrap_or(host).parse::<IpAddr>().ok()
+        })
+        .is_some_and(private)
+}
+
 /// Resolves names and drops private addresses unless allowed.
 #[derive(Clone)]
 struct Guarded {
@@ -209,6 +222,12 @@ async fn post(
     body: &Value,
     headers: Vec<(&'static str, String)>,
 ) -> Result<(), String> {
+    if !allow_private && private_literal(url) {
+        return Err(
+            "the URL names a private address; set allow_private_targets: true to allow it"
+                .to_owned(),
+        );
+    }
     let mut request = Request::post(url)
         .header(header::CONTENT_TYPE, "application/json")
         .header(
@@ -426,6 +445,27 @@ pub(super) async fn with_retries(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn private_ip_literals_in_urls_are_recognised() {
+        for url in [
+            "https://169.254.169.254/latest/meta-data/",
+            "http://127.0.0.1:8080/hook",
+            "https://10.1.2.3/",
+            "https://[::1]/hook",
+            "https://[fd00::1]:8443/",
+        ] {
+            assert!(private_literal(url), "{url}");
+        }
+        for url in [
+            "https://hooks.slack.com/services/x",
+            "https://1.1.1.1/",
+            "https://[2606:4700::1111]/",
+            "not a url",
+        ] {
+            assert!(!private_literal(url), "{url}");
+        }
+    }
 
     #[test]
     fn private_addresses_are_recognised() {

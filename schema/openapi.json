@@ -1,6 +1,24 @@
 {
   "components": {
     "responses": {
+      "ConfigBusy": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        },
+        "description": "More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until the next write is accepted",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
       "Forbidden": {
         "content": {
           "application/json": {
@@ -295,6 +313,22 @@
           "name",
           "owner",
           "spec"
+        ],
+        "type": "object"
+      },
+      "PasswordChange": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "string"
+          },
+          "new": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current",
+          "new"
         ],
         "type": "object"
       },
@@ -5240,6 +5274,82 @@
         ]
       }
     },
+    "/api/v1/auth/password": {
+      "post": {
+        "description": "Changes the caller's own password after checking the current one (ASVS 6.2.2, 6.2.3); the caller's other sessions end (ASVS 7.4.3).",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed; the caller's other sessions ended"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The current password is wrong"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/WrongStage"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The new password is too weak or unchanged"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many attempts; see `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many password hashes at once"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Changes the caller's own password after checking the current one (ASVS 6.2.2, 6.2.3); the caller's other sessions end (ASVS 7.4.3)",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
     "/api/v1/auth/reauth": {
       "post": {
         "description": "Confirms the password (and code) again before a sensitive change (ASVS 7.5.1).",
@@ -6030,6 +6140,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6123,6 +6236,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6293,6 +6409,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6454,6 +6573,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6510,6 +6632,9 @@
               }
             },
             "description": "Not a configuration document"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -7117,7 +7242,7 @@
         ]
       },
       "post": {
-        "description": "A new token, shown once, with a role no higher than the caller's.",
+        "description": "A new token, shown once, with a role no higher than the caller's. People and the CLI only: a token cannot create tokens.",
         "operationId": "create_token",
         "requestBody": {
           "content": {

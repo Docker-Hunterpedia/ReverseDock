@@ -183,6 +183,10 @@ struct State {
     telemetry: telemetry::Telemetry,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
+    /// Configuration writes and dry runs, shared by every caller: each one compiles a whole
+    /// configuration on the proxy's runtime, so an unbounded loop of them would slow it down
+    /// (H-ENG-04).
+    config_work: rdock_limits::RateLimiter,
 }
 
 /// Lower-case hexadecimal.

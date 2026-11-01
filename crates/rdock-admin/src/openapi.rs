@@ -17,6 +17,14 @@ const MODEL: &str = "rdock.";
 /// Operations anyone may call; every other one needs a session or an API token.
 const PUBLIC: [&str; 4] = ["/healthz", "/readyz", "/api/v1/setup", "/api/v1/auth/login"];
 
+/// Operations that take from the shared configuration-work budget (`config_api::over_budget`).
+const CONFIG_WORK: [&str; 4] = [
+    "/api/v1/config/api",
+    "/api/v1/config/validate",
+    "/api/v1/config/rollback",
+    "/api/v1/config/import",
+];
+
 /// A refusal or failure.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ErrorBody {
@@ -147,6 +155,11 @@ fn add_security(document: &mut Value) {
         "Unauthenticated": { "description": "No valid session or token.", "content": error_content() },
         "Forbidden": { "description": "The caller's role does not allow this, or a password check is due.", "content": error_content() },
         "WrongStage": { "description": "The session is not at the stage this step needs, for example already logged in.", "content": error_content() },
+        "ConfigBusy": {
+            "description": "More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.",
+            "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next write is accepted" } },
+            "content": error_content(),
+        },
     });
     let Some(paths) = document["paths"].as_object_mut() else {
         return;
@@ -161,9 +174,14 @@ fn add_security(document: &mut Value) {
             }
             // Session-only operations share one gate that also checks the login stage.
             let stage_gated = operation["security"] == json!([{ "session": [] }]);
+            let config_work =
+                CONFIG_WORK.contains(&path.as_str()) && operation["operationId"] != "get_api";
             let responses = &mut operation["responses"];
             if stage_gated && responses.get("409").is_none() {
                 responses["409"] = json!({ "$ref": "#/components/responses/WrongStage" });
+            }
+            if config_work && responses.get("429").is_none() {
+                responses["429"] = json!({ "$ref": "#/components/responses/ConfigBusy" });
             }
             for (status, name) in [("401", "Unauthenticated"), ("403", "Forbidden")] {
                 if responses.get(status).is_none() {

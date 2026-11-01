@@ -137,6 +137,19 @@ pub(crate) fn need_recent(caller: &Caller) -> Result<(), Denied> {
     }
 }
 
+/// Refuses API tokens: a token must not create its own successors, which would outlive its
+/// expiry and drop its `allowed_from` networks. People and the socket may.
+pub(crate) fn need_not_token(caller: &Caller) -> Result<(), Denied> {
+    if matches!(caller.who, Who::Token { .. }) {
+        Err(Denied(
+            StatusCode::FORBIDDEN,
+            "API tokens cannot create tokens; log in or use `rdock tokens create`",
+        ))
+    } else {
+        Ok(())
+    }
+}
+
 fn unauthorized() -> Denied {
     Denied(StatusCode::UNAUTHORIZED, "log in or send a valid API token")
 }
