@@ -11,6 +11,8 @@ import { type Theme, applyTheme, storedTheme, watchSystemTheme } from "./lib/the
 import { Enrol } from "./pages/Enrol";
 import { Login } from "./pages/Login";
 import { Mfa } from "./pages/Mfa";
+import { Logs } from "./pages/Logs";
+import { Metrics } from "./pages/Metrics";
 import { Overview } from "./pages/Overview";
 import { Security } from "./pages/Security";
 import { Setup } from "./pages/Setup";
@@ -61,6 +63,8 @@ const router = createRouter({
   routeTree: root.addChildren([
     createRoute({ getParentRoute: () => root, path: "/", component: () => <Overview session={useApp().session} /> }),
     createRoute({ getParentRoute: () => root, path: "/security", component: () => <Security session={useApp().session} /> }),
+    createRoute({ getParentRoute: () => root, path: "/traffic", component: Metrics }),
+    createRoute({ getParentRoute: () => root, path: "/logs", component: Logs }),
   ]),
 });
 
