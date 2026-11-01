@@ -35,6 +35,12 @@ Serve the admin API.
 
 Address of the admin API. Loopback by default; any other address needs `tls`.
 
+## `admin.metrics_unauthenticated_on_loopback`
+
+**Type:** `boolean` · **Default:** `false`
+
+Serve `/metrics` without a token when the listener is a loopback address, as before v0.5, for scrapers on the same machine that cannot send one.
+
 ## `admin.mfa`
 
 **Type:** `required_for_admins` · `required` · `optional` · **Default:** `required_for_admins`
@@ -134,3 +140,21 @@ PEM certificate chain, leaf first.
 **Type:** `string` · **Required**
 
 PEM private key.
+
+## `admin.tokens`
+
+**Type:** object · **Default:** `{"allow_no_expiry":false,"default_expiry_days":90}`
+
+API tokens for scripts and Prometheus.
+
+### `admin.tokens.allow_no_expiry`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow tokens that never expire. Off by default: a leaked token should stop working.
+
+### `admin.tokens.default_expiry_days`
+
+**Type:** `integer` · **Default:** `90`
+
+Lifetime of a new token when its creator gives none, in days (1–365).

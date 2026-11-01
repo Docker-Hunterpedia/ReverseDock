@@ -33,6 +33,7 @@
         "dashboard": true,
         "enabled": true,
         "listener": "127.0.0.1:2080",
+        "metrics_unauthenticated_on_loopback": false,
         "mfa": "required_for_admins",
         "passwords": {
           "argon2": {
@@ -49,7 +50,11 @@
         },
         "socket": null,
         "threads": 2,
-        "tls": null
+        "tls": null,
+        "tokens": {
+          "allow_no_expiry": false,
+          "default_expiry_days": 90
+        }
       }
     },
     "certificates": {
@@ -488,6 +493,11 @@
           "$ref": "#/$defs/ListenAddress",
           "default": "127.0.0.1:2080"
         },
+        "metrics_unauthenticated_on_loopback": {
+          "description": "Serve `/metrics` without a token when the listener is a loopback address, as before\nv0.5, for scrapers on the same machine that cannot send one.",
+          "type": "boolean",
+          "default": false
+        },
         "mfa": {
           "description": "Who must use a second factor (TOTP) to log in.",
           "$ref": "#/$defs/MfaPolicy",
@@ -541,6 +551,14 @@
             }
           ],
           "default": null
+        },
+        "tokens": {
+          "description": "API tokens for scripts and Prometheus.",
+          "$ref": "#/$defs/AdminTokens",
+          "default": {
+            "allow_no_expiry": false,
+            "default_expiry_days": 90
+          }
         }
       },
       "additionalProperties": false,
@@ -615,6 +633,26 @@
         "cert_file",
         "key_file"
       ]
+    },
+    "AdminTokens": {
+      "description": "API token rules (ADR-0024).",
+      "type": "object",
+      "properties": {
+        "allow_no_expiry": {
+          "description": "Allow tokens that never expire. Off by default: a leaked token should stop working.",
+          "type": "boolean",
+          "default": false
+        },
+        "default_expiry_days": {
+          "description": "Lifetime of a new token when its creator gives none, in days (1–365).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 90,
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "Alerts": {
       "description": "Alert delivery.",

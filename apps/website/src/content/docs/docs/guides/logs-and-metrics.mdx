@@ -144,11 +144,22 @@ When Prometheus runs on the same machine:
 ```yaml title="prometheus.yml"
 scrape_configs:
   - job_name: rdock
+    authorization:
+      credentials_file: /etc/prometheus/rdock-token
     static_configs:
       - targets: ["127.0.0.1:2080"]
 ```
 
-`/metrics`, `/healthz` and `/readyz` need no token; the API under `/api/v1/` does. If Prometheus runs elsewhere, for example in another container, the admin listener must listen on an address it can reach:
+Since v0.5, `/metrics` needs an API token <Status since="v0.5" />. Create one with the `metrics` role, which reads metrics and nothing else, in the dashboard (**Security**) or on the server:
+
+```sh
+curl -s --unix-socket /var/lib/rdock/admin.sock -H 'Host: localhost' \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"prometheus","role":"metrics","expires_in_days":365}' \
+  http://localhost/api/v1/tokens
+```
+
+The answer shows the token once; write it to the file Prometheus reads. `/healthz` and `/readyz` need no token. A scraper on the same machine that cannot send a token can keep the old behaviour with `admin.metrics_unauthenticated_on_loopback: true` (loopback listeners only). If Prometheus runs elsewhere, for example in another container, the admin listener must listen on an address it can reach:
 
 ```yaml title="rdock.yaml (excerpt)"
 admin:
@@ -158,7 +169,7 @@ admin:
     key_file: /etc/rdock/certs/admin.key
 ```
 
-An admin listener off loopback needs `tls`; without it `rdock validate` refuses the configuration. Point Prometheus at `https://10.0.0.2:2080/metrics` (with the CA that signed the certificate), allow only the Prometheus host to reach that port with a firewall or a private network, and keep the admin token secret. When the listener is on all interfaces (`:2080`), list the names it is reached by in `admin.allowed_hosts`.
+An admin listener off loopback needs `tls`; without it `rdock validate` refuses the configuration. Point Prometheus at `https://10.0.0.2:2080/metrics` (with the CA that signed the certificate), allow only the Prometheus host to reach that port with a firewall or a private network, and keep the metrics token secret; give it an `allowed_from` network so it works only from the Prometheus host. When the listener is on all interfaces (`:2080`), list the names it is reached by in `admin.allowed_hosts`.
 
 Example queries:
 

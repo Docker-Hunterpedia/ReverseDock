@@ -1507,6 +1507,12 @@ impl Validator<'_> {
         if sessions.idle > sessions.absolute {
             self.error("admin.sessions.idle", "must not be longer than `absolute`");
         }
+        if !(1..=365).contains(&self.config.admin.tokens.default_expiry_days) {
+            self.error(
+                "admin.tokens.default_expiry_days",
+                "must be between 1 and 365",
+            );
+        }
         let passwords = &self.config.admin.passwords;
         if passwords
             .blocklist_file
