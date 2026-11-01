@@ -97,6 +97,15 @@ impl Control for Fake {
     async fn history_api(&self, id: u64) -> Option<serde_json::Value> {
         (id == 1_793_000_000_000).then(|| serde_json::json!({ "routes": {} }))
     }
+    async fn backends(&self) -> serde_json::Value {
+        serde_json::json!([{ "service": "web", "backends": [{ "address": "10.0.0.1:80", "drained": false }] }])
+    }
+    async fn set_drained(&self, service: String, backend: String, _drained: bool) -> bool {
+        service == "web" && backend == "10.0.0.1:80"
+    }
+    async fn renew_certificate(&self, name: String) -> bool {
+        name == "example.com"
+    }
 }
 
 /// A string shaped like a token but issued by no one.
@@ -703,6 +712,13 @@ async fn pages_get_the_dashboard_and_the_api_stays_json() {
         request("GET", "127.0.0.1", "/api/v1/nope", ""),
     )
     .await;
+    assert_eq!(
+        reply.status, 401,
+        "unknown API paths reveal nothing before login"
+    );
+    assert_eq!(reply.header("content-type"), Some("application/json"));
+    let viewer = api_token(&admin, "viewer");
+    let reply = client::http1(admin.address, bearer_get("/api/v1/nope", &viewer)).await;
     assert_eq!(reply.status, 404);
     assert_eq!(reply.header("content-type"), Some("application/json"));
     admin.stop().await;
@@ -1140,4 +1156,80 @@ async fn configuration_writes_are_conditional_dry_run_and_audited() {
     .await;
     assert_eq!(reply.status, 403, "GitOps mode refuses writes");
     gitops.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resources_show_owners_and_only_api_objects_change() {
+    let admin = Admin::start(None, Vec::new());
+    let operator = api_token(&admin, "operator");
+    let reply = client::http1(admin.address, bearer_get("/api/v1/routes", &operator)).await;
+    let routes = json_body(&reply);
+    assert!(
+        routes
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "app@docker" && r["owner"] == "docker")
+    );
+
+    let etag = Fake::etag(0);
+    let route = serde_json::json!({ "match": "Host(`one.example`)", "service": "one" });
+    let put =
+        |path: &str, tag: &str| bearer_json("PUT", path, &operator, &route, &[("if-match", tag)]);
+    let reply = client::http1(admin.address, put("/api/v1/routes/app@docker", &etag)).await;
+    assert_eq!(reply.status, 403, "Docker owns it");
+    let reply = client::http1(admin.address, put("/api/v1/routes/web", &etag)).await;
+    assert_eq!(reply.status, 403, "the file owns it");
+    let reply = client::http1(admin.address, put("/api/v1/routes/one", &etag)).await;
+    assert_eq!(reply.status, 200);
+    let next = reply.header("etag").unwrap().to_owned();
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &operator)).await;
+    assert_eq!(json_body(&reply)["routes"]["one"]["service"], "one");
+    let delete = with(
+        request("DELETE", "127.0.0.1", "/api/v1/routes/one@api", ""),
+        &[
+            ("authorization", &format!("Bearer {operator}")),
+            ("if-match", &next),
+        ],
+    );
+    assert_eq!(client::http1(admin.address, delete).await.status, 200);
+
+    let drain = |backend: &str| {
+        bearer_json(
+            "POST",
+            "/api/v1/backends/drain",
+            &operator,
+            &serde_json::json!({ "service": "web", "backend": backend }),
+            &[],
+        )
+    };
+    assert_eq!(
+        client::http1(admin.address, drain("10.0.0.1:80"))
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        client::http1(admin.address, drain("10.9.9.9:80"))
+            .await
+            .status,
+        404
+    );
+    let renew = bearer_json(
+        "POST",
+        "/api/v1/certificates/example.com/renew",
+        &operator,
+        &serde_json::json!({}),
+        &[],
+    );
+    assert_eq!(client::http1(admin.address, renew).await.status, 202);
+    let renew = bearer_json(
+        "POST",
+        "/api/v1/certificates/nope.example/renew",
+        &operator,
+        &serde_json::json!({}),
+        &[],
+    );
+    assert_eq!(client::http1(admin.address, renew).await.status, 404);
+    admin.stop().await;
 }

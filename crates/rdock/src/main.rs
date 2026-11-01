@@ -8,6 +8,7 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+mod admin_cli;
 mod ctl;
 mod engine;
 mod hash;
@@ -60,6 +61,18 @@ enum Command {
     /// Work with the admin audit log.
     #[command(subcommand)]
     Audit(AuditCommand),
+    /// The configuration history, diffs and rollback of the API provider.
+    #[command(subcommand)]
+    Config(admin_cli::ConfigCommand),
+    /// Manage dashboard users.
+    #[command(subcommand)]
+    Users(admin_cli::UsersCommand),
+    /// Manage API tokens.
+    #[command(subcommand)]
+    Tokens(admin_cli::TokensCommand),
+    /// Show backends and drain them.
+    #[command(subcommand)]
+    Backends(admin_cli::BackendsCommand),
     /// Print the JSON Schema of rdock.yaml.
     Schema,
     /// Print version and build information.
@@ -74,6 +87,8 @@ enum Command {
 enum AuditCommand {
     /// Check that no audit record was changed or removed (the SHA-256 chain).
     Verify(AuditArgs),
+    /// Show recent records from the running proxy.
+    List(admin_cli::AuditList),
 }
 
 #[derive(Args)]
@@ -177,7 +192,7 @@ struct CtlArgs {
     /// Configuration file, to find the admin listener.
     #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
     config: PathBuf,
-    /// Data directory, to find the admin socket and token.
+    /// Data directory, to find the admin socket.
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
 }
@@ -203,6 +218,11 @@ fn main() -> ExitCode {
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
         Command::Audit(AuditCommand::Verify(args)) => audit_verify(&args),
+        Command::Audit(AuditCommand::List(args)) => admin_cli::audit_list(&args),
+        Command::Config(command) => admin_cli::config(&command),
+        Command::Users(command) => admin_cli::users(&command),
+        Command::Tokens(command) => admin_cli::tokens(&command),
+        Command::Backends(command) => admin_cli::backends(&command),
         Command::Schema => schema().map(|()| ExitCode::SUCCESS),
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };

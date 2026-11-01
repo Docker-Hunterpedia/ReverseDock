@@ -78,6 +78,7 @@ pub struct Services {
 pub struct Manager {
     plans: watch::Sender<Option<Arc<Plan>>>,
     status: Arc<Mutex<Vec<CertStatus>>>,
+    renewals: tokio::sync::mpsc::Sender<String>,
 }
 
 impl Manager {
@@ -85,6 +86,7 @@ impl Manager {
     #[must_use]
     pub fn spawn(services: Services) -> Self {
         let (plans, rx) = watch::channel(None);
+        let (renewals, renew_rx) = tokio::sync::mpsc::channel(16);
         let status = Arc::new(Mutex::new(Vec::new()));
         let worker = Worker {
             services,
@@ -94,8 +96,22 @@ impl Manager {
             status: status.clone(),
             webhook: None,
         };
-        tokio::spawn(worker.run(rx));
-        Self { plans, status }
+        tokio::spawn(worker.run(rx, renew_rx));
+        Self {
+            plans,
+            status,
+            renewals,
+        }
+    }
+
+    /// Asks for the certificate that covers `name` to be renewed now, within the usual
+    /// back-off after failures. Returns `false` when no automatic certificate covers it.
+    pub fn renew(&self, name: &str) -> bool {
+        let known = self
+            .status()
+            .iter()
+            .any(|s| s.names.iter().any(|n| n == name));
+        known && self.renewals.try_send(name.to_owned()).is_ok()
     }
 
     /// Replaces the plan; the manager starts working on it at once. An unchanged plan is
@@ -130,7 +146,11 @@ struct Worker {
 }
 
 impl Worker {
-    async fn run(mut self, mut plans: watch::Receiver<Option<Arc<Plan>>>) {
+    async fn run(
+        mut self,
+        mut plans: watch::Receiver<Option<Arc<Plan>>>,
+        mut renewals: tokio::sync::mpsc::Receiver<String>,
+    ) {
         loop {
             let plan = plans.borrow_and_update().clone();
             let wake = match &plan {
@@ -139,6 +159,14 @@ impl Worker {
             };
             tokio::select! {
                 changed = plans.changed() => if changed.is_err() { return },
+                Some(name) = renewals.recv() => {
+                    for (names, state) in &mut self.certs {
+                        if names.contains(&name) {
+                            state.renewal_requested = Some(Instant::now());
+                            tracing::info!(certificate = %name, "renewal requested through the admin API");
+                        }
+                    }
+                }
                 () = tokio::time::sleep_until(wake.into()) => {}
             }
         }

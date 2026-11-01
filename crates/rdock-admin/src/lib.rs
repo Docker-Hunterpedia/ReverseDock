@@ -11,6 +11,7 @@ mod guard;
 mod limits;
 mod manage;
 mod passwords;
+mod resources;
 mod routes;
 mod server;
 mod sessions;
@@ -53,6 +54,13 @@ pub trait Control: Send + Sync {
     async fn history(&self) -> serde_json::Value;
     /// The API objects recorded with the history entry `id`.
     async fn history_api(&self, id: u64) -> Option<serde_json::Value>;
+    /// Every service's backends: address, weight, requests in flight, breaker state, drained.
+    async fn backends(&self) -> serde_json::Value;
+    /// Drains or returns `backend` (its address) of `service`; `false` when there is none.
+    async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool;
+    /// Asks for the automatic certificate covering `name` to be renewed now; `false` when
+    /// none covers it.
+    async fn renew_certificate(&self, name: String) -> bool;
 }
 
 /// The outcome of a conditional write of the API provider's objects.
