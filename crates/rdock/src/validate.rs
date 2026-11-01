@@ -62,6 +62,7 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
                         cloudflare: &cloudflare,
                         backends: &backends,
                         sticky_key: b"validate",
+                        live: &rdock_observability::live::Live::default(),
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);

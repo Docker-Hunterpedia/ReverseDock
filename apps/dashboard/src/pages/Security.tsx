@@ -1,20 +1,14 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { type FormEvent, useState } from "react";
 import { Alert, Button, Card, Field, StatusPill } from "../components/ui";
+import { useToast } from "../components/Toast";
+import { AuditLog, Tokens, Users } from "./Access";
 import { CodeList } from "./Enrol";
+import type { Listed } from "../api";
 import { type Session, api, describe } from "../lib/api";
 import { ago } from "../lib/status";
 
-interface Listed {
-  id: string;
-  user: string;
-  created_at: number;
-  idle_seconds: number;
-  client: string | null;
-  current: boolean;
-}
-
-const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-3 uppercase";
+const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-2 uppercase";
 const TD = "border-t border-line px-3 py-2";
 
 interface MfaState {
@@ -26,6 +20,7 @@ interface MfaState {
 /** Two-step verification status and new recovery codes after confirming the password. */
 function TwoStep() {
   const queryClient = useQueryClient();
+  const toast = useToast();
   const state = useQuery({ queryKey: ["mfa"], queryFn: () => api<MfaState>("/auth/mfa") });
   const [asking, setAsking] = useState(false);
   const [password, setPassword] = useState("");
@@ -36,6 +31,7 @@ function TwoStep() {
       return api<{ recovery_codes: string[] }>("/auth/recovery-codes", { method: "POST", body: {} });
     },
     onSuccess: () => {
+      toast("New recovery codes created; the old ones no longer work. Save them now.");
       setAsking(false);
       setPassword("");
       setCode("");
@@ -102,7 +98,47 @@ function TwoStep() {
   );
 }
 
-/** Two-step verification and sessions; users, tokens and the audit log follow (#111). */
+/** Changes the caller's own password; their other sessions end. */
+function Password() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const change = useMutation({
+    mutationFn: () => api("/auth/password", { method: "POST", body: { current, new: next } }),
+    onSuccess: () => {
+      toast("Password changed; your other sessions are logged out.");
+      setCurrent("");
+      setNext("");
+      setAgain("");
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+  const mismatch = again !== "" && again !== next;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!mismatch) change.mutate();
+  };
+  return (
+    <Card title="Password" className="mb-6">
+      <form onSubmit={submit} className="flex max-w-md flex-col gap-3">
+        <Field label="Current password" type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <Field label="New password" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} hint="At least 12 characters. A long phrase is easier to remember than symbols." />
+        <Field label="New password again" type="password" required autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} />
+        {mismatch && <Alert>The new passwords do not match.</Alert>}
+        {change.error && <Alert>{describe(change.error)}</Alert>}
+        <div>
+          <Button type="submit" variant="primary" disabled={change.isPending || mismatch}>
+            {change.isPending ? "Changing…" : "Change password"}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
+/** Two-step verification, users, sessions, API tokens and the audit log. */
 export function Security({ session }: { session: Session }) {
   const queryClient = useQueryClient();
   const sessions = useQuery({
@@ -110,22 +146,26 @@ export function Security({ session }: { session: Session }) {
     queryFn: () => api<Listed[]>("/auth/sessions"),
     refetchInterval: 15000,
   });
+  const toast = useToast();
   const end = useMutation({
     mutationFn: (id: string) => api(`/auth/sessions/${encodeURIComponent(id)}`, { method: "DELETE" }),
+    onSuccess: () => toast("Session ended; that browser is logged out."),
+    onError: (error) => toast(describe(error), "danger"),
     onSettled: () => queryClient.invalidateQueries({ queryKey: ["sessions"] }),
   });
   return (
     <>
       <h1 className="mb-1 text-[22px] leading-7 font-semibold">Security</h1>
       <p className="mb-6 text-fg-2">
-        {session.role === "admin" ? "Everyone's sessions." : "Your sessions."} A session ends after 30 minutes
-        without activity or 8 hours after login.
+        Your password, two-step verification, {session.role === "admin" ? "users, everyone's sessions, API tokens and the audit log" : "your sessions and API tokens"}.
       </p>
+      <Password />
       <TwoStep />
-      <Card title="Sessions">
+      {session.role === "admin" && <Users session={session} />}
+      <Card title="Sessions" className={session.role === "admin" ? "mt-6" : ""}>
         {sessions.error && <Alert>{describe(sessions.error)}</Alert>}
         {end.error && <Alert>{describe(end.error)}</Alert>}
-        <div className="-m-4 overflow-x-auto">
+        <div className="relative -m-4 overflow-x-auto" tabIndex={0} role="group" aria-label="Table, scrolls sideways">
           <table className="w-full text-sm">
             <thead className="bg-surface-2">
               <tr>
@@ -155,6 +195,8 @@ export function Security({ session }: { session: Session }) {
           </table>
         </div>
       </Card>
+      <Tokens session={session} />
+      {session.role === "admin" && <AuditLog />}
     </>
   );
 }

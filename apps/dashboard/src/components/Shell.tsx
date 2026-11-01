@@ -15,20 +15,20 @@ type Icon = ComponentType<{ size?: number; "aria-hidden"?: boolean }>;
 const NAV: { label: string; to?: string; icon: Icon }[][] = [
   [
     { label: "Overview", to: "/", icon: LayoutDashboard },
-    { label: "Routes", icon: Route },
-    { label: "Services", icon: Server },
-    { label: "Middlewares", icon: Layers },
-    { label: "Certificates", icon: ShieldCheck },
-    { label: "Listeners", icon: Network },
-    { label: "Providers", icon: Plug },
+    { label: "Routes", to: "/routes", icon: Route },
+    { label: "Services", to: "/services", icon: Server },
+    { label: "Middlewares", to: "/middlewares", icon: Layers },
+    { label: "Certificates", to: "/certificates", icon: ShieldCheck },
+    { label: "Listeners", to: "/listeners", icon: Network },
+    { label: "Providers", to: "/providers", icon: Plug },
     { label: "Security", to: "/security", icon: KeyRound },
   ],
   [
-    { label: "Logs", icon: ScrollText },
-    { label: "Metrics", icon: Gauge },
-    { label: "Config", icon: FileCode2 },
+    { label: "Logs", to: "/logs", icon: ScrollText },
+    { label: "Metrics", to: "/traffic", icon: Gauge },
+    { label: "Config", to: "/config", icon: FileCode2 },
   ],
-  [{ label: "Settings", icon: Settings }],
+  [{ label: "Settings", to: "/settings", icon: Settings }],
 ];
 
 const THEMES: { value: Theme; label: string; icon: Icon }[] = [

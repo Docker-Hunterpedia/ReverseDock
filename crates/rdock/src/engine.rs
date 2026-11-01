@@ -22,6 +22,8 @@ use serde_json::Value;
 use crate::validate::load_error;
 use crate::zero_config::{self, Source};
 
+mod api;
+
 /// Where the applied configuration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
@@ -71,16 +73,19 @@ impl Report {
 struct Applied {
     config: Option<Config>,
     source: Option<Value>,
+    /// The API provider's objects as last applied, for the history.
+    api: Option<Value>,
     origin: Origin,
 }
 
 /// Providers whose snapshots the engine merges.
-const PROVIDERS: [&str; 1] = ["docker"];
+const PROVIDERS: [&str; 2] = ["docker", api::PROVIDER];
 
 /// Whether the file configuration enables `provider`.
 fn enabled(file: &Config, provider: &str) -> bool {
     match provider {
         "docker" => file.providers.docker.is_some(),
+        api::PROVIDER => true,
         _ => false,
     }
 }
@@ -113,6 +118,10 @@ pub(crate) struct Engine {
     /// Why a provider cannot reach its source, while it cannot.
     degraded: Mutex<BTreeMap<String, String>>,
     started_at: SystemTime,
+    /// One configuration write through the API at a time (version check and apply).
+    api_writes: tokio::sync::Mutex<()>,
+    /// The alert settings of the applied configuration, for the alert dispatcher.
+    alerts: tokio::sync::watch::Sender<rdock_model::settings::Alerts>,
 }
 
 /// What the certificate manager should do for an applied configuration: nothing when
@@ -128,7 +137,6 @@ fn acme_plan(config: &Config, runtime: &Runtime) -> rdock_acme::Plan {
         acme: acme.map(std::borrow::Cow::into_owned).unwrap_or_default(),
         http01: runtime.listeners.values().any(|l| l.tls.is_none()),
         tls_alpn01: runtime.listeners.values().any(|l| l.tls.is_some()),
-        alerts: config.observability.alerts.webhook.clone(),
     }
 }
 
@@ -144,6 +152,13 @@ fn unix_ms() -> u64 {
 
 impl Engine {
     pub(crate) fn new(source: Source, data_dir: &Path, plane: Arc<DataPlane>) -> Self {
+        let (alerts, receiver) =
+            tokio::sync::watch::channel(rdock_model::settings::Alerts::default());
+        plane
+            .metrics()
+            .feeds
+            .alerts
+            .start(receiver, plane.metrics().clone());
         Self {
             source,
             state: StateDir::new(data_dir),
@@ -163,6 +178,7 @@ impl Engine {
             applied: tokio::sync::Mutex::new(Applied {
                 config: None,
                 source: None,
+                api: None,
                 origin: Origin::File,
             }),
             ready: AtomicBool::new(false),
@@ -174,6 +190,8 @@ impl Engine {
             snapshots: Mutex::new(BTreeMap::new()),
             degraded: Mutex::new(BTreeMap::new()),
             started_at: SystemTime::now(),
+            api_writes: tokio::sync::Mutex::new(()),
+            alerts,
         }
     }
 
@@ -187,6 +205,11 @@ impl Engine {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone()
+    }
+
+    /// The data plane's live feeds, for the admin API's streams.
+    pub(crate) fn feeds(&self) -> rdock_observability::feed::Feeds {
+        self.plane.metrics().feeds.clone()
     }
 
     /// The applied configuration, if any.
@@ -342,6 +365,80 @@ impl Engine {
                 .contains(&TrustedProxy::Cloudflare),
         );
         self.local_ca.update(local_names);
+        self.alerts
+            .send_replace(config.observability.alerts.clone());
+    }
+
+    /// Checks error-rate and latency thresholds every 30 seconds against the live rings and
+    /// raises or resolves alerts; runs until the process ends.
+    pub(crate) async fn watch_thresholds(self: Arc<Self>) {
+        use rdock_model::settings::AlertRule;
+        use rdock_observability::alerts::Alert;
+        let mut firing: BTreeSet<String> = BTreeSet::new();
+        let mut tick = tokio::time::interval(Duration::from_secs(30));
+        loop {
+            tick.tick().await;
+            let rules = self.alerts.borrow().rules.clone();
+            let sink = self.plane.metrics().feeds.alerts.clone();
+            let now = SystemTime::now();
+            for (service, ring) in self.plane.live().services.all() {
+                if let Some(rule) = rules.error_rate {
+                    let summary = ring.summary(rule.window.as_std(), now);
+                    let key = format!("error_rate:{service}");
+                    let share = if summary.requests == 0 {
+                        0.0
+                    } else {
+                        percent(summary.classes[4], summary.requests)
+                    };
+                    if summary.requests >= u64::from(rule.min_requests)
+                        && share > f64::from(rule.percent)
+                    {
+                        firing.insert(key.clone());
+                        sink.raise(Alert::firing(
+                            AlertRule::ErrorRate,
+                            key,
+                            format!("Service {service}: {share:.1} % of responses are 5xx (threshold {} %)", rule.percent),
+                            serde_json::json!({ "event": "error_rate", "service": service, "percent": share, "requests": summary.requests }),
+                        ));
+                    } else if firing.remove(&key) {
+                        sink.raise(Alert::resolved(
+                            AlertRule::ErrorRate,
+                            key,
+                            format!("Service {service}: 5xx share back to {share:.1} %"),
+                        ));
+                    }
+                }
+                if let Some(rule) = rules.latency {
+                    let summary = ring.summary(rule.window.as_std(), now);
+                    let key = format!("latency:{service}");
+                    let limit = rule.p99.as_std().as_secs_f64();
+                    match summary.p99 {
+                        Some(p99)
+                            if summary.requests >= u64::from(rule.min_requests) && p99 > limit =>
+                        {
+                            firing.insert(key.clone());
+                            sink.raise(Alert::firing(
+                                AlertRule::Latency,
+                                key,
+                                format!("Service {service}: p99 is {:.0} ms (threshold {:.0} ms)", p99 * 1000.0, limit * 1000.0),
+                                serde_json::json!({ "event": "latency", "service": service, "p99_seconds": p99 }),
+                            ));
+                        }
+                        p99 if firing.remove(&key) => {
+                            sink.raise(Alert::resolved(
+                                AlertRule::Latency,
+                                key,
+                                format!(
+                                    "Service {service}: p99 back to {:.0} ms",
+                                    p99.unwrap_or(0.0) * 1000.0
+                                ),
+                            ));
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
     }
 
     async fn apply(&self, loaded: Loaded, trigger: &str, origin: Origin) -> Report {
@@ -374,16 +471,12 @@ impl Engine {
         }
         self.update_background(&config, acme_plan, local_names);
         let summary = summarize(applied.config.as_ref(), &config);
-        if applied.source.as_ref() != Some(&source) {
-            let entry = HistoryEntry {
-                applied_at_ms: unix_ms(),
-                generation,
-                summary: summary.clone(),
-                source: source.clone(),
-            };
-            if let Err(err) = self.state.record(&entry, HISTORY_LIMIT) {
-                tracing::warn!(error = %err, "cannot write the configuration history");
-            }
+        let api = snapshots
+            .iter()
+            .find(|s| s.provider == api::PROVIDER)
+            .and_then(|s| serde_json::to_value(&s.fragment).ok());
+        if applied.source.as_ref() != Some(&source) || applied.api != api {
+            self.record_history(generation, &summary, &source, api.as_ref());
         }
         if origin == Origin::File
             && let Err(err) = self.state.save_lkg(&source)
@@ -395,9 +488,45 @@ impl Engine {
                 tracing::warn!(provider = %snapshot.provider, error = %err, "cannot store the provider snapshot");
             }
         }
+        self.watch_files(&file);
+        self.metrics_enabled
+            .store(config.observability.metrics.prometheus, Ordering::SeqCst);
+        applied.config = Some(config);
+        applied.source = Some(source);
+        applied.api = api;
+        applied.origin = origin;
+        drop(applied);
+        for d in diagnostics.iter().filter(|d| !d.is_error()) {
+            tracing::warn!(path = %d.path, "{}", d.message);
+        }
+        tracing::info!(generation, %trigger, %summary, "configuration applied");
+        self.count_applied(generation);
+        let report = Report {
+            result: "applied",
+            trigger: trigger.to_owned(),
+            generation,
+            at: now_rfc3339(),
+            origin,
+            error: None,
+            diagnostics,
+        };
+        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
+        self.plane.metrics().feeds.events.send(serde_json::json!({
+            "type": "reload",
+            "result": report.result,
+            "trigger": report.trigger,
+            "generation": report.generation,
+            "error": report.error,
+            "diagnostics": report.diagnostics.len(),
+        }));
+        report
+    }
+
+    /// Remembers the files the applied configuration reads, for the watcher and reload checks.
+    fn watch_files(&self, file: &Config) {
         let files = match &self.source {
             Source::File(path) => {
-                let mut files = referenced_files(path, &file);
+                let mut files = referenced_files(path, file);
                 if file.providers.file.as_ref().is_none_or(|f| f.watch) {
                     let included = self.included.lock().unwrap_or_else(PoisonError::into_inner);
                     files.extend(included.files.iter().cloned());
@@ -412,32 +541,34 @@ impl Engine {
             .lock()
             .unwrap_or_else(PoisonError::into_inner) = Some(fingerprint(&files));
         *self.watched.lock().unwrap_or_else(PoisonError::into_inner) = files;
-        self.metrics_enabled
-            .store(config.observability.metrics.prometheus, Ordering::SeqCst);
-        applied.config = Some(config);
-        applied.source = Some(source);
-        applied.origin = origin;
-        drop(applied);
-        for d in diagnostics.iter().filter(|d| !d.is_error()) {
-            tracing::warn!(path = %d.path, "{}", d.message);
-        }
-        tracing::info!(generation, %trigger, %summary, "configuration applied");
-        self.plane
-            .metrics()
-            .config_reloads
-            .with_label_values(&["applied"])
-            .inc();
-        let report = Report {
-            result: "applied",
-            trigger: trigger.to_owned(),
+    }
+
+    /// Counts an applied reload and resolves a pending configuration alert.
+    fn count_applied(&self, generation: u64) {
+        let metrics = self.plane.metrics();
+        metrics
+            .feeds
+            .alerts
+            .raise(rdock_observability::alerts::Alert::resolved(
+                rdock_model::settings::AlertRule::Config,
+                "config",
+                format!("Configuration applied again (generation {generation})"),
+            ));
+        metrics.config_reloads.with_label_values(&["applied"]).inc();
+    }
+
+    /// Adds an entry to the on-disk history; a failure is logged, never fatal.
+    fn record_history(&self, generation: u64, summary: &str, source: &Value, api: Option<&Value>) {
+        let entry = HistoryEntry {
+            applied_at_ms: unix_ms(),
             generation,
-            at: now_rfc3339(),
-            origin,
-            error: None,
-            diagnostics,
+            summary: summary.to_owned(),
+            source: source.clone(),
+            api: api.cloned(),
         };
-        *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
-        report
+        if let Err(err) = self.state.record(&entry, HISTORY_LIMIT) {
+            tracing::warn!(error = %err, "cannot write the configuration history");
+        }
     }
 
     /// Merges the providers' objects into the file configuration and compiles it. Provider
@@ -505,6 +636,15 @@ impl Engine {
             error,
             diagnostics,
         };
+        self.plane.metrics().feeds.alerts.raise(rdock_observability::alerts::Alert::firing(
+            rdock_model::settings::AlertRule::Config,
+            "config",
+            format!(
+                "A configuration was rejected ({trigger}): {}; the previous one stays in use",
+                report.error.as_deref().unwrap_or("errors")
+            ),
+            serde_json::json!({ "event": "config_rejected", "trigger": trigger, "error": report.error, "diagnostics": report.diagnostics }),
+        ));
         if trigger != "start" {
             tracing::error!(
                 %trigger,
@@ -516,6 +656,14 @@ impl Engine {
             }
         }
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
+        self.plane.metrics().feeds.events.send(serde_json::json!({
+            "type": "reload",
+            "result": report.result,
+            "trigger": report.trigger,
+            "generation": report.generation,
+            "error": report.error,
+            "diagnostics": report.diagnostics.len(),
+        }));
         report
     }
 }
@@ -704,4 +852,218 @@ impl rdock_admin::Control for Engine {
             serde_json::to_value(&report).unwrap_or(Value::Null),
         )
     }
+
+    async fn effective_config(&self) -> Value {
+        let config = self.applied.lock().await.config.clone();
+        config
+            .and_then(|c| serde_json::to_value(c).ok())
+            .unwrap_or(Value::Null)
+    }
+
+    async fn api_config(&self) -> (Value, String) {
+        let fragment = serde_json::to_value(self.api_fragment()).unwrap_or(Value::Null);
+        (fragment, self.api_etag())
+    }
+
+    async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {
+        let fragment = api::parse(candidate)?;
+        let (ok, diagnostics) = self.api_dry_run(fragment);
+        Ok((ok, serde_json::to_value(diagnostics).unwrap_or(Value::Null)))
+    }
+
+    async fn write_api(&self, candidate: Value, if_match: String) -> rdock_admin::ApiWrite {
+        let fragment = match api::parse(candidate) {
+            Ok(fragment) => fragment,
+            Err(err) => return rdock_admin::ApiWrite::Invalid(err),
+        };
+        let report = |r: &Report| serde_json::to_value(r).unwrap_or(Value::Null);
+        match self.api_write(fragment, &if_match).await {
+            api::Write::Applied(r) => rdock_admin::ApiWrite::Applied {
+                report: report(&r),
+                etag: self.api_etag(),
+            },
+            api::Write::Rejected(r) => rdock_admin::ApiWrite::Rejected { report: report(&r) },
+            api::Write::Stale => rdock_admin::ApiWrite::Stale {
+                etag: self.api_etag(),
+            },
+        }
+    }
+
+    async fn history(&self) -> Value {
+        let entries = self.state.history().unwrap_or_else(|err| {
+            tracing::warn!(error = %err, "cannot read the configuration history");
+            Vec::new()
+        });
+        let list: Vec<Value> = entries
+            .iter()
+            .rev()
+            .map(|e| {
+                serde_json::json!({
+                    "id": e.applied_at_ms,
+                    "generation": e.generation,
+                    "applied_at": rdock_observability::rfc3339(UNIX_EPOCH + Duration::from_millis(e.applied_at_ms)),
+                    "summary": e.summary,
+                    "api": e.api.is_some(),
+                })
+            })
+            .collect();
+        Value::Array(list)
+    }
+
+    async fn history_api(&self, id: u64) -> Option<Value> {
+        let entries = self.state.history().ok()?;
+        let entry = entries.iter().find(|e| e.applied_at_ms == id)?;
+        Some(entry.api.clone().unwrap_or_else(|| serde_json::json!({})))
+    }
+
+    async fn backends(&self) -> Value {
+        let now = std::time::Instant::now();
+        let runtime = self.plane.runtime();
+        let services: Vec<Value> = runtime
+            .services
+            .iter()
+            .map(|(name, service)| {
+                let members: Vec<Value> = service
+                    .members()
+                    .iter()
+                    .map(|m| {
+                        let state = match m.state.breaker(now) {
+                            rdock_balancer::BreakerState::Closed => "up",
+                            rdock_balancer::BreakerState::Open => "down",
+                            rdock_balancer::BreakerState::HalfOpen => "trial",
+                        };
+                        serde_json::json!({
+                            "address": m.id,
+                            "weight": m.weight,
+                            "backup": m.backup,
+                            "in_flight": m.state.in_flight(),
+                            "state": state,
+                            "drained": m.state.is_drained(),
+                            "reason": m.state.exclusion(now),
+                        })
+                    })
+                    .collect();
+                serde_json::json!({ "service": name, "backends": members })
+            })
+            .collect();
+        Value::Array(services)
+    }
+
+    async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool {
+        let runtime = self.plane.runtime();
+        let Some(service) = runtime.services.get(&service) else {
+            return false;
+        };
+        let members = service.members();
+        let matching: Vec<_> = members.iter().filter(|m| m.id == backend).collect();
+        for member in &matching {
+            member.state.set_drained(drained);
+        }
+        if !matching.is_empty() {
+            tracing::info!(service = %service.name, %backend, drained, "backend drain changed through the admin API");
+        }
+        !matching.is_empty()
+    }
+
+    async fn renew_certificate(&self, name: String) -> bool {
+        self.acme.renew(&name)
+    }
+
+    async fn explain(&self, request: Value) -> Result<Value, String> {
+        #[derive(serde::Deserialize)]
+        #[serde(deny_unknown_fields)]
+        struct Body {
+            #[serde(default)]
+            listener: String,
+            host: String,
+            #[serde(default)]
+            path: String,
+            #[serde(default)]
+            method: String,
+            #[serde(default)]
+            headers: BTreeMap<String, String>,
+            #[serde(default)]
+            client_ip: Option<std::net::IpAddr>,
+        }
+        let body: Body = serde_json::from_value(request).map_err(|e| e.to_string())?;
+        let mut headers = http::HeaderMap::new();
+        for (name, value) in &body.headers {
+            let name = http::HeaderName::from_bytes(name.as_bytes())
+                .map_err(|e| format!("header `{name}`: {e}"))?;
+            let value =
+                http::HeaderValue::from_str(value).map_err(|e| format!("header `{name}`: {e}"))?;
+            headers.append(name, value);
+        }
+        let runtime = self.plane.runtime();
+        let listener = if body.listener.is_empty() {
+            runtime.listeners.keys().next().cloned().unwrap_or_default()
+        } else {
+            body.listener
+        };
+        let request = rdock_proxy::explain::Request {
+            host: body.host,
+            path: if body.path.is_empty() {
+                "/".to_owned()
+            } else {
+                body.path
+            },
+            method: body.method,
+            headers,
+            client_ip: body.client_ip,
+        };
+        let mut answer = rdock_proxy::explain::explain(&runtime, &listener, &request)?;
+        // Middleware names come from the configuration; the compiled chain has none.
+        let config = self.applied.lock().await.config.clone();
+        if let (Some(config), Some(route)) = (
+            config,
+            answer["outcome"]["route"].as_str().map(str::to_owned),
+        ) {
+            let middlewares = config
+                .routes
+                .get(&route)
+                .map(|r| r.middlewares.clone())
+                .unwrap_or_default();
+            answer["outcome"]["middlewares"] = serde_json::json!(middlewares);
+        }
+        Ok(answer)
+    }
+
+    async fn metrics_summary(&self, window_seconds: u64) -> Value {
+        use rdock_observability::live::{Summary, combined};
+        let live = self.plane.live();
+        let window = Duration::from_secs(window_seconds);
+        let now = SystemTime::now();
+        let without_series = |mut summary: Summary| {
+            summary.series.clear();
+            summary
+        };
+        let routes: Vec<_> = live.routes.all();
+        let services: Vec<_> = live.services.all();
+        let route_rings: Vec<&rdock_observability::live::Ring> =
+            routes.iter().map(|(_, ring)| ring.as_ref()).collect();
+        let total = combined(&route_rings, window, now);
+        let by_name = |list: &[(String, Arc<rdock_observability::live::Ring>)]| -> Value {
+            list.iter()
+                .map(|(name, ring)| {
+                    (
+                        name.clone(),
+                        serde_json::to_value(without_series(ring.summary(window, now)))
+                            .unwrap_or(Value::Null),
+                    )
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into()
+        };
+        serde_json::json!({
+            "total": total,
+            "routes": by_name(&routes),
+            "services": by_name(&services),
+        })
+    }
+}
+
+/// `part` as a percentage of `total`; request counts stay far below 2^52, so `f64` is exact.
+#[allow(clippy::cast_precision_loss)]
+fn percent(part: u64, total: u64) -> f64 {
+    100.0 * part as f64 / total as f64
 }

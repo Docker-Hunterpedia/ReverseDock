@@ -3,7 +3,7 @@
 //! that still uses it.
 
 use std::collections::{HashMap, HashSet};
-use std::sync::atomic::{AtomicU32, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
@@ -15,6 +15,8 @@ pub struct BackendState {
     in_flight: AtomicU32,
     pool_in_flight: Arc<AtomicU32>,
     health: Mutex<Health>,
+    /// Taken out of rotation by an operator: no new requests, open ones finish.
+    drained: AtomicBool,
 }
 
 /// What a recorded failure did.
@@ -84,6 +86,31 @@ impl BackendState {
     fn is_ejected(&self) -> bool {
         self.health().is_ejected()
     }
+
+    /// Why the backend gets no requests now (health, ejection, `Retry-After`, drain); `None`
+    /// when it may get them.
+    pub fn exclusion(&self, now: Instant) -> Option<String> {
+        if self.is_drained() {
+            return Some("drained by an operator".to_owned());
+        }
+        self.health().exclusion(now)
+    }
+
+    /// Whether the backend ramps up after recovering, and its share of the weight now.
+    pub fn ramping(&self, weight: u32, slow_start: Option<Duration>, now: Instant) -> Option<u32> {
+        let current = self.weight(weight, slow_start, now);
+        (current < weight).then_some(current)
+    }
+
+    /// Whether an operator drained the backend.
+    pub fn is_drained(&self) -> bool {
+        self.drained.load(Ordering::Relaxed)
+    }
+
+    /// Drains (`true`) or returns (`false`) the backend.
+    pub fn set_drained(&self, drained: bool) {
+        self.drained.store(drained, Ordering::Relaxed);
+    }
 }
 
 /// One request in flight to a backend; dropping it ends the count.
@@ -120,6 +147,15 @@ impl Drop for RetryPermit {
 }
 
 impl Pool {
+    /// The state of backend `id` if it exists; never creates one.
+    pub fn existing(&self, id: &str) -> Option<Arc<BackendState>> {
+        self.backends
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(id)
+            .cloned()
+    }
+
     /// The state of backend `id`, created on first use.
     pub fn state(&self, id: &str) -> Arc<BackendState> {
         if let Some(state) = self
@@ -211,6 +247,15 @@ pub struct Registry {
 }
 
 impl Registry {
+    /// The pool of `service` if a live generation uses it; never creates one.
+    pub fn existing(&self, service: &str) -> Option<Arc<Pool>> {
+        self.pools
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(service)
+            .and_then(Weak::upgrade)
+    }
+
     /// The pool of `service`, shared with earlier generations while they are alive.
     pub fn pool(&self, service: &str) -> Arc<Pool> {
         let mut pools = self.pools.lock().unwrap_or_else(PoisonError::into_inner);

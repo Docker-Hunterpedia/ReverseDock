@@ -1,15 +1,26 @@
 #![doc = include_str!("../README.md")]
 
 mod account;
+pub mod audit;
 mod auth;
 mod bootstrap;
+mod caller;
+mod config_api;
 mod dashboard;
+#[cfg(feature = "fault-injection")]
+pub mod fault;
 mod guard;
 mod limits;
+mod manage;
+mod openapi;
 mod passwords;
+mod resources;
 mod routes;
 mod server;
 mod sessions;
+mod stream;
+mod telemetry;
+mod tokens;
 mod totp;
 mod users;
 
@@ -19,6 +30,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+pub use openapi::json as openapi_json;
 pub use server::{Running, StartError, start};
 
 /// What the admin API reads from and asks of the running process.
@@ -32,6 +44,60 @@ pub trait Control: Send + Sync {
     async fn status(&self) -> serde_json::Value;
     /// Reloads the configuration; returns whether it was applied, and the report.
     async fn reload(&self) -> (bool, serde_json::Value);
+    /// The applied configuration, providers merged (`name@provider`), secrets as written.
+    async fn effective_config(&self) -> serde_json::Value;
+    /// The API provider's objects and their version tag (`"g<generation>-<hash>"`).
+    async fn api_config(&self) -> (serde_json::Value, String);
+    /// Validates and compiles with `candidate` as the API objects, applying nothing: whether
+    /// it would be applied, and the diagnostics; `Err` when it is not a valid document.
+    async fn dry_run(
+        &self,
+        candidate: serde_json::Value,
+    ) -> Result<(bool, serde_json::Value), String>;
+    /// Replaces the API objects when `if_match` is the current version tag.
+    async fn write_api(&self, candidate: serde_json::Value, if_match: String) -> ApiWrite;
+    /// The configuration history, newest first; each entry has an `id`.
+    async fn history(&self) -> serde_json::Value;
+    /// The API objects recorded with the history entry `id`.
+    async fn history_api(&self, id: u64) -> Option<serde_json::Value>;
+    /// Every service's backends: address, weight, requests in flight, breaker state, drained.
+    async fn backends(&self) -> serde_json::Value;
+    /// Drains or returns `backend` (its address) of `service`; `false` when there is none.
+    async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool;
+    /// Asks for the automatic certificate covering `name` to be renewed now; `false` when
+    /// none covers it.
+    async fn renew_certificate(&self, name: String) -> bool;
+    /// Live traffic of the last `window_seconds` (1–900): the whole proxy with one point per
+    /// second, and every route and service without points.
+    async fn metrics_summary(&self, window_seconds: u64) -> serde_json::Value;
+    /// How a request would be routed on `listener` (the first one when empty): every route
+    /// with why it does or does not match, the winner, its middlewares and the backends it
+    /// would consider. `Err` for an unknown listener or an invalid request.
+    async fn explain(&self, request: serde_json::Value) -> Result<serde_json::Value, String>;
+}
+
+/// The outcome of a conditional write of the API provider's objects.
+#[derive(Debug)]
+pub enum ApiWrite {
+    /// Applied; the new version tag.
+    Applied {
+        /// The reload report.
+        report: serde_json::Value,
+        /// The version tag now current.
+        etag: String,
+    },
+    /// The configuration was rejected; nothing changed.
+    Rejected {
+        /// The reload report with the diagnostics.
+        report: serde_json::Value,
+    },
+    /// `If-Match` named an older version.
+    Stale {
+        /// The version tag now current.
+        etag: String,
+    },
+    /// Not a valid document.
+    Invalid(String),
 }
 
 /// Where and how the admin API listens (ADR-0024).
@@ -49,8 +115,6 @@ pub struct Settings {
     pub allowed_hosts: Vec<String>,
     /// Worker threads of the admin runtime.
     pub threads: usize,
-    /// Bearer token for `/api/v1` on the TCP listener.
-    pub token: String,
     /// Where users and the bootstrap token are kept: `$RDOCK_DATA_DIR/admin`.
     pub state_dir: PathBuf,
     /// Password rules for users.
@@ -61,6 +125,18 @@ pub struct Settings {
     pub mfa: rdock_model::settings::MfaPolicy,
     /// Serve the embedded dashboard (`admin.dashboard`).
     pub dashboard: bool,
+    /// API token rules (`admin.tokens`).
+    pub tokens: rdock_model::settings::AdminTokens,
+    /// Serve `/metrics` without a token on a loopback listener.
+    pub metrics_unauthenticated_on_loopback: bool,
+    /// Allow configuration writes through the API (`admin.api_writes`); off for `GitOps`.
+    pub api_writes: bool,
+    /// Where the audit log is written: `$RDOCK_DATA_DIR/audit`.
+    pub audit_dir: PathBuf,
+    /// Audit log rotation, retention and forwarding.
+    pub audit: rdock_model::settings::AdminAudit,
+    /// The data plane's live feeds for the log and event streams.
+    pub feeds: Option<rdock_observability::feed::Feeds>,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -87,7 +163,6 @@ struct State {
     /// The proxy's runtime: engine calls run there, so whatever they start (health checks,
     /// providers) lives with the data plane and never on the admin runtime.
     main: tokio::runtime::Handle,
-    token: String,
     allowed_hosts: Vec<String>,
     users: users::Users,
     bootstrap: bootstrap::Bootstrap,
@@ -96,8 +171,25 @@ struct State {
     sessions: sessions::Sessions,
     mfa: rdock_model::settings::MfaPolicy,
     dashboard: bool,
+    tokens: tokens::Tokens,
+    token_rules: rdock_model::settings::AdminTokens,
+    /// `/metrics` answers without a token (loopback listener and the setting on).
+    metrics_open: bool,
+    audit: audit::Audit,
+    api_writes: bool,
+    logs: Arc<stream::Hub>,
+    events: Arc<stream::Hub>,
+    quota: stream::Quota,
+    telemetry: telemetry::Telemetry,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
+    /// Configuration writes and dry runs, shared by every caller: each one compiles a whole
+    /// configuration on the proxy's runtime, so an unbounded loop of them would slow it down
+    /// (H-ENG-04).
+    config_work: rdock_limits::RateLimiter,
+    /// Requests per caller (token, user or socket): the admin side shares the proxy's CPU, so
+    /// no single caller may drive it hard enough to slow requests down (H-ENG-04).
+    api_rate: rdock_limits::RateLimiter,
 }
 
 /// Lower-case hexadecimal.

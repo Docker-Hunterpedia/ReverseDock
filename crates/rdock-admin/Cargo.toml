@@ -10,29 +10,41 @@ repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
 
+[features]
+# Faults for the admin isolation test (H-ENG-04); never in release builds.
+fault-injection = []
+
 [dependencies]
 argon2.workspace = true
 async-trait.workspace = true
 axum.workspace = true
 base64.workspace = true
+crc32fast.workspace = true
 http.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+ipnet.workspace = true
+futures-util.workspace = true
+json-patch.workspace = true
 rdock-config.workspace = true
 rdock-limits.workspace = true
 rdock-model.workspace = true
+rdock-observability.workspace = true
 rdock-tls.workspace = true
 ring.workspace = true
 rust-embed.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+similar.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tower-service.workspace = true
 tracing.workspace = true
+utoipa.workspace = true
+utoipa-axum.workspace = true
 
 [dev-dependencies]
 bytes.workspace = true

@@ -37,6 +37,8 @@ pub(crate) struct CertState {
     pub ari_known: bool,
     /// When an alert was last sent for this certificate.
     pub alerted_at: Option<Instant>,
+    /// When an operator asked for renewal now (`POST /api/v1/certificates/{name}/renew`).
+    pub renewal_requested: Option<Instant>,
 }
 
 /// The renewal state of one certificate, as `rdock status` shows it.
@@ -71,6 +73,7 @@ impl CertState {
         self.last_error = None;
         self.ari_renew_at = None;
         self.ari_check_at = None;
+        self.renewal_requested = None;
     }
 
     /// Counts a failed attempt and schedules the next one.
@@ -91,7 +94,7 @@ impl CertState {
 
     pub fn due(&self, now: i64) -> bool {
         let waiting = self.retry_at.is_some_and(|at| at > Instant::now());
-        !waiting && self.renew_at().is_none_or(|at| now >= at)
+        !waiting && (self.renewal_requested.is_some() || self.renew_at().is_none_or(|at| now >= at))
     }
 
     /// Whether renewal information should be fetched now.

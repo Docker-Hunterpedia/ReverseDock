@@ -23,6 +23,12 @@ Commands:
   hash         Create an argon2id password hash for `basic_auth` (reads the password from stdin)
   trust        Install the local CA's root (for localhost and private names) into the system trust stores, or remove it with --uninstall
   migrate      Turn another proxy's configuration into rdock.yaml
+  audit        Work with the admin audit log
+  config       The configuration history, diffs and rollback of the API provider
+  users        Manage dashboard users
+  tokens       Manage API tokens
+  backends     Show backends and drain them
+  routes       Explain routing decisions
   schema       Print the JSON Schema of rdock.yaml
   version      Print version and build information
   help         Print this message or the help of the given subcommand(s)
@@ -105,7 +111,7 @@ Usage: rdock reload [OPTIONS]
 Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
-      --data-dir <DATA_DIR>  Data directory, to find the admin socket and token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -120,7 +126,7 @@ Usage: rdock status [OPTIONS]
 Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
-      --data-dir <DATA_DIR>  Data directory, to find the admin socket and token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
       --json                 Print the raw JSON document
   -h, --help                 Print help
   -V, --version              Print version
@@ -136,7 +142,7 @@ Usage: rdock healthcheck [OPTIONS]
 Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
-      --data-dir <DATA_DIR>  Data directory, to find the admin socket and token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -184,14 +190,123 @@ Options:
   -V, --version  Print version
 ```
 
+## `rdock audit`
+
+```text
+Work with the admin audit log
+
+Usage: rdock audit <COMMAND>
+
+Commands:
+  verify  Check that no audit record was changed or removed (the SHA-256 chain)
+  list    Show recent records from the running proxy
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock config`
+
+```text
+The configuration history, diffs and rollback of the API provider
+
+Usage: rdock config <COMMAND>
+
+Commands:
+  history   List applied configurations, newest first
+  diff      Show what a document for the API provider would change, without applying it
+  rollback  Restore the API provider's objects of a history entry
+  help      Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock users`
+
+```text
+Manage dashboard users
+
+Usage: rdock users <COMMAND>
+
+Commands:
+  list       List users
+  add        Add a user; reads the first password from standard input
+  set        Change a user's role or turn them off or on
+  passwd     Set a new password, read from standard input
+  reset-mfa  Remove a user's second factor, so they enrol again at the next login
+  remove     Delete a user, their sessions and their tokens
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock tokens`
+
+```text
+Manage API tokens
+
+Usage: rdock tokens <COMMAND>
+
+Commands:
+  list    List API tokens
+  create  Create a token and print it once
+  revoke  Revoke a token by its ID
+  help    Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock backends`
+
+```text
+Show backends and drain them
+
+Usage: rdock backends <COMMAND>
+
+Commands:
+  list     List every service's backends and their state
+  drain    Stop sending new requests to a backend; open ones finish
+  undrain  Put a drained backend back in rotation
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock routes`
+
+```text
+Explain routing decisions
+
+Usage: rdock routes <COMMAND>
+
+Commands:
+  explain  Show how a request would be routed, without sending it: every route with why it matches or not, the winner and the backends it would use
+  help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
 ## `rdock schema`
 
 ```text
 Print the JSON Schema of rdock.yaml
 
-Usage: rdock schema
+Usage: rdock schema [OPTIONS]
 
 Options:
+      --openapi  Print the OpenAPI 3.1 document of the admin API instead
   -h, --help     Print help
   -V, --version  Print version
 ```

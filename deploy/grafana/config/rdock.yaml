@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# Configuration for compose.yaml: one route to whoami, metrics on the loopback admin listener.
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  whoami:
+    match: "PathPrefix(`/`)"
+    service: whoami
+
+services:
+  whoami:
+    backends: [{ address: "whoami:80" }]
+    health: { active: { path: /health, interval: 10s } }
+
+observability:
+  metrics:
+    prometheus: true
+
+admin:
+  listener: 127.0.0.1:2080
+
+lifecycle:
+  drain_timeout: 8s   # below Docker's 10 s stop timeout

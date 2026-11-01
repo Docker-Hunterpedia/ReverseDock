@@ -9,7 +9,9 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde::{Deserialize, Serialize};
 
 /// What a user may do (ADR-0024, "What each role may do").
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, utoipa::ToSchema,
+)]
 #[serde(rename_all = "lowercase")]
 pub enum Role {
     /// Reads everything except secrets, users and the audit log.
@@ -148,6 +150,60 @@ impl Users {
         self.insert(&mut list, user)
     }
 
+    /// Adds a user with a new name.
+    pub fn add(&self, user: User) -> Result<(), AddError> {
+        let mut list = self.lock();
+        self.insert(&mut list, user)
+    }
+
+    /// All users.
+    pub fn list(&self) -> Vec<User> {
+        self.lock().clone()
+    }
+
+    /// Changes a user, refusing a change that would leave no enabled admin. Returns `None`
+    /// for an unknown user and `Some(false)` for a refused change.
+    pub fn update_keeping_an_admin(
+        &self,
+        name: &str,
+        change: impl FnOnce(&mut User),
+    ) -> io::Result<Option<bool>> {
+        let mut list = self.lock();
+        let Some(index) = list.iter().position(|u| u.name == name) else {
+            return Ok(None);
+        };
+        let before = list[index].clone();
+        change(&mut list[index]);
+        if !has_admin(&list) {
+            list[index] = before;
+            return Ok(Some(false));
+        }
+        if let Err(err) = self.save(&list) {
+            list[index] = before;
+            return Err(err);
+        }
+        Ok(Some(true))
+    }
+
+    /// Removes a user, refusing to remove the last enabled admin. Same answers as
+    /// [`update_keeping_an_admin`](Self::update_keeping_an_admin).
+    pub fn remove(&self, name: &str) -> io::Result<Option<bool>> {
+        let mut list = self.lock();
+        let Some(index) = list.iter().position(|u| u.name == name) else {
+            return Ok(None);
+        };
+        let removed = list.remove(index);
+        if !has_admin(&list) {
+            list.insert(index, removed);
+            return Ok(Some(false));
+        }
+        if let Err(err) = self.save(&list) {
+            list.insert(index, removed);
+            return Err(err);
+        }
+        Ok(Some(true))
+    }
+
     fn insert(&self, list: &mut Vec<User>, user: User) -> Result<(), AddError> {
         if list.iter().any(|u| u.name == user.name) {
             return Err(AddError::Exists);
@@ -228,6 +284,22 @@ mod tests {
         users
             .update("root", |u| u.password = "$argon2id$y".into())
             .unwrap();
+        users
+            .add(User::new("ops".into(), Role::Operator, "h".into()))
+            .unwrap();
+        assert_eq!(
+            users
+                .update_keeping_an_admin("root", |u| u.disabled = true)
+                .unwrap(),
+            Some(false)
+        );
+        assert_eq!(
+            users.remove("root").unwrap(),
+            Some(false),
+            "the last admin stays"
+        );
+        assert_eq!(users.remove("ops").unwrap(), Some(true));
+        assert_eq!(users.remove("ops").unwrap(), None);
         assert!(users.update("nobody", |_| ()).is_err());
 
         let path = dir.path().join("users.json");

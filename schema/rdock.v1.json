@@ -30,9 +30,16 @@
       "$ref": "#/$defs/Admin",
       "default": {
         "allowed_hosts": [],
+        "api_writes": true,
+        "audit": {
+          "forward": null,
+          "max_file_size": "64MiB",
+          "retention": "400d"
+        },
         "dashboard": true,
         "enabled": true,
         "listener": "127.0.0.1:2080",
+        "metrics_unauthenticated_on_loopback": false,
         "mfa": "required_for_admins",
         "passwords": {
           "argon2": {
@@ -49,7 +56,11 @@
         },
         "socket": null,
         "threads": 2,
-        "tls": null
+        "tls": null,
+        "tokens": {
+          "allow_no_expiry": false,
+          "default_expiry_days": 90
+        }
       }
     },
     "certificates": {
@@ -110,6 +121,13 @@
           "sample": 1.0
         },
         "alerts": {
+          "channels": {},
+          "min_interval": "15m",
+          "rules": {
+            "disabled": [],
+            "error_rate": null,
+            "latency": null
+          },
           "webhook": null
         },
         "metrics": {
@@ -473,6 +491,20 @@
             "type": "string"
           }
         },
+        "api_writes": {
+          "description": "Allow configuration changes through the admin API and the dashboard. Set `false`\n(`GitOps`) when Git and the file provider are the only source of truth.",
+          "type": "boolean",
+          "default": true
+        },
+        "audit": {
+          "description": "The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.",
+          "$ref": "#/$defs/AdminAudit",
+          "default": {
+            "forward": null,
+            "max_file_size": "64MiB",
+            "retention": "400d"
+          }
+        },
         "dashboard": {
           "description": "Serve the embedded dashboard on the admin listener.",
           "type": "boolean",
@@ -487,6 +519,11 @@
           "description": "Address of the admin API. Loopback by default; any other address needs `tls`.",
           "$ref": "#/$defs/ListenAddress",
           "default": "127.0.0.1:2080"
+        },
+        "metrics_unauthenticated_on_loopback": {
+          "description": "Serve `/metrics` without a token when the listener is a loopback address, as before\nv0.5, for scrapers on the same machine that cannot send one.",
+          "type": "boolean",
+          "default": false
         },
         "mfa": {
           "description": "Who must use a second factor (TOTP) to log in.",
@@ -541,12 +578,49 @@
             }
           ],
           "default": null
+        },
+        "tokens": {
+          "description": "API tokens for scripts and Prometheus.",
+          "$ref": "#/$defs/AdminTokens",
+          "default": {
+            "allow_no_expiry": false,
+            "default_expiry_days": 90
+          }
         }
       },
       "additionalProperties": false,
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "AdminAudit": {
+      "description": "The audit log (ADR-0024): every admin write, login, MFA event, refusal and session end, as\nJSON lines that each carry the SHA-256 of the line before.",
+      "type": "object",
+      "properties": {
+        "forward": {
+          "description": "Also send each record to a syslog server.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/AuditForward"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "max_file_size": {
+          "description": "A file is closed and a new one started at this size (1 MiB–1 GiB).",
+          "$ref": "#/$defs/ByteSize",
+          "default": "64MiB"
+        },
+        "retention": {
+          "description": "How long rotated files are kept (1d–3650d).",
+          "$ref": "#/$defs/Duration",
+          "default": "400d"
+        }
+      },
+      "additionalProperties": false
     },
     "AdminPasswords": {
       "description": "Password rules for dashboard users (ADR-0024). There are no composition rules: length and\na list of common passwords are what protect a password (NIST SP 800-63B §3.1.1.2).",
@@ -616,12 +690,346 @@
         "key_file"
       ]
     },
+    "AdminTokens": {
+      "description": "API token rules (ADR-0024).",
+      "type": "object",
+      "properties": {
+        "allow_no_expiry": {
+          "description": "Allow tokens that never expire. Off by default: a leaked token should stop working.",
+          "type": "boolean",
+          "default": false
+        },
+        "default_expiry_days": {
+          "description": "Lifetime of a new token when its creator gives none, in days (1–365).",
+          "type": "integer",
+          "format": "uint16",
+          "default": 90,
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "AlertChannel": {
+      "description": "One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as\n`${file:…}` or `${env:…}` references.",
+      "oneOf": [
+        {
+          "description": "A Slack incoming-webhook URL.",
+          "type": "object",
+          "properties": {
+            "allow_private_targets": {
+              "description": "Allow private, loopback and link-local addresses (an internal relay).",
+              "type": "boolean",
+              "default": false
+            },
+            "rules": {
+              "description": "Only these rules; all when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/AlertRule"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "slack"
+            },
+            "url": {
+              "description": "`https://hooks.slack.com/services/…`.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "description": "A Discord webhook URL; mentions are disabled, so host names cannot ping anyone.",
+          "type": "object",
+          "properties": {
+            "allow_private_targets": {
+              "description": "Allow private, loopback and link-local addresses (an internal relay).",
+              "type": "boolean",
+              "default": false
+            },
+            "rules": {
+              "description": "Only these rules; all when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/AlertRule"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "discord"
+            },
+            "url": {
+              "description": "`https://discord.com/api/webhooks/…`.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "description": "Anything that takes Slack's payload: Discord's `/slack` endpoint, Mattermost,\nRocket.Chat.",
+          "type": "object",
+          "properties": {
+            "allow_private_targets": {
+              "description": "Allow private, loopback and link-local addresses (an internal relay).",
+              "type": "boolean",
+              "default": false
+            },
+            "rules": {
+              "description": "Only these rules; all when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/AlertRule"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "slack_compatible"
+            },
+            "url": {
+              "description": "The incoming-webhook URL.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "description": "JSON `POST`, signed with Standard Webhooks when `secret` is set.",
+          "type": "object",
+          "properties": {
+            "allow_private_targets": {
+              "description": "Allow private, loopback and link-local addresses (an internal relay).",
+              "type": "boolean",
+              "default": false
+            },
+            "rules": {
+              "description": "Only these rules; all when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/AlertRule"
+              }
+            },
+            "secret": {
+              "description": "A `whsec_…` signing secret (Standard Webhooks).",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "token": {
+              "description": "A bearer token for `Authorization`.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "webhook"
+            },
+            "url": {
+              "description": "`https://…`.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "url"
+          ]
+        },
+        {
+          "description": "E-mail through an SMTP server.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Sender address.",
+              "type": "string"
+            },
+            "host": {
+              "description": "Server host name.",
+              "type": "string"
+            },
+            "password": {
+              "description": "Login password.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "port": {
+              "description": "Port: 587 for STARTTLS, 465 for implicit TLS.",
+              "type": "integer",
+              "format": "uint16",
+              "default": 587,
+              "maximum": 65535,
+              "minimum": 0
+            },
+            "rules": {
+              "description": "Only these rules; all when empty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/AlertRule"
+              }
+            },
+            "tls": {
+              "description": "`starttls` (default), `implicit`, or `none` (only to a loopback relay).",
+              "$ref": "#/$defs/SmtpTls",
+              "default": "starttls"
+            },
+            "to": {
+              "description": "Recipients.",
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "smtp"
+            },
+            "username": {
+              "description": "Login user.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "host",
+            "from",
+            "to"
+          ]
+        }
+      ]
+    },
+    "AlertRule": {
+      "description": "A kind of alert.",
+      "oneOf": [
+        {
+          "description": "Renewal keeps failing, or a certificate is about to expire.",
+          "type": "string",
+          "const": "certificates"
+        },
+        {
+          "description": "A backend or a whole service is down.",
+          "type": "string",
+          "const": "backends"
+        },
+        {
+          "description": "A service's 5xx share is above `error_rate`.",
+          "type": "string",
+          "const": "error_rate"
+        },
+        {
+          "description": "A service's p99 latency is above `latency`.",
+          "type": "string",
+          "const": "latency"
+        },
+        {
+          "description": "A configuration was rejected.",
+          "type": "string",
+          "const": "config"
+        },
+        {
+          "description": "Admin security events: login lockouts, user and second-factor changes, tokens used\nfrom a new address.",
+          "type": "string",
+          "const": "security"
+        }
+      ]
+    },
+    "AlertRules": {
+      "description": "What raises alerts. Certificates, backends, config and security are on; the thresholds are\noff until set.",
+      "type": "object",
+      "properties": {
+        "disabled": {
+          "description": "Rules that are off.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/AlertRule"
+          }
+        },
+        "error_rate": {
+          "description": "Alert when a service's 5xx share over the window is above this, in percent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorRateRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "latency": {
+          "description": "Alert when a service's p99 over the window is above this.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatencyRule"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false
+    },
     "Alerts": {
       "description": "Alert delivery.",
       "type": "object",
       "properties": {
+        "channels": {
+          "description": "Where alerts go, by a name you choose.",
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/AlertChannel"
+          },
+          "default": {}
+        },
+        "min_interval": {
+          "description": "The same alert is sent again at most this often while it keeps firing.",
+          "$ref": "#/$defs/Duration",
+          "default": "15m"
+        },
+        "rules": {
+          "description": "What raises an alert.",
+          "$ref": "#/$defs/AlertRules",
+          "default": {
+            "disabled": [],
+            "error_rate": null,
+            "latency": null
+          }
+        },
         "webhook": {
-          "description": "Receives each alert as a JSON `POST`.",
+          "description": "Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.",
           "anyOf": [
             {
               "$ref": "#/$defs/Webhook"
@@ -665,6 +1073,25 @@
         }
       },
       "additionalProperties": false
+    },
+    "AuditForward": {
+      "description": "Where audit records are forwarded.",
+      "type": "object",
+      "properties": {
+        "syslog": {
+          "description": "Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as\nthe message.",
+          "type": "string"
+        },
+        "transport": {
+          "description": "`udp` (default) or `tcp` (octet counting, RFC 6587).",
+          "$ref": "#/$defs/SyslogTransport",
+          "default": "udp"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "syslog"
+      ]
     },
     "Backend": {
       "description": "One backend server.",
@@ -1084,6 +1511,35 @@
         "tcp://socket-proxy:2375"
       ]
     },
+    "ErrorRateRule": {
+      "description": "A 5xx-share threshold.",
+      "type": "object",
+      "properties": {
+        "min_requests": {
+          "description": "Fewer requests than this in the window never alert.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 20,
+          "minimum": 0
+        },
+        "percent": {
+          "description": "Percent of responses that are 5xx (1–100).",
+          "type": "integer",
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "window": {
+          "description": "Window (1m–15m).",
+          "$ref": "#/$defs/Duration",
+          "default": "5m"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "percent"
+      ]
+    },
     "ExternalAccountBinding": {
       "description": "External account binding credentials.",
       "type": "object",
@@ -1412,6 +1868,32 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "LatencyRule": {
+      "description": "A p99 latency threshold.",
+      "type": "object",
+      "properties": {
+        "min_requests": {
+          "description": "Fewer requests than this in the window never alert.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 20,
+          "minimum": 0
+        },
+        "p99": {
+          "description": "The p99 above which a service alerts.",
+          "$ref": "#/$defs/Duration"
+        },
+        "window": {
+          "description": "Window (1m–15m).",
+          "$ref": "#/$defs/Duration",
+          "default": "5m"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "p99"
+      ]
     },
     "LbPolicy": {
       "description": "Backend selection policies.",
@@ -2674,6 +3156,13 @@
           "description": "Where certificate alerts (renewal failures, near expiry) are sent besides the log,\nthe metrics and `rdock status`.",
           "$ref": "#/$defs/Alerts",
           "default": {
+            "channels": {},
+            "min_interval": "15m",
+            "rules": {
+              "disabled": [],
+              "error_rate": null,
+              "latency": null
+            },
             "webhook": null
           }
         },
@@ -3333,6 +3822,26 @@
         "^x-": {}
       }
     },
+    "SmtpTls": {
+      "description": "How the SMTP connection is protected.",
+      "oneOf": [
+        {
+          "description": "Plain connection upgraded with STARTTLS (port 587).",
+          "type": "string",
+          "const": "starttls"
+        },
+        {
+          "description": "TLS from the first byte (port 465).",
+          "type": "string",
+          "const": "implicit"
+        },
+        {
+          "description": "No encryption; refused unless the host is a loopback address.",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
     "SplitTarget": {
       "description": "One target of a weighted split.",
       "type": "object",
@@ -3565,6 +4074,21 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "SyslogTransport": {
+      "description": "How syslog messages travel.",
+      "oneOf": [
+        {
+          "description": "One datagram per record.",
+          "type": "string",
+          "const": "udp"
+        },
+        {
+          "description": "A stream with octet-counted framing.",
+          "type": "string",
+          "const": "tcp"
+        }
+      ]
     },
     "TcpRoute": {
       "description": "A TCP route.",

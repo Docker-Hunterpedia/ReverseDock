@@ -37,6 +37,7 @@ services:
             cloudflare: &cloudflare,
             backends: &backends,
             sticky_key: b"test",
+            live: &rdock_observability::live::Live::default(),
         },
     );
     let runtime = compiled.runtime.expect("compiles");

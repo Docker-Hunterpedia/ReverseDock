@@ -1,0 +1,12 @@
+# Grafana data source for the Compose example. With your own Grafana, skip this file and pick
+# your Prometheus in the dashboard's "Data source" menu.
+apiVersion: 1
+
+datasources:
+  - name: Prometheus
+    uid: prometheus
+    type: prometheus
+    access: proxy
+    url: http://rdock:9090
+    isDefault: true
+    editable: false

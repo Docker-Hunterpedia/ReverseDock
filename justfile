@@ -43,9 +43,15 @@ docs-check:
 lint-workflows:
     actionlint
 
-# Regenerate schema/rdock.v1.json after changing rdock-model
+# Regenerate schema/rdock.v1.json and schema/openapi.json after changing rdock-model or the admin API
 schema:
     cargo run --quiet --locked -p rdock -- schema > schema/rdock.v1.json
+    cargo run --quiet --locked -p rdock -- schema --openapi > schema/openapi.json
+
+# Regenerate the TypeScript types (apps/dashboard/src/api) and the Go client (clients/go) from schema/openapi.json
+clients:
+    pnpm --dir apps/dashboard gen:api
+    cd clients/go && go generate ./...
 
 # Check the minimum supported Rust version
 msrv:

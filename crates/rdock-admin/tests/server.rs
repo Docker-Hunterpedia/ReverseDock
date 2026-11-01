@@ -1,21 +1,36 @@
 //! The admin server on its own runtime: DNS-rebinding and cross-site checks, security headers,
 //! the token on TCP, the Unix socket and TLS (ADR-0024).
 
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::too_many_lines
+)]
 
 use std::io::{Read, Write};
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use rdock_admin::{Control, Running, Settings, TlsFiles};
-use rdock_model::settings::{AdminPasswords, AdminSessions, MfaPolicy};
+use rdock_admin::{ApiWrite, Control, Running, Settings, TlsFiles};
+use rdock_model::settings::{AdminAudit, AdminPasswords, AdminSessions, AdminTokens, MfaPolicy};
 use rdock_testkit::certs::TestCa;
 use rdock_testkit::client::{self, request};
 use rdock_testkit::free_port;
 use tokio::sync::watch;
 
-struct Fake;
+#[derive(Default)]
+struct Fake {
+    /// The API objects and the generation.
+    api: std::sync::Mutex<(serde_json::Value, u64)>,
+}
+
+impl Fake {
+    fn etag(generation: u64) -> String {
+        format!("\"g{generation}-0011223344556677\"")
+    }
+}
 
 #[async_trait]
 impl Control for Fake {
@@ -34,8 +49,75 @@ impl Control for Fake {
             serde_json::json!({ "result": "applied", "generation": 8 }),
         )
     }
+    async fn effective_config(&self) -> serde_json::Value {
+        serde_json::json!({
+            "routes": { "web": {}, "app@docker": {} },
+            "services": { "web": { "sticky": { "cookie": { "secret": "plain" } } } }
+        })
+    }
+    async fn api_config(&self) -> (serde_json::Value, String) {
+        let api = self.api.lock().unwrap();
+        (api.0.clone(), Self::etag(api.1))
+    }
+    async fn dry_run(
+        &self,
+        candidate: serde_json::Value,
+    ) -> Result<(bool, serde_json::Value), String> {
+        if candidate.get("bad").is_some() {
+            return Err("bad: unknown field".into());
+        }
+        let rejected = candidate["routes"].get("reject").is_some();
+        Ok((!rejected, serde_json::json!([])))
+    }
+    async fn write_api(&self, candidate: serde_json::Value, if_match: String) -> ApiWrite {
+        let mut api = self.api.lock().unwrap();
+        if if_match != Self::etag(api.1) {
+            return ApiWrite::Stale {
+                etag: Self::etag(api.1),
+            };
+        }
+        if candidate.get("bad").is_some() {
+            return ApiWrite::Invalid("bad: unknown field".into());
+        }
+        if candidate["routes"].get("reject").is_some() {
+            return ApiWrite::Rejected {
+                report: serde_json::json!({ "result": "rejected" }),
+            };
+        }
+        api.0 = candidate;
+        api.1 += 1;
+        ApiWrite::Applied {
+            report: serde_json::json!({ "result": "applied", "generation": api.1 }),
+            etag: Self::etag(api.1),
+        }
+    }
+    async fn history(&self) -> serde_json::Value {
+        serde_json::json!([{ "id": 1_793_000_000_000_u64, "generation": 1, "summary": "start", "api": true }])
+    }
+    async fn history_api(&self, id: u64) -> Option<serde_json::Value> {
+        (id == 1_793_000_000_000).then(|| serde_json::json!({ "routes": {} }))
+    }
+    async fn backends(&self) -> serde_json::Value {
+        serde_json::json!([{ "service": "web", "backends": [{ "address": "10.0.0.1:80", "drained": false }] }])
+    }
+    async fn set_drained(&self, service: String, backend: String, _drained: bool) -> bool {
+        service == "web" && backend == "10.0.0.1:80"
+    }
+    async fn renew_certificate(&self, name: String) -> bool {
+        name == "example.com"
+    }
+    async fn explain(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
+        if request["host"].is_null() {
+            return Err("missing field `host`".into());
+        }
+        Ok(serde_json::json!({ "outcome": { "result": "404" } }))
+    }
+    async fn metrics_summary(&self, window_seconds: u64) -> serde_json::Value {
+        serde_json::json!({ "total": { "window_seconds": window_seconds }, "routes": {}, "services": {} })
+    }
 }
 
+/// A string shaped like a token but issued by no one.
 const TOKEN: &str = "rdk_test_token";
 
 struct Admin {
@@ -69,15 +151,20 @@ impl Admin {
             socket: Some(dir.path().join("admin.sock")),
             allowed_hosts,
             threads: 1,
-            token: TOKEN.into(),
             state_dir: dir.path().join("admin"),
             passwords: AdminPasswords::default(),
             sessions: AdminSessions::default(),
             mfa: MfaPolicy::default(),
             dashboard: true,
+            tokens: AdminTokens::default(),
+            metrics_unauthenticated_on_loopback: false,
+            audit_dir: dir.path().join("audit"),
+            audit: AdminAudit::default(),
+            api_writes: true,
+            feeds: None,
         };
         change(&mut settings);
-        let running = rdock_admin::start(settings, Arc::new(Fake), stop_rx).unwrap();
+        let running = rdock_admin::start(settings, Arc::new(Fake::default()), stop_rx).unwrap();
         Self {
             address,
             dir,
@@ -146,7 +233,7 @@ async fn health_answers_with_security_headers_and_foreign_hosts_are_refused() {
 #[tokio::test(flavor = "multi_thread")]
 async fn the_api_needs_the_token_and_refuses_cross_site_writes() {
     let admin = Admin::start(None, Vec::new());
-    let bearer = format!("Bearer {TOKEN}");
+    let bearer = format!("Bearer {}", api_token(&admin, "operator"));
     let reply = client::http1(
         admin.address,
         request("GET", "127.0.0.1", "/api/v1/status", ""),
@@ -285,14 +372,19 @@ fn a_busy_port_fails_the_start() {
         socket: None,
         allowed_hosts: Vec::new(),
         threads: 1,
-        token: TOKEN.into(),
         state_dir: std::env::temp_dir().join("rdock-admin-unused"),
         passwords: AdminPasswords::default(),
         sessions: AdminSessions::default(),
         mfa: MfaPolicy::default(),
         dashboard: true,
+        tokens: AdminTokens::default(),
+        metrics_unauthenticated_on_loopback: false,
+        audit_dir: std::env::temp_dir().join("rdock-admin-unused-audit"),
+        audit: AdminAudit::default(),
+        api_writes: true,
+        feeds: None,
     };
-    let err = rdock_admin::start(settings, Arc::new(Fake), stop_rx)
+    let err = rdock_admin::start(settings, Arc::new(Fake::default()), stop_rx)
         .err()
         .unwrap();
     assert!(
@@ -605,6 +697,144 @@ async fn an_admin_enrols_totp_then_logs_in_with_a_second_factor() {
 }
 
 #[tokio::test(flavor = "multi_thread")]
+async fn people_change_their_own_password_and_their_other_sessions_end() {
+    let admin = Admin::start(None, Vec::new());
+    let old = "first password for ann 1";
+    let created = socket_post(
+        &admin.socket(),
+        "/api/v1/users",
+        &serde_json::json!({ "name": "ann", "role": "viewer", "password": old }),
+    );
+    assert!(created.starts_with("HTTP/1.1 201"), "{created}");
+    let credentials = |password: &str| serde_json::json!({ "name": "ann", "password": password });
+    let login = |password: &'static str| {
+        let address = admin.address;
+        async move {
+            client::http1(
+                address,
+                json_post("/api/v1/auth/login", &credentials(password), &[]),
+            )
+            .await
+        }
+    };
+    let stored = || std::fs::read_to_string(admin.dir.path().join("admin/users.json")).unwrap();
+    let before = stored();
+    let here = login(old).await;
+    let (cookie, csrf) = (session_cookie(&here), csrf_of(&here));
+    let elsewhere = session_cookie(&login(old).await);
+
+    let change = |current: &str, new: &str| serde_json::json!({ "current": current, "new": new });
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change("wrong one here", "a new long passphrase 7"),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 401);
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, "short"),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, old),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 422, "the same password again is refused");
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, "a new long passphrase 7"),
+        &cookie,
+        "",
+    )
+    .await;
+    assert_eq!(reply.status, 403, "needs the CSRF token");
+    let reply = session_post(
+        &admin,
+        "/api/v1/auth/password",
+        &change(old, "a new long passphrase 7"),
+        &cookie,
+        &csrf,
+    )
+    .await;
+    assert_eq!(reply.status, 204);
+
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &cookie).await.status,
+        200,
+        "this session stays"
+    );
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &elsewhere)
+            .await
+            .status,
+        401,
+        "the other one ends"
+    );
+    assert_eq!(login(old).await.status, 401);
+    assert_ne!(stored(), before, "the new hash is saved");
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn each_caller_has_its_own_request_budget() {
+    let admin = Admin::start(None, Vec::new());
+    let (busy, calm) = (api_token(&admin, "viewer"), api_token(&admin, "viewer"));
+    let mut limited = None;
+    for _ in 0..200 {
+        let reply = client::http1(admin.address, bearer_get("/api/v1/status", &busy)).await;
+        if reply.status == 429 {
+            limited = Some(reply);
+            break;
+        }
+    }
+    let limited = limited.expect("a burst of 200 runs out of the budget of 100");
+    assert!(limited.header("retry-after").is_some());
+    let reply = client::http1(admin.address, bearer_get("/api/v1/status", &calm)).await;
+    assert_eq!(reply.status, 200, "another caller is not affected");
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn configuration_work_is_rate_limited_for_everyone() {
+    let admin = Admin::start(None, Vec::new());
+    let candidate = serde_json::json!({});
+    let answers: Vec<String> = (0..12)
+        .map(|_| socket_post(&admin.socket(), "/api/v1/config/validate", &candidate))
+        .collect();
+    let accepted = answers
+        .iter()
+        .filter(|a| a.starts_with("HTTP/1.1 200"))
+        .count();
+    let limited: Vec<&String> = answers
+        .iter()
+        .filter(|a| a.starts_with("HTTP/1.1 429"))
+        .collect();
+    assert!(accepted >= 10, "a burst of 10 passes: {answers:?}");
+    assert!(
+        !limited.is_empty(),
+        "then the shared budget runs out: {answers:?}"
+    );
+    assert!(
+        limited[0].to_ascii_lowercase().contains("retry-after:"),
+        "{}",
+        limited[0]
+    );
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
 async fn pages_get_the_dashboard_and_the_api_stays_json() {
     let admin = Admin::start(None, Vec::new());
     let reply = client::http1(
@@ -631,6 +861,13 @@ async fn pages_get_the_dashboard_and_the_api_stays_json() {
         request("GET", "127.0.0.1", "/api/v1/nope", ""),
     )
     .await;
+    assert_eq!(
+        reply.status, 401,
+        "unknown API paths reveal nothing before login"
+    );
+    assert_eq!(reply.header("content-type"), Some("application/json"));
+    let viewer = api_token(&admin, "viewer");
+    let reply = client::http1(admin.address, bearer_get("/api/v1/nope", &viewer)).await;
     assert_eq!(reply.status, 404);
     assert_eq!(reply.header("content-type"), Some("application/json"));
     admin.stop().await;
@@ -642,4 +879,606 @@ async fn pages_get_the_dashboard_and_the_api_stays_json() {
     assert_eq!(reply.status, 404);
     assert_eq!(reply.header("content-type"), Some("application/json"));
     off.stop().await;
+}
+
+/// Creates an API token over the CLI socket and returns its value.
+fn api_token(admin: &Admin, role: &str) -> String {
+    let body = serde_json::json!({ "name": format!("test {role}"), "role": role });
+    let response = socket_post(&admin.socket(), "/api/v1/tokens", &body);
+    assert!(response.starts_with("HTTP/1.1 201"), "{response}");
+    let json: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+    json["token"].as_str().unwrap().to_owned()
+}
+
+fn bearer_get(path: &str, token: &str) -> http::Request<http_body_util::Full<bytes::Bytes>> {
+    with(
+        request("GET", "127.0.0.1", path, ""),
+        &[("authorization", &format!("Bearer {token}"))],
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn roles_limit_tokens_and_metrics_needs_one() {
+    let admin = Admin::start(None, Vec::new());
+    let reply = client::http1(admin.address, request("GET", "127.0.0.1", "/metrics", "")).await;
+    assert_eq!(reply.status, 401, "/metrics needs a token since v0.5");
+
+    let metrics = api_token(&admin, "metrics");
+    let viewer = api_token(&admin, "viewer");
+    let reply = client::http1(admin.address, bearer_get("/metrics", &metrics)).await;
+    assert_eq!(reply.status, 200);
+    assert!(
+        reply.body.starts_with(b"rdock_up 1\n"),
+        "the engine's metrics come first"
+    );
+    let reply = client::http1(admin.address, bearer_get("/api/v1/status", &metrics)).await;
+    assert_eq!(reply.status, 403, "a metrics token reads metrics only");
+    let reply = client::http1(admin.address, bearer_get("/api/v1/status", &viewer)).await;
+    assert_eq!(reply.status, 200);
+    let reload = with(
+        request("POST", "127.0.0.1", "/api/v1/config/reload", ""),
+        &[("authorization", &format!("Bearer {viewer}"))],
+    );
+    assert_eq!(
+        client::http1(admin.address, reload).await.status,
+        403,
+        "viewers do not reload"
+    );
+
+    // A viewer cannot mint a stronger token, and sees only their own.
+    let escalate = json_post(
+        "/api/v1/tokens",
+        &serde_json::json!({ "name": "x", "role": "admin" }),
+        &[("authorization", &format!("Bearer {viewer}"))],
+    );
+    assert_eq!(client::http1(admin.address, escalate).await.status, 403);
+    // Nor a token of the same role: a token never mints its successor.
+    let successor = json_post(
+        "/api/v1/tokens",
+        &serde_json::json!({ "name": "y", "role": "viewer" }),
+        &[("authorization", &format!("Bearer {viewer}"))],
+    );
+    let reply = client::http1(admin.address, successor).await;
+    assert_eq!(reply.status, 403);
+    assert!(
+        json_body(&reply)["error"]
+            .as_str()
+            .unwrap()
+            .contains("cannot create tokens")
+    );
+    let reply = client::http1(admin.address, bearer_get("/api/v1/tokens", &viewer)).await;
+    assert_eq!(
+        json_body(&reply).as_array().unwrap().len(),
+        2,
+        "both were created by cli"
+    );
+    let listed = json_body(&reply);
+    assert!(
+        listed.to_string().find("secret").is_none(),
+        "no hashes in the list"
+    );
+
+    // A one-character typo fails the checksum; revocation is immediate.
+    let mut typo = viewer.clone();
+    typo.replace_range(20..21, if &viewer[20..21] == "a" { "b" } else { "a" });
+    assert_eq!(
+        client::http1(admin.address, bearer_get("/api/v1/status", &typo))
+            .await
+            .status,
+        401
+    );
+    let id = viewer.split('_').nth(2).unwrap();
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "DELETE /api/v1/tokens/{id} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.starts_with("HTTP/1.1 204"), "{response}");
+    assert_eq!(
+        client::http1(admin.address, bearer_get("/api/v1/status", &viewer))
+            .await
+            .status,
+        401
+    );
+    admin.stop().await;
+
+    let open = Admin::start_with(tempfile::tempdir().unwrap(), None, Vec::new(), |s| {
+        s.metrics_unauthenticated_on_loopback = true;
+    });
+    let reply = client::http1(open.address, request("GET", "127.0.0.1", "/metrics", "")).await;
+    assert_eq!(
+        reply.status, 200,
+        "the loopback opt-out keeps old scrapers working"
+    );
+    open.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn admins_manage_users_but_never_remove_the_last_admin() {
+    let admin = Admin::start(None, Vec::new());
+    let root = serde_json::json!({ "name": "root", "password": "correct horse battery staple" });
+    assert!(socket_post(&admin.socket(), "/api/v1/setup", &root).starts_with("HTTP/1.1 201"));
+    let ops = serde_json::json!({ "name": "ops", "role": "operator", "password": "another long passphrase" });
+    assert!(socket_post(&admin.socket(), "/api/v1/users", &ops).starts_with("HTTP/1.1 201"));
+    let weak = serde_json::json!({ "name": "weak", "role": "viewer", "password": "password1234" });
+    assert!(socket_post(&admin.socket(), "/api/v1/users", &weak).starts_with("HTTP/1.1 422"));
+
+    let raw = |method: &str, path: &str, body: &str| {
+        let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+        write!(
+            stream,
+            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+            body.len()
+        )
+        .unwrap();
+        let mut response = String::new();
+        stream.read_to_string(&mut response).unwrap();
+        response
+    };
+    assert!(raw("PATCH", "/api/v1/users/root", r#"{"role":"viewer"}"#).starts_with("HTTP/1.1 409"));
+    assert!(raw("DELETE", "/api/v1/users/root", "").starts_with("HTTP/1.1 409"));
+
+    // The operator logs in (no MFA required for operators by default) and gets a token.
+    let login = serde_json::json!({ "name": "ops", "password": "another long passphrase" });
+    let reply = client::http1(admin.address, json_post("/api/v1/auth/login", &login, &[])).await;
+    assert_eq!(json_body(&reply)["stage"], "full");
+    let cookie = session_cookie(&reply);
+    let csrf = csrf_of(&reply);
+    let users = session_get(&admin, "/api/v1/users", &cookie).await;
+    assert_eq!(users.status, 403, "only admins see users");
+    let body = serde_json::json!({ "name": "deploy", "role": "operator" });
+    let reply = session_post(&admin, "/api/v1/tokens", &body, &cookie, &csrf).await;
+    assert_eq!(reply.status, 201);
+    let token = json_body(&reply)["token"].as_str().unwrap().to_owned();
+    assert_eq!(
+        client::http1(admin.address, bearer_get("/api/v1/status", &token))
+            .await
+            .status,
+        200
+    );
+
+    // Disabling the user ends their sessions, and their tokens stop working with them.
+    assert!(raw("PATCH", "/api/v1/users/ops", r#"{"disabled":true}"#).starts_with("HTTP/1.1 200"));
+    assert_eq!(
+        session_get(&admin, "/api/v1/status", &cookie).await.status,
+        401
+    );
+    assert_eq!(
+        client::http1(admin.address, bearer_get("/api/v1/status", &token))
+            .await
+            .status,
+        401
+    );
+    assert!(raw("DELETE", "/api/v1/users/ops", "").starts_with("HTTP/1.1 204"));
+    let listed = raw("GET", "/api/v1/tokens", "");
+    assert!(
+        !listed.contains("deploy"),
+        "deleting a user revokes their tokens"
+    );
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn a_socket_path_too_long_turns_the_socket_off_not_the_admin_api() {
+    let dir = tempfile::tempdir().unwrap();
+    let long = dir.path().join("x".repeat(120)).join("admin.sock");
+    let admin = Admin::start_with(tempfile::tempdir().unwrap(), None, Vec::new(), |s| {
+        s.socket = Some(long.clone());
+    });
+    let reply = client::http1(admin.address, request("GET", "127.0.0.1", "/healthz", "")).await;
+    assert_eq!(reply.status, 200);
+    assert!(!long.exists());
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn logins_writes_and_refusals_land_in_an_intact_audit_chain() {
+    let admin = Admin::start(None, Vec::new());
+    let root = serde_json::json!({ "name": "root", "password": "correct horse battery staple" });
+    assert!(socket_post(&admin.socket(), "/api/v1/setup", &root).starts_with("HTTP/1.1 201"));
+    let wrong = serde_json::json!({ "name": "root", "password": "wrong horse battery staple" });
+    client::http1(admin.address, json_post("/api/v1/auth/login", &wrong, &[])).await;
+    client::http1(admin.address, json_post("/api/v1/auth/login", &root, &[])).await;
+    let viewer = api_token(&admin, "viewer");
+    let reload = with(
+        request("POST", "127.0.0.1", "/api/v1/config/reload", ""),
+        &[("authorization", &format!("Bearer {viewer}"))],
+    );
+    assert_eq!(client::http1(admin.address, reload).await.status, 403);
+    let forged = bearer_get(
+        "/api/v1/status",
+        "rdk_pat_0000000000_00000000000000000000000000000000000000",
+    );
+    assert_eq!(client::http1(admin.address, forged).await.status, 401);
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/audit", &viewer)).await;
+    assert_eq!(reply.status, 403, "only admins read the audit log");
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "GET /api/v1/audit?limit=50 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let records: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+    let seen: Vec<(String, String)> = records
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["action"].as_str().unwrap().to_owned(),
+                r["result"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    for expected in [
+        ("user.create_first_admin", "ok"),
+        ("login", "denied"),
+        ("login", "ok"),
+        ("token.create", "ok"),
+        ("access", "denied"),
+        ("auth", "denied"),
+    ] {
+        assert!(
+            seen.contains(&(expected.0.to_owned(), expected.1.to_owned())),
+            "{expected:?} missing from {seen:?}"
+        );
+    }
+    assert!(
+        !response.contains("correct horse"),
+        "no passwords in the audit log"
+    );
+    let dir = admin.stop().await;
+    assert!(matches!(
+        rdock_admin::audit::verify(&dir.path().join("audit")).unwrap(),
+        rdock_admin::audit::Verdict::Intact { .. }
+    ));
+}
+
+/// A JSON request with a bearer token and extra headers.
+fn bearer_json(
+    method: &str,
+    path: &str,
+    token: &str,
+    body: &serde_json::Value,
+    extra: &[(&str, &str)],
+) -> http::Request<http_body_util::Full<bytes::Bytes>> {
+    let auth = format!("Bearer {token}");
+    let mut headers = vec![
+        ("authorization", auth.as_str()),
+        ("content-type", "application/json"),
+    ];
+    headers.extend_from_slice(extra);
+    with(
+        request(method, "127.0.0.1", path, body.to_string()),
+        &headers,
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn configuration_writes_are_conditional_dry_run_and_audited() {
+    let admin = Admin::start(None, Vec::new());
+    let operator = api_token(&admin, "operator");
+    let viewer = api_token(&admin, "viewer");
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config", &viewer)).await;
+    let body = json_body(&reply);
+    assert_eq!(body["owners"]["routes"]["app@docker"], "docker");
+    assert_eq!(body["owners"]["routes"]["web"], "file");
+    assert_eq!(
+        body["config"]["services"]["web"]["sticky"]["cookie"]["secret"],
+        "***"
+    );
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &viewer)).await;
+    let etag = reply.header("etag").unwrap().to_owned();
+    let candidate =
+        serde_json::json!({ "routes": { "a": { "match": "Host(`a.example`)", "service": "a" } } });
+
+    let put = |token: &str, extra: &[(&str, &str)]| {
+        bearer_json("PUT", "/api/v1/config/api", token, &candidate, extra)
+    };
+    assert_eq!(
+        client::http1(admin.address, put(&viewer, &[("if-match", &etag)]))
+            .await
+            .status,
+        403
+    );
+    assert_eq!(
+        client::http1(admin.address, put(&operator, &[]))
+            .await
+            .status,
+        428
+    );
+    let stale = client::http1(admin.address, put(&operator, &[("if-match", "\"g0-old\"")])).await;
+    assert_eq!(stale.status, 412);
+    assert_eq!(stale.header("etag"), Some(etag.as_str()));
+    let applied = client::http1(admin.address, put(&operator, &[("if-match", &etag)])).await;
+    assert_eq!(applied.status, 200);
+    let next = applied.header("etag").unwrap().to_owned();
+    assert_ne!(next, etag);
+    let again = client::http1(admin.address, put(&operator, &[("if-match", &etag)])).await;
+    assert_eq!(again.status, 412, "the old version cannot be written twice");
+
+    // Merge patch on top, then a rejected one leaves the version as it was.
+    let patch = with(
+        request(
+            "PATCH",
+            "127.0.0.1",
+            "/api/v1/config/api",
+            r#"{"routes":{"a":null,"b":{"match":"Host(`b`)","service":"b"}}}"#,
+        ),
+        &[
+            ("authorization", &format!("Bearer {operator}")),
+            ("content-type", "application/merge-patch+json"),
+            ("if-match", &next),
+        ],
+    );
+    let patched = client::http1(admin.address, patch).await;
+    assert_eq!(patched.status, 200);
+    let after_patch = patched.header("etag").unwrap().to_owned();
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &viewer)).await;
+    assert!(json_body(&reply)["routes"].get("a").is_none());
+    assert!(json_body(&reply)["routes"].get("b").is_some());
+    let wrong_type = with(
+        request("PATCH", "127.0.0.1", "/api/v1/config/api", "{}"),
+        &[
+            ("authorization", &format!("Bearer {operator}")),
+            ("content-type", "text/plain"),
+            ("if-match", &after_patch),
+        ],
+    );
+    assert_eq!(client::http1(admin.address, wrong_type).await.status, 415);
+    let reject = serde_json::json!({ "routes": { "reject": {} } });
+    let reply = client::http1(
+        admin.address,
+        bearer_json(
+            "PUT",
+            "/api/v1/config/api",
+            &operator,
+            &reject,
+            &[("if-match", &after_patch)],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+
+    // Dry run with a diff; nothing changes.
+    let reply = client::http1(
+        admin.address,
+        bearer_json("POST", "/api/v1/config/validate", &operator, &reject, &[]),
+    )
+    .await;
+    let body = json_body(&reply);
+    assert_eq!(body["valid"], false);
+    assert!(
+        body["diff"].as_str().unwrap().contains("+    \"reject\""),
+        "{body}"
+    );
+    let bad = serde_json::json!({ "bad": 1 });
+    let reply = client::http1(
+        admin.address,
+        bearer_json("POST", "/api/v1/config/validate", &operator, &bad, &[]),
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/history", &viewer)).await;
+    assert_eq!(json_body(&reply)[0]["generation"], 1);
+    let rollback = serde_json::json!({ "id": 1_793_000_000_000_u64 });
+    let reply = client::http1(
+        admin.address,
+        bearer_json(
+            "POST",
+            "/api/v1/config/rollback",
+            &operator,
+            &rollback,
+            &[("if-match", &after_patch)],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 200);
+    let export = client::http1(
+        admin.address,
+        bearer_get("/api/v1/config/export", &operator),
+    )
+    .await;
+    assert_eq!(export.status, 403, "exports are for admins");
+
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "GET /api/v1/audit HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(response.contains("\"config.apply\""));
+    assert!(response.contains("\"config.rollback\""));
+    assert!(response.contains("config_after"));
+    admin.stop().await;
+
+    let gitops = Admin::start_with(tempfile::tempdir().unwrap(), None, Vec::new(), |s| {
+        s.api_writes = false;
+    });
+    let operator = api_token(&gitops, "operator");
+    let reply = client::http1(
+        gitops.address,
+        bearer_json(
+            "PUT",
+            "/api/v1/config/api",
+            &operator,
+            &candidate,
+            &[("if-match", &Fake::etag(0))],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 403, "GitOps mode refuses writes");
+    gitops.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn resources_show_owners_and_only_api_objects_change() {
+    let admin = Admin::start(None, Vec::new());
+    let operator = api_token(&admin, "operator");
+    let reply = client::http1(admin.address, bearer_get("/api/v1/routes", &operator)).await;
+    let routes = json_body(&reply);
+    assert!(
+        routes
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["name"] == "app@docker" && r["owner"] == "docker")
+    );
+
+    let etag = Fake::etag(0);
+    let route = serde_json::json!({ "match": "Host(`one.example`)", "service": "one" });
+    let put =
+        |path: &str, tag: &str| bearer_json("PUT", path, &operator, &route, &[("if-match", tag)]);
+    let reply = client::http1(admin.address, put("/api/v1/routes/app@docker", &etag)).await;
+    assert_eq!(reply.status, 403, "Docker owns it");
+    let reply = client::http1(admin.address, put("/api/v1/routes/web", &etag)).await;
+    assert_eq!(reply.status, 403, "the file owns it");
+    let reply = client::http1(admin.address, put("/api/v1/routes/one", &etag)).await;
+    assert_eq!(reply.status, 200);
+    let next = reply.header("etag").unwrap().to_owned();
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &operator)).await;
+    assert_eq!(json_body(&reply)["routes"]["one"]["service"], "one");
+    let delete = with(
+        request("DELETE", "127.0.0.1", "/api/v1/routes/one@api", ""),
+        &[
+            ("authorization", &format!("Bearer {operator}")),
+            ("if-match", &next),
+        ],
+    );
+    assert_eq!(client::http1(admin.address, delete).await.status, 200);
+
+    let drain = |backend: &str| {
+        bearer_json(
+            "POST",
+            "/api/v1/backends/drain",
+            &operator,
+            &serde_json::json!({ "service": "web", "backend": backend }),
+            &[],
+        )
+    };
+    assert_eq!(
+        client::http1(admin.address, drain("10.0.0.1:80"))
+            .await
+            .status,
+        200
+    );
+    assert_eq!(
+        client::http1(admin.address, drain("10.9.9.9:80"))
+            .await
+            .status,
+        404
+    );
+    let renew = bearer_json(
+        "POST",
+        "/api/v1/certificates/example.com/renew",
+        &operator,
+        &serde_json::json!({}),
+        &[],
+    );
+    assert_eq!(client::http1(admin.address, renew).await.status, 202);
+    let renew = bearer_json(
+        "POST",
+        "/api/v1/certificates/nope.example/renew",
+        &operator,
+        &serde_json::json!({}),
+        &[],
+    );
+    assert_eq!(client::http1(admin.address, renew).await.status, 404);
+    admin.stop().await;
+}
+
+/// Opens a stream over TCP with a bearer token and returns the socket and the status line.
+fn tcp_stream(address: SocketAddr, path: &str, token: &str) -> (std::net::TcpStream, String) {
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
+    )
+    .unwrap();
+    let mut buffer = [0u8; 512];
+    let n = stream.read(&mut buffer).unwrap();
+    let head = String::from_utf8_lossy(&buffer[..n])
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    (stream, head)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_are_limited_per_identity_and_end_for_revoked_tokens() {
+    let admin = Admin::start(None, Vec::new());
+    let viewer = api_token(&admin, "viewer");
+    let address = admin.address;
+    let token = viewer.clone();
+    let (heads, sockets) = tokio::task::spawn_blocking(move || {
+        let mut heads = Vec::new();
+        let mut sockets = Vec::new();
+        for _ in 0..5 {
+            let (socket, head) = tcp_stream(address, "/api/v1/events/stream", &token);
+            heads.push(head);
+            sockets.push(socket);
+        }
+        (heads, sockets)
+    })
+    .await
+    .unwrap();
+    assert!(heads[..4].iter().all(|h| h.contains("200")), "{heads:?}");
+    assert!(
+        heads[4].contains("429"),
+        "the fifth stream is refused: {heads:?}"
+    );
+
+    let reply = client::http1(admin.address, request("GET", "127.0.0.1", "/metrics", "")).await;
+    assert_eq!(reply.status, 401);
+    let metrics = api_token(&admin, "metrics");
+    let reply = client::http1(admin.address, bearer_get("/metrics", &metrics)).await;
+    let text = String::from_utf8_lossy(&reply.body).into_owned();
+    assert!(
+        text.contains("rdock_admin_sse_subscribers{stream=\"events\"} 4"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "rdock_admin_requests_total{endpoint=\"/api/v1/tokens\",status_class=\"2xx\"}"
+        ),
+        "{text}"
+    );
+    drop(sockets);
+
+    let id = viewer.split('_').nth(2).unwrap().to_owned();
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "DELETE /api/v1/tokens/{id} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let token = viewer.clone();
+    let head =
+        tokio::task::spawn_blocking(move || tcp_stream(address, "/api/v1/events/stream", &token).1)
+            .await
+            .unwrap();
+    assert!(
+        head.contains("204"),
+        "a revoked token's EventSource stops reconnecting: {head}"
+    );
+    admin.stop().await;
 }
