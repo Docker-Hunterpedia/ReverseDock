@@ -199,7 +199,10 @@ async fn dispatch(
             tokio::spawn(async move {
                 let result = deliver::with_retries(&client, &name, &channel, &alert).await;
                 let label = if result.is_ok() { "sent" } else { "failed" };
-                metrics.alerts_sent.with_label_values(&[name.as_str(), label]).inc();
+                metrics
+                    .alerts_sent
+                    .with_label_values(&[name.as_str(), label])
+                    .inc();
                 if let Err(err) = result {
                     tracing::warn!(channel = %name, error = %err, "an alert could not be delivered");
                 }
