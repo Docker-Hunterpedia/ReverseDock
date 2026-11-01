@@ -66,3 +66,4 @@ skills-lock.json
 benchmarks/results/ci/
 benchmarks/soak/work/
 __pycache__/
+apps/dashboard/e2e/screenshots/
