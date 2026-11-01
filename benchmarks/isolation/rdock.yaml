@@ -1,0 +1,14 @@
+# The isolation test's configuration: the benchmark route plus the admin API on loopback, where
+# attack.py reaches it from rdock's network namespace.
+listeners:
+  web: { address: ":8080" }
+defaults: { listeners: [web], tls: off }
+routes:
+  app: { match: "PathPrefix(`/`)", service: app }
+services:
+  app:
+    backends: [{ address: "backend:80" }]
+observability:
+  access_log: { format: off }
+admin:
+  listener: 127.0.0.1:2080

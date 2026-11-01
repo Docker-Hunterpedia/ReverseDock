@@ -7,6 +7,8 @@ mod bootstrap;
 mod caller;
 mod config_api;
 mod dashboard;
+#[cfg(feature = "fault-injection")]
+pub mod fault;
 mod guard;
 mod limits;
 mod manage;

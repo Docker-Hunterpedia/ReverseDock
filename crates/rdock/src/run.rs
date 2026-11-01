@@ -239,6 +239,13 @@ async fn start_admin(
         feeds: Some(engine.feeds()),
     };
     let running = rdock_admin::start(settings, engine.clone(), stop)?;
+    #[cfg(feature = "fault-injection")]
+    if let Some(fault) = rdock_admin::fault::from_env()
+        && fault.kind == rdock_admin::fault::Kind::WriteLock
+    {
+        let engine = engine.clone();
+        tokio::spawn(async move { engine.hold_api_writes(fault).await });
+    }
     tracing::info!(%address, socket = %socket.display(), "admin API listening");
     Ok(Some(running))
 }

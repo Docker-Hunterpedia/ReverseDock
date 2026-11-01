@@ -167,8 +167,9 @@ pub fn start(
         telemetry: crate::telemetry::Telemetry::default(),
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
+    let threads = settings.threads.max(1);
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(settings.threads.max(1))
+        .worker_threads(threads)
         .thread_name("rdock-admin")
         .enable_all()
         .build()
@@ -188,11 +189,27 @@ pub fn start(
                         .ok()
                         .map(|l| (l, path))
                 });
-                serve(router, tcp, tls, socket, stop).await;
+                let served = serve(router, tcp, tls, socket, stop);
+                #[cfg(feature = "fault-injection")]
+                let served = with_fault(served, threads);
+                served.await;
             });
         })
         .map_err(StartError::Runtime)?;
     Ok(Running { thread })
+}
+
+/// Serves until `served` ends, interrupted by the fault `RDOCK_FAULT` asks for, if any.
+#[cfg(feature = "fault-injection")]
+async fn with_fault(served: impl std::future::Future<Output = ()>, threads: usize) {
+    let mut served = std::pin::pin!(served);
+    if let Some(fault) = crate::fault::from_env() {
+        tokio::select! {
+            () = &mut served => return,
+            () = crate::fault::strike(fault, threads) => {}
+        }
+    }
+    served.await;
 }
 
 /// Deletes the v0.1–v0.4 shared admin token (ADR-0024): API tokens replace it, and the CLI

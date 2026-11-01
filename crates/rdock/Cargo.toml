@@ -19,6 +19,8 @@ path = "src/main.rs"
 default = ["docker"]
 # The Docker provider (bollard). Off: a build that reads only files.
 docker = ["dep:rdock-provider-docker"]
+# Faults for the admin isolation test (benchmarks/isolation, H-ENG-04); never in release builds.
+fault-injection = ["rdock-admin/fault-injection"]
 
 [dependencies]
 anyhow.workspace = true
