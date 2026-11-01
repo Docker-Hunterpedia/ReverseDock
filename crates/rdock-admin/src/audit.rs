@@ -92,6 +92,8 @@ pub struct Audit {
     retention: Duration,
     writer: Mutex<Writer>,
     forward: Option<SyncSender<String>>,
+    /// Records that could not be written, for `rdock_admin_audit_write_failures_total`.
+    write_failures: std::sync::atomic::AtomicU64,
     /// The events stream, which shows admin actions as they happen.
     events: std::sync::OnceLock<std::sync::Arc<crate::stream::Hub>>,
     /// Security-relevant records also raise an alert (`observability.alerts`, rule `security`).
@@ -175,6 +177,7 @@ impl Audit {
                 prev,
             }),
             forward: forward.map(syslog::start),
+            write_failures: std::sync::atomic::AtomicU64::new(0),
             events: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
         })
@@ -193,8 +196,16 @@ impl Audit {
     /// Appends a record. A failure to write is logged and never fails the request.
     pub fn record(&self, event: Event) {
         if let Err(err) = self.append(event) {
+            self.write_failures
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             tracing::error!(error = %err, dir = %self.dir.display(), "cannot write the audit log");
         }
+    }
+
+    /// How many records could not be written since the start.
+    pub fn write_failures(&self) -> u64 {
+        self.write_failures
+            .load(std::sync::atomic::Ordering::Relaxed)
     }
 
     fn append(&self, event: Event) -> io::Result<()> {
@@ -382,15 +393,20 @@ pub fn verify(dir: &Path) -> io::Result<Verdict> {
 }
 
 mod syslog {
-    //! A background thread sends each record as an RFC 5424 message, over UDP or TCP with
-    //! octet counting (RFC 6587), reconnecting after errors. Never on the request path.
+    //! A background thread sends each record as an RFC 5424 message, over UDP, TCP with octet
+    //! counting (RFC 6587) or TLS (RFC 5425), reconnecting after errors. Never on the request path.
 
     use std::io::Write;
     use std::net::{TcpStream, UdpSocket};
+    use std::path::Path;
+    use std::sync::Arc;
     use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
     use std::time::Duration;
 
     use rdock_model::settings::{AuditForward, SyslogTransport};
+    use rustls::pki_types::pem::PemObject;
+    use rustls::pki_types::{CertificateDer, ServerName};
+    use rustls_platform_verifier::BuilderVerifierExt;
 
     /// `authpriv` (10) × 8 + `notice` (5).
     const PRI: u8 = 85;
@@ -402,42 +418,96 @@ mod syslog {
 
     pub(super) fn start(forward: &AuditForward) -> SyncSender<String> {
         let (tx, rx) = sync_channel::<String>(super::FORWARD_QUEUE);
-        let target = forward.syslog.clone();
-        let transport = forward.transport;
+        let forward = forward.clone();
         let spawned = std::thread::Builder::new()
             .name("rdock-audit-syslog".into())
-            .spawn(move || run(&target, transport, &rx));
+            .spawn(move || run(&forward, &rx));
         if let Err(err) = spawned {
             tracing::error!(error = %err, "cannot start the audit forwarder");
         }
         tx
     }
 
-    fn run(target: &str, transport: SyslogTransport, rx: &Receiver<String>) {
-        let mut tcp: Option<TcpStream> = None;
+    fn tls_config(ca_file: Option<&Path>) -> Result<rustls::ClientConfig, String> {
+        let provider = Arc::new(rustls::crypto::ring::default_provider());
+        let builder = rustls::ClientConfig::builder_with_provider(provider)
+            .with_safe_default_protocol_versions()
+            .map_err(|e| e.to_string())?;
+        let verified = match ca_file {
+            Some(path) => {
+                let mut roots = rustls::RootCertStore::empty();
+                let certificates =
+                    CertificateDer::pem_file_iter(path).map_err(|e| e.to_string())?;
+                for certificate in certificates {
+                    roots
+                        .add(certificate.map_err(|e| e.to_string())?)
+                        .map_err(|e| e.to_string())?;
+                }
+                builder.with_root_certificates(roots)
+            }
+            None => builder
+                .with_platform_verifier()
+                .map_err(|e| e.to_string())?,
+        };
+        Ok(verified.with_no_client_auth())
+    }
+
+    /// A new stream to the server, encrypted when `tls` is set.
+    fn connect(
+        target: &str,
+        tls: Option<&Arc<rustls::ClientConfig>>,
+    ) -> std::io::Result<Box<dyn Write>> {
+        let stream = TcpStream::connect(target)?;
+        stream.set_write_timeout(Some(Duration::from_secs(5)))?;
+        stream.set_read_timeout(Some(Duration::from_secs(5)))?;
+        let Some(config) = tls else {
+            return Ok(Box::new(stream));
+        };
+        let host = target.rsplit_once(':').map_or(target, |(host, _)| host);
+        let host = host
+            .trim_start_matches('[')
+            .trim_end_matches(']')
+            .to_owned();
+        let name = ServerName::try_from(host).map_err(std::io::Error::other)?;
+        let connection =
+            rustls::ClientConnection::new(config.clone(), name).map_err(std::io::Error::other)?;
+        Ok(Box::new(rustls::StreamOwned::new(connection, stream)))
+    }
+
+    fn run(forward: &AuditForward, rx: &Receiver<String>) {
+        let target = forward.syslog.as_str();
+        let tls = (forward.transport == SyslogTransport::Tls)
+            .then(|| tls_config(forward.ca_file.as_deref()));
+        let tls = match tls.transpose() {
+            Ok(tls) => tls.map(Arc::new),
+            Err(err) => {
+                // Records are never sent in clear text in place of TLS.
+                tracing::error!(error = %err, "audit forwarding is off: cannot set up TLS");
+                return;
+            }
+        };
+        let mut open: Option<Box<dyn Write>> = None;
         let udp = UdpSocket::bind("0.0.0.0:0").ok();
         while let Ok(record) = rx.recv() {
             let message = message(&record);
-            let sent = match transport {
-                SyslogTransport::Udp => udp
-                    .as_ref()
+            let sent = if forward.transport == SyslogTransport::Udp {
+                udp.as_ref()
                     .ok_or_else(|| std::io::Error::other("no UDP socket"))
-                    .and_then(|s| s.send_to(message.as_bytes(), target).map(|_| ())),
-                SyslogTransport::Tcp => {
-                    if tcp.is_none() {
-                        tcp = TcpStream::connect(target).ok();
-                        if let Some(stream) = &tcp {
-                            let _ = stream.set_write_timeout(Some(Duration::from_secs(5)));
-                        }
-                    }
-                    match tcp.as_mut() {
-                        Some(stream) => write!(stream, "{} {message}", message.len()),
-                        None => Err(std::io::Error::other("not connected")),
-                    }
-                }
+                    .and_then(|s| s.send_to(message.as_bytes(), target).map(|_| ()))
+            } else {
+                let framed = format!("{} {message}", message.len());
+                let stream = match open.take() {
+                    Some(stream) => Ok(stream),
+                    None => connect(target, tls.as_ref()),
+                };
+                stream.and_then(|mut stream| {
+                    stream.write_all(framed.as_bytes())?;
+                    stream.flush()?;
+                    open = Some(stream);
+                    Ok(())
+                })
             };
             if let Err(err) = sent {
-                tcp = None;
                 tracing::warn!(error = %err, target, "cannot forward an audit record");
             }
         }

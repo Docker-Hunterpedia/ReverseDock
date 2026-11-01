@@ -60,7 +60,8 @@
         "tokens": {
           "allow_no_expiry": false,
           "default_expiry_days": 90
-        }
+        },
+        "trust_forwarded_on_loopback": false
       }
     },
     "certificates": {
@@ -586,6 +587,11 @@
             "allow_no_expiry": false,
             "default_expiry_days": 90
           }
+        },
+        "trust_forwarded_on_loopback": {
+          "description": "Take the client's address from `X-Forwarded-For` on connections from loopback. Turn it\non only when a route of this rdock forwards to the admin listener, so rate limits and\ntoken networks see real clients; any local process could otherwise claim an address.",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,
@@ -1078,12 +1084,20 @@
       "description": "Where audit records are forwarded.",
       "type": "object",
       "properties": {
+        "ca_file": {
+          "description": "CA that signed the syslog server's certificate, for `tls`; the system's CAs when unset.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
         "syslog": {
           "description": "Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as\nthe message.",
           "type": "string"
         },
         "transport": {
-          "description": "`udp` (default) or `tcp` (octet counting, RFC 6587).",
+          "description": "`udp` (default), `tcp` (octet counting, RFC 6587) or `tls` (RFC 5425). Only `tls`\nprotects records on the network.",
           "$ref": "#/$defs/SyslogTransport",
           "default": "udp"
         }
@@ -4087,6 +4101,11 @@
           "description": "A stream with octet-counted framing.",
           "type": "string",
           "const": "tcp"
+        },
+        {
+          "description": "The same stream over TLS, with the server's certificate and name verified.",
+          "type": "string",
+          "const": "tls"
         }
       ]
     },

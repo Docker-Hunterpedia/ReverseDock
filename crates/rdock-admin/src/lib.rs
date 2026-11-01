@@ -102,6 +102,10 @@ pub enum ApiWrite {
 
 /// Where and how the admin API listens (ADR-0024).
 #[derive(Debug, Clone)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent switches from `admin:`, each with its own meaning"
+)]
 pub struct Settings {
     /// TCP address of the admin listener.
     pub address: SocketAddr,
@@ -129,6 +133,8 @@ pub struct Settings {
     pub tokens: rdock_model::settings::AdminTokens,
     /// Serve `/metrics` without a token on a loopback listener.
     pub metrics_unauthenticated_on_loopback: bool,
+    /// Take the client's address from `X-Forwarded-For` on connections from loopback.
+    pub trust_forwarded_on_loopback: bool,
     /// Allow configuration writes through the API (`admin.api_writes`); off for `GitOps`.
     pub api_writes: bool,
     /// Where the audit log is written: `$RDOCK_DATA_DIR/audit`.
@@ -158,6 +164,10 @@ enum Transport {
 }
 
 /// Shared by every request.
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent switches from `admin:`, each with its own meaning"
+)]
 struct State {
     control: Arc<dyn Control>,
     /// The proxy's runtime: engine calls run there, so whatever they start (health checks,
@@ -175,6 +185,7 @@ struct State {
     token_rules: rdock_model::settings::AdminTokens,
     /// `/metrics` answers without a token (loopback listener and the setting on).
     metrics_open: bool,
+    trust_forwarded: bool,
     audit: audit::Audit,
     api_writes: bool,
     logs: Arc<stream::Hub>,

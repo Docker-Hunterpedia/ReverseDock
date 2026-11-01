@@ -71,9 +71,16 @@ fn address_key(ip: IpAddr) -> IpAddr {
     }
 }
 
+/// Addresses remembered per user; the oldest goes first.
+const KNOWN_PER_NAME: usize = 16;
+
 struct Windows {
     by_address: Window<IpAddr>,
     by_name: Window<String>,
+    /// Addresses each user has logged in from: they pass the per-name limit, so someone
+    /// guessing from elsewhere cannot lock the user out (ASVS 6.1.1). Only real logins add to
+    /// this, so its size follows the number of users.
+    known: HashMap<String, VecDeque<IpAddr>>,
 }
 
 /// Both login windows, checked and recorded together.
@@ -98,6 +105,7 @@ impl LoginLimits {
             windows: Mutex::new(Windows {
                 by_address: Window::new(by_address.0, by_address.1),
                 by_name: Window::new(by_name.0, by_name.1),
+                known: HashMap::new(),
             }),
         }
     }
@@ -110,8 +118,10 @@ impl LoginLimits {
         let address = address.map(address_key);
         let name = name.to_ascii_lowercase();
         let wait_address = address.and_then(|a| windows.by_address.wait(&a, now));
-        let wait = wait_address.max(windows.by_name.wait(&name, now));
-        if let Some(wait) = wait {
+        let known =
+            address.is_some_and(|a| windows.known.get(&name).is_some_and(|k| k.contains(&a)));
+        let wait_name = windows.by_name.wait(&name, now).filter(|_| !known);
+        if let Some(wait) = wait_address.max(wait_name) {
             return Err(wait.max(Duration::from_secs(1)));
         }
         if let Some(address) = address {
@@ -119,6 +129,22 @@ impl LoginLimits {
         }
         windows.by_name.record(name, now);
         Ok(())
+    }
+
+    /// `name` proved who they are from `address`: their attempts no longer count, and this
+    /// address passes the per-name limit from now on.
+    pub fn succeeded(&self, address: Option<IpAddr>, name: &str) {
+        let mut windows = self.windows.lock().unwrap_or_else(PoisonError::into_inner);
+        let name = name.to_ascii_lowercase();
+        windows.by_name.hits.remove(&name);
+        if let Some(address) = address.map(address_key) {
+            let known = windows.known.entry(name).or_default();
+            known.retain(|a| *a != address);
+            known.push_back(address);
+            if known.len() > KNOWN_PER_NAME {
+                known.pop_front();
+            }
+        }
     }
 }
 
@@ -128,6 +154,38 @@ mod tests {
 
     fn ip(s: &str) -> Option<IpAddr> {
         s.parse().ok()
+    }
+
+    #[test]
+    fn guessing_elsewhere_does_not_lock_out_a_known_address() {
+        let limits = LoginLimits::default();
+        limits.attempt(ip("192.0.2.9"), "root").unwrap();
+        limits.succeeded(ip("192.0.2.9"), "root");
+        // Someone else uses up the per-name limit from many addresses.
+        for i in 0..10 {
+            limits
+                .attempt(ip(&format!("198.51.100.{i}")), "root")
+                .unwrap();
+        }
+        assert!(
+            limits.attempt(ip("203.0.113.1"), "root").is_err(),
+            "new addresses wait"
+        );
+        limits.attempt(ip("192.0.2.9"), "root").unwrap();
+        // The known address keeps its own limit of five: two used above, three more to go.
+        for _ in 0..3 {
+            limits.attempt(ip("192.0.2.9"), "root").unwrap();
+        }
+        assert!(limits.attempt(ip("192.0.2.9"), "root").is_err());
+    }
+
+    #[test]
+    fn a_successful_login_does_not_use_up_the_name_limit() {
+        let limits = LoginLimits::new((100, Duration::from_secs(60)), (3, Duration::from_secs(60)));
+        for _ in 0..10 {
+            limits.attempt(None, "root").unwrap();
+            limits.succeeded(None, "root");
+        }
     }
 
     #[test]

@@ -341,7 +341,7 @@ pub(crate) fn users(command: &UsersCommand) -> anyhow::Result<ExitCode> {
             change_user(&args.ctl, &args.name, &json!({ "reset_mfa": true }))
         }
         UsersCommand::Remove(args) => {
-            let path = format!("/api/v1/users/{}", args.name);
+            let path = format!("/api/v1/users/{}", segment(&args.name));
             expect(call(&args.ctl, &Call::new("DELETE", &path))?, &[204])?;
             lines([format!("removed {}", args.name)])
         }
@@ -349,7 +349,7 @@ pub(crate) fn users(command: &UsersCommand) -> anyhow::Result<ExitCode> {
 }
 
 fn change_user(ctl: &CtlArgs, name: &str, body: &Value) -> anyhow::Result<ExitCode> {
-    let path = format!("/api/v1/users/{name}");
+    let path = format!("/api/v1/users/{}", segment(name));
     expect(call(ctl, &Call::new("PATCH", &path).json(body))?, &[200])?;
     lines([format!("changed {name}; their sessions ended")])
 }
@@ -385,7 +385,7 @@ pub(crate) fn tokens(command: &TokensCommand) -> anyhow::Result<ExitCode> {
             ])
         }
         TokensCommand::Revoke(args) => {
-            let path = format!("/api/v1/tokens/{}", args.id);
+            let path = format!("/api/v1/tokens/{}", segment(&args.id));
             expect(call(&args.ctl, &Call::new("DELETE", &path))?, &[204])?;
             lines([format!("revoked {}", args.id)])
         }
@@ -536,4 +536,31 @@ pub(crate) fn routes(command: &RoutesCommand) -> anyhow::Result<ExitCode> {
         )),
     }
     lines(out)
+}
+
+/// `value` as one path segment: everything but unreserved characters is percent-encoded, so a
+/// name cannot change the request's path or add a query.
+fn segment(value: &str) -> String {
+    use std::fmt::Write as _;
+    let mut out = String::new();
+    for byte in value.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'_' | b'~') {
+            out.push(char::from(byte));
+        } else {
+            let _ = write!(out, "%{byte:02X}");
+        }
+    }
+    out
+}
+
+#[cfg(test)]
+mod segment_tests {
+    use super::segment;
+
+    #[test]
+    fn a_value_stays_one_path_segment() {
+        assert_eq!(segment("ann-1.b_c~d"), "ann-1.b_c~d");
+        assert_eq!(segment("../../auth?x=1"), "..%2F..%2Fauth%3Fx%3D1");
+        assert_eq!(segment("a b\r\nHost: x"), "a%20b%0D%0AHost%3A%20x");
+    }
 }

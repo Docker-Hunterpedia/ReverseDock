@@ -3427,6 +3427,7 @@ dependencies = [
  "ring",
  "rust-embed",
  "rustls",
+ "rustls-platform-verifier",
  "serde",
  "serde_json",
  "similar",

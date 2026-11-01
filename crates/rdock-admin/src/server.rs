@@ -159,6 +159,7 @@ pub fn start(
         tokens,
         token_rules: settings.tokens,
         metrics_open: settings.metrics_unauthenticated_on_loopback && address.ip().is_loopback(),
+        trust_forwarded: settings.trust_forwarded_on_loopback,
         audit,
         api_writes: settings.api_writes,
         logs: Hub::start(settings.feeds.as_ref().map(|f| f.logs.clone()), "logs"),

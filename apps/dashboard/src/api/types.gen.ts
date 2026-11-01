@@ -422,6 +422,12 @@ export type RdockAdmin = {
      * API tokens for scripts and Prometheus.
      */
     tokens?: RdockAdminTokens;
+    /**
+     * Take the client's address from `X-Forwarded-For` on connections from loopback. Turn it
+     * on only when a route of this rdock forwards to the admin listener, so rate limits and
+     * token networks see real clients; any local process could otherwise claim an address.
+     */
+    trust_forwarded_on_loopback?: boolean;
     [key: string]: unknown | Array<string> | boolean | RdockAdminAudit | RdockListenAddress | RdockMfaPolicy | RdockAdminPasswords | RdockAdminSessions | string | null | number | RdockAdminTls | null | RdockAdminTokens | undefined;
 };
 
@@ -687,12 +693,17 @@ export type RdockArgon2Cost = {
  */
 export type RdockAuditForward = {
     /**
+     * CA that signed the syslog server's certificate, for `tls`; the system's CAs when unset.
+     */
+    ca_file?: string | null;
+    /**
      * Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as
      * the message.
      */
     syslog: string;
     /**
-     * `udp` (default) or `tcp` (octet counting, RFC 6587).
+     * `udp` (default), `tcp` (octet counting, RFC 6587) or `tls` (RFC 5425). Only `tls`
+     * protects records on the network.
      */
     transport?: RdockSyslogTransport;
 };
@@ -2165,7 +2176,7 @@ export type RdockSwarmProvider = {
 /**
  * How syslog messages travel.
  */
-export type RdockSyslogTransport = 'udp' | 'tcp';
+export type RdockSyslogTransport = 'udp' | 'tcp' | 'tls';
 
 /**
  * A TCP route.
