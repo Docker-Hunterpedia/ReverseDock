@@ -15,6 +15,8 @@ RUN corepack enable
 COPY package.json pnpm-workspace.yaml pnpm-lock.yaml ./
 COPY packages packages
 COPY apps/dashboard apps/dashboard
+# The configuration editor imports the JSON Schema.
+COPY schema schema
 COPY apps/website/package.json apps/website/package.json
 RUN pnpm install --frozen-lockfile --filter @reversedock/dashboard... \
  && pnpm --dir apps/dashboard build
