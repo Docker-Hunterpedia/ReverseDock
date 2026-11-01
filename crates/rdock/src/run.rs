@@ -231,6 +231,7 @@ async fn start_admin(
         audit_dir: args.data_dir.join("audit"),
         audit: admin.audit,
         api_writes: admin.api_writes,
+        feeds: Some(engine.feeds()),
     };
     let running = rdock_admin::start(settings, engine.clone(), stop)?;
     tracing::info!(%address, socket = %socket.display(), "admin API listening");

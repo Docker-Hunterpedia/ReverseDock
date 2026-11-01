@@ -20,6 +20,7 @@ http.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 ipnet.workspace = true
+futures-util.workspace = true
 json-patch.workspace = true
 rdock-config.workspace = true
 rdock-limits.workspace = true

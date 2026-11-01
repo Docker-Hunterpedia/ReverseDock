@@ -15,6 +15,8 @@ mod resources;
 mod routes;
 mod server;
 mod sessions;
+mod stream;
+mod telemetry;
 mod tokens;
 mod totp;
 mod users;
@@ -125,6 +127,8 @@ pub struct Settings {
     pub audit_dir: PathBuf,
     /// Audit log rotation, retention and forwarding.
     pub audit: rdock_model::settings::AdminAudit,
+    /// The data plane's live feeds for the log and event streams.
+    pub feeds: Option<rdock_observability::feed::Feeds>,
 }
 
 /// PEM files for the admin listener's TLS.
@@ -165,6 +169,10 @@ struct State {
     metrics_open: bool,
     audit: audit::Audit,
     api_writes: bool,
+    logs: Arc<stream::Hub>,
+    events: Arc<stream::Hub>,
+    quota: stream::Quota,
+    telemetry: telemetry::Telemetry,
     /// Password hashes in progress: two at a time, sixteen waiting at most.
     hashing: rdock_limits::ConcurrencyLimiter,
 }

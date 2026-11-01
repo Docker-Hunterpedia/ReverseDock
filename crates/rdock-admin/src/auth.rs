@@ -258,6 +258,7 @@ pub(crate) async fn login(
         }
         Some(None) => {
             tracing::info!(client = ?address, "admin login failed");
+            state.telemetry.login_failed();
             state.audit.record(Event {
                 client: address,
                 outcome: Outcome::Denied,

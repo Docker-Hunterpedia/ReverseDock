@@ -23,6 +23,7 @@ use crate::bootstrap::Bootstrap;
 use crate::limits::LoginLimits;
 use crate::passwords::Policy;
 use crate::sessions::Sessions;
+use crate::stream::Hub;
 use crate::tokens::Tokens;
 use crate::users::Users;
 use crate::{Control, Settings, State, Transport, guard, routes};
@@ -134,6 +135,8 @@ pub fn start(
         source,
     })?;
     remove_shared_token(&settings.state_dir);
+    let events = Hub::start(settings.feeds.as_ref().map(|f| f.events.clone()), "events");
+    audit.set_events(events.clone());
     let state = Arc::new(State {
         control,
         main: tokio::runtime::Handle::current(),
@@ -153,6 +156,10 @@ pub fn start(
         metrics_open: settings.metrics_unauthenticated_on_loopback && address.ip().is_loopback(),
         audit,
         api_writes: settings.api_writes,
+        logs: Hub::start(settings.feeds.as_ref().map(|f| f.logs.clone()), "logs"),
+        events: events.clone(),
+        quota: crate::stream::Quota::default(),
+        telemetry: crate::telemetry::Telemetry::default(),
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()

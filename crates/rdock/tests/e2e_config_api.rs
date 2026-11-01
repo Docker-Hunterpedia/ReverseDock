@@ -284,3 +284,110 @@ async fn live_metrics_count_requests_per_route_and_service() {
     let summary: serde_json::Value = serde_json::from_str(&body).unwrap();
     assert_eq!(summary["routes"]["app"]["requests"], 25);
 }
+
+/// Opens a server-sent events stream over the admin socket.
+fn open_stream(rdock: &Rdock, path: &str, last_id: Option<&str>) -> std::os::unix::net::UnixStream {
+    use std::io::Write;
+    let mut stream =
+        std::os::unix::net::UnixStream::connect(rdock.data_dir().join("admin.sock")).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+        .unwrap();
+    let resume = last_id
+        .map(|id| format!("Last-Event-ID: {id}\r\n"))
+        .unwrap_or_default();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: localhost\r\nAccept: text/event-stream\r\n{resume}\r\n"
+    )
+    .unwrap();
+    stream
+}
+
+/// Reads until `count` events with data arrived; returns (id, data) pairs.
+fn read_events(stream: &mut std::os::unix::net::UnixStream, count: usize) -> Vec<(String, String)> {
+    use std::io::Read;
+    let mut raw = String::new();
+    let mut buffer = [0u8; 8192];
+    loop {
+        let events: Vec<(String, String)> = raw
+            .split("\n\n")
+            .filter_map(|block| {
+                let id = block
+                    .lines()
+                    .find_map(|l| l.strip_prefix("id: ").or_else(|| l.strip_prefix("id:")))?;
+                let data = block
+                    .lines()
+                    .find_map(|l| l.strip_prefix("data: ").or_else(|| l.strip_prefix("data:")))?;
+                Some((id.trim().to_owned(), data.to_owned()))
+            })
+            .collect();
+        if events.len() >= count {
+            return events;
+        }
+        let n = stream.read(&mut buffer).expect("the stream stalled");
+        assert!(n > 0, "the stream closed early:\n{raw}");
+        raw.push_str(&String::from_utf8_lossy(&buffer[..n]));
+    }
+}
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn logs_and_events_stream_live_with_replay() {
+    let backend = Backend::start("sse").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"Host(`app.test`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+
+    let mut logs = open_stream(&rdock, "/api/v1/logs/stream?status=2xx", None);
+    let mut events = open_stream(&rdock, "/api/v1/events/stream?type=reload", None);
+    tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    for path in ["/one", "/two", "/three"] {
+        assert_eq!(
+            client::http1(proxy, get("app.test", path)).await.status,
+            200
+        );
+    }
+    assert_eq!(
+        client::http1(proxy, get("nothing.test", "/")).await.status,
+        404
+    );
+    let lines = tokio::task::spawn_blocking(move || read_events(&mut logs, 3))
+        .await
+        .unwrap();
+    let paths: Vec<String> = lines
+        .iter()
+        .map(|(_, data)| {
+            serde_json::from_str::<serde_json::Value>(data).unwrap()["path"]
+                .as_str()
+                .unwrap()
+                .to_owned()
+        })
+        .collect();
+    assert_eq!(
+        paths,
+        ["/one", "/two", "/three"],
+        "the 404 is filtered out on the server"
+    );
+    let ids: Vec<u64> = lines.iter().map(|(id, _)| id.parse().unwrap()).collect();
+    assert!(ids.windows(2).all(|w| w[1] > w[0]), "ids increase: {ids:?}");
+
+    assert_eq!(rdock.reload().0, 200);
+    let reload = tokio::task::spawn_blocking(move || read_events(&mut events, 1))
+        .await
+        .unwrap();
+    let event: serde_json::Value = serde_json::from_str(&reload[0].1).unwrap();
+    assert_eq!(event["type"], "reload");
+    assert_eq!(event["result"], "applied");
+
+    // A reconnect with Last-Event-ID gets what came after it.
+    let first = ids[0].to_string();
+    let mut resumed = open_stream(&rdock, "/api/v1/logs/stream?status=2xx", Some(&first));
+    let replayed = tokio::task::spawn_blocking(move || read_events(&mut resumed, 2))
+        .await
+        .unwrap();
+    assert_eq!(replayed[0].0, ids[1].to_string());
+}

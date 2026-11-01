@@ -112,6 +112,10 @@ impl RdockProxy {
         if ok {
             if member.state.success(now) {
                 tracing::info!(service = %service.name, backend = %member.id, "backend recovered");
+                metrics.feeds.events.send(serde_json::json!({
+                    "type": "backend", "service": &*service.name, "backend": member.id, "state": "up",
+                    "reason": "recovered",
+                }));
                 metrics
                     .backend_up
                     .with_label_values(&[&*service.name, &member.id])
@@ -130,6 +134,10 @@ impl RdockProxy {
                     seconds = time.as_secs(),
                     "backend ejected after repeated failures"
                 );
+                metrics.feeds.events.send(serde_json::json!({
+                    "type": "backend", "service": &*service.name, "backend": member.id, "state": "down",
+                    "reason": "ejected after repeated failures", "seconds": time.as_secs(),
+                }));
                 metrics
                     .backend_ejections
                     .with_label_values(&[&*service.name, &member.id])
@@ -1085,6 +1093,12 @@ impl ProxyHttp for RdockProxy {
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
         };
         log.write(&record);
+        let feed = &self.shared.metrics.feeds.logs;
+        if feed.watched()
+            && let Ok(entry) = serde_json::to_value(&record)
+        {
+            feed.send(entry);
+        }
     }
 }
 

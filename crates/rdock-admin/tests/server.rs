@@ -155,6 +155,7 @@ impl Admin {
             audit_dir: dir.path().join("audit"),
             audit: AdminAudit::default(),
             api_writes: true,
+            feeds: None,
         };
         change(&mut settings);
         let running = rdock_admin::start(settings, Arc::new(Fake::default()), stop_rx).unwrap();
@@ -375,6 +376,7 @@ fn a_busy_port_fails_the_start() {
         audit_dir: std::env::temp_dir().join("rdock-admin-unused-audit"),
         audit: AdminAudit::default(),
         api_writes: true,
+        feeds: None,
     };
     let err = rdock_admin::start(settings, Arc::new(Fake::default()), stop_rx)
         .err()
@@ -762,7 +764,10 @@ async fn roles_limit_tokens_and_metrics_needs_one() {
     let viewer = api_token(&admin, "viewer");
     let reply = client::http1(admin.address, bearer_get("/metrics", &metrics)).await;
     assert_eq!(reply.status, 200);
-    assert_eq!(reply.body.as_ref(), b"rdock_up 1\n");
+    assert!(
+        reply.body.starts_with(b"rdock_up 1\n"),
+        "the engine's metrics come first"
+    );
     let reply = client::http1(admin.address, bearer_get("/api/v1/status", &metrics)).await;
     assert_eq!(reply.status, 403, "a metrics token reads metrics only");
     let reply = client::http1(admin.address, bearer_get("/api/v1/status", &viewer)).await;
@@ -1234,5 +1239,88 @@ async fn resources_show_owners_and_only_api_objects_change() {
         &[],
     );
     assert_eq!(client::http1(admin.address, renew).await.status, 404);
+    admin.stop().await;
+}
+
+/// Opens a stream over TCP with a bearer token and returns the socket and the status line.
+fn tcp_stream(address: SocketAddr, path: &str, token: &str) -> (std::net::TcpStream, String) {
+    let mut stream = std::net::TcpStream::connect(address).unwrap();
+    stream
+        .set_read_timeout(Some(std::time::Duration::from_secs(5)))
+        .unwrap();
+    write!(
+        stream,
+        "GET {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {token}\r\n\r\n"
+    )
+    .unwrap();
+    let mut buffer = [0u8; 512];
+    let n = stream.read(&mut buffer).unwrap();
+    let head = String::from_utf8_lossy(&buffer[..n])
+        .lines()
+        .next()
+        .unwrap_or_default()
+        .to_owned();
+    (stream, head)
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn streams_are_limited_per_identity_and_end_for_revoked_tokens() {
+    let admin = Admin::start(None, Vec::new());
+    let viewer = api_token(&admin, "viewer");
+    let address = admin.address;
+    let token = viewer.clone();
+    let (heads, sockets) = tokio::task::spawn_blocking(move || {
+        let mut heads = Vec::new();
+        let mut sockets = Vec::new();
+        for _ in 0..5 {
+            let (socket, head) = tcp_stream(address, "/api/v1/events/stream", &token);
+            heads.push(head);
+            sockets.push(socket);
+        }
+        (heads, sockets)
+    })
+    .await
+    .unwrap();
+    assert!(heads[..4].iter().all(|h| h.contains("200")), "{heads:?}");
+    assert!(
+        heads[4].contains("429"),
+        "the fifth stream is refused: {heads:?}"
+    );
+
+    let reply = client::http1(admin.address, request("GET", "127.0.0.1", "/metrics", "")).await;
+    assert_eq!(reply.status, 401);
+    let metrics = api_token(&admin, "metrics");
+    let reply = client::http1(admin.address, bearer_get("/metrics", &metrics)).await;
+    let text = String::from_utf8_lossy(&reply.body).into_owned();
+    assert!(
+        text.contains("rdock_admin_sse_subscribers{stream=\"events\"} 4"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "rdock_admin_requests_total{endpoint=\"/api/v1/tokens\",status_class=\"2xx\"}"
+        ),
+        "{text}"
+    );
+    drop(sockets);
+
+    let id = viewer.split('_').nth(2).unwrap().to_owned();
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "DELETE /api/v1/tokens/{id} HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let token = viewer.clone();
+    let head =
+        tokio::task::spawn_blocking(move || tcp_stream(address, "/api/v1/events/stream", &token).1)
+            .await
+            .unwrap();
+    assert!(
+        head.contains("204"),
+        "a revoked token's EventSource stops reconnecting: {head}"
+    );
     admin.stop().await;
 }

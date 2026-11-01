@@ -230,7 +230,16 @@ pub(crate) async fn authenticate(
 ) -> Response {
     let transport = request.extensions().get::<Transport>().copied();
     let peer = request.extensions().get::<Peer>().copied();
-    match identify(&state, request.method(), request.headers(), transport, peer) {
+    let identified = identify(&state, request.method(), request.headers(), transport, peer);
+    // A browser's EventSource reconnects after errors but stops at 204: a stream whose
+    // session or token was revoked gets 204, so it does not retry forever.
+    let stream = request.uri().path().ends_with("/stream");
+    let credentials = request.headers().contains_key(header::AUTHORIZATION)
+        || account::cookie(request.headers()).is_some();
+    if identified.is_err() && stream && credentials {
+        return StatusCode::NO_CONTENT.into_response();
+    }
+    match identified {
         Ok(caller) => {
             let path = request.uri().path().to_owned();
             request.extensions_mut().insert(caller.clone());
