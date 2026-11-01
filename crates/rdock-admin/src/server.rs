@@ -167,6 +167,7 @@ pub fn start(
         telemetry: crate::telemetry::Telemetry::default(),
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
         config_work: crate::config_api::work_limiter(),
+        api_rate: crate::caller::request_limiter(),
     });
     let threads = settings.threads.max(1);
     let runtime = tokio::runtime::Builder::new_multi_thread()
