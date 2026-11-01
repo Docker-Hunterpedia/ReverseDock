@@ -846,7 +846,7 @@ impl rdock_admin::Control for Engine {
     }
 
     async fn reload(&self) -> (bool, Value) {
-        let report = off_workers(Box::pin(Engine::reload(self, "api"))).await;
+        let report = Engine::reload(self, "api").await;
         (
             report.applied(),
             serde_json::to_value(&report).unwrap_or(Value::Null),
@@ -867,7 +867,7 @@ impl rdock_admin::Control for Engine {
 
     async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {
         let fragment = api::parse(candidate)?;
-        let (ok, diagnostics) = off_workers(async { self.api_dry_run(fragment) }).await;
+        let (ok, diagnostics) = self.api_dry_run(fragment);
         Ok((ok, serde_json::to_value(diagnostics).unwrap_or(Value::Null)))
     }
 
@@ -877,7 +877,7 @@ impl rdock_admin::Control for Engine {
             Err(err) => return rdock_admin::ApiWrite::Invalid(err),
         };
         let report = |r: &Report| serde_json::to_value(r).unwrap_or(Value::Null);
-        match off_workers(Box::pin(self.api_write(fragment, &if_match))).await {
+        match self.api_write(fragment, &if_match).await {
             api::Write::Applied(r) => rdock_admin::ApiWrite::Applied {
                 report: report(&r),
                 etag: self.api_etag(),
@@ -1066,18 +1066,4 @@ impl rdock_admin::Control for Engine {
 #[allow(clippy::cast_precision_loss)]
 fn percent(part: u64, total: u64) -> f64 {
     100.0 * part as f64 / total as f64
-}
-
-/// Runs configuration work the admin API asked for (parsing, compiling, applying) without
-/// holding one of the proxy's worker threads: on the multi-threaded runtime the thread hands
-/// its other tasks to a new worker first, so requests keep being served while it compiles
-/// (H-ENG-04). Elsewhere (single-threaded tests) the work runs in place.
-async fn off_workers<F: std::future::Future>(work: F) -> F::Output {
-    use tokio::runtime::{Handle, RuntimeFlavor};
-    let handle = Handle::current();
-    if handle.runtime_flavor() == RuntimeFlavor::MultiThread {
-        tokio::task::block_in_place(|| handle.block_on(work))
-    } else {
-        work.await
-    }
 }
