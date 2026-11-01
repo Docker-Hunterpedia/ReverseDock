@@ -96,6 +96,19 @@ impl Engine {
         format!("\"g{}-{prefix}\"", self.plane.runtime().generation)
     }
 
+    /// Holds the configuration-write lock for the fault's duration after its delay, so API
+    /// writes queue up (H-ENG-04 isolation test).
+    #[cfg(feature = "fault-injection")]
+    pub(crate) async fn hold_api_writes(&self, fault: rdock_admin::fault::Fault) {
+        tokio::time::sleep(fault.delay).await;
+        let _held = self.api_writes.lock().await;
+        tracing::warn!(
+            seconds = fault.duration.as_secs(),
+            "fault injection: holding the configuration-write lock"
+        );
+        tokio::time::sleep(fault.duration).await;
+    }
+
     /// Replaces the API objects when `if_match` is the current version, and applies them; a
     /// rejected configuration leaves the previous objects in place.
     pub(crate) async fn api_write(&self, candidate: Fragment, if_match: &str) -> Write {

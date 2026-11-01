@@ -58,6 +58,9 @@ deny = [
   { name = "native-tls", reason = "rustls with ring only (ADR-0013)" },
   { name = "aws-lc-rs", reason = "ring is the only crypto provider (ADR-0013)" },
   { name = "aws-lc-sys", reason = "ring is the only crypto provider (ADR-0013)" },
+  # The data plane never depends on the admin API (ADR-0009, ADR-0024, H-ENG-04): only the
+  # binary wires the two together.
+  { name = "rdock-admin", wrappers = ["rdock"], reason = "only the binary may depend on the admin API (ADR-0024)" },
 ]
 
 [sources]

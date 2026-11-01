@@ -27,6 +27,8 @@ ARG RUST_VERSION
 ENV RUSTUP_TOOLCHAIN=${RUST_VERSION}
 ARG RDOCK_BUILD_COMMIT=docker
 ENV RDOCK_BUILD_COMMIT=${RDOCK_BUILD_COMMIT}
+# Extra Cargo features; only the isolation test sets one (fault-injection, benchmarks/isolation).
+ARG CARGO_FEATURES=
 # Pingora builds zlib-ng with CMake; ring and zstd need a C compiler.
 RUN apk add --no-cache musl-dev cmake make
 WORKDIR /src
@@ -34,7 +36,7 @@ COPY . .
 COPY --from=dashboard /src/apps/dashboard/dist apps/dashboard/dist
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p rdock \
+    cargo build --release --locked -p rdock --features "${CARGO_FEATURES}" \
  && install -D -m 0755 target/release/rdock /out/rdock \
  && mkdir -p /out/data
 
