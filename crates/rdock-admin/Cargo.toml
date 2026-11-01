@@ -23,6 +23,7 @@ rdock-limits.workspace = true
 rdock-model.workspace = true
 rdock-tls.workspace = true
 ring.workspace = true
+rust-embed.workspace = true
 rustls.workspace = true
 serde.workspace = true
 serde_json.workspace = true

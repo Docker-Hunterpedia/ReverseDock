@@ -37,10 +37,17 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         )
         .route("/readyz", get(ready))
         .route("/metrics", get(metrics))
-        .route("/api/v1/setup", post(auth::setup))
+        .route("/api/v1/setup", get(auth::setup_needed).post(auth::setup))
         .route("/api/v1/auth/login", post(auth::login))
         .route("/api/v1/auth/session", get(account::session))
-        .route("/api/v1/auth/mfa", post(account::mfa))
+        .route(
+            "/api/v1/auth/mfa",
+            get(account::mfa_state).post(account::mfa),
+        )
+        .route(
+            "/api/v1/auth/recovery-codes",
+            post(account::new_recovery_codes),
+        )
         .route(
             "/api/v1/auth/totp",
             post(account::enrol).delete(account::unenrol),
@@ -54,10 +61,27 @@ pub(crate) fn router(state: Arc<State>) -> Router {
             axum::routing::delete(account::end_session),
         )
         .nest("/api/v1", api)
-        .fallback(|| async { error(StatusCode::NOT_FOUND, "not found") })
+        .fallback(fallback)
         .layer(axum::extract::DefaultBodyLimit::max(MAX_BODY))
         .layer(middleware::from_fn_with_state(state.clone(), guard::checks))
         .with_state(state)
+}
+
+/// Dashboard pages and files for `GET`/`HEAD` outside `/api/`, when the dashboard is on;
+/// JSON 404 otherwise.
+async fn fallback(
+    Extract(state): Extract<Arc<State>>,
+    method: http::Method,
+    uri: http::Uri,
+    headers: http::HeaderMap,
+) -> Response {
+    let page = matches!(method, http::Method::GET | http::Method::HEAD)
+        && !uri.path().starts_with("/api/");
+    if state.dashboard && page {
+        crate::dashboard::serve(uri.path(), &headers)
+    } else {
+        error(StatusCode::NOT_FOUND, "not found")
+    }
 }
 
 /// The Unix socket is trusted like the data directory; TCP needs the bearer token or a

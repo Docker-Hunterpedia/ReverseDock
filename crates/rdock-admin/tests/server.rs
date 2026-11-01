@@ -52,9 +52,18 @@ impl Admin {
     }
 
     fn start_in(dir: tempfile::TempDir, tls: Option<TlsFiles>, allowed_hosts: Vec<String>) -> Self {
+        Self::start_with(dir, tls, allowed_hosts, |_| {})
+    }
+
+    fn start_with(
+        dir: tempfile::TempDir,
+        tls: Option<TlsFiles>,
+        allowed_hosts: Vec<String>,
+        change: impl FnOnce(&mut Settings),
+    ) -> Self {
         let address: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().unwrap();
         let (stop, stop_rx) = watch::channel(false);
-        let settings = Settings {
+        let mut settings = Settings {
             address,
             tls,
             socket: Some(dir.path().join("admin.sock")),
@@ -65,7 +74,9 @@ impl Admin {
             passwords: AdminPasswords::default(),
             sessions: AdminSessions::default(),
             mfa: MfaPolicy::default(),
+            dashboard: true,
         };
+        change(&mut settings);
         let running = rdock_admin::start(settings, Arc::new(Fake), stop_rx).unwrap();
         Self {
             address,
@@ -279,6 +290,7 @@ fn a_busy_port_fails_the_start() {
         passwords: AdminPasswords::default(),
         sessions: AdminSessions::default(),
         mfa: MfaPolicy::default(),
+        dashboard: true,
     };
     let err = rdock_admin::start(settings, Arc::new(Fake), stop_rx)
         .err()
@@ -590,4 +602,44 @@ async fn an_admin_enrols_totp_then_logs_in_with_a_second_factor() {
         9
     );
     admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn pages_get_the_dashboard_and_the_api_stays_json() {
+    let admin = Admin::start(None, Vec::new());
+    let reply = client::http1(
+        admin.address,
+        request("GET", "127.0.0.1", "/api/v1/setup", ""),
+    )
+    .await;
+    assert_eq!(json_body(&reply), serde_json::json!({ "needed": true }));
+
+    // With or without a built dashboard in this binary, a page path answers HTML.
+    for path in ["/", "/security"] {
+        let reply = client::http1(admin.address, request("GET", "127.0.0.1", path, "")).await;
+        assert!(
+            reply
+                .header("content-type")
+                .unwrap()
+                .starts_with("text/html"),
+            "{path}"
+        );
+        assert!(reply.header("content-security-policy").is_some());
+    }
+    let reply = client::http1(
+        admin.address,
+        request("GET", "127.0.0.1", "/api/v1/nope", ""),
+    )
+    .await;
+    assert_eq!(reply.status, 404);
+    assert_eq!(reply.header("content-type"), Some("application/json"));
+    admin.stop().await;
+
+    let off = Admin::start_with(tempfile::tempdir().unwrap(), None, Vec::new(), |s| {
+        s.dashboard = false;
+    });
+    let reply = client::http1(off.address, request("GET", "127.0.0.1", "/", "")).await;
+    assert_eq!(reply.status, 404);
+    assert_eq!(reply.header("content-type"), Some("application/json"));
+    off.stop().await;
 }
