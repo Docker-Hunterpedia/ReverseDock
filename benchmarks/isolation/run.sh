@@ -12,26 +12,29 @@ FAULT_AT=${FAULT_AT:-15}
 PHASES=${PHASES:-"baseline login sse apply write-lock stall abort"}
 
 load() {  # load NAME: fixed-rate load on the proxy for DURATION seconds
-  docker compose --profile load run --rm -e OUT=/results -e PROXY="$1" -e TARGET=http://rdock:8080/ \
+  docker compose --profile load run --rm --no-deps -e OUT=/results -e PROXY="$1" -e TARGET=http://rdock:8080/ \
     -e RATE="$RATE" -e DURATION="${DURATION}s" k6 run --quiet /scripts/load.js >/dev/null
 }
 
 start() {  # start [FAULT]: a fresh rdock with an admin user and an operator token
   docker compose down -v >/dev/null 2>&1 || true
-  RDOCK_FAULT="${1:-}" docker compose up -d backend rdock >/dev/null
+  # Exported for the whole phase: compose compares every later `run` with this value and
+  # would recreate rdock without the fault.
+  export RDOCK_FAULT="${1:-}"
+  docker compose up -d backend rdock >/dev/null
   until docker compose exec -T rdock rdock status >/dev/null 2>&1; do sleep 1; done
   openssl rand -hex 16 | docker compose exec -T rdock rdock users add admin --role admin >/dev/null
   docker compose exec -T rdock rdock tokens create attack --role operator --days 1 | head -n 1 > work/token
-  docker compose --profile load run --rm -e OUT=/results -e PROXY=warmup -e TARGET=http://rdock:8080/ \
+  docker compose --profile load run --rm --no-deps -e OUT=/results -e PROXY=warmup -e TARGET=http://rdock:8080/ \
     -e RATE="$RATE" -e DURATION=10s k6 run --quiet /scripts/load.js >/dev/null
 }
 
 attack() {  # attack MODE: attack.py next to the load, its counts kept in work/
-  docker compose --profile attack run --rm attack "$1" "$DURATION" > "work/attack-$1.json" 2>&1 &
+  docker compose --profile attack run --rm --no-deps attack "$1" "$DURATION" > "work/attack-$1.json" 2>&1 &
 }
 
 admin_alive() {
-  docker compose --profile attack run --rm --entrypoint python3 attack -c \
+  docker compose --profile attack run --rm --no-deps --entrypoint python3 attack -c \
     'import socket; socket.create_connection(("127.0.0.1", 2080), 2)' >/dev/null 2>&1
 }
 
