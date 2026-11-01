@@ -65,3 +65,4 @@ skills-lock.json
 # Local and CI regression runs (bench.yml); published reports get their own folder.
 benchmarks/results/ci/
 benchmarks/soak/work/
+__pycache__/
