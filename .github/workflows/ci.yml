@@ -211,6 +211,8 @@ jobs:
         run: |
           pnpm --dir apps/dashboard check:budget
           pnpm --dir apps/dashboard check:licenses
+      - name: Known vulnerabilities in production npm dependencies
+        run: pnpm --dir apps/dashboard audit --prod
       - name: Every page, both themes, 400 to 1440 px (axe, no requests off the origin)
         run: pnpm --dir apps/dashboard check:pages
       - name: Lighthouse on Overview

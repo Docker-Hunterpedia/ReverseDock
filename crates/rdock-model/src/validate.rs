@@ -1530,6 +1530,15 @@ impl Validator<'_> {
         {
             self.error("admin.audit.forward.syslog", "write it as `host:port`");
         }
+        if let Some(forward) = &audit.forward
+            && forward.ca_file.is_some()
+            && forward.transport != crate::settings::SyslogTransport::Tls
+        {
+            self.error(
+                "admin.audit.forward.ca_file",
+                "only `transport: tls` uses a CA file",
+            );
+        }
         let passwords = &self.config.admin.passwords;
         if passwords
             .blocklist_file

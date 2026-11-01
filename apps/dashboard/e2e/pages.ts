@@ -20,6 +20,9 @@ try {
     const page = await context.newPage();
     let where = "";
     page.on("pageerror", (error) => failures.push(`${where}: script error: ${error.message}`));
+    page.on("console", (message) => {
+      if (message.type() === "error" && message.text().includes("Content Security Policy")) failures.push(`${where}: ${message.text()}`);
+    });
     page.on("request", (request) => {
       const url = request.url();
       if (!url.startsWith(lab.base) && !url.startsWith("data:") && !url.startsWith("blob:")) failures.push(`${where}: request left the admin origin: ${url}`);

@@ -233,6 +233,7 @@ async fn start_admin(
         dashboard: admin.dashboard,
         tokens: admin.tokens,
         metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
+        trust_forwarded_on_loopback: admin.trust_forwarded_on_loopback,
         audit_dir: args.data_dir.join("audit"),
         audit: admin.audit,
         api_writes: admin.api_writes,

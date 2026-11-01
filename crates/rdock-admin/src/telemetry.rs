@@ -1,5 +1,5 @@
 //! The admin side's own metrics (ADR-0024), appended to `/metrics`:
-//! `rdock_admin_requests_total{endpoint,status_class}`, `rdock_admin_login_failures_total`,
+//! `rdock_admin_requests_total{endpoint,status_class}`, `rdock_admin_login_failures_total`, `rdock_admin_audit_write_failures_total`,
 //! `rdock_admin_sse_subscribers{stream}` and `rdock_admin_sse_dropped_events_total{stream}`.
 
 use std::collections::BTreeMap;
@@ -83,6 +83,16 @@ pub(crate) fn render(state: &State) -> String {
         out,
         "rdock_admin_login_failures_total {}",
         state.telemetry.login_failures.load(Ordering::Relaxed)
+    );
+    let _ = writeln!(
+        out,
+        "# HELP rdock_admin_audit_write_failures_total Audit records that could not be written."
+    );
+    let _ = writeln!(out, "# TYPE rdock_admin_audit_write_failures_total counter");
+    let _ = writeln!(
+        out,
+        "rdock_admin_audit_write_failures_total {}",
+        state.audit.write_failures()
     );
     let _ = writeln!(out, "# HELP rdock_admin_sse_subscribers Open live streams.");
     let _ = writeln!(out, "# TYPE rdock_admin_sse_subscribers gauge");

@@ -186,9 +186,15 @@ pub(crate) fn identify(
             client: None,
         });
     }
-    let address: Option<IpAddr> = client(peer, headers);
+    let address: Option<IpAddr> = client(state.trust_forwarded, peer, headers);
     let session = account::cookie(headers)
-        .and_then(|value| state.sessions.get(value))
+        .and_then(|value| {
+            if headers.contains_key(crate::sessions::BACKGROUND_HEADER) {
+                state.sessions.peek(value)
+            } else {
+                state.sessions.get(value)
+            }
+        })
         .filter(|s| s.stage == Stage::Full);
     if let Some(session) = session {
         let safe = matches!(*method, Method::GET | Method::HEAD);

@@ -77,7 +77,7 @@ impl Default for Limits {
 #[expect(
     clippy::struct_excessive_bools,
     reason = "each bool is an independent YAML switch (enabled, dashboard, api_writes, open \
-              metrics); revisit if two of them ever become one mode"
+              metrics, trusted forwarding); revisit if two of them ever become one mode"
 )]
 pub struct Admin {
     /// Serve the admin API.
@@ -108,6 +108,10 @@ pub struct Admin {
     /// Serve `/metrics` without a token when the listener is a loopback address, as before
     /// v0.5, for scrapers on the same machine that cannot send one.
     pub metrics_unauthenticated_on_loopback: bool,
+    /// Take the client's address from `X-Forwarded-For` on connections from loopback. Turn it
+    /// on only when a route of this rdock forwards to the admin listener, so rate limits and
+    /// token networks see real clients; any local process could otherwise claim an address.
+    pub trust_forwarded_on_loopback: bool,
     /// The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.
     pub audit: AdminAudit,
     /// Allow configuration changes through the admin API and the dashboard. Set `false`
@@ -130,6 +134,7 @@ impl Default for Admin {
             mfa: MfaPolicy::default(),
             tokens: AdminTokens::default(),
             metrics_unauthenticated_on_loopback: false,
+            trust_forwarded_on_loopback: false,
             audit: AdminAudit::default(),
             api_writes: true,
         }
@@ -166,9 +171,13 @@ pub struct AuditForward {
     /// Syslog server as `host:port`; records are RFC 5424 messages with the JSON record as
     /// the message.
     pub syslog: String,
-    /// `udp` (default) or `tcp` (octet counting, RFC 6587).
+    /// `udp` (default), `tcp` (octet counting, RFC 6587) or `tls` (RFC 5425). Only `tls`
+    /// protects records on the network.
     #[serde(default)]
     pub transport: SyslogTransport,
+    /// CA that signed the syslog server's certificate, for `tls`; the system's CAs when unset.
+    #[serde(default)]
+    pub ca_file: Option<std::path::PathBuf>,
 }
 
 /// How syslog messages travel.
@@ -180,6 +189,8 @@ pub enum SyslogTransport {
     Udp,
     /// A stream with octet-counted framing.
     Tcp,
+    /// The same stream over TLS, with the server's certificate and name verified.
+    Tls,
 }
 
 /// API token rules (ADR-0024).

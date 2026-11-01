@@ -35,7 +35,7 @@ Admins must set up an authenticator app before they can do anything else (`admin
 
 ## Sessions
 
-A session ends after 30 minutes without activity or 8 hours after login (`admin.sessions`), and when rdock restarts. **Security** lists your sessions; admins see everyone's and can end any of them.
+A session ends after 30 minutes without activity or 8 hours after login (`admin.sessions`), and when rdock restarts. Activity means you using the page: an open tab that only refreshes its data on its own still reaches the idle timeout <Status since="v0.5" />. **Security** lists your sessions; admins see everyone's and can end any of them.
 
 ## Your password
 
@@ -44,6 +44,10 @@ A session ends after 30 minutes without activity or 8 hours after login (`admin.
 ## Sensitive changes
 
 Adding or changing users, creating tokens and similar changes need your password (and code) from the last five minutes. When it is older, the dashboard asks for it and then makes the change. API tokens cannot create other tokens <Status since="v0.5" />: a token is made by a person in the dashboard or with `rdock tokens create` on the server.
+
+## Behind a route
+
+If a route of this rdock forwards to the admin listener, every visitor arrives from loopback. Set `admin.trust_forwarded_on_loopback: true` <Status since="v0.5" /> so rate limits and token networks see real client addresses, and add the domain to `admin.allowed_hosts`. Leave it off otherwise: with it on, any process on the machine can claim any address.
 
 ## Turn it off
 
