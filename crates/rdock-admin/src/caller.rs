@@ -13,6 +13,7 @@ use axum::response::{IntoResponse, Response};
 use http::{HeaderMap, Method, StatusCode, header};
 use serde::{Deserialize, Serialize};
 
+use crate::audit::{Event, Outcome};
 use crate::auth::{Peer, client};
 use crate::routes::Denied;
 use crate::sessions::Stage;
@@ -44,13 +45,17 @@ impl From<Role> for Access {
     }
 }
 
-/// An identified caller.
+/// Who an identified caller is.
 #[derive(Debug, Clone)]
-pub(crate) enum Caller {
+pub(crate) enum Who {
     /// The Unix socket: the owner of the data directory.
     Cli,
     /// An API token, limited to its creator's current role.
-    Token { access: Access, owner: String },
+    Token {
+        id: String,
+        access: Access,
+        owner: String,
+    },
     /// A complete dashboard session.
     Session {
         user: String,
@@ -59,32 +64,52 @@ pub(crate) enum Caller {
     },
 }
 
+/// An identified caller and where the request came from.
+#[derive(Debug, Clone)]
+pub(crate) struct Caller {
+    pub(crate) who: Who,
+    pub(crate) client: Option<IpAddr>,
+}
+
 impl Caller {
     pub(crate) fn access(&self) -> Access {
-        match self {
-            Self::Cli => Access::Admin,
-            Self::Token { access, .. } => *access,
-            Self::Session { role, .. } => Access::from(*role),
+        match &self.who {
+            Who::Cli => Access::Admin,
+            Who::Token { access, .. } => *access,
+            Who::Session { role, .. } => Access::from(*role),
         }
     }
 
-    /// The name recorded as owner or actor: the user, the token's creator, or `cli`.
+    /// The name recorded as owner: the user, the token's creator, or `cli`.
     pub(crate) fn name(&self) -> &str {
-        match self {
-            Self::Cli => "cli",
-            Self::Token { owner, .. } => owner,
-            Self::Session { user, .. } => user,
+        match &self.who {
+            Who::Cli => "cli",
+            Who::Token { owner, .. } => owner,
+            Who::Session { user, .. } => user,
         }
     }
 
     /// Whether a sensitive change may proceed: a person must have confirmed their password in
     /// the last five minutes (ASVS 7.5.1); the socket and tokens cannot re-authenticate.
     pub(crate) fn recently_authenticated(&self) -> bool {
-        match self {
-            Self::Session { authenticated, .. } => {
+        match &self.who {
+            Who::Session { authenticated, .. } => {
                 authenticated.elapsed() <= crate::sessions::REAUTH
             }
-            Self::Cli | Self::Token { .. } => true,
+            Who::Cli | Who::Token { .. } => true,
+        }
+    }
+
+    /// An audit event by this caller.
+    pub(crate) fn event(&self, action: &'static str) -> Event {
+        let (actor, method) = match &self.who {
+            Who::Cli => ("cli".to_owned(), "socket"),
+            Who::Token { id, .. } => (format!("token:{id}"), "token"),
+            Who::Session { user, .. } => (user.clone(), "session"),
+        };
+        Event {
+            client: self.client,
+            ..Event::new(actor, method, action)
         }
     }
 }
@@ -131,8 +156,12 @@ pub(crate) fn identify(
     peer: Option<Peer>,
 ) -> Result<Caller, Denied> {
     if transport == Some(Transport::Socket) {
-        return Ok(Caller::Cli);
+        return Ok(Caller {
+            who: Who::Cli,
+            client: None,
+        });
     }
+    let address: Option<IpAddr> = client(peer, headers);
     let session = account::cookie(headers)
         .and_then(|value| state.sessions.get(value))
         .filter(|s| s.stage == Stage::Full);
@@ -144,16 +173,34 @@ pub(crate) fn identify(
                 "missing or wrong X-CSRF-Token",
             ));
         }
-        return Ok(Caller::Session {
-            user: session.user,
-            role: session.role,
-            authenticated: session.authenticated,
+        return Ok(Caller {
+            who: Who::Session {
+                user: session.user,
+                role: session.role,
+                authenticated: session.authenticated,
+            },
+            client: address,
         });
     }
-    let address: Option<IpAddr> = client(peer, headers);
-    let token = bearer(headers)
-        .and_then(|value| state.tokens.verify(value, address))
-        .ok_or_else(unauthorized)?;
+    let Some(presented) = bearer(headers) else {
+        return Err(unauthorized());
+    };
+    let Some((token, moved)) = state.tokens.verify(presented, address) else {
+        state.audit.record(Event {
+            client: address,
+            outcome: Outcome::Denied,
+            reason: Some("unknown, expired or revoked token".into()),
+            ..Event::new("-", "token", "auth")
+        });
+        return Err(unauthorized());
+    };
+    if moved {
+        state.audit.record(Event {
+            client: address,
+            resource: Some(token.id.clone()),
+            ..Event::new(format!("token:{}", token.id), "token", "token.new_address")
+        });
+    }
     // A token never outlives or outranks its creator.
     let owner_access = if token.created_by == "cli" {
         Some(Access::Admin)
@@ -165,9 +212,13 @@ pub(crate) fn identify(
             .map(|u| Access::from(u.role))
     };
     let owner_access = owner_access.ok_or_else(unauthorized)?;
-    Ok(Caller::Token {
-        access: token.role.min(owner_access),
-        owner: token.created_by,
+    Ok(Caller {
+        who: Who::Token {
+            id: token.id,
+            access: token.role.min(owner_access),
+            owner: token.created_by,
+        },
+        client: address,
     })
 }
 
@@ -181,8 +232,18 @@ pub(crate) async fn authenticate(
     let peer = request.extensions().get::<Peer>().copied();
     match identify(&state, request.method(), request.headers(), transport, peer) {
         Ok(caller) => {
-            request.extensions_mut().insert(caller);
-            next.run(request).await
+            let path = request.uri().path().to_owned();
+            request.extensions_mut().insert(caller.clone());
+            let response = next.run(request).await;
+            if response.status() == StatusCode::FORBIDDEN {
+                state.audit.record(Event {
+                    resource: Some(path),
+                    outcome: Outcome::Denied,
+                    reason: Some("role or recent password check missing".into()),
+                    ..caller.event("access")
+                });
+            }
+            response
         }
         Err(denied) => denied.into_response(),
     }
@@ -197,12 +258,21 @@ mod tests {
         assert!(Access::Metrics < Access::Viewer);
         assert!(Access::Viewer < Access::Operator && Access::Operator < Access::Admin);
         assert_eq!(Access::from(Role::Operator), Access::Operator);
-        let token = Caller::Token {
-            access: Access::Metrics,
-            owner: "root".into(),
+        let token = Caller {
+            who: Who::Token {
+                id: "x".into(),
+                access: Access::Metrics,
+                owner: "root".into(),
+            },
+            client: None,
         };
         assert!(need(&token, Access::Metrics).is_ok());
         assert!(need(&token, Access::Viewer).is_err());
-        assert!(need(&Caller::Cli, Access::Admin).is_ok());
+        assert_eq!(token.event("access").actor, "token:x");
+        let cli = Caller {
+            who: Who::Cli,
+            client: None,
+        };
+        assert!(need(&cli, Access::Admin).is_ok());
     }
 }

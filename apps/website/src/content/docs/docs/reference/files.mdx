@@ -77,6 +77,10 @@ TOTP secret and the SHA-256 hashes of unused recovery codes; mode 0600, written 
 Passwords are never stored. Back it up with the rest of the data directory, and protect the
 backup like the file: the TOTP secrets are in it. Sessions are kept in memory only.
 
+### `audit/` <Status since="v0.5" />
+
+The admin audit log: `audit-<first sequence number>.jsonl` files, mode 0600 in a 0700 directory, each line linked to the previous one by its SHA-256. `rdock audit verify` checks the chain. Rotated files older than `admin.audit.retention` are deleted.
+
 ### `admin.sock`
 
 The Unix socket `rdock reload` and `rdock status` use, created at start with mode 0600 and removed at shutdown (`admin.socket` moves it). Requests on it need no token: being able to open it means being the owner of the data directory.

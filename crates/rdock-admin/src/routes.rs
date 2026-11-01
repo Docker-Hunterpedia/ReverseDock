@@ -52,6 +52,7 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         )
         .route("/tokens", get(manage::tokens).post(manage::create_token))
         .route("/tokens/{id}", axum::routing::delete(manage::revoke_token))
+        .route("/audit", get(manage::audit))
         .route_layer(middleware::from_fn_with_state(
             state.clone(),
             caller::authenticate,
@@ -168,8 +169,16 @@ async fn reload(
         .spawn(async move { control.reload().await })
         .await
     {
-        Ok((true, report)) => axum::Json(report).into_response(),
+        Ok((true, report)) => {
+            state.audit.record(caller.event("config.reload"));
+            axum::Json(report).into_response()
+        }
         Ok((false, report)) => {
+            state.audit.record(crate::audit::Event {
+                outcome: crate::audit::Outcome::Failed,
+                reason: Some("the configuration was rejected".into()),
+                ..caller.event("config.reload")
+            });
             (StatusCode::UNPROCESSABLE_ENTITY, axum::Json(report)).into_response()
         }
         Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down"),

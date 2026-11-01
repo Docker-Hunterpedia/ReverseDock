@@ -17,6 +17,7 @@ use tokio::sync::watch;
 use tokio_rustls::TlsAcceptor;
 use tower_service::Service;
 
+use crate::audit::Audit;
 use crate::auth::Peer;
 use crate::bootstrap::Bootstrap;
 use crate::limits::LoginLimits;
@@ -122,6 +123,16 @@ pub fn start(
     }
     let policy = Policy::new(&settings.passwords).map_err(state_error)?;
     let tokens = Tokens::open(&settings.state_dir).map_err(state_error)?;
+    let audit = Audit::open(
+        &settings.audit_dir,
+        settings.audit.max_file_size.as_u64(),
+        settings.audit.retention.as_std(),
+        settings.audit.forward.as_ref(),
+    )
+    .map_err(|source| StartError::State {
+        path: settings.audit_dir.clone(),
+        source,
+    })?;
     remove_shared_token(&settings.state_dir);
     let state = Arc::new(State {
         control,
@@ -140,6 +151,7 @@ pub fn start(
         tokens,
         token_rules: settings.tokens,
         metrics_open: settings.metrics_unauthenticated_on_loopback && address.ip().is_loopback(),
+        audit,
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()

@@ -3321,6 +3321,7 @@ dependencies = [
  "rdock-config",
  "rdock-limits",
  "rdock-model",
+ "rdock-observability",
  "rdock-testkit",
  "rdock-tls",
  "ring",

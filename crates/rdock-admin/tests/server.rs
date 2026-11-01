@@ -9,7 +9,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 use rdock_admin::{Control, Running, Settings, TlsFiles};
-use rdock_model::settings::{AdminPasswords, AdminSessions, AdminTokens, MfaPolicy};
+use rdock_model::settings::{AdminAudit, AdminPasswords, AdminSessions, AdminTokens, MfaPolicy};
 use rdock_testkit::certs::TestCa;
 use rdock_testkit::client::{self, request};
 use rdock_testkit::free_port;
@@ -77,6 +77,8 @@ impl Admin {
             dashboard: true,
             tokens: AdminTokens::default(),
             metrics_unauthenticated_on_loopback: false,
+            audit_dir: dir.path().join("audit"),
+            audit: AdminAudit::default(),
         };
         change(&mut settings);
         let running = rdock_admin::start(settings, Arc::new(Fake), stop_rx).unwrap();
@@ -294,6 +296,8 @@ fn a_busy_port_fails_the_start() {
         dashboard: true,
         tokens: AdminTokens::default(),
         metrics_unauthenticated_on_loopback: false,
+        audit_dir: std::env::temp_dir().join("rdock-admin-unused-audit"),
+        audit: AdminAudit::default(),
     };
     let err = rdock_admin::start(settings, Arc::new(Fake), stop_rx)
         .err()
@@ -822,4 +826,71 @@ async fn a_socket_path_too_long_turns_the_socket_off_not_the_admin_api() {
     assert_eq!(reply.status, 200);
     assert!(!long.exists());
     admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn logins_writes_and_refusals_land_in_an_intact_audit_chain() {
+    let admin = Admin::start(None, Vec::new());
+    let root = serde_json::json!({ "name": "root", "password": "correct horse battery staple" });
+    assert!(socket_post(&admin.socket(), "/api/v1/setup", &root).starts_with("HTTP/1.1 201"));
+    let wrong = serde_json::json!({ "name": "root", "password": "wrong horse battery staple" });
+    client::http1(admin.address, json_post("/api/v1/auth/login", &wrong, &[])).await;
+    client::http1(admin.address, json_post("/api/v1/auth/login", &root, &[])).await;
+    let viewer = api_token(&admin, "viewer");
+    let reload = with(
+        request("POST", "127.0.0.1", "/api/v1/config/reload", ""),
+        &[("authorization", &format!("Bearer {viewer}"))],
+    );
+    assert_eq!(client::http1(admin.address, reload).await.status, 403);
+    let forged = bearer_get(
+        "/api/v1/status",
+        "rdk_pat_0000000000_00000000000000000000000000000000000000",
+    );
+    assert_eq!(client::http1(admin.address, forged).await.status, 401);
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/audit", &viewer)).await;
+    assert_eq!(reply.status, 403, "only admins read the audit log");
+    let mut stream = std::os::unix::net::UnixStream::connect(admin.socket()).unwrap();
+    write!(
+        stream,
+        "GET /api/v1/audit?limit=50 HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n"
+    )
+    .unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    let records: serde_json::Value =
+        serde_json::from_str(response.split_once("\r\n\r\n").unwrap().1).unwrap();
+    let seen: Vec<(String, String)> = records
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| {
+            (
+                r["action"].as_str().unwrap().to_owned(),
+                r["result"].as_str().unwrap().to_owned(),
+            )
+        })
+        .collect();
+    for expected in [
+        ("user.create_first_admin", "ok"),
+        ("login", "denied"),
+        ("login", "ok"),
+        ("token.create", "ok"),
+        ("access", "denied"),
+        ("auth", "denied"),
+    ] {
+        assert!(
+            seen.contains(&(expected.0.to_owned(), expected.1.to_owned())),
+            "{expected:?} missing from {seen:?}"
+        );
+    }
+    assert!(
+        !response.contains("correct horse"),
+        "no passwords in the audit log"
+    );
+    let dir = admin.stop().await;
+    assert!(matches!(
+        rdock_admin::audit::verify(&dir.path().join("audit")).unwrap(),
+        rdock_admin::audit::Verdict::Intact { .. }
+    ));
 }

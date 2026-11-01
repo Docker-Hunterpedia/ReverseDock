@@ -1513,6 +1513,23 @@ impl Validator<'_> {
                 "must be between 1 and 365",
             );
         }
+        let audit = &self.config.admin.audit;
+        let days = audit.retention.as_std().as_secs() / 86_400;
+        if !(1..=3650).contains(&days) {
+            self.error("admin.audit.retention", "must be between 1d and 3650d");
+        }
+        let size = audit.max_file_size.as_u64();
+        if !(1 << 20..=1 << 30).contains(&size) {
+            self.error("admin.audit.max_file_size", "must be between 1MiB and 1GiB");
+        }
+        if let Some(forward) = &audit.forward
+            && forward
+                .syslog
+                .rsplit_once(':')
+                .is_none_or(|(host, port)| host.is_empty() || port.parse::<u16>().is_err())
+        {
+            self.error("admin.audit.forward.syslog", "write it as `host:port`");
+        }
         let passwords = &self.config.admin.passwords;
         if passwords
             .blocklist_file
