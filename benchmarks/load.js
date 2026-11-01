@@ -5,8 +5,13 @@ import http from 'k6/http';
 const RATE = Number(__ENV.RATE || 1000);
 const DURATION = __ENV.DURATION || '30s';
 
+const HOSTS = Number(__ENV.HOSTS || 0); // `routes` scenario: a different host per request
+const params = { timeout: '10s' };
+
 export const options = {
   discardResponseBodies: true,
+  insecureSkipTLSVerify: true, // the `tls` scenarios use a throwaway certificate
+  noConnectionReuse: __ENV.NEW_CONNECTIONS === '1', // `tls-new`: a handshake for every request
   scenarios: {
     constant: {
       executor: 'constant-arrival-rate',
@@ -21,11 +26,14 @@ export const options = {
 };
 
 export default function () {
-  http.get(__ENV.TARGET, { timeout: '10s' });
+  if (HOSTS > 0) params.headers = { Host: `site${__ITER % HOSTS}.test` };
+  http.get(__ENV.TARGET, params);
 }
 
 export function handleSummary(data) {
-  const d = data.metrics.http_req_duration.values;
+  // http_req_duration leaves out connecting and the TLS handshake, which `tls-new` is there to
+  // measure; a whole iteration includes them.
+  const d = (__ENV.NEW_CONNECTIONS === '1' ? data.metrics.iteration_duration : data.metrics.http_req_duration).values;
   const out = {
     proxy: __ENV.PROXY,
     rate: RATE,

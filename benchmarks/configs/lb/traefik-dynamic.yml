@@ -1,0 +1,8 @@
+http:
+  routers:
+    app: { rule: "PathPrefix(`/`)", service: app, entryPoints: [web] }
+  services:
+    app:
+      loadBalancer:
+        # Traefik balances servers with weighted round-robin by default.
+        servers: [{ url: "http://backend:80" }, { url: "http://backend-2:80" }, { url: "http://backend-3:80" }]

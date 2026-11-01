@@ -1,28 +1,61 @@
 #!/usr/bin/env bash
 # Runs every proxy at every rate and writes results/<version>/<proxy>-<rate>.json and
 # results/<version>/report.md.
-#   ./run.sh                        # all proxies, default rates
+#   ./run.sh                        # all proxies, default rates, one backend
 #   PROXIES="rdock nginx" RATES="5000 20000" DURATION=60s ./run.sh
+#   SCENARIO=lb ./run.sh            # results/<version>/<scenario>/
+# Scenarios: single (default) one backend; lb round-robin over three backends; tls HTTPS with
+# kept-alive connections; tls-new a TLS handshake for every request; slow a backend that takes
+# 100 ms; routes 1,000 hosts, each with its own route.
 set -euo pipefail
 cd "$(dirname "$0")"
 PROXIES=${PROXIES:-"rdock nginx haproxy caddy traefik"}
 RATES=${RATES:-"5000 10000 20000 40000"}
 DURATION=${DURATION:-30s}
 VERSION=${VERSION:-dev}
-OUT="results/$VERSION"
+SCENARIO=${SCENARIO:-single}
+SCHEME=http; URLPATH=/; BACKENDS="backend"; OUT="results/$VERSION/$SCENARIO"; EXTRA=()
+export CONFIGS=./configs BACKEND_CPUS=4
+case $SCENARIO in
+  single) OUT="results/$VERSION" ;;
+  lb) BACKENDS="backend backend-2 backend-3"; CONFIGS=./configs/lb; BACKEND_CPUS=1.33 ;;
+  tls | tls-new)
+    SCHEME=https; CONFIGS=./configs/tls
+    # HTTP/1.1 for everyone: not every proxy here offers HTTP/2 by default.
+    EXTRA=(-e GODEBUG=http2client=0)
+    [ "$SCENARIO" = tls-new ] && EXTRA+=(-e NEW_CONNECTIONS=1)
+    ;;
+  slow) BACKENDS="backend-slow"; URLPATH="/?wait=100ms" ;;
+  routes)
+    CONFIGS=./configs/routes
+    python3 -I gen-routes.py configs/routes 1000
+    EXTRA=(-e HOSTS=1000)
+    ;;
+  *) echo "SCENARIO is single, lb, tls, tls-new, slow or routes" >&2; exit 2 ;;
+esac
+# A throwaway certificate; compose mounts the folder for every scenario.
+if [ ! -f configs/tls/certs/combined.pem ]; then
+  mkdir -p configs/tls/certs
+  openssl req -x509 -newkey ec -pkeyopt ec_paramgen_curve:prime256v1 -nodes -days 30 -subj /CN=bench \
+    -addext "subjectAltName=DNS:rdock,DNS:nginx,DNS:haproxy,DNS:caddy,DNS:traefik" \
+    -keyout configs/tls/certs/key.pem -out configs/tls/certs/cert.pem 2>/dev/null
+  cat configs/tls/certs/cert.pem configs/tls/certs/key.pem > configs/tls/certs/combined.pem
+  chmod 644 configs/tls/certs/*
+fi
 WARMUP=${WARMUP:-10s}
 mkdir -p "$OUT"
 # k6 runs as an unprivileged user in its container; on Linux it must be able to write here.
 chmod a+w "$OUT"
-docker compose up -d backend
+# shellcheck disable=SC2086  # BACKENDS is a list of service names
+docker compose --profile lb --profile slow up -d $BACKENDS
 for proxy in $PROXIES; do
-  docker compose --profile "$proxy" up -d "$proxy"
+  docker compose --profile "$proxy" up -d --no-deps "$proxy"
   sleep 3
-  target="http://$proxy:8080/"
-  docker compose --profile load run --rm -e OUT="/results/$VERSION" -e PROXY="warmup" -e TARGET="$target" -e RATE=2000 -e DURATION="$WARMUP" k6 run --quiet /scripts/load.js >/dev/null
+  target="$SCHEME://$proxy:8080$URLPATH"
+  docker compose --profile load run --rm "${EXTRA[@]}" -e OUT="/$OUT" -e PROXY="warmup" -e TARGET="$target" -e RATE=2000 -e DURATION="$WARMUP" k6 run --quiet /scripts/load.js >/dev/null
   for rate in $RATES; do
     echo "== $proxy at $rate req/s for $DURATION"
-    docker compose --profile load run --rm -e OUT="/results/$VERSION" -e PROXY="$proxy" -e TARGET="$target" -e RATE="$rate" -e DURATION="$DURATION" k6 run --quiet /scripts/load.js >/dev/null
+    docker compose --profile load run --rm "${EXTRA[@]}" -e OUT="/$OUT" -e PROXY="$proxy" -e TARGET="$target" -e RATE="$rate" -e DURATION="$DURATION" k6 run --quiet /scripts/load.js >/dev/null
   done
   docker compose --profile "$proxy" stop "$proxy"
   docker compose --profile "$proxy" rm -f "$proxy" >/dev/null

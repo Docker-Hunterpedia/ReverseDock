@@ -1,0 +1,13 @@
+# ReverseDock: one route, round-robin over three backends, no access log.
+listeners:
+  web: { address: ":8080" }
+defaults: { listeners: [web], tls: off }
+routes:
+  app: { match: "PathPrefix(`/`)", service: app }
+services:
+  app:
+    backends: [{ address: "backend:80" }, { address: "backend-2:80" }, { address: "backend-3:80" }]
+    load_balancer: { policy: round_robin }
+observability:
+  access_log: { format: off }
+admin: { enabled: false }
