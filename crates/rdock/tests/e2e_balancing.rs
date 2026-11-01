@@ -97,6 +97,9 @@ async fn least_requests_avoids_busy_backends() {
     let idle = client::http1(addr(port), get("a", "/")).await;
     let idle = idle.header("x-backend").unwrap().to_owned();
     for _ in 0..5 {
+        // rdock stops counting a request after the client has its response, so the next one
+        // could still see this backend as busy and tie it with the two slow ones.
+        tokio::time::sleep(Duration::from_millis(50)).await;
         let reply = client::http1(addr(port), get("a", "/")).await;
         assert_eq!(reply.header("x-backend"), Some(idle.as_str()));
     }
