@@ -1,0 +1,12 @@
+# Prometheus for the Compose example. It shares rdock's network namespace, so the admin
+# listener stays on loopback (127.0.0.1:2080) and needs no TLS.
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: rdock
+    authorization:
+      # An API token with the `metrics` role; see README.md.
+      credentials_file: /etc/prometheus/secrets/rdock-token
+    static_configs:
+      - targets: ["127.0.0.1:2080"]

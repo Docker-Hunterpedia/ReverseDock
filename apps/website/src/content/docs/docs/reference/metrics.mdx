@@ -9,12 +9,16 @@ import Status from '../../../../components/Status.astro';
 
 ReverseDock <Status since="v0.1" /> exports Prometheus metrics in the text format at
 **`GET /metrics`** on the admin listener (`127.0.0.1:2080` unless `admin.listener` says
-otherwise). The endpoint needs no token. Set `observability.metrics.prometheus: false` to turn
-it off; it then answers 404.
+otherwise). Since v0.5 it needs an API token with the `metrics` role <Status since="v0.5" />
+([how to create one](/docs/guides/logs-and-metrics/#scrape-with-prometheus)). Set
+`observability.metrics.prometheus: false` to turn it off; it then answers 404.
 
 ```sh
-curl -s http://127.0.0.1:2080/metrics
+curl -s -H "Authorization: Bearer $(cat rdock-token)" http://127.0.0.1:2080/metrics
 ```
+
+A ready-made [Grafana dashboard](/docs/guides/logs-and-metrics/#grafana-dashboard) shows all
+of them.
 
 Label values come from your configuration (listener, route, service and certificate names) or
 from small fixed sets, never from request data such as paths or hosts, so the number of series
@@ -78,6 +82,16 @@ Errors after the connection is open, such as a read timeout, show up as 502 or 5
 epoch. Label: `name`, the key under `certificates`. Updated whenever a configuration is applied,
 including when certificate files change.
 
+### `rdock_cert_renewal_failures_total` <Status since="v0.3" />
+
+**Counter.** Failed attempts to issue or renew an automatic certificate. Label: `name`, the
+certificate's first domain name.
+
+### `rdock_acme_orders_total` <Status since="v0.3" />
+
+**Counter.** ACME certificate orders. Labels: `ca` (the CA's host name) and `result`
+(`issued` or `failed`).
+
 ## Backends <Status since="v0.4" />
 
 ### `rdock_backend_requests_total`
@@ -129,6 +143,13 @@ applied reload.
 **Counter.** Attempts to apply a configuration, including the first one at start. Label:
 `result`, which is `applied` or `rejected`. A rejected reload leaves the running configuration
 in place.
+
+## Alerts <Status since="v0.5" />
+
+### `rdock_alerts_sent_total`
+
+**Counter.** Alert deliveries. Labels: `channel` (the channel's name under
+`observability.alerts.channels`) and `result` (`sent` or `failed`, after retries).
 
 ## Build
 

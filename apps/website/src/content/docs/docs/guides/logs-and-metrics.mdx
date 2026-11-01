@@ -192,6 +192,21 @@ histogram_quantile(0.95, sum by (le, route) (rate(rdock_http_request_duration_se
 increase(rdock_config_reloads_total{result="rejected"}[15m]) > 0
 ```
 
+### Grafana dashboard
+
+<Status since="v0.5" /> [`deploy/grafana/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/deploy/grafana) has a Grafana dashboard built from these metrics: requests, 5xx share and latency percentiles per route, connections and TLS errors per listener, backend state, answers, latency, retries and ejections per service, days until each certificate expires, ACME orders, reloads and alert deliveries. Configuration changes show as annotations.
+
+Import `dashboards/rdock.json` (**Dashboards → New → Import**) and pick your Prometheus in its **Data source** menu; every panel follows that menu, and the uid `rdock-overview` stays the same across imports. The folder also has provisioning files and a Compose example that runs rdock, Prometheus and Grafana together:
+
+```sh
+cd deploy/grafana
+docker compose up -d --build
+docker compose exec rdock rdock tokens create prometheus --role metrics --days 365 \
+  | head -n 1 > secrets/rdock-token
+```
+
+Then open `http://localhost:3000`. A test in CI fails when the dashboard queries a metric or label rdock does not export.
+
 ## Tracing <Status since="v0.4" />
 
 ReverseDock sends OpenTelemetry traces over OTLP/HTTP to a collector: Grafana Tempo, Jaeger, the OpenTelemetry Collector, or a hosted service.
