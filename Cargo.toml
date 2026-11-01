@@ -110,6 +110,9 @@ uuid = { version = "1.29.0", features = ["v7"] }
 bollard = { version = "0.21.1", default-features = false, features = ["http", "pipe"] }
 futures-util = { version = "0.3.34", default-features = false }
 
+# Admin API (ADR-0024): axum on its own runtime; hyper and hyper-util are already in the tree.
+axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
+
 # Operations
 notify = "8.2.1"
 notify-debouncer-full = "0.7.0"
@@ -123,7 +126,7 @@ assert_cmd = "2.2.2"
 h2 = "0.4.20"
 http-body-util = "0.1.5"
 hyper = { version = "1.12.0", features = ["client", "http1", "http2", "server"] }
-hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server-auto", "tokio"] }
+hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server-auto", "service", "tokio"] }
 # HTTPS client for webhooks and DNS APIs, the same build instant-acme uses (ring, OS roots).
 hyper-rustls = { version = "0.27.10", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "rustls-platform-verifier", "tls12"] }
 jsonschema = { version = "0.60.1", default-features = false }

@@ -105,7 +105,7 @@ Usage: rdock reload [OPTIONS]
 Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
-      --data-dir <DATA_DIR>  Data directory, to find the admin token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket and token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
   -h, --help                 Print help
   -V, --version              Print version
 ```
@@ -120,7 +120,7 @@ Usage: rdock status [OPTIONS]
 Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
-      --data-dir <DATA_DIR>  Data directory, to find the admin token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket and token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
       --json                 Print the raw JSON document
   -h, --help                 Print help
   -V, --version              Print version
@@ -136,7 +136,7 @@ Usage: rdock healthcheck [OPTIONS]
 Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
-      --data-dir <DATA_DIR>  Data directory, to find the admin token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket and token [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
   -h, --help                 Print help
   -V, --version              Print version
 ```

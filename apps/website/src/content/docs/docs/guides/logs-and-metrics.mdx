@@ -153,9 +153,12 @@ scrape_configs:
 ```yaml title="rdock.yaml (excerpt)"
 admin:
   listener: 10.0.0.2:2080
+  tls:
+    cert_file: /etc/rdock/certs/admin.pem
+    key_file: /etc/rdock/certs/admin.key
 ```
 
-`rdock validate` then warns that the admin API is reachable from the network. Allow only the Prometheus host to reach that port, with a firewall or a private network, and keep the admin token secret.
+An admin listener off loopback needs `tls`; without it `rdock validate` refuses the configuration. Point Prometheus at `https://10.0.0.2:2080/metrics` (with the CA that signed the certificate), allow only the Prometheus host to reach that port with a firewall or a private network, and keep the admin token secret. When the listener is on all interfaces (`:2080`), list the names it is reached by in `admin.allowed_hosts`.
 
 Example queries:
 

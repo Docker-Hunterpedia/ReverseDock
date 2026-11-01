@@ -161,7 +161,7 @@ struct CtlArgs {
     /// Configuration file, to find the admin listener.
     #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
     config: PathBuf,
-    /// Data directory, to find the admin token.
+    /// Data directory, to find the admin socket and token.
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
 }

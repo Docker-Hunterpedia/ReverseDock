@@ -52,7 +52,7 @@ error: routes.api.service: service `missing` does not exist
 rejected: the configuration has errors; generation 3 stays in use
 ```
 
-`rdock reload` and `rdock status` talk to the admin listener (`127.0.0.1:2080` unless `admin.listener` says otherwise) and read the admin token from `$RDOCK_DATA_DIR/admin/token`, or from `RDOCK_ADMIN_TOKEN`. They find the admin listener in the configuration file; if the file cannot be read and you changed `admin.listener`, pass `--admin 127.0.0.1:2080` with the address in use. In a container, run them inside it: `docker compose exec rdock rdock reload`. See the [CLI reference](/docs/reference/cli/).
+`rdock reload` and `rdock status` talk to the running proxy over its admin socket, `$RDOCK_DATA_DIR/admin.sock` (or `admin.socket`), which needs no token because only the owner of the data directory can open it. Without the socket, or with `--admin`, they use the admin listener (`127.0.0.1:2080` unless `admin.listener` says otherwise) and read the admin token from `$RDOCK_DATA_DIR/admin/token`, or from `RDOCK_ADMIN_TOKEN`. They find the admin listener in the configuration file; if the file cannot be read and you changed `admin.listener`, pass `--admin 127.0.0.1:2080` with the address in use. In a container, run them inside it: `docker compose exec rdock rdock reload`. See the [CLI reference](/docs/reference/cli/).
 
 `rdock status` shows the generation in use and the result of the last reload:
 

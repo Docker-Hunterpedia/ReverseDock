@@ -162,7 +162,7 @@ impl Rdock {
             .ok()?;
         write!(
             stream,
-            "{method} {path} HTTP/1.1\r\nHost: admin\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+            "{method} {path} HTTP/1.1\r\nHost: 127.0.0.1\r\nAuthorization: Bearer {}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
             token.trim()
         )
         .ok()?;

@@ -32,7 +32,7 @@ Go through this list before ReverseDock serves real traffic. Each item says what
 
 ## Admin API and monitoring
 
-- **The admin listener stays on `127.0.0.1:2080`.** `rdock validate` warns when it is reachable from the network. `/healthz`, `/readyz` and `/metrics` need no token; `/api/v1/status` and `/api/v1/config/reload` need the token from `/var/lib/rdock/admin/token` or `RDOCK_ADMIN_TOKEN`.
+- **The admin listener stays on `127.0.0.1:2080`.** Any other address needs `admin.tls`, or `rdock validate` refuses it. Open the dashboard from your machine through an SSH tunnel (`ssh -L 2080:127.0.0.1:2080 server`). `/healthz`, `/readyz` and `/metrics` need no token; `/api/v1/status` and `/api/v1/config/reload` need the token from `/var/lib/rdock/admin/token` or `RDOCK_ADMIN_TOKEN`.
 - **The admin token is protected** like a password; anyone with it can reload the configuration.
 - **Prometheus scrapes `/metrics`.** Alert on the rate of 5xx in `rdock_http_requests_total`, on `rdock_upstream_errors_total`, on `rdock_config_reloads_total{result="rejected"}` and on certificate expiry ([Metrics](/docs/reference/metrics/)).
 - **Access logs are collected and redacted.** By default `authorization`, `proxy-authorization`, `cookie` and `set-cookie` are redacted; add any other header that carries secrets to `observability.access_log.redact`.

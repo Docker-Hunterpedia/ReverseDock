@@ -1493,10 +1493,53 @@ impl Validator<'_> {
             );
         }
         if !admin.listener.is_loopback() {
-            self.push(
-                Diagnostic::warning("admin.listener", format!("the admin API is reachable from the network on `{}`", admin.listener))
-                    .with_hint("keep it on 127.0.0.1, or expose it only through a route with authentication (ADR-0007)"),
-            );
+            if admin.tls.is_none() {
+                self.push(
+                    Diagnostic::error("admin.listener", format!("the admin API on `{}` is reachable from the network without TLS", admin.listener))
+                        .with_hint("keep it on 127.0.0.1, or set `admin.tls`: browsers do not keep secure cookies on plain HTTP to a network address (ADR-0024)"),
+                );
+            } else {
+                self.push(
+                    Diagnostic::warning(
+                        "admin.listener",
+                        format!(
+                            "the admin API is reachable from the network on `{}`",
+                            admin.listener
+                        ),
+                    )
+                    .with_hint(
+                        "limit who can reach it with a firewall; it still requires authentication",
+                    ),
+                );
+            }
+            if admin.listener.ip().is_none_or(|ip| ip.is_unspecified())
+                && admin.allowed_hosts.is_empty()
+            {
+                self.error(
+                    "admin.allowed_hosts",
+                    "list the host names the admin API is reached by when it listens on all interfaces",
+                );
+            }
+        }
+        if let Some(tls) = &admin.tls {
+            for (field, path) in [("cert_file", &tls.cert_file), ("key_file", &tls.key_file)] {
+                if path.as_os_str().is_empty() {
+                    self.error(format!("admin.tls.{field}"), "path is empty");
+                }
+            }
+        }
+        if !(1..=16).contains(&admin.threads) {
+            self.error("admin.threads", "must be between 1 and 16");
+        }
+        for (i, host) in admin.allowed_hosts.iter().enumerate() {
+            if host.is_empty()
+                || (host.contains(['/', ' ', ':']) && host.parse::<std::net::Ipv6Addr>().is_err())
+            {
+                self.error(
+                    format!("admin.allowed_hosts[{i}]"),
+                    format!("`{host}` is not a host name or IP address"),
+                );
+            }
         }
     }
 
