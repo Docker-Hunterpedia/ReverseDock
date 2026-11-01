@@ -18,6 +18,8 @@ pub struct Metrics {
     registry: Registry,
     /// Live feeds for the admin API's log and event streams.
     pub feeds: crate::feed::Feeds,
+    /// Alerts delivered by channel and result (`sent`, `failed`).
+    pub alerts_sent: IntCounterVec,
     /// Requests by listener, route, service, method and status class.
     pub requests: IntCounterVec,
     /// Request duration by listener and route.
@@ -208,6 +210,12 @@ impl Metrics {
                 &["service"],
             ),
         )?;
+        let alerts_sent = counters(
+            &registry,
+            "rdock_alerts_sent_total",
+            "Alerts delivered, by channel and result.",
+            &["channel", "result"],
+        )?;
         let mirrors = counters(
             &registry,
             "rdock_mirror_requests_total",
@@ -224,6 +232,7 @@ impl Metrics {
         Ok(Self {
             registry,
             feeds: crate::feed::Feeds::default(),
+            alerts_sent,
             requests,
             duration,
             upstream_errors,

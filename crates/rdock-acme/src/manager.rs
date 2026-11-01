@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use instant_acme::{Account, ChallengeType};
-use rdock_model::acme::{Acme, Challenge, Webhook};
+use rdock_model::acme::{Acme, Challenge};
 use rdock_observability::Metrics;
 use rdock_tls::{CertIndex, CertRequest, Challenges, LoadedCert, SniResolver};
 use tokio::sync::{Semaphore, watch};
@@ -18,7 +18,6 @@ use tracing::{info, warn};
 use crate::account::{Accounts, choose_profile};
 use crate::directory::{directory_url, staging_for};
 use crate::dns::{DnsProviders, Lookup};
-use crate::http::WebhookClient;
 use crate::issue::{DnsChallenge, IssueError, Issued, OrderSpec, issue};
 use crate::state::{CertState, CertStatus, spread};
 use crate::storage::{CertMeta, Storage, StorageLock};
@@ -39,8 +38,6 @@ pub struct Plan {
     pub http01: bool,
     /// Whether a TLS listener can answer TLS-ALPN-01 challenges.
     pub tls_alpn01: bool,
-    /// Where alerts go besides the log.
-    pub alerts: Option<Webhook>,
 }
 
 impl Plan {
@@ -94,7 +91,6 @@ impl Manager {
             certs: BTreeMap::new(),
             lock: None,
             status: status.clone(),
-            webhook: None,
         };
         tokio::spawn(worker.run(rx, renew_rx));
         Self {
@@ -142,7 +138,6 @@ struct Worker {
     certs: BTreeMap<Vec<String>, CertState>,
     lock: Option<StorageLock>,
     status: Arc<Mutex<Vec<CertStatus>>>,
-    webhook: Option<WebhookClient>,
 }
 
 impl Worker {
@@ -203,7 +198,7 @@ impl Worker {
             self.issue_all(plan, &storage, due).await;
             self.publish();
         }
-        self.alert(plan).await;
+        self.alert();
         let now = unix_now();
         self.certs
             .values()
@@ -469,7 +464,7 @@ impl Worker {
     }
 
     /// Reports certificates that keep failing or are about to expire.
-    async fn alert(&mut self, plan: &Plan) {
+    fn alert(&mut self) {
         let now = unix_now();
         let alerts: Vec<(Vec<String>, serde_json::Value)> = self
             .certs
@@ -480,31 +475,32 @@ impl Worker {
             .collect();
         for (names, alert) in alerts {
             warn!(names = ?names, alert = %alert, "certificate alert");
-            if let Some(webhook) = &plan.alerts {
-                self.send(webhook, &alert).await;
-            }
+            let summary = match alert["event"].as_str() {
+                Some("certificate_renewal_failing") => format!(
+                    "Renewal of the certificate for {} keeps failing: {}",
+                    names.join(", "),
+                    alert["error"].as_str().unwrap_or("unknown error")
+                ),
+                _ => format!(
+                    "The certificate for {} expires within 7 days",
+                    names.join(", ")
+                ),
+            };
+            self.services
+                .metrics
+                .feeds
+                .alerts
+                .raise(rdock_observability::alerts::Alert::firing(
+                    rdock_model::settings::AlertRule::Certificates,
+                    format!("certificate:{}", names.join(",")),
+                    summary,
+                    alert,
+                ));
             if let Some(state) = self.certs.get_mut(&names) {
                 crate::alerts::sent(state);
             }
         }
         self.publish();
-    }
-
-    async fn send(&mut self, webhook: &Webhook, alert: &serde_json::Value) {
-        if self.webhook.is_none() {
-            match WebhookClient::new() {
-                Ok(client) => self.webhook = Some(client),
-                Err(e) => {
-                    warn!(error = %e, "cannot create the alert webhook client");
-                    return;
-                }
-            }
-        }
-        if let Some(client) = &self.webhook
-            && let Err(e) = client.post(webhook, alert).await
-        {
-            warn!(error = %e, "alert webhook failed");
-        }
     }
 }
 

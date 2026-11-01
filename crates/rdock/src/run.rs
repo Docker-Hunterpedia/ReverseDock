@@ -108,16 +108,9 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         DataPlane::new(metrics, Runtime::empty()).with_sticky_key(sticky_key(&args.data_dir)?),
     );
     let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
+    tokio::spawn(engine.clone().watch_thresholds());
 
-    tracing::info!(version = VERSION, commit = COMMIT, config = %source.describe(), "starting rdock");
-    if source == Source::ZeroConfig {
-        tracing::info!(
-            "no configuration file: zero-config mode serves labelled Docker containers over HTTPS on :443 \
-             with certificates from Let's Encrypt (accepting its terms of service), and redirects :80; \
-             write {} to configure more",
-            crate::DEFAULT_CONFIG
-        );
-    }
+    log_start(&source);
     engine.restore_snapshots();
     let report = match engine.boot().await {
         Ok(report) => report,
@@ -186,6 +179,18 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     }
     tracing::info!("rdock stopped");
     Ok(ExitCode::SUCCESS)
+}
+
+fn log_start(source: &Source) {
+    tracing::info!(version = VERSION, commit = COMMIT, config = %source.describe(), "starting rdock");
+    if *source == Source::ZeroConfig {
+        tracing::info!(
+            "no configuration file: zero-config mode serves labelled Docker containers over HTTPS on :443 \
+             with certificates from Let's Encrypt (accepting its terms of service), and redirects :80; \
+             write {} to configure more",
+            crate::DEFAULT_CONFIG
+        );
+    }
 }
 
 /// Provider settings are read at start; say so when a reload changes them.

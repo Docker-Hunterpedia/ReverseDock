@@ -79,6 +79,20 @@ impl Running {
     }
 }
 
+/// The user store and the bootstrap token, which is issued only while no admin exists.
+fn open_users(state_dir: &std::path::Path) -> std::io::Result<(Users, Bootstrap)> {
+    let users = Users::open(state_dir)?;
+    if users.has_admin() {
+        return Ok((users, Bootstrap::inactive(state_dir)?));
+    }
+    let bootstrap = Bootstrap::issue(state_dir)?;
+    tracing::warn!(
+        file = %bootstrap.file().display(),
+        "no admin user yet: create one with the single-use bootstrap token in this file (valid 24 hours)"
+    );
+    Ok((users, bootstrap))
+}
+
 /// Binds the listeners and serves them on a dedicated runtime until `stop` turns `true`.
 /// Engine calls are sent to the caller's runtime, which must be a tokio runtime.
 pub fn start(
@@ -109,19 +123,7 @@ pub fn start(
         path: settings.state_dir.clone(),
         source,
     };
-    let users = Users::open(&settings.state_dir).map_err(state_error)?;
-    let bootstrap = if users.has_admin() {
-        Bootstrap::inactive(&settings.state_dir)
-    } else {
-        Bootstrap::issue(&settings.state_dir)
-    }
-    .map_err(state_error)?;
-    if !users.has_admin() {
-        tracing::warn!(
-            file = %bootstrap.file().display(),
-            "no admin user yet: create one with the single-use bootstrap token in this file (valid 24 hours)"
-        );
-    }
+    let (users, bootstrap) = open_users(&settings.state_dir).map_err(state_error)?;
     let policy = Policy::new(&settings.passwords).map_err(state_error)?;
     let tokens = Tokens::open(&settings.state_dir).map_err(state_error)?;
     let audit = Audit::open(
@@ -137,6 +139,9 @@ pub fn start(
     remove_shared_token(&settings.state_dir);
     let events = Hub::start(settings.feeds.as_ref().map(|f| f.events.clone()), "events");
     audit.set_events(events.clone());
+    if let Some(feeds) = &settings.feeds {
+        audit.set_alerts(feeds.alerts.clone());
+    }
     let state = Arc::new(State {
         control,
         main: tokio::runtime::Handle::current(),

@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod alerting;
 pub mod compile;
 mod conn;
 mod dns;
