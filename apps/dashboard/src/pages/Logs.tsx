@@ -85,7 +85,7 @@ export function Logs() {
         <div className="mb-4"><Alert tone="warn">{stream.missed} lines were skipped because the browser fell behind.</Alert></div>
       )}
       <Card>
-        <div className="-m-4 overflow-x-auto">
+        <div className="relative -m-4 overflow-x-auto" tabIndex={0} role="group" aria-label="Table, scrolls sideways">
           <table className="w-full font-mono text-[12.5px]">
             <tbody>
               {stream.entries.map((line) => (

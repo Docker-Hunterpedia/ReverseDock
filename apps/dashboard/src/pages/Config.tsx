@@ -55,6 +55,7 @@ function Editor({ value, onChange, readOnly }: { value: string; onChange?: (v: s
         json(),
         readOnly ? [] : jsonSchema(apiSchema),
         EditorView.editable.of(!readOnly),
+        EditorView.contentAttributes.of({ "aria-label": readOnly ? "Configuration, read only" : "Configuration editor" }),
         EditorView.updateListener.of((u) => u.docChanged && change.current?.(u.state.doc.toString())),
         EditorView.theme({
           "&": { fontSize: "13px", backgroundColor: "var(--rd-surface-2)", color: "var(--rd-text)" },

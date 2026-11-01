@@ -8,7 +8,7 @@ import type { Listed } from "../api";
 import { type Session, api, describe } from "../lib/api";
 import { ago } from "../lib/status";
 
-const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-3 uppercase";
+const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-2 uppercase";
 const TD = "border-t border-line px-3 py-2";
 
 interface MfaState {
@@ -165,7 +165,7 @@ export function Security({ session }: { session: Session }) {
       <Card title="Sessions" className={session.role === "admin" ? "mt-6" : ""}>
         {sessions.error && <Alert>{describe(sessions.error)}</Alert>}
         {end.error && <Alert>{describe(end.error)}</Alert>}
-        <div className="-m-4 overflow-x-auto">
+        <div className="relative -m-4 overflow-x-auto" tabIndex={0} role="group" aria-label="Table, scrolls sideways">
           <table className="w-full text-sm">
             <thead className="bg-surface-2">
               <tr>

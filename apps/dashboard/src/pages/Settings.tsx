@@ -23,7 +23,7 @@ function Row({ label, children }: { label: string; children: ReactNode }) {
   return (
     <div className="grid grid-cols-1 gap-1 border-t border-line py-2.5 first:border-t-0 sm:grid-cols-[14rem_1fr]">
       <dt className="text-[13px] text-fg-3">{label}</dt>
-      <dd className="text-sm">{children}</dd>
+      <dd className="min-w-0 text-sm break-words">{children}</dd>
     </div>
   );
 }
@@ -65,7 +65,7 @@ export function Settings({ theme, setTheme }: { theme: Theme; setTheme: (t: Them
       <Card title="This instance" className="mt-6">
         <dl>
           <Row label="Version">{s ? `${s.version}${s.commit !== "dev" ? ` (${s.commit.slice(0, 12)})` : ""}` : "…"}</Row>
-          <Row label="Configuration file"><span className="font-mono text-[13px]">{s?.config_file ?? "zero-config"}</span></Row>
+          <Row label="Configuration file"><span className="font-mono text-[13px] break-all">{s?.config_file ?? "zero-config"}</span></Row>
           <Row label="Started">{s?.started_at.replace("T", " ").slice(0, 19)} UTC</Row>
         </dl>
       </Card>

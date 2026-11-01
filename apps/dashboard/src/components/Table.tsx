@@ -1,12 +1,12 @@
 import type { ReactNode } from "react";
 
-export const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-3 uppercase whitespace-nowrap";
+export const TH = "px-3 py-2 text-left text-xs font-medium tracking-[0.04em] text-fg-2 uppercase whitespace-nowrap";
 export const TD = "border-t border-line px-3 py-2";
 
 /** A dense table inside a card (docs/08-design-system.md, DataTable). */
 export function Table({ head, children, empty }: { head: ReactNode; children: ReactNode; empty?: ReactNode }) {
   return (
-    <div className="-m-4 overflow-x-auto">
+    <div className="relative -m-4 overflow-x-auto" tabIndex={0} role="group" aria-label="Table, scrolls sideways">
       <table className="w-full text-sm">
         <thead className="bg-surface-2">
           <tr>{head}</tr>
