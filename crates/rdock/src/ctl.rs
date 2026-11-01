@@ -337,19 +337,56 @@ fn certificate_line(cert: &serde_json::Value) -> String {
     )
 }
 
+/// Exit 0 when the running proxy is ready: `/readyz` on the admin socket or listener, or, with
+/// the admin side turned off, every listener accepting connections.
 pub(crate) fn healthcheck(args: &CtlArgs) -> ExitCode {
-    match tcp_request(address(args), &Call::new("GET", "/readyz"), None).map(|a| (a.status, a.body))
+    if args.admin.is_none()
+        && let Ok(loaded) = rdock_config::load_file(&args.config)
+        && !loaded.config.admin.enabled
     {
-        Ok((200, _)) => ExitCode::SUCCESS,
-        Ok((status, body)) => {
-            eprintln!("not ready ({status}): {}", body.trim());
-            ExitCode::FAILURE
-        }
+        return report(listeners_accept(&loaded.config));
+    }
+    report(ready(args))
+}
+
+fn report(checked: anyhow::Result<()>) -> ExitCode {
+    match checked {
+        Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             eprintln!("not ready: {err:#}");
             ExitCode::FAILURE
         }
     }
+}
+
+/// `/readyz`, on the socket when there is one: it needs no token and works whatever TLS the
+/// listener has, while this client speaks plain HTTP.
+fn ready(args: &CtlArgs) -> anyhow::Result<()> {
+    let call = Call::new("GET", "/readyz");
+    let socket = admin_settings(args)
+        .socket
+        .unwrap_or_else(|| socket_path(&args.data_dir));
+    let answer = if args.admin.is_none() && socket.exists() {
+        send_call(&Target::Socket(socket), &call)?
+    } else {
+        tcp_request(address(args), &call, None)?
+    };
+    if answer.status != 200 {
+        bail!("{}: {}", answer.status, answer.body.trim());
+    }
+    Ok(())
+}
+
+fn listeners_accept(config: &rdock_model::Config) -> anyhow::Result<()> {
+    for (name, listener) in &config.listeners {
+        let mut address = admin_address(&listener.address);
+        if address.ip().is_unspecified() {
+            address.set_ip(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST));
+        }
+        TcpStream::connect_timeout(&address, Duration::from_secs(2))
+            .with_context(|| format!("listener {name} at {address}"))?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]
