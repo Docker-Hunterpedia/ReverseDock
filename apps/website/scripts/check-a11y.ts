@@ -13,6 +13,7 @@ const PAGES = [
   '/docs/guides/route-a-domain/',
   '/docs/migrate/from-traefik/',
   '/docs/reference/configuration/routes/',
+  '/docs/reference/playground/',
   '/docs/concepts/architecture/',
   '/docs/operations/troubleshooting/',
 ];

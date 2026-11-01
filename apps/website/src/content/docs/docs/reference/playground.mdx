@@ -1,0 +1,26 @@
+---
+title: Configuration playground
+description: Edit rdock.yaml in your browser with completion and checks from the JSON Schema. Nothing leaves the page.
+sidebar:
+  order: 2
+---
+
+import ConfigPlayground from '../../../../components/ConfigPlayground.astro';
+import Status from '../../../../components/Status.astro';
+
+Write or paste an `rdock.yaml` here <Status since="v0.5" />. The editor checks it against the [JSON Schema](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/schema/rdock.v1.json) as you type, suggests what fits with **Ctrl+Space**, and explains a field when you hover over it. Everything runs in your browser: your configuration is not sent anywhere.
+
+<ConfigPlayground />
+
+## What it checks
+
+It finds YAML mistakes, unknown fields, wrong types and values that are not allowed. It cannot find what only rdock knows, such as a route naming a service that does not exist, or a rule that does not parse. For those, run the full check before you deploy:
+
+```sh
+rdock validate rdock.yaml
+```
+
+## Related
+
+- [Configuration reference](/docs/reference/configuration/)
+- [`rdock validate`](/docs/reference/cli/)

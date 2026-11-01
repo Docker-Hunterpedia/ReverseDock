@@ -74,3 +74,6 @@ jobs:
         run: |
           pnpm exec playwright install --with-deps chromium
           pnpm check:a11y
+      - name: Configuration playground (checks, completion, no requests while editing)
+        working-directory: apps/website
+        run: pnpm check:playground

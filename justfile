@@ -82,4 +82,4 @@ website-check:
     pnpm install --frozen-lockfile
     cargo build --locked -p rdock
     cd apps/website && pnpm gen && git diff --exit-code -- src/content/docs
-    cd apps/website && pnpm check:status && pnpm check:snippets && pnpm check && pnpm build && pnpm check:a11y
+    cd apps/website && pnpm check:status && pnpm check:snippets && pnpm check && pnpm build && pnpm check:a11y && pnpm check:playground
