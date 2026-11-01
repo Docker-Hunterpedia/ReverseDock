@@ -12,6 +12,10 @@ One route forwards every request to one backend, an NGINX serving a fixed 1 KiB 
 
 Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](compose.yaml).
 
+### Load-balancing scenario
+
+`SCENARIO=lb` puts three backends behind the route, balanced round-robin, so the proxies' load balancers are measured too. The three backends share the 4 CPUs the single backend has otherwise (1.33 each), so only the proxy's work changes. Each proxy uses its own round-robin: rdock `policy: round_robin`, NGINX's default weighted round-robin ([upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)), HAProxy `balance roundrobin` ([configuration manual](https://docs.haproxy.org/3.2/configuration.html#4.2-balance)), Caddy `lb_policy round_robin` ([reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#lb_policy)) and Traefik's default weighted round-robin ([services](https://doc.traefik.io/traefik/routing/services/)), all checked 2026-11-01. Configurations: [`configs/lb/`](configs/lb/). A check with 30 requests per proxy found each backend getting a third of them (NGINX 11/10/9, the others 10/10/10).
+
 ## How load is generated
 
 [k6](https://grafana.com/docs/k6/latest/) runs an **open model**: the `constant-arrival-rate` executor starts requests at a fixed rate whatever the latency ([k6 executors](https://grafana.com/docs/k6/latest/using-k6/scenarios/executors/constant-arrival-rate/), checked 2026-10-29). A closed-loop tool waits for each answer before sending the next request, so a stalling proxy slows the load down and hides its own tail latency, which is called coordinated omission ([wrk2](https://github.com/giltene/wrk2), checked 2026-10-29). With an open model, a stall shows up in p99 and p99.9 as it would for real users.
@@ -24,9 +28,10 @@ Each proxy gets a 10-second warm-up at 2,000 req/s, then 30 seconds at each targ
 docker build -t rdock:bench ..             # or RDOCK_IMAGE=ghcr.io/docker-hunterpedia/rdock:<version>
 VERSION=0.4.0-alpha.1 ./run.sh             # all proxies at 5k, 10k, 20k, 40k req/s
 PROXIES="rdock nginx" RATES="20000" DURATION=60s ./run.sh
+SCENARIO=lb VERSION=0.4.0-alpha.1 ./run.sh # three backends, round-robin
 ```
 
-Results go to `results/<version>/<proxy>-<rate>.json`, and `results/<version>/report.md` sums them up. Requirements: Docker with Compose and Python 3.
+Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/lb/` for the load-balancing scenario), and `report.md` in the same folder sums them up. Requirements: Docker with Compose and Python 3.
 
 ## Reading the results
 
