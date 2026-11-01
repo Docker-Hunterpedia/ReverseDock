@@ -12,9 +12,22 @@ One route forwards every request to one backend, an NGINX serving a fixed 1 KiB 
 
 Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](compose.yaml).
 
-### Load-balancing scenario
+### Scenarios
 
-`SCENARIO=lb` puts three backends behind the route, balanced round-robin, so the proxies' load balancers are measured too. The three backends share the 4 CPUs the single backend has otherwise (1.33 each), so only the proxy's work changes. Each proxy uses its own round-robin: rdock `policy: round_robin`, NGINX's default weighted round-robin ([upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)), HAProxy `balance roundrobin` ([configuration manual](https://docs.haproxy.org/3.2/configuration.html#4.2-balance)), Caddy `lb_policy round_robin` ([reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#lb_policy)) and Traefik's default weighted round-robin ([services](https://doc.traefik.io/traefik/routing/services/)), all checked 2026-11-01. Configurations: [`configs/lb/`](configs/lb/). A check with 30 requests per proxy found each backend getting a third of them (NGINX 11/10/9, the others 10/10/10).
+`SCENARIO=<name> ./run.sh` measures something other than the bare proxy. Results go to `results/<version>/<name>/`.
+
+| Scenario | What changes | What it shows |
+|---|---|---|
+| `single` (default) | One route, one backend, plain HTTP | The cost of the proxy itself |
+| `lb` | Three backends, round-robin; they share the same 4 CPUs (1.33 each) | The load balancer |
+| `tls` | HTTPS with kept-alive connections, HTTP/1.1, a P-256 certificate | Encryption per request |
+| `tls-new` | Like `tls`, with a new connection and TLS handshake for every request | Handshakes, the most expensive thing a proxy does. Latency here is k6's `iteration_duration`, because `http_req_duration` leaves out connecting and the handshake |
+| `slow` | The backend answers after 100 ms ([traefik/whoami](https://github.com/traefik/whoami) `?wait=100ms`) | Holding many requests open at once. Subtract the 100 ms when reading latency |
+| `routes` | 1,000 hosts, each with its own route, one chosen per request; [`gen-routes.py`](gen-routes.py) writes the configurations | Routing as a configuration grows. HAProxy uses plain ACLs in order, the way a hand-written configuration does; a map file would be faster |
+
+For `lb`, each proxy uses its own round-robin: rdock `policy: round_robin`, NGINX's default weighted round-robin ([upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)), HAProxy `balance roundrobin` ([configuration manual](https://docs.haproxy.org/3.2/configuration.html#4.2-balance)), Caddy `lb_policy round_robin` ([reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#lb_policy)) and Traefik's default weighted round-robin ([services](https://doc.traefik.io/traefik/routing/services/)), all checked 2026-11-01. A check with 30 requests per proxy found each backend getting a third of them (NGINX 11/10/9, the others 10/10/10).
+
+For the `tls` scenarios, k6 runs with `GODEBUG=http2client=0`, so every proxy is measured on HTTP/1.1; not all of them offer HTTP/2 by default.
 
 ## How load is generated
 
@@ -28,10 +41,10 @@ Each proxy gets a 10-second warm-up at 2,000 req/s, then 30 seconds at each targ
 docker build -t rdock:bench ..             # or RDOCK_IMAGE=ghcr.io/docker-hunterpedia/rdock:<version>
 VERSION=0.4.0-alpha.1 ./run.sh             # all proxies at 5k, 10k, 20k, 40k req/s
 PROXIES="rdock nginx" RATES="20000" DURATION=60s ./run.sh
-SCENARIO=lb VERSION=0.4.0-alpha.1 ./run.sh # three backends, round-robin
+SCENARIO=lb VERSION=0.4.0-alpha.1 ./run.sh # another scenario, see above
 ```
 
-Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/lb/` for the load-balancing scenario), and `report.md` in the same folder sums them up. Requirements: Docker with Compose and Python 3.
+Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/<scenario>/` for the other scenarios), and `report.md` in the same folder sums them up. Requirements: Docker with Compose and Python 3.
 
 ## Reading the results
 

@@ -1,0 +1,9 @@
+# Caddy: HTTPS on :8080 with a given certificate; access logs are off unless `log` is set.
+{
+  auto_https off
+  admin off
+}
+https://:8080 {
+  tls /certs/cert.pem /certs/key.pem
+  reverse_proxy backend:80
+}
