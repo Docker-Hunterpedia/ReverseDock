@@ -37,7 +37,7 @@ impl Bootstrap {
         SystemRandom::new()
             .fill(&mut secret)
             .map_err(|_| io::Error::other("the system random generator failed"))?;
-        let token = format!("{PREFIX}{}", hex(&secret));
+        let token = format!("{PREFIX}{}", crate::hex(&secret));
         let path = Self::path(dir);
         rdock_config::state::write_atomic(&path, format!("{token}\n").as_bytes())?;
         Ok(Self {
@@ -89,14 +89,6 @@ fn verifier(token: &str) -> [u8; 32] {
     let mut out = [0u8; 32];
     out.copy_from_slice(digest(&SHA256, token.as_bytes()).as_ref());
     out
-}
-
-fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
 }
 
 fn remove(path: &Path) -> io::Result<()> {

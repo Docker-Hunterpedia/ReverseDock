@@ -73,8 +73,10 @@ hours, and the next start writes a new one. See [Security model](/docs/concepts/
 
 ### `admin/users.json` <Status since="v0.5" />
 
-The dashboard users: name, role, Argon2id password hash and creation time, mode 0600, written
-atomically. Passwords are never stored. Back it up with the rest of the data directory.
+The dashboard users: name, role, Argon2id password hash, creation time and, once enrolled, the
+TOTP secret and the SHA-256 hashes of unused recovery codes; mode 0600, written atomically.
+Passwords are never stored. Back it up with the rest of the data directory, and protect the
+backup like the file: the TOTP secrets are in it. Sessions are kept in memory only.
 
 ### `admin.sock`
 
