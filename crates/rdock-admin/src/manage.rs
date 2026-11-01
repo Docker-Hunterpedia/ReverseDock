@@ -10,6 +10,7 @@ use axum::response::{IntoResponse, Response};
 use http::StatusCode;
 use ipnet::IpNet;
 use serde::{Deserialize, Serialize};
+use utoipa::{IntoParams, ToSchema};
 
 use crate::State;
 use crate::audit::Event;
@@ -32,8 +33,8 @@ fn internal(err: &std::io::Error) -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save the change")
 }
 
-#[derive(Serialize)]
-struct UserView {
+#[derive(Serialize, ToSchema)]
+pub(crate) struct UserView {
     name: String,
     role: Role,
     disabled: bool,
@@ -53,7 +54,9 @@ impl From<User> for UserView {
     }
 }
 
-/// `GET /api/v1/users`.
+/// `GET /api/v1/users`: every user (admin role).
+#[utoipa::path(get, path = "/users", tag = "users",
+    responses((status = OK, description = "The users", body = [UserView])))]
 pub(crate) async fn users(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -63,7 +66,7 @@ pub(crate) async fn users(
     axum::Json(list).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct NewUser {
     name: String,
@@ -72,7 +75,14 @@ pub(crate) struct NewUser {
 }
 
 /// `POST /api/v1/users`: a new user with a first password, who enrols MFA at first login
-/// when the policy asks for it.
+/// when the policy asks for it. Admin role and a recent password check.
+#[utoipa::path(post, path = "/users", tag = "users", request_body = NewUser,
+    responses(
+        (status = CREATED, description = "Created", body = UserView),
+        (status = CONFLICT, description = "The name is taken", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Invalid name or weak password", body = crate::openapi::ErrorBody),
+        (status = SERVICE_UNAVAILABLE, description = "Too many password hashes at once", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn create_user(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -122,7 +132,7 @@ pub(crate) async fn create_user(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct UserChange {
     #[serde(default)]
@@ -138,6 +148,14 @@ pub(crate) struct UserChange {
 
 /// `PATCH /api/v1/users/{name}`: role, disabled, a new password or an MFA reset. Ends the
 /// user's sessions; refuses to leave no enabled admin.
+#[utoipa::path(patch, path = "/users/{name}", tag = "users", request_body = UserChange,
+    params(("name" = String, Path, description = "User name")),
+    responses(
+        (status = OK, description = "Changed", body = UserView),
+        (status = NOT_FOUND, description = "No such user", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "No enabled admin would remain", body = crate::openapi::ErrorBody),
+        (status = UNPROCESSABLE_ENTITY, description = "Weak password", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn change_user(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -208,6 +226,13 @@ pub(crate) async fn change_user(
 }
 
 /// `DELETE /api/v1/users/{name}`: removes the user, their sessions and their tokens.
+#[utoipa::path(delete, path = "/users/{name}", tag = "users",
+    params(("name" = String, Path, description = "User name")),
+    responses(
+        (status = NO_CONTENT, description = "Deleted"),
+        (status = NOT_FOUND, description = "No such user", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "No enabled admin would remain", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn delete_user(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -238,17 +263,28 @@ pub(crate) async fn delete_user(
     }
 }
 
-#[derive(Serialize)]
-struct TokenView {
+#[derive(Serialize, ToSchema)]
+pub(crate) struct TokenView {
     id: String,
     name: String,
     role: Access,
     created_by: String,
     created_at: u64,
     expires_at: Option<u64>,
+    #[schema(value_type = Vec<String>)]
     allowed_from: Vec<IpNet>,
     last_used_at: Option<u64>,
+    #[schema(value_type = Option<String>)]
     last_used_from: Option<std::net::IpAddr>,
+}
+
+/// A new token: the value is shown only in this answer.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct CreatedToken {
+    #[serde(flatten)]
+    view: TokenView,
+    /// `rdk_pat_…`
+    token: String,
 }
 
 impl From<Token> for TokenView {
@@ -268,6 +304,8 @@ impl From<Token> for TokenView {
 }
 
 /// `GET /api/v1/tokens`: the caller's tokens, or everyone's for an admin.
+#[utoipa::path(get, path = "/tokens", tag = "tokens",
+    responses((status = OK, description = "The tokens", body = [TokenView])))]
 pub(crate) async fn tokens(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -283,7 +321,7 @@ pub(crate) async fn tokens(
     axum::Json(list).into_response()
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct TokenRequest {
     name: String,
@@ -291,11 +329,18 @@ pub(crate) struct TokenRequest {
     /// Days until it expires; `0` never, when `admin.tokens.allow_no_expiry` allows it.
     #[serde(default)]
     expires_in_days: Option<u16>,
+    /// Networks the token may be used from; empty means anywhere.
     #[serde(default)]
+    #[schema(value_type = Vec<String>)]
     allowed_from: Vec<IpNet>,
 }
 
 /// `POST /api/v1/tokens`: a new token, shown once, with a role no higher than the caller's.
+#[utoipa::path(post, path = "/tokens", tag = "tokens", request_body = TokenRequest,
+    responses(
+        (status = CREATED, description = "Created; the value is not shown again", body = CreatedToken),
+        (status = UNPROCESSABLE_ENTITY, description = "Invalid name or expiry", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn create_token(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -350,15 +395,23 @@ pub(crate) async fn create_token(
                 resource: Some(token.id.clone()),
                 ..caller.event("token.create")
             });
-            let mut view = serde_json::to_value(TokenView::from(token)).unwrap_or_default();
-            view["token"] = serde_json::Value::String(value);
-            (StatusCode::CREATED, axum::Json(view)).into_response()
+            let created = CreatedToken {
+                view: TokenView::from(token),
+                token: value,
+            };
+            (StatusCode::CREATED, axum::Json(created)).into_response()
         }
     }
 }
 
 /// `DELETE /api/v1/tokens/{id}`: revokes one of the caller's tokens, or anyone's for an
 /// admin. Takes effect at once.
+#[utoipa::path(delete, path = "/tokens/{id}", tag = "tokens",
+    params(("id" = String, Path, description = "Token ID")),
+    responses(
+        (status = NO_CONTENT, description = "Revoked"),
+        (status = NOT_FOUND, description = "No such token", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn revoke_token(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -385,6 +438,8 @@ pub(crate) async fn revoke_token(
 
 /// `GET /api/v1/audit?limit=100&before=<seq>`: recent audit records, newest first. Admins
 /// only.
+#[utoipa::path(get, path = "/audit", tag = "audit", params(AuditQuery),
+    responses((status = OK, description = "Audit records, newest first", body = [crate::openapi::AuditRecord])))]
 pub(crate) async fn audit(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -398,11 +453,14 @@ pub(crate) async fn audit(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, IntoParams)]
 #[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
 pub(crate) struct AuditQuery {
+    /// How many records, 1 to 1000; 100 by default.
     #[serde(default)]
     limit: Option<usize>,
+    /// Only records with a sequence number below this one.
     #[serde(default)]
     before: Option<u64>,
 }

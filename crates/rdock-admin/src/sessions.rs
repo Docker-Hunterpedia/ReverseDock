@@ -29,7 +29,7 @@ const PENDING: Duration = Duration::from_secs(10 * 60);
 pub const REAUTH: Duration = Duration::from_secs(5 * 60);
 
 /// How far a session has come.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum Stage {
     /// Password checked; the TOTP or a recovery code is next.
@@ -65,12 +65,13 @@ pub struct Session {
 }
 
 /// What `GET /api/v1/auth/sessions` shows of a session.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, utoipa::ToSchema)]
 pub struct Listed {
     id: String,
     user: String,
     created_at: u64,
     idle_seconds: u64,
+    #[schema(value_type = Option<String>)]
     client: Option<IpAddr>,
     current: bool,
 }

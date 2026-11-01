@@ -6,31 +6,12 @@ import { useReauth } from "../components/Reauth";
 import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card, Field, StatusPill } from "../components/ui";
+import type { AuditRecord as Record, TokenView as Token, UserView as User } from "../api";
 import { type Role, type Session, api, describe } from "../lib/api";
-
-interface User {
-  name: string;
-  role: Role;
-  disabled: boolean;
-  created_at: number;
-  mfa: boolean;
-}
-
-interface Token {
-  id: string;
-  name: string;
-  role: string;
-  created_by: string;
-  created_at: number;
-  expires_at: number | null;
-  allowed_from: string[];
-  last_used_at: number | null;
-  last_used_from: string | null;
-}
 
 const select = "h-9 rounded-sm border border-line bg-surface px-2.5 text-sm text-fg";
 
-function day(unix: number | null): string {
+function day(unix?: number | null): string {
   return unix == null ? "never" : new Date(unix * 1000).toISOString().slice(0, 10);
 }
 
@@ -206,18 +187,6 @@ export function Tokens({ session }: { session: Session }) {
       )}
     </Card>
   );
-}
-
-interface Record {
-  time: string;
-  seq: number;
-  actor: string;
-  method: string;
-  client: string | null;
-  action: string;
-  resource: string | null;
-  result: "ok" | "denied" | "failed";
-  reason: string | null;
 }
 
 /** The hash-chained audit log, newest first, 100 at a time. Admins only. */

@@ -77,7 +77,11 @@ enum Command {
     #[command(subcommand)]
     Routes(admin_cli::RoutesCommand),
     /// Print the JSON Schema of rdock.yaml.
-    Schema,
+    Schema {
+        /// Print the OpenAPI 3.1 document of the admin API instead.
+        #[arg(long)]
+        openapi: bool,
+    },
     /// Print version and build information.
     Version {
         /// Print as JSON.
@@ -227,7 +231,10 @@ fn main() -> ExitCode {
         Command::Tokens(command) => admin_cli::tokens(&command),
         Command::Backends(command) => admin_cli::backends(&command),
         Command::Routes(command) => admin_cli::routes(&command),
-        Command::Schema => schema().map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: true } => {
+            print(rdock_admin::openapi_json()).map(|()| ExitCode::SUCCESS)
+        }
         Command::Version { json } => version(json).map(|()| ExitCode::SUCCESS),
     };
     result.unwrap_or_else(|err| {

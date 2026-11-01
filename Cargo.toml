@@ -122,6 +122,9 @@ tower-service = "0.3.3"
 # The dashboard, embedded at build time (ADR-0024). debug-embed: debug builds embed too, never reading from disk at run time.
 rust-embed = { version = "8.13.0", default-features = false, features = ["debug-embed", "include-exclude", "mime-guess"] }
 axum = { version = "0.8.9", default-features = false, features = ["http1", "json", "matched-path", "query", "tokio"] }
+# OpenAPI 3.1 generated from the handlers (F-MGMT-01); utoipa 6.0.0 and utoipa-axum 0.3.0 released 2026-09-22.
+utoipa = { version = "6.0.0", default-features = false, features = ["macros"] }
+utoipa-axum = "0.3.0"
 
 # Operations
 notify = "8.2.1"

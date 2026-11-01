@@ -11,6 +11,7 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use rdock_model::settings::MfaPolicy;
 use serde::Deserialize;
 use subtle::ConstantTimeEq;
+use utoipa::ToSchema;
 
 use crate::audit::{Event, Outcome};
 use crate::auth::{Peer, client, hashing, too_many};
@@ -149,13 +150,15 @@ fn internal(err: &std::io::Error) -> Response {
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save the user")
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Code {
     code: String,
 }
 
 /// `GET /api/v1/auth/session`: who is logged in, how far, and the CSRF token.
+#[utoipa::path(get, path = "/api/v1/auth/session", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "The session", body = crate::openapi::SessionInfo)))]
 pub(crate) async fn session(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -173,6 +176,12 @@ pub(crate) async fn session(
 }
 
 /// `POST /api/v1/auth/mfa`: the second step of a login, with a TOTP or recovery code.
+#[utoipa::path(post, path = "/api/v1/auth/mfa", tag = "auth", security(("session" = [])), request_body = Code,
+    responses(
+        (status = OK, description = "Logged in; a new session cookie", body = crate::openapi::SessionInfo),
+        (status = UNAUTHORIZED, description = "Wrong code", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn mfa(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -210,6 +219,11 @@ pub(crate) async fn mfa(
 
 /// `POST /api/v1/auth/totp`: a new TOTP secret to enrol, confirmed with
 /// `POST /api/v1/auth/totp/confirm`.
+#[utoipa::path(post, path = "/api/v1/auth/totp", tag = "auth", security(("session" = [])),
+    responses(
+        (status = OK, description = "`secret` and an `otpauth://` `uri`", body = Object),
+        (status = CONFLICT, description = "Already enrolled", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn enrol(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -244,6 +258,12 @@ pub(crate) async fn enrol(
 
 /// `POST /api/v1/auth/totp/confirm`: saves the secret once the app shows a matching code,
 /// returns ten recovery codes (shown once) and ends the user's other sessions.
+#[utoipa::path(post, path = "/api/v1/auth/totp/confirm", tag = "auth", security(("session" = [])), request_body = Code,
+    responses(
+        (status = OK, description = "The session and `recovery_codes`", body = Object),
+        (status = UNAUTHORIZED, description = "Wrong code", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "No enrolment started", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn confirm(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -315,6 +335,11 @@ pub(crate) async fn confirm(
 /// `POST /api/v1/auth/recovery-codes`: replaces the caller's recovery codes with ten new
 /// ones, shown once. Needs the password (and code) confirmed in the last five minutes; the
 /// old codes stop working at once.
+#[utoipa::path(post, path = "/api/v1/auth/recovery-codes", tag = "auth", security(("session" = [])),
+    responses(
+        (status = OK, description = "`recovery_codes`", body = Object),
+        (status = CONFLICT, description = "No authenticator app set up", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn new_recovery_codes(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -354,6 +379,8 @@ pub(crate) async fn new_recovery_codes(
 
 /// `GET /api/v1/auth/mfa`: whether the caller has a second factor and how many recovery
 /// codes are left.
+#[utoipa::path(get, path = "/api/v1/auth/mfa", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "`enrolled`, `recovery_codes_left` and `required`", body = Object)))]
 pub(crate) async fn mfa_state(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -374,6 +401,8 @@ pub(crate) async fn mfa_state(
 
 /// `DELETE /api/v1/auth/totp`: removes the caller's second factor, when the policy allows
 /// it and the password was confirmed in the last five minutes.
+#[utoipa::path(delete, path = "/api/v1/auth/totp", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "The session, with a new cookie", body = crate::openapi::SessionInfo)))]
 pub(crate) async fn unenrol(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -406,7 +435,7 @@ pub(crate) async fn unenrol(
     }
 }
 
-#[derive(Deserialize)]
+#[derive(Deserialize, ToSchema)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct Reauth {
     password: String,
@@ -416,6 +445,12 @@ pub(crate) struct Reauth {
 
 /// `POST /api/v1/auth/reauth`: confirms the password (and code) again before a sensitive
 /// change (ASVS 7.5.1).
+#[utoipa::path(post, path = "/api/v1/auth/reauth", tag = "auth", security(("session" = [])), request_body = Reauth,
+    responses(
+        (status = NO_CONTENT, description = "Confirmed for five minutes"),
+        (status = UNAUTHORIZED, description = "Wrong password or code", body = crate::openapi::ErrorBody),
+        (status = TOO_MANY_REQUESTS, description = "Too many attempts; see `Retry-After`", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn reauth(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -466,6 +501,8 @@ pub(crate) async fn reauth(
 }
 
 /// `POST /api/v1/auth/logout`: ends the session and tells the browser to forget it.
+#[utoipa::path(post, path = "/api/v1/auth/logout", tag = "auth", security(("session" = [])),
+    responses((status = NO_CONTENT, description = "Logged out")))]
 pub(crate) async fn logout(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -495,6 +532,8 @@ pub(crate) async fn logout(
 }
 
 /// `GET /api/v1/auth/sessions`: the caller's sessions, or everyone's for an admin.
+#[utoipa::path(get, path = "/api/v1/auth/sessions", tag = "auth", security(("session" = [])),
+    responses((status = OK, description = "The sessions", body = [crate::sessions::Listed])))]
 pub(crate) async fn sessions(
     Extract(state): Extract<Arc<State>>,
     method: Method,
@@ -510,6 +549,12 @@ pub(crate) async fn sessions(
 
 /// `DELETE /api/v1/auth/sessions/{id}`: ends one of the caller's sessions, or anyone's for
 /// an admin.
+#[utoipa::path(delete, path = "/api/v1/auth/sessions/{id}", tag = "auth", security(("session" = [])),
+    params(("id" = String, Path, description = "Session ID")),
+    responses(
+        (status = NO_CONTENT, description = "Ended"),
+        (status = NOT_FOUND, description = "No such session", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn end_session(
     Extract(state): Extract<Arc<State>>,
     method: Method,

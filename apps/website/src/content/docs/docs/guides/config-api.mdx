@@ -92,3 +92,15 @@ admin:
 ```
 
 Every configuration write through the API and the dashboard is then refused with `403`; reading, history and dry runs keep working. Every write and rollback is in the [audit log](/docs/concepts/security-model/#admin-api) with the version hashes before and after.
+
+## OpenAPI and clients
+
+The whole admin API is described by an OpenAPI 3.1 document <Status since="v0.5" />, generated from the code, so it always matches the running version. Any authenticated caller can read it:
+
+```sh
+api http://localhost/api/openapi.json > openapi.json
+rdock schema --openapi > openapi.json   # the same, without a running rdock
+```
+
+A copy is in the repository as `schema/openapi.json`, together with a Go client in `clients/go` (generated with oapi-codegen) and the TypeScript types the dashboard uses (`apps/dashboard/src/api`). A test calls every operation in the document against a running rdock and checks each answer against it.
+

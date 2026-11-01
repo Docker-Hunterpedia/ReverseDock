@@ -352,6 +352,18 @@ fn open(
 }
 
 /// `GET /api/v1/logs/stream`: access-log lines as they happen.
+#[utoipa::path(get, path = "/logs/stream", tag = "streams", params(("route" = Option<String>, Query, description = "Only this route"),
+        ("service" = Option<String>, Query, description = "Only this service"),
+        ("status" = Option<String>, Query, description = "A status or class, for example `5xx`"),
+        ("client" = Option<String>, Query, description = "Client address prefix"),
+        ("q" = Option<String>, Query, description = "Text anywhere in the entry"),
+        ("type" = Option<String>, Query, description = "Event type, for example `reload`"),
+        ("Last-Event-ID" = Option<String>, Header, description = "Resume after this entry")),
+    responses(
+        (status = OK, description = "Server-sent events, one JSON entry per `data:` line", body = String, content_type = "text/event-stream"),
+        (status = NO_CONTENT, description = "The session or token was revoked; do not reconnect"),
+        (status = TOO_MANY_REQUESTS, description = "Too many open streams", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn logs(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,
@@ -372,6 +384,18 @@ pub(crate) async fn logs(
 }
 
 /// `GET /api/v1/events/stream`: reloads, backend health, certificate and admin events.
+#[utoipa::path(get, path = "/events/stream", tag = "streams", params(("route" = Option<String>, Query, description = "Only this route"),
+        ("service" = Option<String>, Query, description = "Only this service"),
+        ("status" = Option<String>, Query, description = "A status or class, for example `5xx`"),
+        ("client" = Option<String>, Query, description = "Client address prefix"),
+        ("q" = Option<String>, Query, description = "Text anywhere in the entry"),
+        ("type" = Option<String>, Query, description = "Event type, for example `reload`"),
+        ("Last-Event-ID" = Option<String>, Header, description = "Resume after this entry")),
+    responses(
+        (status = OK, description = "Server-sent events, one JSON entry per `data:` line", body = String, content_type = "text/event-stream"),
+        (status = NO_CONTENT, description = "The session or token was revoked; do not reconnect"),
+        (status = TOO_MANY_REQUESTS, description = "Too many open streams", body = crate::openapi::ErrorBody),
+    ))]
 pub(crate) async fn events(
     Extract(state): Extract<Arc<State>>,
     Extension(caller): Extension<Caller>,

@@ -59,6 +59,7 @@ http.workspace = true
 http-body-util.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
+jsonschema.workspace = true
 rdock-testkit.workspace = true
 ring.workspace = true
 rustls.workspace = true
