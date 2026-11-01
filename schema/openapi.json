@@ -1,6 +1,24 @@
 {
   "components": {
     "responses": {
+      "ConfigBusy": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        },
+        "description": "More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until the next write is accepted",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
+      },
       "Forbidden": {
         "content": {
           "application/json": {
@@ -10,6 +28,24 @@
           }
         },
         "description": "The caller's role does not allow this, or a password check is due."
+      },
+      "RateLimited": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        },
+        "description": "More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds until the next request is accepted",
+            "schema": {
+              "type": "integer"
+            }
+          }
+        }
       },
       "Unauthenticated": {
         "content": {
@@ -295,6 +331,22 @@
           "name",
           "owner",
           "spec"
+        ],
+        "type": "object"
+      },
+      "PasswordChange": {
+        "additionalProperties": false,
+        "properties": {
+          "current": {
+            "type": "string"
+          },
+          "new": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "current",
+          "new"
         ],
         "type": "object"
       },
@@ -4976,6 +5028,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5038,6 +5093,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5130,6 +5188,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5166,6 +5227,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5235,6 +5299,82 @@
           }
         ],
         "summary": "The second step of a login, with a TOTP or recovery code",
+        "tags": [
+          "auth"
+        ]
+      }
+    },
+    "/api/v1/auth/password": {
+      "post": {
+        "description": "Changes the caller's own password after checking the current one (ASVS 6.2.2, 6.2.3); the caller's other sessions end (ASVS 7.4.3).",
+        "operationId": "change_password",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PasswordChange"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "204": {
+            "description": "Changed; the caller's other sessions ended"
+          },
+          "401": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The current password is wrong"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "409": {
+            "$ref": "#/components/responses/WrongStage"
+          },
+          "422": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The new password is too weak or unchanged"
+          },
+          "429": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many attempts; see `Retry-After`"
+          },
+          "503": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Too many password hashes at once"
+          }
+        },
+        "security": [
+          {
+            "session": []
+          }
+        ],
+        "summary": "Changes the caller's own password after checking the current one (ASVS 6.2.2, 6.2.3); the caller's other sessions end (ASVS 7.4.3)",
         "tags": [
           "auth"
         ]
@@ -5326,6 +5466,9 @@
               }
             },
             "description": "No authenticator app set up"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5362,6 +5505,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5401,6 +5547,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5451,6 +5600,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5487,6 +5639,9 @@
           },
           "409": {
             "$ref": "#/components/responses/WrongStage"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5528,6 +5683,9 @@
               }
             },
             "description": "Already enrolled"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5588,6 +5746,9 @@
               }
             },
             "description": "No enrolment started"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5624,6 +5785,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5680,6 +5844,9 @@
               }
             },
             "description": "No such backend"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5736,6 +5903,9 @@
               }
             },
             "description": "No such backend"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5772,6 +5942,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5829,6 +6002,9 @@
               }
             },
             "description": "No automatic certificate covers the name"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5865,6 +6041,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -5909,6 +6088,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6030,6 +6212,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6123,6 +6308,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6159,6 +6347,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6198,6 +6389,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6293,6 +6487,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6339,6 +6536,9 @@
               }
             },
             "description": "Rejected; the report has the diagnostics"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "content": {
@@ -6454,6 +6654,9 @@
               }
             },
             "description": "`If-Match` is missing"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6510,6 +6713,9 @@
               }
             },
             "description": "Not a configuration document"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
           }
         },
         "security": [
@@ -6666,6 +6872,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6832,6 +7041,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6868,6 +7080,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -6924,6 +7139,9 @@
               }
             },
             "description": "Not a valid request description"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7053,6 +7271,9 @@
           "403": {
             "$ref": "#/components/responses/Forbidden"
           },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
           "503": {
             "content": {
               "application/json": {
@@ -7101,6 +7322,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7117,7 +7341,7 @@
         ]
       },
       "post": {
-        "description": "A new token, shown once, with a role no higher than the caller's.",
+        "description": "A new token, shown once, with a role no higher than the caller's. People and the CLI only: a token cannot create tokens.",
         "operationId": "create_token",
         "requestBody": {
           "content": {
@@ -7155,6 +7379,9 @@
               }
             },
             "description": "Invalid name or expiry"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7205,6 +7432,9 @@
               }
             },
             "description": "No such token"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7244,6 +7474,9 @@
           },
           "403": {
             "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7308,6 +7541,9 @@
               }
             },
             "description": "Invalid name or weak password"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           },
           "503": {
             "content": {
@@ -7378,6 +7614,9 @@
               }
             },
             "description": "No enabled admin would remain"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7463,6 +7702,9 @@
               }
             },
             "description": "Weak password"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7529,6 +7771,9 @@
               }
             },
             "description": "Not a section"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7627,6 +7872,9 @@
               }
             },
             "description": "The API objects changed since they were read"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7697,6 +7945,9 @@
               }
             },
             "description": "No such object"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7803,6 +8054,9 @@
               }
             },
             "description": "Rejected"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [
@@ -7871,6 +8125,9 @@
               }
             },
             "description": "Metrics are disabled"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
           }
         },
         "security": [

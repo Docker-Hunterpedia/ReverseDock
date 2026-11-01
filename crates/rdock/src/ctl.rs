@@ -151,11 +151,26 @@ fn tcp_request(
     call: &Call<'_>,
     token: Option<&str>,
 ) -> anyhow::Result<Answer> {
+    if token.is_some() {
+        refuse_plain_token(address)?;
+    }
     let stream = TcpStream::connect_timeout(&address, TIMEOUT)
         .with_context(|| format!("cannot reach the admin API at {address} (is rdock running?)"))?;
     stream.set_read_timeout(Some(TIMEOUT))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
     exchange(stream, call, &address.to_string(), token)
+}
+
+/// The CLI speaks plain HTTP, so it sends a token only to a loopback address; anywhere else
+/// the token would cross the network in clear text (ASVS V12).
+fn refuse_plain_token(address: SocketAddr) -> anyhow::Result<()> {
+    if address.ip().is_loopback() {
+        return Ok(());
+    }
+    bail!(
+        "not sending the API token to {address} over plain HTTP; run the command on the server \
+         (it uses the admin socket) or forward the admin port: ssh -L 2080:127.0.0.1:2080 <server>"
+    )
 }
 
 fn exchange(
@@ -333,6 +348,24 @@ pub(crate) fn healthcheck(args: &CtlArgs) -> ExitCode {
         Err(err) => {
             eprintln!("not ready: {err:#}");
             ExitCode::FAILURE
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn tokens_go_only_to_loopback_over_plain_http() {
+        for ok in ["127.0.0.1:2080", "[::1]:2080"] {
+            assert!(refuse_plain_token(ok.parse().unwrap()).is_ok(), "{ok}");
+        }
+        for refused in ["10.0.0.2:2080", "203.0.113.7:2080", "[2001:db8::1]:2080"] {
+            assert!(
+                refuse_plain_token(refused.parse().unwrap()).is_err(),
+                "{refused}"
+            );
         }
     }
 }

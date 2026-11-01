@@ -98,6 +98,46 @@ function TwoStep() {
   );
 }
 
+/** Changes the caller's own password; their other sessions end. */
+function Password() {
+  const toast = useToast();
+  const queryClient = useQueryClient();
+  const [current, setCurrent] = useState("");
+  const [next, setNext] = useState("");
+  const [again, setAgain] = useState("");
+  const change = useMutation({
+    mutationFn: () => api("/auth/password", { method: "POST", body: { current, new: next } }),
+    onSuccess: () => {
+      toast("Password changed; your other sessions are logged out.");
+      setCurrent("");
+      setNext("");
+      setAgain("");
+      void queryClient.invalidateQueries({ queryKey: ["sessions"] });
+    },
+  });
+  const mismatch = again !== "" && again !== next;
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    if (!mismatch) change.mutate();
+  };
+  return (
+    <Card title="Password" className="mb-6">
+      <form onSubmit={submit} className="flex max-w-md flex-col gap-3">
+        <Field label="Current password" type="password" required autoComplete="current-password" value={current} onChange={(e) => setCurrent(e.target.value)} />
+        <Field label="New password" type="password" required minLength={12} maxLength={128} autoComplete="new-password" value={next} onChange={(e) => setNext(e.target.value)} hint="At least 12 characters. A long phrase is easier to remember than symbols." />
+        <Field label="New password again" type="password" required autoComplete="new-password" value={again} onChange={(e) => setAgain(e.target.value)} />
+        {mismatch && <Alert>The new passwords do not match.</Alert>}
+        {change.error && <Alert>{describe(change.error)}</Alert>}
+        <div>
+          <Button type="submit" variant="primary" disabled={change.isPending || mismatch}>
+            {change.isPending ? "Changing…" : "Change password"}
+          </Button>
+        </div>
+      </form>
+    </Card>
+  );
+}
+
 /** Two-step verification, users, sessions, API tokens and the audit log. */
 export function Security({ session }: { session: Session }) {
   const queryClient = useQueryClient();
@@ -117,8 +157,9 @@ export function Security({ session }: { session: Session }) {
     <>
       <h1 className="mb-1 text-[22px] leading-7 font-semibold">Security</h1>
       <p className="mb-6 text-fg-2">
-        Two-step verification, {session.role === "admin" ? "users, everyone's sessions, API tokens and the audit log" : "your sessions and API tokens"}.
+        Your password, two-step verification, {session.role === "admin" ? "users, everyone's sessions, API tokens and the audit log" : "your sessions and API tokens"}.
       </p>
+      <Password />
       <TwoStep />
       {session.role === "admin" && <Users session={session} />}
       <Card title="Sessions" className={session.role === "admin" ? "mt-6" : ""}>

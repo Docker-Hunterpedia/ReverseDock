@@ -166,6 +166,8 @@ pub fn start(
         quota: crate::stream::Quota::default(),
         telemetry: crate::telemetry::Telemetry::default(),
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
+        config_work: crate::config_api::work_limiter(),
+        api_rate: crate::caller::request_limiter(),
     });
     let threads = settings.threads.max(1);
     let runtime = tokio::runtime::Builder::new_multi_thread()
@@ -260,6 +262,14 @@ fn bind_socket(path: &Path) -> Result<(std::os::unix::net::UnixListener, PathBuf
 
 type Socket = (tokio::net::UnixListener, PathBuf);
 
+/// Open TCP connections to the admin listener; more are closed as they arrive. Dashboards,
+/// scripts and Prometheus need a handful; four streams per identity are allowed.
+const MAX_CONNECTIONS: usize = 256;
+
+/// Time to finish a TLS handshake or a request's headers, including the next request on a
+/// kept-alive connection.
+const HEADER_TIMEOUT: Duration = Duration::from_secs(10);
+
 async fn serve(
     router: Router,
     tcp: tokio::net::TcpListener,
@@ -271,24 +281,36 @@ async fn serve(
         .clone()
         .layer(Extension(Transport::Tcp { tls: tls.is_some() }));
     let socket_router = router.layer(Extension(Transport::Socket));
+    let open = Arc::new(tokio::sync::Semaphore::new(MAX_CONNECTIONS));
     loop {
         tokio::select! {
             changed = stop.changed() => if changed.is_err() || *stop.borrow() { break },
             accepted = tcp.accept() => match accepted {
                 Ok((stream, address)) => {
+                    // Over the cap the connection is closed at once: holding thousands of
+                    // them would spend CPU the proxy shares (H-ENG-04, ASVS finding 11).
+                    let Ok(permit) = open.clone().try_acquire_owned() else {
+                        tracing::debug!(%address, "admin connection refused: too many open");
+                        continue;
+                    };
                     let router = tcp_router.clone();
                     let peer = Some(Peer(address));
                     match tls.clone() {
                         Some(acceptor) => {
                             tokio::spawn(async move {
-                                match acceptor.accept(stream).await {
-                                    Ok(stream) => connection(stream, router, peer).await,
-                                    Err(err) => tracing::debug!(error = %err, "admin TLS handshake failed"),
+                                let _permit = permit;
+                                match tokio::time::timeout(HEADER_TIMEOUT, acceptor.accept(stream)).await {
+                                    Ok(Ok(stream)) => connection(stream, router, peer).await,
+                                    Ok(Err(err)) => tracing::debug!(error = %err, "admin TLS handshake failed"),
+                                    Err(_) => tracing::debug!("admin TLS handshake timed out"),
                                 }
                             });
                         }
                         None => {
-                            tokio::spawn(connection(stream, router, peer));
+                            tokio::spawn(async move {
+                                let _permit = permit;
+                                connection(stream, router, peer).await;
+                            });
                         }
                     }
                 }
@@ -330,7 +352,12 @@ where
         }
         router.clone().call(request)
     });
-    if let Err(err) = Builder::new(TokioExecutor::new())
+    let mut builder = Builder::new(TokioExecutor::new());
+    builder
+        .http1()
+        .timer(hyper_util::rt::TokioTimer::new())
+        .header_read_timeout(HEADER_TIMEOUT);
+    if let Err(err) = builder
         .serve_connection(TokioIo::new(stream), service)
         .await
     {

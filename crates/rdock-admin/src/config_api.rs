@@ -23,12 +23,49 @@ use crate::{ApiWrite, State};
 /// How long a diff may take before it falls back to a coarser one (ADR-0024).
 const DIFF_DEADLINE: Duration = Duration::from_millis(200);
 
+/// Configuration writes and dry runs per second across all callers, and the burst above it.
+/// The isolation test measured ~195 applies a second raising the proxy's p99 from 0.7 to
+/// 12.6 ms on 2 CPUs; 5 a second is about 2.5 % of that work.
+const WRITES_PER_SECOND: u32 = 5;
+const WRITE_BURST: u32 = 10;
+
+/// The budget shared by every caller for configuration writes and dry runs.
+pub(crate) fn work_limiter() -> rdock_limits::RateLimiter {
+    rdock_limits::RateLimiter::new(WRITES_PER_SECOND, Duration::from_secs(1), WRITE_BURST, 1)
+}
+
+/// Takes one unit of the configuration-work budget; when it is spent, how long to wait.
+fn over_budget(state: &State) -> Option<Duration> {
+    match state.config_work.check(&(), std::time::Instant::now()) {
+        rdock_limits::Decision::Allow => None,
+        rdock_limits::Decision::Deny { retry_after } => Some(retry_after),
+    }
+}
+
 macro_rules! check {
     ($result:expr) => {
         if let Err(denied) = $result {
             return denied.into_response();
         }
     };
+}
+
+/// Values hidden like secrets although the loader resolves their references: password hashes
+/// of basic auth and the v0.3 alert webhook URL, which carries its own credential.
+const ALSO_MASKED: [&[&str]; 1] = [&["observability", "alerts", "webhook", "url"]];
+
+/// Basic-auth `users` entries, `name:hash`: only the hash is masked, so entries can still be
+/// told apart, reordered and removed.
+const USERS: [&str; 4] = ["middlewares", "*", "users", "*"];
+
+fn is_users_entry(keys: &[&str]) -> bool {
+    keys.len() == USERS.len() && USERS.iter().zip(keys).all(|(p, k)| *p == "*" || p == k)
+}
+
+fn also_masked(keys: &[&str]) -> bool {
+    ALSO_MASKED.iter().any(|pattern| {
+        pattern.len() == keys.len() && pattern.iter().zip(keys).all(|(p, k)| *p == "*" || p == k)
+    })
 }
 
 /// Secret values written in place are shown as `***`; `${file:…}` and `${env:…}` references
@@ -51,12 +88,91 @@ fn mask(value: &mut Value, path: &mut Vec<String>) {
         }
         Value::String(text) => {
             let keys: Vec<&str> = path.iter().map(String::as_str).collect();
-            if field_kind(&keys) == FieldKind::Secret && !text.starts_with("${") {
+            let secret = field_kind(&keys) == FieldKind::Secret || also_masked(&keys);
+            if is_users_entry(&keys) {
+                if let Some((name, _)) = text.split_once(':') {
+                    *text = format!("{name}:***");
+                }
+            } else if secret && !text.starts_with("${") {
                 *text = "***".into();
             }
         }
         _ => {}
     }
+}
+
+fn is_users_path(keys: &[String]) -> bool {
+    is_users_entry(&keys.iter().map(String::as_str).collect::<Vec<_>>())
+}
+
+/// Puts back the hash of a `name:***` basic-auth entry from the current list, by name.
+fn restore_user(entry: &mut Value, current: &Value, path: &[String]) -> Result<(), String> {
+    let Some(name) = entry.as_str().and_then(|e| e.strip_suffix(":***")) else {
+        return Ok(());
+    };
+    let kept = current
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .find(|e| e.split_once(':').is_some_and(|(n, _)| n == name));
+    match kept {
+        Some(kept) => {
+            *entry = Value::String(kept.to_owned());
+            Ok(())
+        }
+        None => Err(format!(
+            "{}: user {name} has no current password hash to keep; write name:hash",
+            path.join(".")
+        )),
+    }
+}
+
+fn is_masked_field(keys: &[String]) -> bool {
+    let keys: Vec<&str> = keys.iter().map(String::as_str).collect();
+    field_kind(&keys) == FieldKind::Secret || also_masked(&keys)
+}
+
+/// Puts the current value back wherever the candidate kept a secret as `***`, the masked
+/// value it was read with, so saving a document read through the API never stores `***`.
+/// Fails with the path of a `***` that has no current value to keep.
+fn restore_masked(
+    candidate: &mut Value,
+    current: &Value,
+    path: &mut Vec<String>,
+) -> Result<(), String> {
+    match candidate {
+        Value::Object(map) => {
+            for (key, child) in map.iter_mut() {
+                path.push(key.clone());
+                restore_masked(child, &current[key.as_str()], path)?;
+                path.pop();
+            }
+        }
+        Value::Array(items) => {
+            path.push("*".into());
+            let users = is_users_path(path);
+            for (i, item) in items.iter_mut().enumerate() {
+                if users {
+                    restore_user(item, current, path)?;
+                } else {
+                    restore_masked(item, &current[i], path)?;
+                }
+            }
+            path.pop();
+        }
+        Value::String(text) if text == "***" && is_masked_field(path) => match current {
+            Value::String(kept) => kept.clone_into(text),
+            _ => {
+                return Err(format!(
+                    "{} is `***`, the masked value; write the secret or a ${{file:…}} reference",
+                    path.join(".")
+                ));
+            }
+        },
+        _ => {}
+    }
+    Ok(())
 }
 
 pub(crate) fn masked(mut value: Value, root: &[&str]) -> Value {
@@ -163,6 +279,16 @@ pub(crate) async fn write(
     if_match: String,
     action: &'static str,
 ) -> Response {
+    if let Some(wait) = over_budget(state) {
+        return crate::auth::too_many(wait);
+    }
+    let mut candidate = candidate;
+    let Some((current, _)) = api_config(state).await else {
+        return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
+    };
+    if let Err(message) = restore_masked(&mut candidate, &current, &mut Vec::new()) {
+        return error(StatusCode::UNPROCESSABLE_ENTITY, &message);
+    }
     let before = hash_of(&if_match);
     let control = state.control.clone();
     let outcome = state
@@ -354,6 +480,9 @@ pub(crate) async fn validate(
     axum::Json(candidate): axum::Json<Value>,
 ) -> Response {
     check!(need(&caller, Access::Operator));
+    if let Some(wait) = over_budget(&state) {
+        return crate::auth::too_many(wait);
+    }
     let Some((current, _)) = api_config(&state).await else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
     };
@@ -525,6 +654,56 @@ mod tests {
             "${file:/run/secrets/k}"
         );
         assert_eq!(out["certificates"]["main"]["key_password"], "***");
+    }
+
+    #[test]
+    fn basic_auth_hashes_and_the_old_webhook_url_are_masked() {
+        let config = json!({
+            "middlewares": { "auth": { "type": "basic_auth", "users": ["ann:$2y$05$abc"] } },
+            "observability": { "alerts": { "webhook": { "url": "https://hooks.example/T0/B0/xyz" } } }
+        });
+        let out = masked(config, &[]);
+        assert_eq!(out["middlewares"]["auth"]["users"][0], "ann:***");
+        assert_eq!(out["observability"]["alerts"]["webhook"]["url"], "***");
+    }
+
+    #[test]
+    fn masked_values_written_back_keep_the_current_secret() {
+        let current = json!({
+            "middlewares": {
+                "auth": { "type": "basic_auth", "users": ["ann:$2y$05$abc", "bob:$2y$05$def"] },
+                "sign": { "type": "hmac", "hmac_secret": "s3cret" }
+            }
+        });
+        let mut candidate = masked(current.clone(), &[]);
+        candidate["middlewares"]["auth"]["realm"] = json!("staff");
+        // Ann is removed: Bob keeps his own hash, not the one at his old position.
+        candidate["middlewares"]["auth"]["users"] = json!(["bob:***", "cy:$2y$05$new"]);
+        restore_masked(&mut candidate, &current, &mut Vec::new()).unwrap();
+        assert_eq!(
+            candidate["middlewares"]["auth"]["users"],
+            json!(["bob:$2y$05$def", "cy:$2y$05$new"])
+        );
+        assert_eq!(candidate["middlewares"]["sign"]["hmac_secret"], "s3cret");
+        assert_eq!(candidate["middlewares"]["auth"]["realm"], "staff");
+
+        // A new object cannot keep a secret it never had; `***` in an ordinary field is text.
+        let mut fresh =
+            json!({ "middlewares": { "new": { "type": "hmac", "hmac_secret": "***" } } });
+        let err = restore_masked(&mut fresh, &current, &mut Vec::new()).unwrap_err();
+        assert!(
+            err.starts_with("middlewares.new.hmac_secret is `***`"),
+            "{err}"
+        );
+        let mut unknown = json!({ "middlewares": { "auth": { "users": ["dan:***"] } } });
+        let err = restore_masked(&mut unknown, &current, &mut Vec::new()).unwrap_err();
+        assert!(
+            err.contains("user dan has no current password hash"),
+            "{err}"
+        );
+        let mut plain = json!({ "routes": { "r": { "match": "***" } } });
+        restore_masked(&mut plain, &current, &mut Vec::new()).unwrap();
+        assert_eq!(plain["routes"]["r"]["match"], "***");
     }
 
     #[test]

@@ -102,6 +102,16 @@ impl Caller {
         }
     }
 
+    /// Whose request budget this call takes from: one per token, per user across their
+    /// sessions, and one for the socket.
+    fn budget_key(&self) -> String {
+        match &self.who {
+            Who::Cli => "cli".to_owned(),
+            Who::Token { id, .. } => format!("token:{id}"),
+            Who::Session { user, .. } => format!("user:{user}"),
+        }
+    }
+
     /// An audit event by this caller.
     pub(crate) fn event(&self, action: &'static str) -> Event {
         let (actor, method) = match &self.who {
@@ -134,6 +144,19 @@ pub(crate) fn need_recent(caller: &Caller) -> Result<(), Denied> {
             StatusCode::FORBIDDEN,
             "confirm your password first: POST /api/v1/auth/reauth",
         ))
+    }
+}
+
+/// Refuses API tokens: a token must not create its own successors, which would outlive its
+/// expiry and drop its `allowed_from` networks. People and the socket may.
+pub(crate) fn need_not_token(caller: &Caller) -> Result<(), Denied> {
+    if matches!(caller.who, Who::Token { .. }) {
+        Err(Denied(
+            StatusCode::FORBIDDEN,
+            "API tokens cannot create tokens; log in or use `rdock tokens create`",
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -225,6 +248,22 @@ pub(crate) fn identify(
 }
 
 /// Identifies the caller of every `/api/v1` request behind it and stores it for handlers.
+/// Requests per second each caller may make, and the burst above it. A dashboard page makes a
+/// few a second; the isolation test showed one script making ~500 a second takes most of a
+/// CPU from a 2-CPU proxy.
+const REQUESTS_PER_SECOND: u32 = 20;
+const REQUEST_BURST: u32 = 100;
+
+/// The per-caller request budget, tracking at most 4,096 callers.
+pub(crate) fn request_limiter() -> rdock_limits::RateLimiter {
+    rdock_limits::RateLimiter::new(
+        REQUESTS_PER_SECOND,
+        std::time::Duration::from_secs(1),
+        REQUEST_BURST,
+        4096,
+    )
+}
+
 pub(crate) async fn authenticate(
     Extract(state): Extract<Arc<State>>,
     mut request: Request,
@@ -243,6 +282,12 @@ pub(crate) async fn authenticate(
     }
     match identified {
         Ok(caller) => {
+            if let rdock_limits::Decision::Deny { retry_after } = state
+                .api_rate
+                .check(&caller.budget_key(), std::time::Instant::now())
+            {
+                return crate::auth::too_many(retry_after);
+            }
             let path = request.uri().path().to_owned();
             request.extensions_mut().insert(caller.clone());
             let response = next.run(request).await;

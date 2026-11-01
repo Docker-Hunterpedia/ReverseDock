@@ -15,7 +15,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::State;
 use crate::audit::Event;
 use crate::auth::hashing;
-use crate::caller::{Access, Caller, need, need_recent};
+use crate::caller::{Access, Caller, need, need_not_token, need_recent};
 use crate::routes::error;
 use crate::tokens::{NewToken, Token};
 use crate::users::{AddError, Role, User, normalize_name};
@@ -336,6 +336,7 @@ pub(crate) struct TokenRequest {
 }
 
 /// `POST /api/v1/tokens`: a new token, shown once, with a role no higher than the caller's.
+/// People and the CLI only: a token cannot create tokens.
 #[utoipa::path(post, path = "/tokens", tag = "tokens", request_body = TokenRequest,
     responses(
         (status = CREATED, description = "Created; the value is not shown again", body = CreatedToken),
@@ -347,6 +348,7 @@ pub(crate) async fn create_token(
     axum::Json(body): axum::Json<TokenRequest>,
 ) -> Response {
     check!(need(&caller, Access::Viewer));
+    check!(need_not_token(&caller));
     check!(need_recent(&caller));
     let name = body.name.trim();
     if name.is_empty() || name.chars().count() > 64 {

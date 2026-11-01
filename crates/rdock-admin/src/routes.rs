@@ -95,6 +95,7 @@ pub(crate) fn documented(guard: impl FnOnce(Api) -> Api) -> Api {
         .routes(routes!(account::enrol, account::unenrol))
         .routes(routes!(account::confirm))
         .routes(routes!(account::reauth))
+        .routes(routes!(account::change_password))
         .routes(routes!(account::logout))
         .routes(routes!(account::sessions))
         .routes(routes!(account::end_session))
