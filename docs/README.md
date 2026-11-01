@@ -14,6 +14,7 @@ Reading order:
 | 08 | [Design system](08-design-system.md) | Harbor UI: tokens, layout, pages, components, accessibility |
 | 09 | [Website and docs](09-website.md) | reversedock.dev: landing page, docs map, migration guides, quality gates, phases W0–W3 |
 | — | [Decisions (ADRs)](decisions/README.md) | Why we chose what we chose |
+| — | [Security reviews](security/asvs-5.0-l2-admin.md) | ASVS 5.0 Level 2 review of the admin surface, with findings and their status |
 | — | [research/](research/) | Original idea, notes, matrix summary and the source workbook |
 | — | [design/](design/) | Dashboard mock (HTML) |
 | — | [assets/](assets/) | Logo (SVG/PNG), README banner (HTML source + PNG) |
