@@ -81,24 +81,6 @@ backup like the file: the TOTP secrets are in it. Sessions are kept in memory on
 
 The Unix socket `rdock reload` and `rdock status` use, created at start with mode 0600 and removed at shutdown (`admin.socket` moves it). Requests on it need no token: being able to open it means being the owner of the data directory.
 
-### `admin/bootstrap-token` <Status since="v0.5" />
-
-Written at every start while no admin user exists: `rdk_boot_` followed by 40 hexadecimal
-characters (160 random bits), mode 0600. The log prints the file's path, never its value. It
-does one thing, create the first admin user, then it is deleted; it stops working after 24
-hours, and the next start writes a new one. See [Security model](/docs/concepts/security-model/#admin-api).
-
-### `admin/users.json` <Status since="v0.5" />
-
-The dashboard users: name, role, Argon2id password hash, creation time and, once enrolled, the
-TOTP secret and the SHA-256 hashes of unused recovery codes; mode 0600, written atomically.
-Passwords are never stored. Back it up with the rest of the data directory, and protect the
-backup like the file: the TOTP secrets are in it. Sessions are kept in memory only.
-
-### `admin.sock`
-
-The Unix socket `rdock reload` and `rdock status` use, created at start with mode 0600 and removed at shutdown (`admin.socket` moves it). Requests on it need no token: being able to open it means being the owner of the data directory.
-
 ### `state/lkg.json`
 
 The **last-known-good** configuration: the most recent configuration loaded from the file and
