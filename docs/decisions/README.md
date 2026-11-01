@@ -28,4 +28,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0022](0022-production-reliability.md) | Production reliability: backend state shared across reloads, health with fail-open, retry budgets, verified-only client certificates, JWT on ring, OpenTelemetry over OTLP/HTTP |
 | [0023](0023-upstream-connection-pool.md) | Upstream keep-alive pool per listener sized for busy traffic (`upstream_idle_connections`, 4096) |
 | [0024](0024-management-api-and-dashboard.md) | Management: axum admin API on its own runtime, sessions with MFA, scoped tokens, roles, hash-chained audit log, mandatory If-Match, SSE and ring buffer, English-only dashboard |
-| [0025](0025-admin-limits-and-review-fixes.md) | Admin limits and changes from the v0.5 security review: connection, request and write limits, token and session rules, client addresses, secrets, audit over TLS, strict CSP | accepted |
+| [0025](0025-admin-limits-and-review-fixes.md) | Admin limits and changes from the v0.5 security review: connection, request and write limits, token and session rules, client addresses, secrets, audit over TLS, strict CSP |
