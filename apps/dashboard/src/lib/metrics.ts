@@ -30,7 +30,7 @@ export interface MetricsSummary {
 
 export interface Backends {
   service: string;
-  backends: { address: string; state: "up" | "down" | "trial"; in_flight: number; drained: boolean; weight: number }[];
+  backends: { address: string; state: "up" | "down" | "trial"; in_flight: number; drained: boolean; weight: number; reason: string | null }[];
 }
 
 /** "12 ms", "1.4 s", "—". */

@@ -391,3 +391,80 @@ async fn logs_and_events_stream_live_with_replay() {
         .unwrap();
     assert_eq!(replayed[0].0, ids[1].to_string());
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn explain_shows_why_routes_match_and_backends_are_excluded() {
+    let backend = Backend::start("explain").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  api: {{ match: \"Host(`app.test`) && PathPrefix(`/api`)\", service: app, middlewares: [tag] }}\n  site: {{ match: \"Host(`app.test`)\", service: app }}\n  other: {{ match: \"Host(`other.test`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}, {{ address: \"127.0.0.1:9\" }}] }}\nmiddlewares:\n  tag: {{ type: headers, response: {{ set: {{ X-Tag: \"1\" }} }} }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let drain = serde_json::json!({ "service": "app", "backend": "127.0.0.1:9" }).to_string();
+    let json = [("Content-Type", "application/json")];
+    assert_eq!(
+        rdock
+            .admin_send("POST", "/api/v1/backends/drain", &json, &drain)
+            .unwrap()
+            .0,
+        200
+    );
+
+    let ask = serde_json::json!({ "host": "app.test", "path": "/api/users?x=1" }).to_string();
+    let (status, _, body) = rdock
+        .admin_send("POST", "/api/v1/routes/explain", &json, &ask)
+        .unwrap();
+    assert_eq!(status, 200, "{body}");
+    let answer: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let results: Vec<(&str, &str)> = answer["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|r| (r["name"].as_str().unwrap(), r["result"].as_str().unwrap()))
+        .collect();
+    assert!(results.contains(&("api", "matched")), "{answer}");
+    assert!(
+        results.contains(&("site", "shadowed")),
+        "the shorter rule matches too: {answer}"
+    );
+    let other = answer["routes"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["name"] == "other")
+        .unwrap();
+    assert!(
+        other["reason"]
+            .as_str()
+            .unwrap()
+            .contains("the host is `app.test`"),
+        "{other}"
+    );
+    assert_eq!(answer["outcome"]["route"], "api");
+    assert_eq!(answer["outcome"]["middlewares"], serde_json::json!(["tag"]));
+    let excluded = answer["outcome"]["backends"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|b| b["address"] == "127.0.0.1:9")
+        .unwrap();
+    assert_eq!(excluded["considered"], false);
+    assert_eq!(excluded["reason"], "drained by an operator");
+
+    let none = serde_json::json!({ "host": "nothing.test" }).to_string();
+    let (_, _, body) = rdock
+        .admin_send("POST", "/api/v1/routes/explain", &json, &none)
+        .unwrap();
+    assert!(body.contains("\"result\":\"404\""), "{body}");
+
+    let output = rdock.command(&[
+        "routes", "explain", "--host", "app.test", "--path", "/api/x",
+    ]);
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(output.status.success(), "{text}");
+    assert!(
+        text.contains("route api → service app") && text.contains("excluded: drained"),
+        "{text}"
+    );
+}

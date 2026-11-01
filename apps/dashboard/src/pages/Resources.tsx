@@ -2,6 +2,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Plus } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Drawer, OwnerBadge } from "../components/Drawer";
+import { RouteTester } from "../components/RouteTester";
 import { useToast } from "../components/Toast";
 import { TD, TH, Table } from "../components/Table";
 import { Alert, Button, Card } from "../components/ui";
@@ -206,12 +207,15 @@ export function Resources({ kind, session, extra }: { kind: Kind; session: Sessi
           <h1 className="text-[22px] leading-7 font-semibold">{text.title}</h1>
           <p className="mt-1 text-fg-2">{text.intro}</p>
         </div>
-        {canEdit && (
-          <Button variant="primary" onClick={() => setOpen("new")}>
-            <Plus size={15} aria-hidden />
-            New {kind.slice(0, -1)}
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {kind === "routes" && <RouteTester />}
+          {canEdit && (
+            <Button variant="primary" onClick={() => setOpen("new")}>
+              <Plus size={15} aria-hidden />
+              New {kind.slice(0, -1)}
+            </Button>
+          )}
+        </div>
       </div>
       {list.error && <Alert>{describe(list.error)}</Alert>}
       <Card>

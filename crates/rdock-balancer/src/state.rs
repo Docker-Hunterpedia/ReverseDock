@@ -87,6 +87,21 @@ impl BackendState {
         self.health().is_ejected()
     }
 
+    /// Why the backend gets no requests now (health, ejection, `Retry-After`, drain); `None`
+    /// when it may get them.
+    pub fn exclusion(&self, now: Instant) -> Option<String> {
+        if self.is_drained() {
+            return Some("drained by an operator".to_owned());
+        }
+        self.health().exclusion(now)
+    }
+
+    /// Whether the backend ramps up after recovering, and its share of the weight now.
+    pub fn ramping(&self, weight: u32, slow_start: Option<Duration>, now: Instant) -> Option<u32> {
+        let current = self.weight(weight, slow_start, now);
+        (current < weight).then_some(current)
+    }
+
     /// Whether an operator drained the backend.
     pub fn is_drained(&self) -> bool {
         self.drained.load(Ordering::Relaxed)

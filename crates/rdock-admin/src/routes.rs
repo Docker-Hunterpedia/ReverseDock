@@ -75,6 +75,7 @@ pub(crate) fn router(state: Arc<State>) -> Router {
         .route("/providers", get(resources::providers))
         .route("/listeners", get(resources::listeners))
         .route("/metrics/summary", get(resources::metrics_summary))
+        .route("/routes/explain", post(resources::explain))
         .route("/logs/stream", get(stream::logs))
         .route("/events/stream", get(stream::events))
         .route("/{kind}", get(resources::list))

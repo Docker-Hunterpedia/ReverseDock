@@ -138,6 +138,39 @@ pub(crate) struct BackendRef {
     ctl: CtlArgs,
 }
 
+#[derive(Subcommand)]
+pub(crate) enum RoutesCommand {
+    /// Show how a request would be routed, without sending it: every route with why it
+    /// matches or not, the winner and the backends it would use.
+    Explain(Explain),
+}
+
+#[derive(Args)]
+pub(crate) struct Explain {
+    /// Host of the request.
+    #[arg(long)]
+    host: String,
+    /// Path, with an optional query.
+    #[arg(long, default_value = "/")]
+    path: String,
+    #[arg(long, default_value = "GET")]
+    method: String,
+    /// The listener; the first one when omitted.
+    #[arg(long)]
+    listener: Option<String>,
+    /// A request header as `Name: value`; repeat for more.
+    #[arg(long = "header")]
+    headers: Vec<String>,
+    /// The client's address, for `ClientIP` rules.
+    #[arg(long)]
+    client_ip: Option<std::net::IpAddr>,
+    /// Print the raw JSON answer.
+    #[arg(long)]
+    json: bool,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
 #[derive(Args)]
 pub(crate) struct AuditList {
     /// How many records, newest first.
@@ -421,4 +454,86 @@ pub(crate) fn audit_list(args: &AuditList) -> anyhow::Result<ExitCode> {
                 .unwrap_or_default()
         )
     }))
+}
+
+pub(crate) fn routes(command: &RoutesCommand) -> anyhow::Result<ExitCode> {
+    let RoutesCommand::Explain(args) = command;
+    let mut headers = serde_json::Map::new();
+    for header in &args.headers {
+        let (name, value) = header
+            .split_once(':')
+            .with_context(|| format!("write headers as `Name: value`, not `{header}`"))?;
+        headers.insert(name.trim().to_owned(), json!(value.trim()));
+    }
+    let body = json!({
+        "listener": args.listener.clone().unwrap_or_default(),
+        "host": args.host,
+        "path": args.path,
+        "method": args.method,
+        "headers": headers,
+        "client_ip": args.client_ip,
+    });
+    let answer = expect(
+        call(
+            &args.ctl,
+            &Call::new("POST", "/api/v1/routes/explain").json(&body),
+        )?,
+        &[200],
+    )?;
+    let result = answer.json();
+    if args.json {
+        return lines([serde_json::to_string_pretty(&result).unwrap_or_default()]);
+    }
+    let mut out = vec![format!(
+        "{} {}{} on listener {}",
+        text(&result["request"]["method"]),
+        text(&result["request"]["host"]),
+        text(&result["request"]["path"]),
+        text(&result["listener"])
+    )];
+    for route in result["routes"].as_array().into_iter().flatten() {
+        let mark = match route["result"].as_str() {
+            Some("matched") => "→",
+            Some("shadowed") => "≈",
+            _ => "✗",
+        };
+        out.push(format!(
+            "  {mark} {:<28} {}",
+            text(&route["name"]),
+            route["reason"].as_str().unwrap_or("matches")
+        ));
+    }
+    let outcome = &result["outcome"];
+    match outcome["result"].as_str() {
+        Some("route") => {
+            out.push(format!(
+                "route {} → service {}",
+                text(&outcome["route"]),
+                text(&outcome["service"])
+            ));
+            let middlewares: Vec<String> = outcome["middlewares"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(text)
+                .collect();
+            if !middlewares.is_empty() {
+                out.push(format!("middlewares: {}", middlewares.join(" → ")));
+            }
+            for b in outcome["backends"].as_array().into_iter().flatten() {
+                let state = if b["considered"] == true {
+                    "considered".to_owned()
+                } else {
+                    format!("excluded: {}", b["reason"].as_str().unwrap_or("?"))
+                };
+                out.push(format!("  backend {:<28} {state}", text(&b["address"])));
+            }
+        }
+        _ => out.push(format!(
+            "{}: {}",
+            text(&outcome["result"]),
+            outcome["reason"].as_str().unwrap_or_default()
+        )),
+    }
+    lines(out)
 }

@@ -51,6 +51,9 @@ pub struct AccessRecord {
     /// Backend address.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream: Option<String>,
+    /// Backends tried before `upstream` when the request was retried (ADR-0015), in order.
+    #[serde(skip_serializing_if = "Vec::is_empty", default)]
+    pub tried: Vec<String>,
     /// TLS version.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub tls_version: Option<String>,

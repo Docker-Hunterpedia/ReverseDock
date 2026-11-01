@@ -1080,6 +1080,14 @@ impl ProxyHttp for RdockProxy {
             route: route.map(|r| r.name.to_string()),
             service: service.as_ref().map(|s| s.name.to_string()),
             upstream: ctx.upstream.as_ref().map(ToString::to_string),
+            tried: {
+                let current = ctx.member.as_ref().map(|m| m.id.as_str());
+                ctx.tried
+                    .iter()
+                    .filter(|t| Some(t.as_str()) != current)
+                    .cloned()
+                    .collect()
+            },
             tls_version: ssl.as_ref().map(|s| s.version.to_string()),
             tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
             sni: ssl

@@ -92,6 +92,23 @@ impl Rule {
         })
     }
 
+    /// `None` when the request matches, else the first term that does not, in words.
+    #[must_use]
+    pub fn explain(&self, facts: &Facts<'_>) -> Option<String> {
+        match self {
+            Self::Match(m) => (!m.matches(facts)).then(|| m.mismatch(facts)),
+            Self::Not(inner) => inner
+                .matches(facts)
+                .then(|| "a negated condition (`!`) matches this request".to_owned()),
+            Self::All(items) => items.iter().find_map(|r| r.explain(facts)),
+            Self::Any(items) => {
+                let reasons: Vec<String> = items.iter().map_while(|r| r.explain(facts)).collect();
+                (reasons.len() == items.len())
+                    .then(|| format!("none of the alternatives match: {}", reasons.join("; ")))
+            }
+        }
+    }
+
     /// Whether the request matches.
     #[must_use]
     pub fn matches(&self, facts: &Facts<'_>) -> bool {
@@ -158,6 +175,44 @@ fn compile_matcher(m: &Matcher) -> Result<Compiled, RuleCompileError> {
 }
 
 impl Compiled {
+    /// Why this matcher does not match `f`.
+    fn mismatch(&self, f: &Facts<'_>) -> String {
+        let header = |name: &HeaderName| {
+            let values: Vec<&str> = f
+                .headers
+                .get_all(name)
+                .iter()
+                .filter_map(|v| v.to_str().ok())
+                .collect();
+            if values.is_empty() {
+                "missing".to_owned()
+            } else {
+                format!("`{}`", values.join(", "))
+            }
+        };
+        match self {
+            Self::AnyHost => "never".to_owned(),
+            Self::Host(host) => format!("Host(`{host}`): the host is `{}`", f.host),
+            Self::HostWildcard(suffix) => format!("Host(`*{suffix}`): the host is `{}`", f.host),
+            Self::HostRegexp(re) => format!("HostRegexp(`{re}`): the host is `{}`", f.host),
+            Self::Path(p) => format!("Path(`{p}`): the path is `{}`", f.path),
+            Self::PathPrefix(p) => format!("PathPrefix(`{p}`): the path is `{}`", f.path),
+            Self::PathRegexp(re) => format!("PathRegexp(`{re}`): the path is `{}`", f.path),
+            Self::Method(m) => format!("Method(`{m}`): the method is `{}`", f.method),
+            Self::Header(name, value) => {
+                format!("Header(`{name}`, `{value}`): it is {}", header(name))
+            }
+            Self::HeaderRegexp(name, re) => {
+                format!("HeaderRegexp(`{name}`, `{re}`): it is {}", header(name))
+            }
+            Self::Query(key, value) => format!("Query(`{key}`, `{value}`): not in the query"),
+            Self::QueryRegexp(key, re) => {
+                format!("QueryRegexp(`{key}`, `{re}`): no matching value")
+            }
+            Self::ClientIp(net) => format!("ClientIP(`{net}`): the client is `{}`", f.client_ip),
+        }
+    }
+
     fn matches(&self, f: &Facts<'_>) -> bool {
         match self {
             Self::AnyHost => true,

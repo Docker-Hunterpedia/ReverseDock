@@ -33,6 +33,7 @@ function BackendsCard({ session }: { session: Session }) {
             <td className={`${TD} font-mono text-[13px]`}>{b.address}</td>
             <td className={TD}>
               {b.drained ? <StatusPill tone="muted">drained</StatusPill> : <StatusPill tone={b.state === "up" ? "ok" : b.state === "trial" ? "warn" : "danger"}>{b.state}</StatusPill>}
+              {b.reason && !b.drained && <span className="ml-2 text-[13px] text-fg-2">{b.reason}</span>}
             </td>
             <td className={`${TD} text-right tabular-nums`}>{b.in_flight}</td>
             <td className={`${TD} text-right`}>
