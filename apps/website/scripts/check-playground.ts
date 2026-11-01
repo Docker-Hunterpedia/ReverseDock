@@ -36,9 +36,8 @@ async function expectStatus(page: Page, pattern: RegExp, what: string) {
 }
 
 const browser = await chromium.launch();
-// The site's web fonts load with every page; nothing else may leave it, and nothing at all may be
-// requested once the page has loaded, because that is when a configuration exists to leak.
-const FONTS = ['https://fonts.googleapis.com/', 'https://fonts.gstatic.com/'];
+// Nothing may leave the site, and nothing at all may be requested once the page has loaded,
+// because that is when a configuration exists to leak.
 const foreign: string[] = [];
 const whileEditing: string[] = [];
 try {
@@ -48,7 +47,7 @@ try {
     const url = request.url();
     if (url.startsWith('data:')) return;
     if (loaded) whileEditing.push(url);
-    if (!url.startsWith(base) && !FONTS.some((font) => url.startsWith(font))) foreign.push(url);
+    if (!url.startsWith(base)) foreign.push(url);
   });
   await page.goto(`${base}/docs/reference/playground/`, { waitUntil: 'networkidle' });
   loaded = true;
@@ -67,9 +66,17 @@ try {
 
   await page.locator('#playground-reset').click();
   await expectStatus(page, /^No problems found$/, 'starting over');
-  if (foreign.length > 0) throw new Error(`requests left the site:\n${foreign.join('\n')}`);
   if (whileEditing.length > 0) throw new Error(`requests while editing:\n${whileEditing.join('\n')}`);
-  console.log('playground ok: checks, completion, no requests while editing');
+  for (const path of ['/', '/docs/reference/playground/']) {
+    await page.goto(base + path, { waitUntil: 'networkidle' });
+    const fonts = await page.evaluate(async () => {
+      await document.fonts.ready;
+      return [...document.fonts].filter((f) => f.status === 'loaded').map((f) => f.family.replaceAll('"', ''));
+    });
+    if (!fonts.includes('Inter Variable')) throw new Error(`${path}: the site's own font did not load: ${fonts}`);
+  }
+  if (foreign.length > 0) throw new Error(`requests left the site:\n${foreign.join('\n')}`);
+  console.log('playground ok: checks, completion, own fonts, no requests off the site or while editing');
 } finally {
   await browser.close();
   if (server.pid) process.kill(-server.pid);
