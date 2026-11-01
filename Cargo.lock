@@ -3575,6 +3575,7 @@ dependencies = [
  "prometheus",
  "rdock-config",
  "rdock-model",
+ "regex",
  "ring",
  "serde",
  "serde_json",

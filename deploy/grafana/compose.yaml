@@ -1,0 +1,68 @@
+# ReverseDock with Prometheus and Grafana, to try the dashboard. README.md has the steps.
+#
+#   docker compose up -d --build
+#   docker compose exec rdock rdock tokens create prometheus --role metrics --days 365 \
+#     | head -n 1 > secrets/rdock-token
+#   open http://localhost:3000 (admin / admin, then set a new password)
+#
+# Prometheus shares rdock's network namespace, so it scrapes the admin listener on loopback
+# (127.0.0.1:2080) with the token in secrets/rdock-token; nothing else can reach it.
+name: reversedock-grafana
+
+services:
+  rdock:
+    # Built from this repository until v0.5 is released; then use
+    # ghcr.io/docker-hunterpedia/rdock:<version>.
+    build: ../..
+    image: rdock:local
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "127.0.0.1:9090:9090"   # Prometheus, which shares this network namespace
+    volumes:
+      - ./config:/etc/rdock:ro
+      - rdock-data:/var/lib/rdock
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    stop_grace_period: 10s
+    depends_on: [whoami]
+
+  whoami:
+    image: traefik/whoami:v1.11
+    restart: unless-stopped
+
+  prometheus:
+    image: prom/prometheus:v3.15.0
+    restart: unless-stopped
+    network_mode: service:rdock
+    volumes:
+      - ./prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./secrets:/etc/prometheus/secrets:ro
+      - prometheus-data:/prometheus
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [rdock]
+
+  grafana:
+    image: grafana/grafana:13.2.4
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /var/lib/grafana/dashboards/rdock.json
+    volumes:
+      - ./provisioning:/etc/grafana/provisioning:ro
+      - ./dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    cap_drop: [ALL]
+    security_opt: ["no-new-privileges:true"]
+    depends_on: [prometheus]
+
+volumes:
+  rdock-data:
+  prometheus-data:
+  grafana-data:
