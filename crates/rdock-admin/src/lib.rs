@@ -61,6 +61,9 @@ pub trait Control: Send + Sync {
     /// Asks for the automatic certificate covering `name` to be renewed now; `false` when
     /// none covers it.
     async fn renew_certificate(&self, name: String) -> bool;
+    /// Live traffic of the last `window_seconds` (1–900): the whole proxy with one point per
+    /// second, and every route and service without points.
+    async fn metrics_summary(&self, window_seconds: u64) -> serde_json::Value;
 }
 
 /// The outcome of a conditional write of the API provider's objects.

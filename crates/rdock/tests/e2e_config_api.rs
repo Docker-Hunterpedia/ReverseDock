@@ -251,3 +251,36 @@ async fn the_cli_manages_users_tokens_backends_and_history() {
     }
     ok(rdock.command(&["audit", "verify"]));
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn live_metrics_count_requests_per_route_and_service() {
+    let backend = Backend::start("live").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"Host(`app.test`)\", service: app }}\nservices:\n  app: {{ backends: [{{ address: \"{}\" }}] }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    for _ in 0..25 {
+        assert_eq!(client::http1(proxy, get("app.test", "/")).await.status, 200);
+    }
+    let (status, _, body) = rdock
+        .admin_send("GET", "/api/v1/metrics/summary?window=60", &[], "")
+        .unwrap();
+    assert_eq!(status, 200, "{body}");
+    let summary: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(summary["total"]["requests"], 25, "{summary}");
+    assert_eq!(summary["total"]["classes"][1], 25);
+    assert_eq!(summary["total"]["series"].as_array().unwrap().len(), 60);
+    assert_eq!(summary["routes"]["app"]["requests"], 25);
+    assert_eq!(summary["services"]["app"]["requests"], 25);
+    assert!(summary["routes"]["app"]["p99"].as_f64().unwrap() > 0.0);
+    // A reload keeps the counts: the ring belongs to the route name, not the generation.
+    assert_eq!(rdock.reload().0, 200);
+    let (_, _, body) = rdock
+        .admin_send("GET", "/api/v1/metrics/summary?window=60", &[], "")
+        .unwrap();
+    let summary: serde_json::Value = serde_json::from_str(&body).unwrap();
+    assert_eq!(summary["routes"]["app"]["requests"], 25);
+}
