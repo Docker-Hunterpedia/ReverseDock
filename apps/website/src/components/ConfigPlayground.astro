@@ -1,0 +1,121 @@
+---
+// The configuration playground (F-MGMT-05): edits `rdock.yaml` with completion and checks from
+// the JSON Schema, which is bundled into the page. Nothing is sent anywhere.
+---
+<div class="playground not-content">
+  <div class="toolbar">
+    <p id="playground-status" role="status" aria-live="polite">Checking…</p>
+    <button type="button" id="playground-copy">Copy</button>
+    <button type="button" id="playground-reset">Start over</button>
+  </div>
+  <div id="playground-editor"></div>
+  <noscript><p>The playground needs JavaScript. Use <code>rdock validate</code> instead.</p></noscript>
+</div>
+
+<style>
+  .playground { margin-block: 1rem; }
+  .toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; margin-bottom: 0.5rem; }
+  .toolbar p { flex: 1 1 12rem; margin: 0; font-weight: 600; }
+  .toolbar button {
+    cursor: pointer;
+    padding: 0.25rem 0.75rem;
+    color: var(--sl-color-text);
+    background: var(--sl-color-bg-nav);
+    border: 1px solid var(--sl-color-gray-5);
+    border-radius: 0.25rem;
+  }
+  #playground-editor { border: 1px solid var(--sl-color-gray-5); border-radius: 0.25rem; overflow: hidden; }
+</style>
+
+<script>
+  import { yaml } from '@codemirror/lang-yaml';
+  import { HighlightStyle, syntaxHighlighting } from '@codemirror/language';
+  import { tags } from '@lezer/highlight';
+  import { diagnosticCount, type Diagnostic, linter } from '@codemirror/lint';
+  import { EditorState } from '@codemirror/state';
+  import { yamlSchema } from '@valtown/codemirror-json-schema/yaml';
+  import { EditorView, basicSetup } from 'codemirror';
+  import { parseDocument } from 'yaml';
+  import schema from '../../../../schema/rdock.v1.json';
+
+  const STARTER = `# Edit this or paste your own. Ctrl+Space suggests what fits.
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "Host(\`app.example.com\`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "10.0.0.5:3000"
+    load_balancer: { policy: round_robin }
+`;
+
+  // The schema linter only sees documents that parse, so YAML mistakes are reported here.
+  const yamlSyntax = linter((view) => {
+    const size = view.state.doc.length;
+    return parseDocument(view.state.doc.toString()).errors.map((error): Diagnostic => {
+      const from = Math.min(error.pos[0], size);
+      return { from, to: Math.min(Math.max(error.pos[1], from), size), severity: 'error', message: error.message };
+    });
+  });
+
+  // Site colours, so the text keeps its contrast in the light and the dark theme.
+  const colours = HighlightStyle.define([
+    { tag: tags.comment, color: 'var(--sl-color-gray-2)' },
+    { tag: [tags.propertyName, tags.definition(tags.propertyName)], color: 'var(--sl-color-text-accent)', fontWeight: '600' },
+    { tag: [tags.string, tags.number, tags.bool, tags.null, tags.keyword, tags.content], color: 'var(--sl-color-text)' },
+    { tag: [tags.punctuation, tags.separator, tags.meta], color: 'var(--sl-color-gray-2)' },
+  ]);
+
+  const status = document.getElementById('playground-status')!;
+  const showStatus = (state: EditorState) => {
+    const problems = diagnosticCount(state);
+    status.textContent = problems === 0 ? 'No problems found' : `${problems} ${problems === 1 ? 'problem' : 'problems'} found`;
+  };
+
+  const view = new EditorView({
+    parent: document.getElementById('playground-editor')!,
+    state: EditorState.create({
+      doc: STARTER,
+      extensions: [
+        basicSetup,
+        yaml(),
+        yamlSchema(schema as Parameters<typeof yamlSchema>[0]),
+        yamlSyntax,
+        syntaxHighlighting(colours),
+        EditorView.contentAttributes.of({ 'aria-label': 'rdock.yaml editor' }),
+        EditorView.updateListener.of((update) => showStatus(update.state)),
+        EditorView.theme({
+          '&': { color: 'var(--sl-color-text)', backgroundColor: 'var(--sl-color-bg)', fontSize: '0.875rem' },
+          '.cm-scroller': { minHeight: '24rem', maxHeight: '36rem', fontFamily: 'var(--sl-font-mono)' },
+          '.cm-gutters': { color: 'var(--sl-color-gray-2)', backgroundColor: 'var(--sl-color-bg-nav)', border: 'none' },
+          '.cm-content': { caretColor: 'var(--sl-color-text)' },
+          '.cm-activeLine': { backgroundColor: 'transparent' },
+          '.cm-activeLineGutter': { color: 'var(--sl-color-text)', backgroundColor: 'transparent' },
+          '.cm-tooltip': { color: 'var(--sl-color-text)', backgroundColor: 'var(--sl-color-bg-nav)' },
+        }),
+      ],
+    }),
+  });
+
+  // Keyboard users can scroll long documents without entering the editor.
+  view.scrollDOM.tabIndex = 0;
+  view.scrollDOM.setAttribute('role', 'group');
+  view.scrollDOM.setAttribute('aria-label', 'rdock.yaml, scrollable');
+
+  document.getElementById('playground-copy')!.addEventListener('click', async () => {
+    await navigator.clipboard.writeText(view.state.doc.toString());
+    status.textContent = 'Copied';
+  });
+  document.getElementById('playground-reset')!.addEventListener('click', () => {
+    view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: STARTER } });
+  });
+</script>
