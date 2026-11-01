@@ -47,6 +47,13 @@ export function Overview({ session }: { session: Session }) {
     queryFn: () => api<MetricsSummary>("/metrics/summary?window=900"),
     refetchInterval: 2000,
   });
+  // The tile above the table counts the last minute, so the table does too; a 15-minute average
+  // would read far too low for a while after a start or a burst.
+  const recent = useQuery({
+    queryKey: ["metrics-summary-recent"],
+    queryFn: () => api<MetricsSummary>("/metrics/summary?window=60"),
+    refetchInterval: 2000,
+  });
   const backends = useQuery({ queryKey: ["backends"], queryFn: () => api<Backends[]>("/backends"), refetchInterval: 5000 });
   const events = useEventStream<Event>("/api/v1/events/stream", 12);
   const reload = useMutation({
@@ -75,7 +82,7 @@ export function Overview({ session }: { session: Session }) {
   const last = s?.last_reload;
   const members = (backends.data ?? []).flatMap((b) => b.backends);
   const healthy = members.filter((m) => m.state === "up" && !m.drained).length;
-  const routes = Object.entries(metrics.data?.routes ?? {}).sort(([, a], [, b]) => b.rate - a.rate).slice(0, 8);
+  const routes = Object.entries(recent.data?.routes ?? {}).sort(([, a], [, b]) => b.rate - a.rate).slice(0, 8);
   const lastMinute = total?.series.slice(-60) ?? [];
   const perSecond = lastMinute.reduce((sum, p) => sum + p.requests, 0) / Math.max(lastMinute.length, 1);
 
@@ -122,7 +129,7 @@ export function Overview({ session }: { session: Session }) {
       </Card>
 
       <div className="mt-6 grid grid-cols-1 gap-6 xl:grid-cols-[2fr_1fr]">
-        <Card title="Top routes">
+        <Card title="Top routes, last minute">
           <Table
             head={<><th className={TH}>Route</th><th className={`${TH} text-right`}>Req/s</th><th className={`${TH} text-right`}>Errors</th><th className={`${TH} text-right`}>p95</th></>}
             empty={routes.length === 0 ? "No traffic yet." : undefined}
