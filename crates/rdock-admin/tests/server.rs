@@ -158,6 +158,7 @@ impl Admin {
             dashboard: true,
             tokens: AdminTokens::default(),
             metrics_unauthenticated_on_loopback: false,
+            trust_forwarded_on_loopback: false,
             audit_dir: dir.path().join("audit"),
             audit: AdminAudit::default(),
             api_writes: true,
@@ -379,6 +380,7 @@ fn a_busy_port_fails_the_start() {
         dashboard: true,
         tokens: AdminTokens::default(),
         metrics_unauthenticated_on_loopback: false,
+        trust_forwarded_on_loopback: false,
         audit_dir: std::env::temp_dir().join("rdock-admin-unused-audit"),
         audit: AdminAudit::default(),
         api_writes: true,
@@ -803,6 +805,25 @@ async fn each_caller_has_its_own_request_budget() {
     assert!(limited.header("retry-after").is_some());
     let reply = client::http1(admin.address, bearer_get("/api/v1/status", &calm)).await;
     assert_eq!(reply.status, 200, "another caller is not affected");
+    admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn bodies_over_a_mebibyte_are_refused() {
+    let admin = Admin::start(None, Vec::new());
+    let token = api_token(&admin, "operator");
+    let auth = format!("Bearer {token}");
+    let large = serde_json::json!({ "routes": "x".repeat(1024 * 1024) });
+    let reply = client::http1(
+        admin.address,
+        json_post(
+            "/api/v1/config/validate",
+            &large,
+            &[("authorization", &auth)],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 413);
     admin.stop().await;
 }
 

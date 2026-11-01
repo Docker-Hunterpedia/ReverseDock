@@ -84,9 +84,14 @@ fn current<'h>(
     headers: &'h HeaderMap,
     stages: &[Stage],
 ) -> Result<(&'h str, Session), Denied> {
-    let Some((value, session)) =
-        cookie(headers).and_then(|v| state.sessions.get(v).map(|s| (v, s)))
-    else {
+    let Some((value, session)) = cookie(headers).and_then(|v| {
+        let found = if headers.contains_key(crate::sessions::BACKGROUND_HEADER) {
+            state.sessions.peek(v)
+        } else {
+            state.sessions.get(v)
+        };
+        found.map(|s| (v, s))
+    }) else {
         return Err(Denied(StatusCode::UNAUTHORIZED, "log in first"));
     };
     let safe = matches!(*method, Method::GET | Method::HEAD);
@@ -193,10 +198,8 @@ pub(crate) async fn mfa(
         Ok(found) => found,
         Err(refused) => return refused.into_response(),
     };
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
+    if let Err(wait) = state.limits.attempt(address, &session.user) {
         return too_many(wait);
     }
     match second_factor(&state, &session.user, &body.code) {
@@ -209,6 +212,7 @@ pub(crate) async fn mfa(
         }
         Ok(true) => match state.sessions.rotate(value, |s| s.stage = Stage::Full) {
             Some((cookie, session)) => {
+                state.limits.succeeded(address, &session.user);
                 state.audit.record(event(&session, "totp", "login.mfa"));
                 reply(StatusCode::OK, &session, Some(&cookie))
             }
@@ -278,10 +282,10 @@ pub(crate) async fn confirm(
     let Some(secret) = session.pending_totp.clone() else {
         return error(StatusCode::CONFLICT, "start with POST /api/v1/auth/totp");
     };
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    if let Err(wait) = state.limits.attempt(
+        client(state.trust_forwarded, peer.map(|p| p.0), &headers),
+        &session.user,
+    ) {
         return too_many(wait);
     }
     let Some(step) = totp::verify(&secret, &body.code, now_unix(), 0) else {
@@ -462,10 +466,8 @@ pub(crate) async fn reauth(
         Ok(found) => found,
         Err(refused) => return refused.into_response(),
     };
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
+    if let Err(wait) = state.limits.attempt(address, &session.user) {
         return too_many(wait);
     }
     let worker = state.clone();
@@ -487,6 +489,7 @@ pub(crate) async fn reauth(
             state
                 .sessions
                 .modify(value, |s| s.authenticated = Instant::now());
+            state.limits.succeeded(address, &session.user);
             state.audit.record(event(&session, "password", "reauth"));
             StatusCode::NO_CONTENT.into_response()
         }
@@ -544,10 +547,10 @@ pub(crate) async fn change_password(
             "choose a different password",
         );
     }
-    if let Err(wait) = state
-        .limits
-        .attempt(client(peer.map(|p| p.0), &headers), &session.user)
-    {
+    if let Err(wait) = state.limits.attempt(
+        client(state.trust_forwarded, peer.map(|p| p.0), &headers),
+        &session.user,
+    ) {
         return too_many(wait);
     }
     let worker = state.clone();

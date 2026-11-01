@@ -35,6 +35,14 @@ interface Options {
   ifMatch?: string;
 }
 
+// Requests made while no one has touched the page for a minute are marked, so polling does not
+// keep an unattended session from reaching its idle timeout.
+const ATTENDED_MS = 60_000;
+let lastInput = Date.now();
+for (const event of ["pointerdown", "keydown", "wheel"]) {
+  window.addEventListener(event, () => { lastInput = Date.now(); }, { passive: true, capture: true });
+}
+
 export async function api<T>(path: string, options: Options = {}): Promise<T> {
   return (await request<T>(path, options)).data;
 }
@@ -47,6 +55,7 @@ export async function apiWithTag<T>(path: string, options: Options = {}): Promis
 async function request<T>(path: string, options: Options): Promise<{ data: T; etag: string }> {
   const method = options.method ?? "GET";
   const headers: Record<string, string> = { Accept: "application/json" };
+  if (Date.now() - lastInput > ATTENDED_MS) headers["X-RDock-Background"] = "1";
   if (options.body !== undefined) headers["Content-Type"] = "application/json";
   const csrf = method === "GET" ? "" : csrfSource();
   if (csrf) headers["X-CSRF-Token"] = csrf;

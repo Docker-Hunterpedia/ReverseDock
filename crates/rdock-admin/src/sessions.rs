@@ -19,6 +19,9 @@ use crate::users::Role;
 /// `Domain`, so no other host or path can set or overwrite it.
 pub const COOKIE: &str = "__Host-rdock_session";
 
+/// Sent by the dashboard on requests no one asked for just now (polling).
+pub const BACKGROUND_HEADER: &str = "x-rdock-background";
+
 /// Sessions per user; the oldest ends when a new one would exceed it.
 const PER_USER: usize = 32;
 /// Sessions in all; past it, logins are refused until some end.
@@ -180,6 +183,20 @@ impl Sessions {
         Some(session.clone())
     }
 
+    /// The live session for `cookie`, without marking it as used: for requests the dashboard
+    /// makes on its own, so an unattended tab still reaches the idle timeout (ASVS 7.3.1).
+    pub fn peek(&self, cookie: &str) -> Option<Session> {
+        let now = Instant::now();
+        let mut map = self.lock();
+        let k = key(cookie);
+        let session = map.get(&k)?;
+        if !self.alive(session, now) {
+            map.remove(&k);
+            return None;
+        }
+        Some(session.clone())
+    }
+
     /// Changes the session for `cookie` in place.
     pub fn modify(&self, cookie: &str, change: impl FnOnce(&mut Session)) -> Option<Session> {
         let mut map = self.lock();
@@ -289,6 +306,20 @@ mod tests {
         assert_eq!(sessions.get(&rotated).unwrap().stage, Stage::Full);
         assert_ne!(before.csrf, after.csrf);
         assert_eq!(before.id, after.id);
+    }
+
+    #[test]
+    fn background_requests_do_not_keep_a_session_alive() {
+        let short = Sessions::new(Duration::from_millis(60), Duration::from_secs(3600));
+        let (cookie, _) = short
+            .create("root", Role::Admin, Stage::Full, None)
+            .unwrap();
+        for _ in 0..4 {
+            std::thread::sleep(Duration::from_millis(5));
+            assert!(short.peek(&cookie).is_some());
+        }
+        std::thread::sleep(Duration::from_millis(60));
+        assert!(short.peek(&cookie).is_none(), "the idle timer kept running");
     }
 
     #[test]

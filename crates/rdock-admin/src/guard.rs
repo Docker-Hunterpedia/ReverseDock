@@ -12,7 +12,7 @@ use http::{HeaderMap, HeaderValue, Method, StatusCode, header};
 use crate::routes::error;
 use crate::{State, Transport};
 
-const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; \
+const CSP: &str = "default-src 'self'; script-src 'self'; style-src 'self'; \
                    img-src 'self' data:; connect-src 'self'; object-src 'none'; base-uri 'none'; \
                    frame-ancestors 'none'; form-action 'self'";
 

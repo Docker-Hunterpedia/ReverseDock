@@ -47,8 +47,12 @@ function Editor({ value, onChange, readOnly }: { value: string; onChange?: (v: s
   change.current = onChange;
   useEffect(() => {
     if (!box.current) return;
+    // In a shadow root CodeMirror adds its styles as constructed stylesheets instead of a <style>
+    // element, so the Content Security Policy can refuse inline style elements (ASVS 3.4.3).
+    const root = box.current.shadowRoot ?? box.current.attachShadow({ mode: "open" });
     view.current = new EditorView({
-      parent: box.current,
+      parent: root,
+      root,
       doc: value,
       extensions: [
         basicSetup,
@@ -58,7 +62,7 @@ function Editor({ value, onChange, readOnly }: { value: string; onChange?: (v: s
         EditorView.contentAttributes.of({ "aria-label": readOnly ? "Configuration, read only" : "Configuration editor" }),
         EditorView.updateListener.of((u) => u.docChanged && change.current?.(u.state.doc.toString())),
         EditorView.theme({
-          "&": { fontSize: "13px", backgroundColor: "var(--rd-surface-2)", color: "var(--rd-text)" },
+          "&": { minHeight: "420px", fontSize: "13px", backgroundColor: "var(--rd-surface-2)", color: "var(--rd-text)" },
           ".cm-content": { fontFamily: "var(--font-mono)", caretColor: "var(--rd-accent)" },
           ".cm-gutters": { backgroundColor: "var(--rd-surface)", color: "var(--rd-text-3)", borderRight: "1px solid var(--rd-border)" },
           ".cm-activeLine, .cm-activeLineGutter": { backgroundColor: "color-mix(in srgb, var(--rd-accent) 8%, transparent)" },
@@ -76,7 +80,7 @@ function Editor({ value, onChange, readOnly }: { value: string; onChange?: (v: s
       view.current.dispatch({ changes: { from: 0, to: current?.length ?? 0, insert: value } });
     }
   }, [value]);
-  return <div ref={box} className="min-h-[420px] overflow-hidden rounded-sm border border-line [&_.cm-editor]:min-h-[420px]" />;
+  return <div ref={box} className="min-h-[420px] overflow-hidden rounded-sm border border-line" />;
 }
 
 function DiffView({ diff }: { diff: string }) {

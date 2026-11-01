@@ -35,12 +35,17 @@ const WRONG: &str = "wrong user name or password";
 /// The rate-limit key for setup attempts; `@` keeps it apart from every user name.
 const SETUP_KEY: &str = "@setup";
 
-/// The client's address for limits and logs: the socket's peer, or, on a connection from
-/// loopback (ReverseDock forwarding a route to its own admin listener), the last
-/// `X-Forwarded-For` entry, which the proxy appended. Never a header from anyone else.
-pub(crate) fn client(peer: Option<Peer>, headers: &HeaderMap) -> Option<IpAddr> {
+/// The client's address for limits and logs: the socket's peer. With
+/// `admin.trust_forwarded_on_loopback`, for a dashboard reached through a route of this rdock,
+/// a connection from loopback counts as the last `X-Forwarded-For` entry, which the proxy
+/// appended. It is off by default, because any local process could otherwise claim an address.
+pub(crate) fn client(
+    trust_forwarded: bool,
+    peer: Option<Peer>,
+    headers: &HeaderMap,
+) -> Option<IpAddr> {
     let ip = peer?.0.ip();
-    if !ip.is_loopback() {
+    if !trust_forwarded || !ip.is_loopback() {
         return Some(ip);
     }
     let forwarded = headers
@@ -97,6 +102,9 @@ fn start_session(state: &State, user: &User, address: Option<IpAddr>) -> Respons
     } else {
         Stage::Full
     };
+    if step == Stage::Full {
+        state.limits.succeeded(address, &user.name);
+    }
     match state.sessions.create(&user.name, user.role, step, address) {
         Some((cookie, session)) => account::reply(StatusCode::OK, &session, Some(&cookie)),
         None => busy(),
@@ -139,7 +147,7 @@ pub(crate) async fn setup(
     if state.users.has_admin() {
         return error(StatusCode::CONFLICT, "an admin user exists; log in instead");
     }
-    let address = client(peer.map(|p| p.0), &headers);
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
     if let Err(wait) = state.limits.attempt(address, SETUP_KEY) {
         return too_many(wait);
     }
@@ -225,7 +233,7 @@ pub(crate) async fn login(
     headers: HeaderMap,
     axum::Json(body): axum::Json<Credentials>,
 ) -> Response {
-    let address = client(peer.map(|p| p.0), &headers);
+    let address = client(state.trust_forwarded, peer.map(|p| p.0), &headers);
     let name = normalize_name(&body.name).unwrap_or_default();
     // Only well-formed names are recorded: a password typed into the name field never is.
     let actor = if name.is_empty() {
@@ -304,17 +312,22 @@ mod tests {
             HeaderValue::from_static("203.0.113.9, 198.51.100.7"),
         );
         assert_eq!(
-            client(peer("127.0.0.1:5000"), &headers),
+            client(true, peer("127.0.0.1:5000"), &headers),
             Some("198.51.100.7".parse().unwrap())
         );
         assert_eq!(
-            client(peer("192.0.2.4:5000"), &headers),
+            client(true, peer("192.0.2.4:5000"), &headers),
             Some("192.0.2.4".parse().unwrap())
         );
         assert_eq!(
-            client(peer("[::1]:5000"), &HeaderMap::new()),
+            client(true, peer("[::1]:5000"), &HeaderMap::new()),
             Some("::1".parse().unwrap())
         );
-        assert_eq!(client(None, &headers), None);
+        assert_eq!(client(true, None, &headers), None);
+        assert_eq!(
+            client(false, peer("127.0.0.1:5000"), &headers),
+            "127.0.0.1".parse().ok(),
+            "off by default: a local process cannot claim an address"
+        );
     }
 }

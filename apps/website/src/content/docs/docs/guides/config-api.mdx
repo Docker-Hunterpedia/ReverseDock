@@ -78,6 +78,8 @@ api -X POST http://localhost/api/v1/config/validate -H 'Content-Type: applicatio
 
 The answer has `valid`, the `diagnostics` and a unified `diff` against the current API objects. Nothing is applied.
 
+Checking a candidate needs the operator role, like changing one.
+
 ## History and rollback
 
 `GET /api/v1/config/history` lists applied configurations, newest first, each with an `id`. `POST /api/v1/config/rollback` with `{"id": …}` and `If-Match` restores the API objects of that entry; people confirm their password first (`POST /api/v1/auth/reauth`). The file part is never rolled back by the API: the file is its own source of truth.
