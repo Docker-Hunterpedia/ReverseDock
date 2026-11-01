@@ -370,7 +370,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum(rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\",status_class=\"5xx\"}[$__rate_interval])) / sum(rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval]))",
+          "expr": "(sum(rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\",status_class=\"5xx\"}[$__rate_interval])) or vector(0)) / sum(rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval]))",
           "legendFormat": "",
           "refId": "A"
         }
@@ -574,7 +574,7 @@
     {
       "type": "stat",
       "title": "First certificate expiry",
-      "description": "Days until the certificate that expires first.",
+      "description": "Days until the certificate that expires first. Empty when rdock has no certificates.",
       "id": 7,
       "datasource": {
         "type": "prometheus",
@@ -608,7 +608,8 @@
                 "value": 21
               }
             ]
-          }
+          },
+          "noValue": "No certificates"
         },
         "overrides": []
       },
@@ -620,9 +621,9 @@
           "fields": "",
           "values": false
         },
-        "colorMode": "value",
+        "colorMode": "none",
         "graphMode": "area",
-        "textMode": "auto",
+        "textMode": "value",
         "justifyMode": "auto",
         "orientation": "auto",
         "wideLayout": true,
@@ -730,17 +731,7 @@
                 "value": null
               }
             ]
-          },
-          "mappings": [
-            {
-              "type": "value",
-              "options": {
-                "1": {
-                  "text": "running"
-                }
-              }
-            }
-          ]
+          }
         },
         "overrides": []
       },
@@ -753,8 +744,8 @@
           "values": false
         },
         "colorMode": "value",
-        "graphMode": "area",
-        "textMode": "auto",
+        "graphMode": "none",
+        "textMode": "name",
         "justifyMode": "auto",
         "orientation": "auto",
         "wideLayout": true,
@@ -971,7 +962,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (route) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval]))",
+          "expr": "label_replace(sum by (route) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval])), \"route\", \"(no route)\", \"route\", \"\")",
           "legendFormat": "{{route}}",
           "refId": "A"
         }
@@ -1175,7 +1166,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "histogram_quantile(0.95, sum by (le, route) (rate(rdock_http_request_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval])))",
+          "expr": "label_replace(histogram_quantile(0.95, sum by (le, route) (rate(rdock_http_request_duration_seconds_bucket{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval]))), \"route\", \"(no route)\", \"route\", \"\")",
           "legendFormat": "{{route}}",
           "refId": "A"
         }
@@ -1237,7 +1228,7 @@
             "type": "prometheus",
             "uid": "${datasource}"
           },
-          "expr": "sum by (service) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\",status_class=\"5xx\"}[$__rate_interval])) / sum by (service) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval]))",
+          "expr": "(sum by (service) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\",status_class=\"5xx\"}[$__rate_interval])) or (0 * sum by (service) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval])))) / sum by (service) (rate(rdock_http_requests_total{job=~\"$job\",instance=~\"$instance\",listener=~\"$listener\",route=~\"$route\"}[$__rate_interval]))",
           "legendFormat": "{{service}}",
           "refId": "A"
         }

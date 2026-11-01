@@ -22,17 +22,35 @@ fn healthy(dir: &Path) -> bool {
         .success()
 }
 
-fn start(dir: &Path, config: &str) -> Child {
+/// Stops rdock when dropped, also when an assertion fails.
+struct Running(Child);
+
+impl Running {
+    fn stop(&mut self) {
+        let _ = self.0.kill();
+        let _ = self.0.wait();
+    }
+}
+
+impl Drop for Running {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+fn start(dir: &Path, config: &str) -> Running {
     std::fs::write(dir.join("rdock.yaml"), config).unwrap();
-    Command::new(RDOCK)
-        .args(["run", "--config"])
-        .arg(dir.join("rdock.yaml"))
-        .arg("--data-dir")
-        .arg(dir)
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .spawn()
-        .unwrap()
+    Running(
+        Command::new(RDOCK)
+            .args(["run", "--config"])
+            .arg(dir.join("rdock.yaml"))
+            .arg("--data-dir")
+            .arg(dir)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .spawn()
+            .unwrap(),
+    )
 }
 
 fn wait_healthy(dir: &Path) {
@@ -46,8 +64,7 @@ fn wait_healthy(dir: &Path) {
 fn check(config: &str, dir: &Path) {
     let mut rdock = start(dir, config);
     wait_healthy(dir);
-    rdock.kill().unwrap();
-    rdock.wait().unwrap();
+    rdock.stop();
     assert!(!healthy(dir), "a stopped proxy is not healthy");
 }
 
@@ -86,8 +103,6 @@ fn an_admin_listener_with_tls_does_not_look_unhealthy() {
         issued.cert.display(),
         issued.key.display()
     );
-    let mut rdock = start(dir.path(), &config);
+    let _rdock = start(dir.path(), &config);
     wait_healthy(dir.path());
-    rdock.kill().unwrap();
-    rdock.wait().unwrap();
 }
