@@ -4,7 +4,8 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 
 ## Working rules
 
-- **Never push to `main`.** It is protected by the "Protect main" ruleset. Every change goes through a branch and a pull request and is squash-merged. Do not merge PRs yourself or use `--admin`/bypass; maintainers merge.
+- **Never push to `main`.** It is protected by the "Protect main" ruleset. Every change goes through a branch and a pull request and is squash-merged.
+- **Merging:** AI assistants may squash-merge a PR (`gh pr merge <n> --squash --delete-branch`) only when a maintainer asks for it in the session, every required check passes, and the PR is not a draft. Merge stacked PRs bottom-up. Never use `--admin`, bypass the ruleset, or merge with failing or pending checks.
 - **Branch names:** `type/short-topic`, e.g. `feat/docker-network-selection`, `fix/acme-ari-retry`, `docs/roadmap-typo`.
 - **Sign off every commit:** `git commit -s` (Developer Certificate of Origin). The `dco` check fails without a `Signed-off-by` line matching the commit author.
 - **PR titles are Conventional Commits:** `type(scope): summary`. Types: `feat`, `fix`, `docs`, `perf`, `refactor`, `test`, `build`, `ci`, `chore`, `revert`, `security`; add `!` for breaking changes. Scopes are crate or area names without the `rdock-` prefix (`proxy`, `rules`, `config`, `tls`, `acme`, `balancer`, `middleware`, `docker`, `swarm`, `kubernetes`, `cloudflare`, `admin`, `dashboard`, `website`, `observability`, `adr`, `repo`). The `pr-title` check enforces this; the title becomes the commit on `main`.
