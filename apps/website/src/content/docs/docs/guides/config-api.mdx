@@ -1,0 +1,63 @@
+---
+title: Change the configuration through the API
+description: Add routes, services and middlewares through the admin API with versioned writes, dry runs, diffs, history and rollback, or turn API writes off for GitOps.
+sidebar:
+  order: 12
+---
+
+import Status from '../../../../components/Status.astro';
+
+Besides the file and Docker, the admin API is a provider of its own <Status since="v0.5" />: routes, services and middlewares written through it are merged into the configuration as `name@api`, validated and applied exactly like a file reload, stored in `$RDOCK_DATA_DIR/state/`, and restored after a restart. Objects from the file or Docker stay read-only through the API.
+
+The examples run on the server, over the admin socket. From elsewhere, use `http://127.0.0.1:2080` with `-H "Authorization: Bearer $TOKEN"` and a token with the `operator` role (see [Security model](/docs/concepts/security-model/#admin-api)).
+
+```sh
+api() { curl -s --unix-socket /var/lib/rdock/admin.sock -H 'Host: localhost' "$@"; }
+```
+
+## Read
+
+```sh
+api http://localhost/api/v1/config          # everything in use, with the owner of each object
+api -i http://localhost/api/v1/config/api   # only the API's objects; note the ETag header
+```
+
+Secret values written in place are shown as `***`; `${file:…}` and `${env:…}` references are shown as written.
+
+## Change, always with If-Match
+
+Every change names the version it was based on, so two people cannot overwrite each other: without `If-Match` the answer is `428`, with an older version `412` and the current `ETag`.
+
+```sh
+api -X PUT http://localhost/api/v1/config/api \
+  -H 'Content-Type: application/json' -H 'If-Match: "g7-3f2a9c1b0e4d5a6f"' \
+  -d '{"routes":{"shop":{"match":"Host(`shop.example.com`)","service":"shop"}},
+       "services":{"shop":{"backends":[{"address":"10.0.0.5:8080"}]}}}'
+```
+
+`PATCH` changes part of it: `Content-Type: application/merge-patch+json` (RFC 7396, `null` removes) or `application/json-patch+json` (RFC 6902 operations). A configuration that would not be applied is refused with `422` and the diagnostics, and nothing changes: unlike Docker objects, a broken API object is never just left out.
+
+## Try first
+
+```sh
+api -X POST http://localhost/api/v1/config/validate -H 'Content-Type: application/json' -d @candidate.json
+```
+
+The answer has `valid`, the `diagnostics` and a unified `diff` against the current API objects. Nothing is applied.
+
+## History and rollback
+
+`GET /api/v1/config/history` lists applied configurations, newest first, each with an `id`. `POST /api/v1/config/rollback` with `{"id": …}` and `If-Match` restores the API objects of that entry; people confirm their password first (`POST /api/v1/auth/reauth`). The file part is never rolled back by the API: the file is its own source of truth.
+
+## Export and import
+
+`GET /api/v1/config/export` (admins, after a password check) returns `{"version":1,"api":{…}}`; `POST /api/v1/config/import` with that document and `If-Match` replaces the API objects on another instance. Write secrets as references: a document with masked `***` values is refused.
+
+## GitOps
+
+```yaml title="rdock.yaml (excerpt)"
+admin:
+  api_writes: false
+```
+
+Every configuration write through the API and the dashboard is then refused with `403`; reading, history and dry runs keep working. Every write and rollback is in the [audit log](/docs/concepts/security-model/#admin-api) with the version hashes before and after.

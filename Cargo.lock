@@ -1975,6 +1975,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "json-patch"
+version = "4.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "7421438de105a0827e44fadd05377727847d717c80ce29a229f85fd04c427b72"
+dependencies = [
+ "jsonptr",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.21",
+]
+
+[[package]]
+name = "jsonptr"
+version = "0.7.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a5a3cc660ba5d72bce0b3bb295bf20847ccbb40fd423f3f05b61273672e561fe"
+dependencies = [
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "jsonschema"
 version = "0.60.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3264,6 +3286,7 @@ dependencies = [
  "sd-notify",
  "serde",
  "serde_json",
+ "serde_path_to_error",
  "tempfile",
  "tokio",
  "tokio-tungstenite",
@@ -3318,6 +3341,7 @@ dependencies = [
  "hyper",
  "hyper-util",
  "ipnet",
+ "json-patch",
  "rdock-config",
  "rdock-limits",
  "rdock-model",
@@ -3329,6 +3353,7 @@ dependencies = [
  "rustls",
  "serde",
  "serde_json",
+ "similar",
  "subtle",
  "tempfile",
  "thiserror 2.0.21",
@@ -4225,6 +4250,15 @@ name = "simdutf8"
 version = "0.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e3a9fe34e3e7a50316060351f37187a3f546bce95496156754b601a5fa71b76e"
+
+[[package]]
+name = "similar"
+version = "3.2.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "d2f8bec09ae8fae0f4f265a4559a9334be3929d8504e9b536df0a41302bd1733"
+dependencies = [
+ "bstr",
+]
 
 [[package]]
 name = "slab"

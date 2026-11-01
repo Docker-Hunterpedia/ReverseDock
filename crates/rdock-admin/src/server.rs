@@ -152,6 +152,7 @@ pub fn start(
         token_rules: settings.tokens,
         metrics_open: settings.metrics_unauthenticated_on_loopback && address.ip().is_loopback(),
         audit,
+        api_writes: settings.api_writes,
         hashing: rdock_limits::ConcurrencyLimiter::new(2, 16, Duration::from_secs(10), 1),
     });
     let runtime = tokio::runtime::Builder::new_multi_thread()

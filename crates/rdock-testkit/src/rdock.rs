@@ -152,22 +152,42 @@ impl Rdock {
     }
 
     pub fn admin_request(&self, method: &str, path: &str) -> Option<(u16, String)> {
+        self.admin_send(method, path, &[], "")
+            .map(|(status, _, body)| (status, body))
+    }
+
+    /// A request over the admin socket with extra headers and a body; returns the status,
+    /// the response head and the body.
+    pub fn admin_send(
+        &self,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Option<(u16, String, String)> {
+        use std::fmt::Write as _;
         use std::io::Write;
         let mut stream =
             std::os::unix::net::UnixStream::connect(self.data_dir().join("admin.sock")).ok()?;
         stream
             .set_read_timeout(Some(Duration::from_secs(20)))
             .ok()?;
-        write!(
-            stream,
-            "{method} {path} HTTP/1.1\r\nHost: localhost\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        )
-        .ok()?;
+        let mut head = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
+        for (name, value) in headers {
+            let _ = write!(head, "{name}: {value}\r\n");
+        }
+        let _ = write!(
+            head,
+            "Content-Length: {}\r\nConnection: close\r\n\r\n",
+            body.len()
+        );
+        stream.write_all(head.as_bytes()).ok()?;
+        stream.write_all(body.as_bytes()).ok()?;
         let mut raw = String::new();
         stream.read_to_string(&mut raw).ok()?;
         let (head, body) = raw.split_once("\r\n\r\n")?;
         let status = head.split_whitespace().nth(1)?.parse().ok()?;
-        Some((status, body.to_owned()))
+        Some((status, head.to_owned(), body.to_owned()))
     }
 
     /// Asks the running process to reload, as `rdock reload` does.

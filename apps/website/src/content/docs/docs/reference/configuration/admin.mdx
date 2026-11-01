@@ -17,6 +17,12 @@ Admin API and dashboard.
 
 Host names the admin listener answers to; other `Host` headers get 421 (DNS-rebinding defence). Default: `localhost`, `127.0.0.1` and `::1` on loopback, the listener's IP otherwise. Required when `listener` is on all interfaces.
 
+## `admin.api_writes`
+
+**Type:** `boolean` · **Default:** `true`
+
+Allow configuration changes through the admin API and the dashboard. Set `false` (`GitOps`) when Git and the file provider are the only source of truth.
+
 ## `admin.audit`
 
 **Type:** object · **Default:** `{"forward":null,"max_file_size":"64MiB","retention":"400d"}`

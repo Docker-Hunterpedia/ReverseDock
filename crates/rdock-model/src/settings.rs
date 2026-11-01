@@ -74,6 +74,11 @@ impl Default for Limits {
 /// Admin API and dashboard (ADR-0024).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "each bool is an independent YAML switch (enabled, dashboard, api_writes, open \
+              metrics); revisit if two of them ever become one mode"
+)]
 pub struct Admin {
     /// Serve the admin API.
     pub enabled: bool,
@@ -105,6 +110,9 @@ pub struct Admin {
     pub metrics_unauthenticated_on_loopback: bool,
     /// The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.
     pub audit: AdminAudit,
+    /// Allow configuration changes through the admin API and the dashboard. Set `false`
+    /// (`GitOps`) when Git and the file provider are the only source of truth.
+    pub api_writes: bool,
 }
 
 impl Default for Admin {
@@ -123,6 +131,7 @@ impl Default for Admin {
             tokens: AdminTokens::default(),
             metrics_unauthenticated_on_loopback: false,
             audit: AdminAudit::default(),
+            api_writes: true,
         }
     }
 }

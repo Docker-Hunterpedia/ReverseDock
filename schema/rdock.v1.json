@@ -30,6 +30,7 @@
       "$ref": "#/$defs/Admin",
       "default": {
         "allowed_hosts": [],
+        "api_writes": true,
         "audit": {
           "forward": null,
           "max_file_size": "64MiB",
@@ -482,6 +483,11 @@
           "items": {
             "type": "string"
           }
+        },
+        "api_writes": {
+          "description": "Allow configuration changes through the admin API and the dashboard. Set `false`\n(`GitOps`) when Git and the file provider are the only source of truth.",
+          "type": "boolean",
+          "default": true
         },
         "audit": {
           "description": "The hash-chained audit log in `$RDOCK_DATA_DIR/audit/`.",
