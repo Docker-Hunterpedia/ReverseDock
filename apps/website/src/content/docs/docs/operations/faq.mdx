@@ -65,7 +65,9 @@ Yes. A file with a `.json` extension is read as JSON; anything else is read as Y
 
 ## How does it compare with NGINX, Traefik, Caddy and HAProxy?
 
-ReverseDock aims to combine Traefik's service discovery, Caddy's automatic HTTPS, NGINX's HTTP features and HAProxy's reliability in one free binary. Version 0.1 covers host and path routing with your own certificates; the rest arrives over the milestones on the [roadmap](/docs/project/roadmap/).
+ReverseDock aims to combine Traefik's service discovery, Caddy's automatic HTTPS, NGINX's HTTP features and HAProxy's reliability in one free binary. Features arrive milestone by milestone on the [roadmap](/docs/project/roadmap/).
+
+On speed: measured on 2 CPUs with the same load for all five, ReverseDock completes about as many requests per second as NGINX, fails none under overload, and is ahead with new TLS connections and slow backends; HAProxy is about 25 % faster on plain proxying. The numbers, the method and the scripts to run it yourself are on the [Performance](/docs/project/performance/) page.
 
 ## Related
 
