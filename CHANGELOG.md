@@ -43,6 +43,8 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ### Fixed
 - **About 500 requests in flight was the most a container could hold** ([#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93)): rdock now raises its soft open-file limit to the hard one at start, as Go programs do; containers often start with a soft limit of 1024 (Docker 29.1 with containerd 2.2). The limit raised, and a warning when it cannot be, are in the log.
+||||||| bb267c0
+- **Every response to an HTTP/1 client left as two packets** ([#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93)): the header and the body were written separately, because the client connection had no write buffer. It now has one (8 KiB, allocated on the first write), so a header and a typical body leave in one write and one segment, as from NGINX.
 - **Throughput collapsed under overload** ([#86](https://github.com/Docker-Hunterpedia/ReverseDock/issues/86), ADR-0023): each listener kept only 128 idle connections to backends, so with more requests in flight every extra request opened and closed its own backend connection. The pool is now 4096 and configurable with `security.limits.upstream_idle_connections` (M-LB-08). At a 40,000 req/s target the benchmark now holds about 14,900 req/s with 0.37 % failures instead of 1,925 req/s with 52 %.
 
 ### Changed
