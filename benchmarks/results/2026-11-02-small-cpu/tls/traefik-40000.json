@@ -1,0 +1,16 @@
+{
+  "proxy": "traefik",
+  "rate": 40000,
+  "duration": "30s",
+  "requests": 1082855,
+  "achieved_rps": 36045.466180638905,
+  "failed": 1,
+  "dropped": 117145,
+  "ms": {
+    "p50": 0,
+    "p90": 0,
+    "p99": 0,
+    "p999": 0,
+    "max": 0
+  }
+}
