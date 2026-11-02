@@ -33,6 +33,36 @@ pub(crate) fn run(args: &RunArgs) -> anyhow::Result<ExitCode> {
     runtime.block_on(serve(args))
 }
 
+/// Raises the soft open-file limit to the hard one, as Go programs do at start (Go 1.19
+/// release notes, August 2022). Every proxied request holds two sockets, and inside a
+/// container the soft limit is often 1024 with a hard limit of 524288 (Docker 29.1 with
+/// containerd 2.2, measured 2026-11-02), which caps a listener at about 500 requests in
+/// flight that the hard limit would allow. macOS refuses more than `OPEN_MAX`.
+fn raise_open_file_limit() {
+    use nix::sys::resource::{Resource, getrlimit, setrlimit};
+    let (soft, hard) = match getrlimit(Resource::RLIMIT_NOFILE) {
+        Ok(limits) => limits,
+        Err(err) => {
+            tracing::warn!(error = %err, "cannot read the open-file limit");
+            return;
+        }
+    };
+    let wanted = if cfg!(target_os = "macos") {
+        hard.min(10_240)
+    } else {
+        hard
+    };
+    if soft >= wanted {
+        return;
+    }
+    match setrlimit(Resource::RLIMIT_NOFILE, wanted, hard) {
+        Ok(()) => tracing::info!(from = soft, to = wanted, "raised the open-file limit"),
+        Err(err) => {
+            tracing::warn!(error = %err, soft, hard, "cannot raise the open-file limit");
+        }
+    }
+}
+
 /// The key that signs sticky cookies of services without their own secret:
 /// `$RDOCK_DATA_DIR/sticky.key` (hex, created on first start, readable by the owner only), so
 /// cookies stay valid across restarts.
@@ -87,6 +117,7 @@ impl Signals {
 async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     // Before anything else: the default action of SIGHUP would end the process.
     let mut signals = Signals::install()?;
+    raise_open_file_limit();
     std::fs::create_dir_all(&args.data_dir).with_context(|| {
         format!(
             "creating the data directory {} (set --data-dir or RDOCK_DATA_DIR)",
@@ -286,4 +317,21 @@ pub(crate) fn admin_address(listen: &rdock_model::values::ListenAddress) -> std:
         .ip()
         .unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED));
     std::net::SocketAddr::new(ip, listen.port())
+}
+
+#[cfg(test)]
+mod tests {
+    use nix::sys::resource::{Resource, getrlimit};
+
+    #[test]
+    fn the_soft_open_file_limit_reaches_the_hard_one() {
+        super::raise_open_file_limit();
+        let (soft, hard) = getrlimit(Resource::RLIMIT_NOFILE).unwrap();
+        let wanted = if cfg!(target_os = "macos") {
+            hard.min(10_240)
+        } else {
+            hard
+        };
+        assert_eq!(soft, wanted);
+    }
 }
