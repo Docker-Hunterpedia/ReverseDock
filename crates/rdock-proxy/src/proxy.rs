@@ -461,6 +461,75 @@ impl RdockProxy {
         }
         Ok(())
     }
+
+    /// The access-log record of a finished request.
+    fn access_record(
+        &self,
+        session: &Session,
+        e: Option<&Error>,
+        ctx: &mut RequestCtx,
+        status: u16,
+        elapsed: Duration,
+    ) -> AccessRecord {
+        let log = &ctx.runtime.access_log;
+        let route = ctx.route.as_ref();
+        let service = ctx.service.as_ref();
+        let req = session.req_header();
+        let header = |name: &str| {
+            req.headers
+                .get(name)
+                .and_then(|v| v.to_str().ok())
+                .map(|v| {
+                    if log.redacts(name) {
+                        "***".to_owned()
+                    } else {
+                        v.to_owned()
+                    }
+                })
+        };
+        let ssl = session.digest().and_then(|d| d.ssl_digest.clone());
+        AccessRecord {
+            ts: rfc3339(ctx.started_at),
+            request_id: ctx.request_id.to_string(),
+            client_ip: ctx.client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
+            method: req.method.to_string(),
+            host: ctx.host.clone(),
+            path: ctx.path.clone(),
+            query_len: ctx.query_len,
+            proto: if session.is_http2() {
+                "HTTP/2".into()
+            } else {
+                format!("{:?}", req.version)
+            },
+            status,
+            bytes_in: session.body_bytes_read(),
+            bytes_out: session.body_bytes_sent(),
+            duration_ms: elapsed.as_secs_f64() * 1000.0,
+            listener: self.listener.to_string(),
+            route: route.map(|r| r.name.to_string()),
+            service: service.map(|s| s.name.to_string()),
+            upstream: ctx.upstream.as_ref().map(ToString::to_string),
+            tried: {
+                let current = ctx.member.as_ref().map(|m| m.id.as_str());
+                ctx.tried
+                    .iter()
+                    .filter(|t| Some(t.as_str()) != current)
+                    .cloned()
+                    .collect()
+            },
+            tls_version: ssl.as_ref().map(|s| s.version.to_string()),
+            tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
+            sni: ssl
+                .as_ref()
+                .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+                .and_then(|h| h.sni.clone()),
+            user: ctx.mw.as_ref().and_then(|cx| cx.user.clone()),
+            user_agent: header("user-agent"),
+            referer: header("referer").map(|r| r.split('?').next().unwrap_or_default().to_owned()),
+            cf_ray: header("cf-ray"),
+            error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
+        }
+    }
 }
 
 #[async_trait]
@@ -1057,61 +1126,7 @@ impl ProxyHttp for RdockProxy {
         if !log.enabled() && !feed.watched() {
             return;
         }
-        let req = session.req_header();
-        let header = |name: &str| {
-            req.headers
-                .get(name)
-                .and_then(|v| v.to_str().ok())
-                .map(|v| {
-                    if log.redacts(name) {
-                        "***".to_owned()
-                    } else {
-                        v.to_owned()
-                    }
-                })
-        };
-        let ssl = session.digest().and_then(|d| d.ssl_digest.clone());
-        let record = AccessRecord {
-            ts: rfc3339(ctx.started_at),
-            request_id: ctx.request_id.to_string(),
-            client_ip: ctx.client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
-            method: req.method.to_string(),
-            host: ctx.host.clone(),
-            path: ctx.path.clone(),
-            query_len: ctx.query_len,
-            proto: if session.is_http2() {
-                "HTTP/2".into()
-            } else {
-                format!("{:?}", req.version)
-            },
-            status,
-            bytes_in: session.body_bytes_read(),
-            bytes_out: session.body_bytes_sent(),
-            duration_ms: elapsed.as_secs_f64() * 1000.0,
-            listener: self.listener.to_string(),
-            route: route.map(|r| r.name.to_string()),
-            service: service.as_ref().map(|s| s.name.to_string()),
-            upstream: ctx.upstream.as_ref().map(ToString::to_string),
-            tried: {
-                let current = ctx.member.as_ref().map(|m| m.id.as_str());
-                ctx.tried
-                    .iter()
-                    .filter(|t| Some(t.as_str()) != current)
-                    .cloned()
-                    .collect()
-            },
-            tls_version: ssl.as_ref().map(|s| s.version.to_string()),
-            tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
-            sni: ssl
-                .as_ref()
-                .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-                .and_then(|h| h.sni.clone()),
-            user: ctx.mw.as_ref().and_then(|cx| cx.user.clone()),
-            user_agent: header("user-agent"),
-            referer: header("referer").map(|r| r.split('?').next().unwrap_or_default().to_owned()),
-            cf_ray: header("cf-ray"),
-            error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
-        };
+        let record = self.access_record(session, e, ctx, status, elapsed);
         log.write(&record);
         if feed.watched()
             && let Ok(entry) = serde_json::to_value(&record)
