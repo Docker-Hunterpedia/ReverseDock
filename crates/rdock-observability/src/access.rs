@@ -130,6 +130,12 @@ impl AccessLog {
         self.redact.iter().any(|r| r == name)
     }
 
+    /// Whether records are written at all (`format` is not `off`).
+    #[must_use]
+    pub fn enabled(&self) -> bool {
+        self.sender.is_some()
+    }
+
     /// Queues a record, unless `sample` leaves out this successful request. Never blocks.
     pub fn write(&self, record: &AccessRecord) {
         let Some(sender) = &self.sender else { return };
