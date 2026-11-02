@@ -30,6 +30,8 @@ The official image is `ghcr.io/docker-hunterpedia/rdock`. It contains the static
 
 The entrypoint is `rdock` and the default command is `run`. The image has a `HEALTHCHECK` that runs `rdock healthcheck` every 10 seconds, so `docker ps` shows `healthy` once the proxy is ready. With `admin.enabled: false` it checks instead that every listener accepts connections.
 
+At start, rdock raises its soft open-file limit to the hard one, because every proxied request holds two sockets and containers often start with a soft limit of 1024 (Docker 29.1 with containerd 2.2 gives 1024 soft and 524288 hard, measured on 2026-11-02). Only the hard limit matters: raise it with `--ulimit nofile=1048576:1048576` (or `ulimits: { nofile: 1048576 }` in Compose) if you expect more than about 250,000 open connections.
+
 ## Run it
 
 Put the proxy and your applications on one user-defined network, so ReverseDock can reach them by container name:
