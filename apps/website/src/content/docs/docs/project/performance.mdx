@@ -76,7 +76,27 @@ NGINX and HAProxy answer 0.1–0.5 ms sooner at the tail; all three stay near a 
 
 ## Large responses
 
-LARGE_BODIES
+Bigger answers move the cost from parsing to copying. Here the backend answers with 100 KiB and with 1 MiB; each cell is the p99 in ms when the proxy kept up with the rate, otherwise what it completed.
+
+100 KiB responses:
+
+| Target req/s | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 0.38 | 0.57 | 0.43 | 0.46 | 0.43 |
+| 2,500 | 0.49 | 0.80 | 0.57 | 0.69 | 0.60 |
+| 5,000 | 0.80 | 1.66 | 1.15 | 1.30 | 0.92 |
+| 10,000 | 6.17 | 7,470 done, 1.0% failed | 7,460 done | 1,728 done | 2,374 done, 15.5% failed |
+
+1 MiB responses:
+
+| Target req/s | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---:|---:|---:|---:|---:|---:|
+| 100 | 1.06 | 2.43 | 1.82 | 1.49 | 1.21 |
+| 250 | 0.90 | 2.25 | 1.52 | 1.15 | 1.03 |
+| 500 | 0.84 | 30.43 | 1.58 | 1.13 | 1.02 |
+| 1,000 | 1.27 | 18.82 | 1.74 | 1.49 | 1.46 |
+
+At 10,000 req/s of 100 KiB (1 GB/s), ReverseDock is the only one of the five that keeps up on 2 CPUs. With 1 MiB responses all five keep up to 1,000 req/s, and ReverseDock has the lowest p99 at every rate.
 
 ## What changed in v0.5
 
