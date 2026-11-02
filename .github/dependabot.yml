@@ -50,6 +50,9 @@ updates:
     ignore:
       - dependency-name: tokio
         versions: [">= 1.54"]
+      # The fuzz crate shares the workspace's brotli line (see the root cargo block).
+      - dependency-name: brotli
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: docker
     directory: /
     schedule:
