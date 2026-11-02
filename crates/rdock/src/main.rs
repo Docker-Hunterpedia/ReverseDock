@@ -8,6 +8,12 @@ use std::process::ExitCode;
 use anyhow::Context;
 use clap::{Args, Parser, Subcommand, ValueEnum};
 
+/// musl's malloc took a global lock on every allocation and mapped and unmapped memory for
+/// the 64 KiB connection buffers, which was about a quarter of the CPU per request on 2 CPUs
+/// (perf, 2026-11-02, #93). mimalloc keeps freed memory per thread and reuses it.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 mod admin_cli;
 mod ctl;
 mod engine;
