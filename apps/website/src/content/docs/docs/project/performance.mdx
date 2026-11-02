@@ -1,0 +1,122 @@
+---
+title: Performance
+description: How ReverseDock compares with NGINX, HAProxy, Caddy and Traefik on 2 CPUs, measured 2026-11-02 with k6's open model, and what changed in v0.5 to get there.
+sidebar:
+  order: 2
+---
+
+Numbers from one lab, published with the scripts and raw results so anyone can run them again: [`benchmarks/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks) in the repository, results in [`benchmarks/results/2026-11-02-small-cpu/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks/results/2026-11-02-small-cpu). Measured on 2026-11-02 with ReverseDock from `main` at `36f64a9`, the release candidate of v0.5.
+
+## The lab
+
+- A dedicated Linux server (Hetzner, 8 vCPUs, 32 GiB, Ubuntu 26.04, Docker 29.1.3), nothing else running.
+- Every proxy in its own container limited to **2 CPUs and 1 GiB**, one at a time; the backend (NGINX serving a 1 KiB page) and the load generator get 4 CPUs each.
+- [k6](https://grafana.com/docs/k6/latest/) in an **open model**: requests start at a fixed rate whatever the latency, so a stalling proxy shows up in the tail instead of slowing the load down. 10 s warm-up, 30 s at 5,000, 10,000, 20,000 and 40,000 req/s. A proxy that cannot keep up shows fewer completed requests, failures, or both.
+- Versions: NGINX 1.29.3, HAProxy 3.2.8, Caddy 2.10.2, Traefik 3.5.4. Each with the equivalent configuration for the scenario, access logging off, keep-alive to the backend.
+
+Six scenarios: a single backend, load balancing over three, TLS with kept-alive connections, TLS with a new handshake per request, a backend that answers after 100 ms, and 1,000 hosts with a route each.
+
+## Peak throughput
+
+The most requests per second each proxy completed at any target rate, counting only runs with fewer than 5 % failures.
+
+| Scenario | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---|---:|---:|---:|---:|---:|
+| Single backend | **24,619** | 24,889 (1.2% failed) | 31,895 | 10,000 | 10,000 |
+| Load balancing | **24,094** | 24,986 (1.1% failed) | 31,960 | 10,000 | 10,000 |
+| TLS, reused connections | **22,326** | 21,600 (1.4% failed) | 29,991 | 9,971 | 9,976 |
+| TLS, new connections | **5,821** | 3,815 (3.5% failed) | 3,227 | 1,062 (1.9% failed) | 2,009 |
+| Slow backend (100 ms) | **17,755** | 9,556 (3.1% failed) | 19,091 | 4,952 | 9,823 |
+| Many routes | **23,075** | 24,221 (1.3% failed) | 28,106 | 3,761 (0.3% failed) | 10,000 |
+
+- ReverseDock and NGINX complete about the same; a few percent either way is run-to-run noise.
+- HAProxy is ahead on plain proxying, by about 25 %. ReverseDock is ahead with new TLS connections (1.8× HAProxy) and close on the slow backend.
+- Caddy and Traefik keep up with 10,000 req/s on 2 CPUs and collapse above it in this lab; the report explains the check that was done to make sure the lab was fair to them.
+
+## Failed requests under overload
+
+At the 40,000 req/s target, far above what 2 CPUs can serve, what matters is how a proxy fails. ReverseDock answered what it could and failed nothing; NGINX failed 1–4 % of requests.
+
+| Scenario | ReverseDock | NGINX | HAProxy |
+|---|---:|---:|---:|
+| Single backend | 0.00% | 1.22% | 0.00% |
+| Load balancing | 0.00% | 1.10% | 0.00% |
+| TLS, reused connections | 0.00% | 1.36% | 0.00% |
+| TLS, new connections | 0.00% | 3.76% | 0.00% |
+| Slow backend (100 ms) | 0.00% | 3.11% | 0.00% |
+| Many routes | 0.00% | 1.35% | 0.00% |
+
+## Latency
+
+p99 in ms. For new TLS connections the time includes the handshake; for the slow backend it includes the backend's 100 ms. "Behind" marks a proxy that did not keep up with the rate, so its latency is queueing.
+
+At 5,000 req/s:
+
+| Scenario | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---|---:|---:|---:|---:|---:|
+| Single backend | **0.46** | 0.35 | 0.37 | 0.70 | 0.52 |
+| Load balancing | **0.53** | 0.40 | 0.34 | 0.68 | 0.57 |
+| TLS, reused connections | **0.49** | 0.45 | 0.65 | 0.77 | 0.55 |
+| TLS, new connections | **6.23** | 10000.25 (2.6% failed) | 1331.29 (behind) | 10000.15 (1.9% failed) | 5525.84 (behind) |
+| Slow backend (100 ms) | **102.14** | 102.29 | 102.26 | 105.40 | 102.80 |
+| Many routes | **0.53** | 0.42 | 0.60 | 46.48 (0.3% failed) | 0.66 |
+
+At 10,000 req/s:
+
+| Scenario | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---|---:|---:|---:|---:|---:|
+| Single backend | **1.17** | 1.13 | 0.94 | 6.44 | 1.29 |
+| Load balancing | **1.41** | 1.11 | 0.92 | 3.82 | 1.45 |
+| TLS, reused connections | **2.10** | 1.76 | 1.79 | 24.69 | 11.87 |
+| TLS, new connections | **2729.23 (behind)** | 10000.25 (3.3% failed) | 1327.57 (behind) | 10003.44 (36.3% failed) | 10003.03 (17.6% failed) |
+| Slow backend (100 ms) | **110.39** | 106.60 (0.5% failed) | 109.46 | 5552.60 (behind) | 118.94 |
+| Many routes | **1.70** | 1.21 | 2.09 | 10000.60 (17.6% failed) | 2.44 |
+
+NGINX and HAProxy answer 0.1–0.5 ms sooner at the tail; all three stay near a millisecond up to 10,000 req/s.
+
+## Large responses
+
+LARGE_BODIES
+
+## What changed in v0.5
+
+Before this work, ReverseDock on 2 CPUs completed 11,839 req/s with a single backend, half of NGINX, and 1 % of its requests failed under overload ([#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93)). Profiling found four costs; each got its own pull request and its own measurement. CPU time per request, from the container's `cpu.stat`, with a single backend:
+
+| Rate | before | + open-file limit | + mimalloc | + write buffer | combined branch | `main` now | NGINX |
+|---:|---:|---:|---:|---:|---:|---:|---:|
+| 2,500 | 174 | 185 | 95 | 162 | 81 | **81** | 42 |
+| 5,000 | 139 | 151 | 90 | 128 | 75 | **76** | 47 |
+| 7,500 | 157 | 187 | 90 | 142 | 76 | **77** | 56 |
+| 10,000 | 164 | 172 | 90 | 154 | 76 | **76** | 56 |
+| 12,500 | 147 | 152 | 88 | 143 | 75 | **76** | 53 |
+
+1. **Open-file limit** ([#170](https://github.com/Docker-Hunterpedia/ReverseDock/pull/170)): the container's soft limit of 1,024 file descriptors capped ReverseDock near 500 requests in flight, so every stall became errors. ReverseDock now raises it to the hard limit at start, as Go does.
+2. **Allocator** ([#172](https://github.com/Docker-Hunterpedia/ReverseDock/pull/172)): the static binary used musl's allocator, which mapped and unmapped memory for every 64 KiB buffer behind a global lock, about 27 % of CPU. mimalloc takes CPU per request from 139 to 90 µs.
+3. **Fewer syscalls per request** ([#173](https://github.com/Docker-Hunterpedia/ReverseDock/pull/173)): no `getrandom` call per request for the request id, and no access-log record built when nobody reads it.
+4. **One packet per response** ([#174](https://github.com/Docker-Hunterpedia/ReverseDock/pull/174)): the response head and body left in two TCP segments; an 8 KiB write buffer sends one, saving a segment and an ACK per request.
+
+Together: CPU per request from 139 to 76 µs, and twice the peak in most scenarios. The gap that remains to HAProxy is in cross-thread wake-ups inside the runtime, not in the request path; [#176](https://github.com/Docker-Hunterpedia/ReverseDock/issues/176) tracks a thread-per-core experiment for a later release.
+
+## Read with care
+
+- One machine, 2 CPUs, 1 KiB responses. Other hardware gives other numbers. Compare proxies within one run, never across runs.
+- Run-to-run noise is about 10 %. NGINX's single-backend peak was 22,638 in one session and 24,889 in the next, on the same machine.
+- HAProxy is faster on plain proxying. That is the honest number, and it is tracked, not hidden.
+- Bigger machines (4 and 8 CPUs) are not measured yet.
+
+## Run it yourself
+
+```sh
+git clone https://github.com/Docker-Hunterpedia/ReverseDock && cd ReverseDock/benchmarks
+docker build -t rdock:bench ..
+VERSION=mine ./run.sh                                   # all proxies, single backend
+SCENARIO=tls-new PROXIES="rdock haproxy" VERSION=mine ./run.sh
+```
+
+The soak test (24 hours at 1,000 req/s with reloads, a backend going down every 15 minutes and certificate changes) lives in [`benchmarks/soak/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks/soak).
+
+## Related
+
+- [What is ReverseDock](/docs/start/what-is-reversedock/)
+- [Production checklist](/docs/operations/production-checklist/)
+- [Roadmap](/docs/project/roadmap/)
