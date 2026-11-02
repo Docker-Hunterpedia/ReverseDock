@@ -41,6 +41,7 @@ rdock-observability.workspace = true
 rdock-provider-docker = { workspace = true, optional = true }
 rdock-proxy.workspace = true
 sd-notify.workspace = true
+mimalloc.workspace = true
 nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true
