@@ -1052,6 +1052,11 @@ impl ProxyHttp for RdockProxy {
             service.live.record(sample, now);
         }
         let log = &ctx.runtime.access_log;
+        let feed = &self.shared.metrics.feeds.logs;
+        // Building the record is about twenty allocations; skip it when nobody reads it.
+        if !log.enabled() && !feed.watched() {
+            return;
+        }
         let req = session.req_header();
         let header = |name: &str| {
             req.headers
@@ -1108,7 +1113,6 @@ impl ProxyHttp for RdockProxy {
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
         };
         log.write(&record);
-        let feed = &self.shared.metrics.feeds.logs;
         if feed.watched()
             && let Ok(entry) = serde_json::to_value(&record)
         {
