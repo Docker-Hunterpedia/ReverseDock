@@ -3359,6 +3359,7 @@ dependencies = [
  "hyper-util",
  "jsonschema",
  "mimalloc",
+ "nix",
  "notify",
  "notify-debouncer-full",
  "rdock-acme",
