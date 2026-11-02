@@ -42,6 +42,7 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 ## [0.4.0-alpha.1] — v0.4 "Production reliability"
 
 ### Fixed
+- **Every response to an HTTP/1 client left as two packets** ([#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93)): the header and the body were written separately, because the client connection had no write buffer. It now has one (8 KiB, allocated on the first write), so a header and a typical body leave in one write and one segment, as from NGINX.
 - **Throughput collapsed under overload** ([#86](https://github.com/Docker-Hunterpedia/ReverseDock/issues/86), ADR-0023): each listener kept only 128 idle connections to backends, so with more requests in flight every extra request opened and closed its own backend connection. The pool is now 4096 and configurable with `security.limits.upstream_idle_connections` (M-LB-08). At a 40,000 req/s target the benchmark now holds about 14,900 req/s with 0.37 % failures instead of 1,925 req/s with 52 %.
 
 ### Changed
