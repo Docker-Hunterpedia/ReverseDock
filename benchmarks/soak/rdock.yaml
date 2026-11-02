@@ -21,4 +21,5 @@ middlewares:
   stamp: { type: headers, response: { set: { X-Soak-Generation: "GENERATION" } } }
 observability:
   access_log: { format: off }
-admin: { enabled: false }
+# The admin side stays on (its defaults: a loopback listener nobody calls), so its threads and
+# memory are part of what the probe measures.

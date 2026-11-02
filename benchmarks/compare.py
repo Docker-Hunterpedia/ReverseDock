@@ -12,11 +12,11 @@ import sys
 
 # rdock must complete at least this share of what NGINX completes at the same target rate.
 MIN_THROUGHPUT_RATIO = 0.95
-# rdock p99 may be at most this multiple of NGINX p99 plus a fixed allowance. The allowance is
-# today's gap, not a goal: on a 4-CPU runner on 2026-10-30, rdock's p99 at 5k was 19.9 ms against
-# NGINX's 1.7 ms (#91). Lower it as that gap closes.
-MAX_P99_RATIO = 4.0
-P99_SLACK_MS = 25.0
+# rdock p99 may be at most this multiple of NGINX p99 plus a fixed allowance. On 2 CPUs on
+# 2026-11-02, rdock's p99 was 1.0–1.4× NGINX's up to 10k req/s (results/2026-11-02-small-cpu);
+# the allowance absorbs the shared runner's jitter, not a gap (#93).
+MAX_P99_RATIO = 2.0
+P99_SLACK_MS = 5.0
 # Failed requests: at most 1 %, or twice what NGINX failed if the machine itself was overloaded.
 MAX_FAILED = 0.01
 

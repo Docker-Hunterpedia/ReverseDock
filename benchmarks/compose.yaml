@@ -16,6 +16,7 @@ services:
     volumes:
       - ./backend/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./backend/index.html:/usr/share/nginx/html/index.html:ro
+      - ./backend/bodies:/usr/share/nginx/html/bodies:ro
     networks: [bench]
 
   # `slow` scenario: answers after ?wait=100ms, under the same name as the usual backend.

@@ -26,12 +26,19 @@ case $SCENARIO in
     [ "$SCENARIO" = tls-new ] && EXTRA+=(-e NEW_CONNECTIONS=1)
     ;;
   slow) BACKENDS="backend-slow"; URLPATH="/?wait=100ms" ;;
+  large | huge)
+    # Response bodies of 100 KiB and 1 MiB instead of 1 KiB; lower rates, see README.
+    mkdir -p backend/bodies
+    [ -f backend/bodies/100k.bin ] || head -c 102400 /dev/urandom > backend/bodies/100k.bin
+    [ -f backend/bodies/1m.bin ] || head -c 1048576 /dev/urandom > backend/bodies/1m.bin
+    [ "$SCENARIO" = large ] && URLPATH=/bodies/100k.bin || URLPATH=/bodies/1m.bin
+    ;;
   routes)
     CONFIGS=./configs/routes
     python3 -I gen-routes.py configs/routes 1000
     EXTRA=(-e HOSTS=1000)
     ;;
-  *) echo "SCENARIO is single, lb, tls, tls-new, slow or routes" >&2; exit 2 ;;
+  *) echo "SCENARIO is single, lb, tls, tls-new, slow, routes, large or huge" >&2; exit 2 ;;
 esac
 # A throwaway certificate; compose mounts the folder for every scenario.
 if [ ! -f configs/tls/certs/combined.pem ]; then

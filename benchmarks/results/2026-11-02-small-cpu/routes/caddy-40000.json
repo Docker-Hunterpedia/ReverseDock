@@ -1,0 +1,16 @@
+{
+  "proxy": "caddy",
+  "rate": 40000,
+  "duration": "30s",
+  "requests": 1058339,
+  "achieved_rps": 35272.981683136146,
+  "failed": 1,
+  "dropped": 141662,
+  "ms": {
+    "p50": 0,
+    "p90": 0,
+    "p99": 0,
+    "p999": 0,
+    "max": 0
+  }
+}

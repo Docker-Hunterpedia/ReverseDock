@@ -24,6 +24,8 @@ Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](
 | `tls-new` | Like `tls`, with a new connection and TLS handshake for every request | Handshakes, the most expensive thing a proxy does. Latency here is k6's `iteration_duration`, because `http_req_duration` leaves out connecting and the handshake |
 | `slow` | The backend answers after 100 ms ([traefik/whoami](https://github.com/traefik/whoami) `?wait=100ms`) | Holding many requests open at once. Subtract the 100 ms when reading latency |
 | `routes` | 1,000 hosts, each with its own route, one chosen per request; [`gen-routes.py`](gen-routes.py) writes the configurations | Routing as a configuration grows. HAProxy uses plain ACLs in order, the way a hand-written configuration does; a map file would be faster |
+| `large` | The backend answers with 100 KiB instead of 1 KiB (`RATES="1000 2500 5000 10000"`) | Copying bytes; at 10,000 req/s the proxy moves 1 GB/s |
+| `huge` | 1 MiB answers (`RATES="100 250 500 1000"`) | The same at 1 GB/s with few requests; the bodies are random bytes made by `run.sh`, never committed |
 
 For `lb`, each proxy uses its own round-robin: rdock `policy: round_robin`, NGINX's default weighted round-robin ([upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)), HAProxy `balance roundrobin` ([configuration manual](https://docs.haproxy.org/3.2/configuration.html#4.2-balance)), Caddy `lb_policy round_robin` ([reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#lb_policy)) and Traefik's default weighted round-robin ([services](https://doc.traefik.io/traefik/routing/services/)), all checked 2026-11-01. A check with 30 requests per proxy found each backend getting a third of them (NGINX 11/10/9, the others 10/10/10).
 
@@ -54,7 +56,7 @@ Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/<scena
 
 ## In CI
 
-The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 2,500 and 5,000 req/s, and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.95× its throughput, a p99 above 4× NGINX's plus 25 ms, or more than 1 % failed requests. The rates stay below what ReverseDock sustains on a 4-CPU runner today (about 6,300 req/s, against NGINX's 10,000; see [#91](https://github.com/Docker-Hunterpedia/ReverseDock/issues/91)), so the check catches regressions from the current state. Raise the rates and lower the limits as that gap closes. The results are kept as a workflow artifact for 30 days and shown in the job summary.
+The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 5,000 and 10,000 req/s, and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.95× its throughput, a p99 above 2× NGINX's plus 5 ms, or more than 1 % failed requests. Since [#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93) ReverseDock completes as much as NGINX at these rates on 2 CPUs with a p99 within 1.4× of it, so the limits leave room for the runner's jitter only. The results are kept as a workflow artifact for 30 days and shown in the job summary.
 
 GitHub's shared runners are virtual machines whose speed changes from run to run, so these numbers are a regression check only and are never published. Running both proxies in one job cancels most of that noise. Published reports below come from fixed hardware.
 
@@ -109,3 +111,4 @@ The first runs found that the admin side's own threads do not protect the proxy 
 |---|---|---|
 | 0.4.0-alpha.1 | Apple M5 Pro (15 cores), 24 GiB, Docker Desktop | [results/0.4.0-alpha.1/report.md](results/0.4.0-alpha.1/report.md) |
 | main, 2026-10-30 (upstream pool, #86) | same | [results/2026-10-30-upstream-pool/report.md](results/2026-10-30-upstream-pool/report.md) |
+| main at 36f64a9, 2026-11-02 (small CPUs, #93): all scenarios, all proxies, before and after, large bodies | Hetzner dedicated server, 8 vCPUs, 32 GiB, Ubuntu 26.04 | [results/2026-11-02-small-cpu/report.md](results/2026-11-02-small-cpu/report.md) |
