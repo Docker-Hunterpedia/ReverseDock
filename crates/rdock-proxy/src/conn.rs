@@ -362,14 +362,14 @@ mod tests {
         let early = tokio::time::timeout(Duration::from_millis(20), b.read(&mut buf)).await;
         assert!(early.is_err(), "no bytes before the flush");
         c.flush().await.unwrap();
-        assert!(c.pending.is_empty());
+        assert_eq!(c.pending, Vec::<u8>::new());
         let n = b.read(&mut buf).await.unwrap();
         assert_eq!(&buf[..n], [&header[..], b"body"].concat());
 
         // A write of the buffer's size or more goes straight to the socket.
         let big = vec![b'x'; WRITE_BUFFER];
         c.write_all(&big).await.unwrap();
-        assert!(c.pending.is_empty());
+        assert_eq!(c.pending, Vec::<u8>::new());
         let n = b.read(&mut buf).await.unwrap();
         assert_eq!(n, WRITE_BUFFER);
 
@@ -382,7 +382,7 @@ mod tests {
             "the full buffer was written before the next bytes"
         );
         AsyncWriteExt::shutdown(&mut c).await.unwrap();
-        assert!(c.pending.is_empty(), "shutdown flushes");
+        assert_eq!(c.pending, Vec::<u8>::new(), "shutdown flushes");
     }
 
     #[tokio::test]

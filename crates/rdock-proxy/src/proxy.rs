@@ -1120,14 +1120,13 @@ impl ProxyHttp for RdockProxy {
         if let Some(service) = &service {
             service.live.record(sample, now);
         }
-        let log = &ctx.runtime.access_log;
         let feed = &self.shared.metrics.feeds.logs;
         // Building the record is about twenty allocations; skip it when nobody reads it.
-        if !log.enabled() && !feed.watched() {
+        if !ctx.runtime.access_log.enabled() && !feed.watched() {
             return;
         }
         let record = self.access_record(session, e, ctx, status, elapsed);
-        log.write(&record);
+        ctx.runtime.access_log.write(&record);
         if feed.watched()
             && let Ok(entry) = serde_json::to_value(&record)
         {
