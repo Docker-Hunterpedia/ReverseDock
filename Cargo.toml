@@ -111,7 +111,8 @@ zstd = "0.14.3"
 httpdate = "1.0.3"
 # HMAC for sticky cookies and JWT signatures; already built for rustls (ADR-0013).
 ring = "0.17.14"
-uuid = { version = "1.29.0", features = ["v7"] }
+# fast-rng: request ids from a thread-local generator, not a getrandom call per request (#93).
+uuid = { version = "1.29.0", features = ["v7", "fast-rng"] }
 
 # Providers (bollard 0.21.1 released 2026-08-16; no TLS features, Docker endpoints are unix sockets or plain tcp://)
 bollard = { version = "0.21.1", default-features = false, features = ["http", "pipe"] }
@@ -131,6 +132,10 @@ notify = "8.2.1"
 notify-debouncer-full = "0.7.0"
 prometheus = { version = "0.14.0", default-features = false }
 sd-notify = "0.5.0"
+# Global allocator (0.1.52 released 2026-05-22): musl's malloc mapped and unmapped memory on the request path (#93).
+mimalloc = "0.1.52"
+# Raises the open-file limit at start (nix 0.31.3 released 2026-05-11; pingora-core builds it already).
+nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "json", "smallvec", "std", "tracing-log"] }
 
