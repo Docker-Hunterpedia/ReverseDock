@@ -85,7 +85,27 @@ Caddy and Traefik are left out: both failed most requests at this rate.
 
 ## Large responses
 
-LARGE_BODIES
+Two more scenarios, added for this report: the backend answers with 100 KiB (`large`, at 1,000 to 10,000 req/s) and with 1 MiB (`huge`, at 100 to 1,000 req/s). Each cell is the p99 in ms when the proxy kept up with the rate, otherwise what it completed.
+
+100 KiB responses:
+
+| Target req/s | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---:|---:|---:|---:|---:|---:|
+| 1,000 | 0.38 | 0.57 | 0.43 | 0.46 | 0.43 |
+| 2,500 | 0.49 | 0.80 | 0.57 | 0.69 | 0.60 |
+| 5,000 | 0.80 | 1.66 | 1.15 | 1.30 | 0.92 |
+| 10,000 | 6.17 | 7,470 done, 1.0% failed | 7,460 done | 1,728 done | 2,374 done, 15.5% failed |
+
+1 MiB responses:
+
+| Target req/s | ReverseDock | NGINX | HAProxy | Caddy | Traefik |
+|---:|---:|---:|---:|---:|---:|
+| 100 | 1.06 | 2.43 | 1.82 | 1.49 | 1.21 |
+| 250 | 0.90 | 2.25 | 1.52 | 1.15 | 1.03 |
+| 500 | 0.84 | 30.43 | 1.58 | 1.13 | 1.02 |
+| 1,000 | 1.27 | 18.82 | 1.74 | 1.49 | 1.46 |
+
+At 10,000 req/s of 100 KiB, 1 GB/s, ReverseDock is the only one of the five that keeps up on 2 CPUs; NGINX and HAProxy complete about 7,500. With 1 MiB responses every proxy keeps up to 1,000 req/s (also 1 GB/s) and ReverseDock has the lowest p99 at every rate; NGINX's tail at 500 and 1,000 req/s is in the tens of milliseconds. Results in [`large/`](large/) and [`huge/`](huge/).
 
 ## Caddy and Traefik above 10,000 req/s
 
@@ -110,6 +130,6 @@ The numbers for Caddy and Traefik in this report are what a 2-CPU, 1 GiB contain
 
 ## Files
 
-- [`single/`](single/), [`lb/`](lb/), [`tls/`](tls/), [`tls-new/`](tls-new/), [`slow/`](slow/), [`routes/`](routes/): one JSON per proxy and rate, and the generated `report.md`, for `main` at `36f64a9`.
+- [`single/`](single/), [`lb/`](lb/), [`tls/`](tls/), [`tls-new/`](tls-new/), [`slow/`](slow/), [`routes/`](routes/), [`large/`](large/), [`huge/`](huge/): one JSON per proxy and rate, and the generated `report.md`, for `main` at `36f64a9`.
 - [`before/`](before/): the same for `main` at `c3e2f1a`.
 - [`cpu.txt`](cpu.txt), [`before/cpu.txt`](before/cpu.txt), [`fixes/`](fixes/): the CPU ladders (`cpu.stat` of the proxy's cgroup after 30 s at each rate; µs per request = `usage_usec` ÷ (rate × 30)).
