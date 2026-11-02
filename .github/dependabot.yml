@@ -1,9 +1,12 @@
 version: 2
+# Version updates wait 14 days after a release. Security updates are not delayed.
 updates:
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     labels: ["dependencies", "type/chore"]
     commit-message:
       prefix: ci
@@ -14,6 +17,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     labels: ["dependencies", "type/chore"]
     commit-message:
       prefix: build
@@ -29,10 +34,15 @@ updates:
       # parking_lot 0.13 needs Rust 1.95; our MSRV is 1.89 (docs/06-repo-layout.md §2).
       - dependency-name: parking_lot
         versions: [">= 0.13"]
+      # Stays on the version pingora-core builds (see Cargo.toml), so the binary has one brotli.
+      - dependency-name: brotli
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: cargo
     directory: /tests/fuzz
     schedule:
       interval: monthly
+    cooldown:
+      default-days: 14
     labels: ["dependencies", "type/chore"]
     commit-message:
       prefix: build
@@ -44,6 +54,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     labels: ["dependencies", "type/chore"]
     commit-message:
       prefix: build
@@ -52,6 +64,8 @@ updates:
     directory: /
     schedule:
       interval: weekly
+    cooldown:
+      default-days: 14
     labels: ["dependencies", "type/chore"]
     commit-message:
       prefix: build
