@@ -3342,7 +3342,7 @@ dependencies = [
 
 [[package]]
 name = "rdock"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "anyhow",
  "argon2",
@@ -3392,7 +3392,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-acme"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3423,7 +3423,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-admin"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "argon2",
  "async-trait",
@@ -3464,7 +3464,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-balancer"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "fastrand",
  "ring",
@@ -3473,7 +3473,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-cloudflare"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3498,7 +3498,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-config"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "jsonschema",
  "rdock-model",
@@ -3512,14 +3512,14 @@ dependencies = [
 
 [[package]]
 name = "rdock-limits"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "tokio",
 ]
 
 [[package]]
 name = "rdock-middleware"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "arc-swap",
  "argon2",
@@ -3552,7 +3552,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-migrate"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "rdock-config",
  "rdock-model",
@@ -3564,7 +3564,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-model"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "ipnet",
  "rdock-rules",
@@ -3578,7 +3578,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-observability"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3610,11 +3610,11 @@ dependencies = [
 
 [[package]]
 name = "rdock-provider-api"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 
 [[package]]
 name = "rdock-provider-docker"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "bollard",
  "futures-util",
@@ -3630,19 +3630,19 @@ dependencies = [
 
 [[package]]
 name = "rdock-provider-file"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 
 [[package]]
 name = "rdock-provider-kubernetes"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 
 [[package]]
 name = "rdock-provider-swarm"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 
 [[package]]
 name = "rdock-proxy"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "arc-swap",
  "async-trait",
@@ -3680,7 +3680,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-rules"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "ipnet",
  "proptest",
@@ -3690,7 +3690,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-testkit"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "bytes",
  "futures-util",
@@ -3711,7 +3711,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-tls"
-version = "0.4.0-alpha.1"
+version = "0.5.0-alpha.1"
 dependencies = [
  "arc-swap",
  "pkcs8",
