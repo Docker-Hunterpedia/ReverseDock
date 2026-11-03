@@ -117,11 +117,11 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [x] M-OBS-01 OpenTelemetry traces (OTLP), W3C `traceparent`, sampling
 - [x] M-OBS-02 Per-route/service metrics with bounded labels; p50/p95/p99
 - [x] M-OBS-03 Log sampling, structured export (Loki/OpenSearch via stdout or OTLP logs)
-- [ ] M-OBS-04 Alert rules (cert expiry, backend down, error-rate) → webhook, email (SMTP), Slack/Discord-compatible webhooks
-- [ ] M-OBS-05 Grafana dashboard JSON shipped in repo
+- [x] M-OBS-04 Alert rules (cert expiry, backend down, error-rate) → webhook, email (SMTP), Slack/Discord-compatible webhooks
+- [x] M-OBS-05 Grafana dashboard JSON shipped in repo
 
 ### M-ADM · Management
-- [ ] M-ADM-01 Versioned REST API (`/api/v1`) with OpenAPI, scoped tokens, audit log
+- [x] M-ADM-01 Versioned REST API (`/api/v1`) with OpenAPI, scoped tokens, audit log
 - [ ] M-ADM-02 Config history, diff, rollback; dry-run validation endpoint
 - [ ] M-ADM-03 Embedded dashboard (see F-UI)
 - [ ] M-ADM-04 Import/export full config; GitOps reconciliation mode (file provider wins)
@@ -175,14 +175,14 @@ Tracked as W-SWM-01…03 below.
 - [x] H-ENG-01 Benchmarks: sustained/burst, connection churn, long-lived WS/SSE, TLS handshakes, tail latency; same hardware vs NGINX/Traefik/Caddy/HAProxy; published scripts + results
 - [x] H-ENG-02 Soak tests (24h+), fault injection (toxiproxy), backend failure/recovery, reload under load
 - [ ] H-ENG-03 Memory-leak and resource-exhaustion tests; HTTP parsing fuzzing (differential)
-- [ ] H-ENG-04 Rule: control plane and dashboard are never on the request path
+- [x] H-ENG-04 Rule: control plane and dashboard are never on the request path
 
 ---
 
 ## F — Features and differentiators
 
 ### F-UI · Dashboard (P1) — see [design system](08-design-system.md)
-- [ ] F-UI-01 Embedded, responsive, light/dark, English only (ADR-0024; RTL/Arabic dropped), keyboard-navigable, no external calls
+- [x] F-UI-01 Embedded, responsive, light/dark, English only (ADR-0024; RTL/Arabic dropped), keyboard-navigable, no external calls
 - [ ] F-UI-02 Overview: traffic, error rate, p95, backend health, certificate status, provider status
 - [ ] F-UI-03 CRUD for routes/services/middlewares/certificates owned by the API provider; read-only view of file/Docker/K8s-owned objects with "where it comes from"
 - [ ] F-UI-04 Live request log (SSE) with filters; live traffic charts without Prometheus (15-minute ring buffer)
@@ -213,7 +213,7 @@ Tracked as W-SWM-01…03 below.
 - [ ] F-WEB-06 Mail proxy — out of scope for core (separate project if ever)
 
 ### F-MGMT · Management and automation
-- [ ] F-MGMT-01 CLI/API parity; OpenAPI published; typed clients generated (TS, Go)
+- [x] F-MGMT-01 CLI/API parity; OpenAPI published; typed clients generated (TS, Go)
 - [ ] F-MGMT-02 Terraform/OpenTofu provider (P2)
 - [ ] F-MGMT-03 Migration assistants: `rdock migrate traefik` (labels + dynamic YAML, P0), `rdock migrate nginx` (directive subset, P3)
 - [ ] F-MGMT-04 Webhooks for config/cert/health events

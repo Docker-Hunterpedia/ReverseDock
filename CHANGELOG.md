@@ -4,6 +4,8 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+## [0.5.0-alpha.1] — v0.5 "Management"
+
 ### Changed
 - **Breaking:** an `admin.listener` that is not a loopback address now needs `admin.tls` (TLS 1.3 only); `rdock validate` and `rdock run` refuse it otherwise, because browsers do not keep secure cookies on plain HTTP to a network address (ADR-0024). A listener on all interfaces also needs `admin.allowed_hosts`.
 - The admin API runs on axum, on a runtime of its own (`admin.threads`, 2), so admin traffic never takes worker threads from the proxy. It answers only to the host names in `admin.allowed_hosts` (421 otherwise, against DNS rebinding), refuses cross-site writes from browsers (403), and sends a strict `Content-Security-Policy`, `no-store`, `nosniff` and `no-referrer` on every response, plus HSTS over TLS (#96).

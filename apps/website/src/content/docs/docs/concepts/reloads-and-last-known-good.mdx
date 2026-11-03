@@ -63,7 +63,7 @@ The copy holds the document as written. `${env:…}` and `${file:…}` reference
 
 ## History
 
-Each applied configuration that differs from the previous one is also written to `$RDOCK_DATA_DIR/state/history/`. An entry holds the time it was applied, the generation, the change summary and the document as written. The newest 50 entries are kept. Viewing and rolling back history from the admin API and dashboard is <Status planned="v0.5" />; until then the entries are plain JSON files you can read.
+Each applied configuration that differs from the previous one is also written to `$RDOCK_DATA_DIR/state/history/`. An entry holds the time it was applied, the generation, the change summary and the document as written. The newest 50 entries are kept. The admin API and the dashboard show this history and roll back to an entry <Status since="v0.5" /> (`rdock config history`, `rdock config rollback`, see the [configuration API](/docs/guides/config-api/)); the entries are also plain JSON files you can read.
 
 ## Shutdown
 
