@@ -17,6 +17,7 @@ sidebar:
 - The admin socket no longer stops rdock when it cannot be created (for example a path longer than about 104 bytes on macOS); the CLI then needs `--admin` and a token.
 - `cargo-deny` bans OpenSSL, native-tls and aws-lc, so no dependency can bring another TLS stack in.
 - The nightly benchmark check runs at 5,000 and 10,000 req/s and fails when ReverseDock's p99 passes 2× NGINX's plus 5 ms (was 4× plus 25 ms): on 2 CPUs ReverseDock now completes as much as NGINX with a p99 within 1.4× of it ([results](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/benchmarks/results/2026-11-02-small-cpu/report.md), #93).
+- The v0.5 release candidate passed the 24-hour soak with the admin side on: 1,000 req/s with reloads, backend outages and certificate changes, 86 million requests, none failed, memory flat at 62 MiB, every reload applied ([results](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/benchmarks/results/2026-11-02-small-cpu/soak/report.md), H-ENG-02, H-ENG-03).
 
 ### Added
 - **Configuration playground** (#114, F-MGMT-05): a documentation page edits `rdock.yaml` in the browser with completion, hover help and checks from the JSON Schema bundled into the page. Nothing is sent anywhere while you edit; a test enforces it.
