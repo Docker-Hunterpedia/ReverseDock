@@ -16,7 +16,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 | v0.2 | Docker-native | replace Traefik on a Compose box using your existing labels | <Status since="v0.2" />  0.2.0-alpha.1 |
 | v0.3 | Automatic HTTPS | go from DNS to HTTPS with one label | <Status since="v0.3" />  0.3.0-alpha.2 |
 | v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status since="v0.4" />  0.4.0-alpha.1 |
-| v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status planned="v0.5" /> |
+| v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status since="v0.5" />  0.5.0-alpha.1 |
 | v0.6 | Swarm, L4, static | multi-node Docker, TCP and SNI passthrough, static sites | <Status planned="v0.6" /> |
 | v0.7 | Kubernetes | run it as a Gateway API controller | <Status planned="v0.7" /> |
 | v0.8 | Cache and extensibility | cache like NGINX, extend it with plugins | <Status planned="v0.8" /> |
@@ -39,9 +39,12 @@ ACME with HTTP-01, TLS-ALPN-01 and DNS-01, renewal guided by ARI, a local CA for
 
 Load-balancing policies, active and passive health checks, retries with a retry budget, sticky sessions, traffic splits and mirroring, mTLS and Cloudflare Authenticated Origin Pulls, JWT, limits, brotli and zstd, OpenTelemetry tracing, a chaos suite, and the [first published benchmarks](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks) against NGINX, HAProxy, Caddy and Traefik. Request buffering moves to v0.8.
 
-## v0.5 to v1.0
+## v0.5: Management <Status since="v0.5" />
 
-- **v0.5:** the embedded dashboard and the REST API with audit log, tokens, configuration editor, diff and rollback.
+The embedded dashboard and the versioned REST API with its OpenAPI document and generated clients: admin users, sessions and two-step verification, scoped tokens, a hash-chained audit log, a configuration API with history and rollback, live traffic, logs and events, routing explanations, alerts, a Grafana dashboard, a security review of the admin surface, and [about twice the throughput on 2 CPUs](/docs/project/performance/) with a passed 24-hour soak.
+
+## v0.6 to v1.0
+
 - **v0.6:** Docker Swarm, TCP routing with SNI passthrough, the PROXY protocol, static files.
 - **v0.7:** Kubernetes Gateway API controller and Helm chart, tested with the upstream conformance suite.
 - **v0.8:** HTTP cache, plugins, API-gateway features, UDP.
