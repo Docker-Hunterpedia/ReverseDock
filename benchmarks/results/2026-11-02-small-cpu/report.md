@@ -121,6 +121,10 @@ Neither change helps: with the memory limit lifted, Traefik is no longer killed 
 
 The numbers for Caddy and Traefik in this report are what a 2-CPU, 1 GiB container gives; they are not a measure of either proxy on a bigger machine.
 
+## 24-hour soak
+
+The same build then ran the [24-hour soak](soak/report.md): 1,000 req/s with a reload every 5 minutes, a backend stopped every 15 minutes and a certificate change every 30 minutes, with the admin side on. 86.3 million requests, none failed, 18 dropped; memory +0.3 MiB after warm-up (62 MiB RSS), file descriptors flat, 287 of 287 reloads applied, no panic; p99 per 10-minute window 0.30–0.89 ms, median 0.33 ms.
+
 ## Read with care
 
 - One machine, one lab, 2 CPUs, 1 KiB responses. Other hardware gives other numbers; compare proxies within one run only.
@@ -132,4 +136,5 @@ The numbers for Caddy and Traefik in this report are what a 2-CPU, 1 GiB contain
 
 - [`single/`](single/), [`lb/`](lb/), [`tls/`](tls/), [`tls-new/`](tls-new/), [`slow/`](slow/), [`routes/`](routes/), [`large/`](large/), [`huge/`](huge/): one JSON per proxy and rate, and the generated `report.md`, for `main` at `36f64a9`.
 - [`before/`](before/): the same for `main` at `c3e2f1a`.
+- [`soak/`](soak/): the 24-hour soak of the same build: the analyzer's report, the probe's `probe.csv`, `events.csv` and one k6 summary per window.
 - [`cpu.txt`](cpu.txt), [`before/cpu.txt`](before/cpu.txt), [`fixes/`](fixes/): the CPU ladders (`cpu.stat` of the proxy's cgroup after 30 s at each rate; µs per request = `usage_usec` ÷ (rate × 30)).

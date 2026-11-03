@@ -173,7 +173,7 @@ Tracked as W-SWM-01…03 below.
 
 ### H-ENG · Reliability and performance engineering (P1 onward, continuous)
 - [x] H-ENG-01 Benchmarks: sustained/burst, connection churn, long-lived WS/SSE, TLS handshakes, tail latency; same hardware vs NGINX/Traefik/Caddy/HAProxy; published scripts + results
-- [ ] H-ENG-02 Soak tests (24h+), fault injection (toxiproxy), backend failure/recovery, reload under load
+- [x] H-ENG-02 Soak tests (24h+), fault injection (toxiproxy), backend failure/recovery, reload under load
 - [ ] H-ENG-03 Memory-leak and resource-exhaustion tests; HTTP parsing fuzzing (differential)
 - [ ] H-ENG-04 Rule: control plane and dashboard are never on the request path
 

@@ -133,7 +133,7 @@ VERSION=mine ./run.sh                                   # all proxies, single ba
 SCENARIO=tls-new PROXIES="rdock haproxy" VERSION=mine ./run.sh
 ```
 
-The soak test (24 hours at 1,000 req/s with reloads, a backend going down every 15 minutes and certificate changes) lives in [`benchmarks/soak/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks/soak).
+The soak test (24 hours at 1,000 req/s with reloads, a backend going down every 15 minutes and certificate changes) lives in [`benchmarks/soak/`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/benchmarks/soak). The v0.5 release candidate [passed it](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/benchmarks/results/2026-11-02-small-cpu/soak/report.md) with the admin side on: 86 million requests, none failed, memory +0.3 MiB after warm-up at 62 MiB, every one of 287 reloads applied, p99 per 10-minute window between 0.30 and 0.89 ms.
 
 ## Related
 
