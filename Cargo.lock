@@ -1497,6 +1497,7 @@ version = "0.26.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "12b92608f679a6fa515dd1d15c1ff89443026e391200a2c840c7afcba482893d"
 dependencies = [
+ "bitflags",
  "data-encoding",
  "idna",
  "ipnet",
@@ -1505,7 +1506,9 @@ dependencies = [
  "prefix-trie",
  "rand 0.10.3",
  "ring",
+ "rustls-pki-types",
  "thiserror 2.0.21",
+ "time",
  "tinyvec",
  "tracing",
  "url",
@@ -3373,6 +3376,7 @@ dependencies = [
  "rdock-balancer",
  "rdock-cloudflare",
  "rdock-config",
+ "rdock-dns-providers",
  "rdock-middleware",
  "rdock-migrate",
  "rdock-model",
@@ -3494,6 +3498,7 @@ dependencies = [
  "rdock-acme",
  "rdock-config",
  "rdock-model",
+ "rdock-testkit",
  "serde",
  "serde_json",
  "tempfile",
@@ -3515,6 +3520,34 @@ dependencies = [
  "serde_path_to_error",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rdock-dns-providers"
+version = "0.5.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "fastrand",
+ "hickory-proto",
+ "http",
+ "http-body-util",
+ "httpdate",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "percent-encoding",
+ "rdock-acme",
+ "rdock-config",
+ "rdock-model",
+ "rdock-testkit",
+ "ring",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -3723,8 +3756,10 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "percent-encoding",
  "proxy-header",
  "rcgen",
+ "rdock-acme",
  "rustls",
  "rustls-pki-types",
  "serde_json",

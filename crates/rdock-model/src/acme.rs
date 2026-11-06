@@ -197,6 +197,101 @@ pub enum DnsProvider {
     },
     /// A JSON `POST` of `{"action", "name", "value"}` to an HTTPS endpoint.
     Webhook(Webhook),
+    /// DigitalOcean DNS, with a token allowed to read domains and to create and delete records.
+    #[serde(rename = "digitalocean")]
+    DigitalOcean(DigitalOceanProvider),
+    /// Hetzner DNS through the Hetzner Cloud API (the zone moved to the Hetzner Console), with an
+    /// API token of the project that holds the zone.
+    Hetzner(HetznerProvider),
+    /// Dynamic updates (RFC 2136) signed with TSIG, sent to a primary nameserver such as BIND,
+    /// Knot or PowerDNS.
+    Rfc2136(Rfc2136Provider),
+}
+
+/// DigitalOcean DNS (`type: digitalocean`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DigitalOceanProvider {
+    /// API token with the custom scopes `domain:read`, `domain:create` and `domain:delete`.
+    /// Write it as a `${file:…}` or `${env:…}` reference.
+    pub api_token: String,
+    /// The domain (zone) holding the records, such as `example.com`. Found by asking for each
+    /// parent of the name when omitted.
+    #[serde(default)]
+    pub zone: Option<String>,
+    /// For tests only: another API base URL, `http://` only on a loopback address.
+    #[serde(default)]
+    pub api_url: Option<HttpUrl>,
+}
+
+/// Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct HetznerProvider {
+    /// Read & Write API token of the Cloud project that holds the zone; tokens from the old DNS
+    /// Console do not work. Write it as a `${file:…}` or `${env:…}` reference.
+    pub api_token: String,
+    /// The name of the zone holding the records, such as `example.com`. Found by asking for each
+    /// parent of the name when omitted.
+    #[serde(default)]
+    pub zone: Option<String>,
+    /// For tests only: another API base URL, `http://` only on a loopback address.
+    #[serde(default)]
+    pub api_url: Option<HttpUrl>,
+}
+
+/// RFC 2136 dynamic updates (`type: rfc2136`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Rfc2136Provider {
+    /// IP address of the primary nameserver: `ip` (port 53), `ip:port` or `[ipv6]:port`.
+    pub nameserver: String,
+    /// The zone to update, such as `example.com`. Found with SOA queries to `nameserver` when
+    /// omitted.
+    #[serde(default)]
+    pub zone: Option<String>,
+    /// Name of the TSIG key, as the server knows it.
+    #[serde(default)]
+    pub tsig_key_name: Option<String>,
+    /// The TSIG key's secret, base64 as `tsig-keygen` prints it. Write it as a `${file:…}` or
+    /// `${env:…}` reference.
+    #[serde(default)]
+    pub tsig_secret: Option<String>,
+    /// The TSIG algorithm.
+    #[serde(default)]
+    pub tsig_algorithm: TsigAlgorithm,
+    /// How updates are sent.
+    #[serde(default)]
+    pub transport: DnsTransport,
+    /// Send updates without TSIG. Anyone who can reach the server could then change the zone, so
+    /// this is only for servers that authorize updates by address.
+    #[serde(default)]
+    pub insecure_unsigned: bool,
+}
+
+/// TSIG algorithms (RFC 8945).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "kebab-case")]
+pub enum TsigAlgorithm {
+    /// HMAC-SHA256, the one RFC 8945 recommends.
+    #[default]
+    HmacSha256,
+    /// HMAC-SHA384.
+    HmacSha384,
+    /// HMAC-SHA512.
+    HmacSha512,
+    /// HMAC-SHA1: accepted with a warning; RFC 8945 does not recommend it.
+    HmacSha1,
+    /// HMAC-MD5: refused by validation; RFC 8945 says it must not be used.
+    HmacMd5,
+}
+
+/// The transport for DNS messages.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum DnsTransport {
+    /// TCP: every answer arrives, whatever its size.
+    #[default]
+    Tcp,
+    /// UDP.
+    Udp,
 }
 
 /// An HTTPS endpoint that receives JSON events.

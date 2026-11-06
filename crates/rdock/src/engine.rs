@@ -168,7 +168,10 @@ impl Engine {
                 resolver: plane.resolver(),
                 challenges: plane.challenges(),
                 metrics: plane.metrics().clone(),
-                dns: Arc::new(rdock_cloudflare::dns::Providers),
+                // DigitalOcean, Hetzner and RFC 2136, then Cloudflare, then exec and webhook.
+                dns: Arc::new(rdock_dns_providers::Providers::new(Arc::new(
+                    rdock_cloudflare::dns::Providers,
+                ))),
             }),
             cloudflare: rdock_cloudflare::IpSync::spawn(
                 rdock_cloudflare::Options::new(data_dir.join("cloudflare")),

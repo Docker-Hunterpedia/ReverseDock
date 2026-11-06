@@ -940,6 +940,27 @@ export type RdockDefaults = {
 };
 
 /**
+ * DigitalOcean DNS (`type: digitalocean`).
+ */
+export type RdockDigitalOceanProvider = {
+    /**
+     * API token with the custom scopes `domain:read`, `domain:create` and `domain:delete`.
+     * Write it as a `${file:…}` or `${env:…}` reference.
+     */
+    api_token: string;
+    /**
+     * For tests only: another API base URL, `http://` only on a loopback address.
+     */
+    api_url?: RdockHttpUrl | null;
+    /**
+     * The domain (zone) holding the records, such as `example.com`. Found by asking for each
+     * parent of the name when omitted.
+     */
+    zone?: string | null;
+    [key: string]: unknown | string | RdockHttpUrl | null | string | null | undefined;
+};
+
+/**
  * A DNS provider for DNS-01 challenges.
  */
 export type RdockDnsProvider = {
@@ -968,7 +989,12 @@ export type RdockDnsProvider = {
     timeout?: RdockDuration;
     type: 'exec';
     [key: string]: unknown | Array<string> | string | RdockDuration | 'exec' | undefined;
-} | RdockWebhook;
+} | RdockWebhook | RdockDigitalOceanProvider | RdockHetznerProvider | RdockRfc2136Provider;
+
+/**
+ * The transport for DNS messages.
+ */
+export type RdockDnsTransport = 'tcp' | 'udp';
 
 /**
  * Docker provider.
@@ -1119,6 +1145,27 @@ export type RdockHealthMethod = 'GET' | 'HEAD';
  * How a probe checks a backend.
  */
 export type RdockHealthMode = 'http' | 'tcp' | 'grpc';
+
+/**
+ * Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).
+ */
+export type RdockHetznerProvider = {
+    /**
+     * Read & Write API token of the Cloud project that holds the zone; tokens from the old DNS
+     * Console do not work. Write it as a `${file:…}` or `${env:…}` reference.
+     */
+    api_token: string;
+    /**
+     * For tests only: another API base URL, `http://` only on a loopback address.
+     */
+    api_url?: RdockHttpUrl | null;
+    /**
+     * The name of the zone holding the records, such as `example.com`. Found by asking for each
+     * parent of the name when omitted.
+     */
+    zone?: string | null;
+    [key: string]: unknown | string | RdockHttpUrl | null | string | null | undefined;
+};
 
 /**
  * `Strict-Transport-Security` settings. Browsers then refuse plain HTTP for the host, so
@@ -1854,6 +1901,44 @@ export type RdockRetries = {
 export type RdockRetryOn = 'connect' | 'reset' | 'timeout' | '502' | '503' | '504';
 
 /**
+ * RFC 2136 dynamic updates (`type: rfc2136`).
+ */
+export type RdockRfc2136Provider = {
+    /**
+     * Send updates without TSIG. Anyone who can reach the server could then change the zone, so
+     * this is only for servers that authorize updates by address.
+     */
+    insecure_unsigned?: boolean;
+    /**
+     * IP address of the primary nameserver: `ip` (port 53), `ip:port` or `[ipv6]:port`.
+     */
+    nameserver: string;
+    /**
+     * How updates are sent.
+     */
+    transport?: RdockDnsTransport;
+    /**
+     * The TSIG algorithm.
+     */
+    tsig_algorithm?: RdockTsigAlgorithm;
+    /**
+     * Name of the TSIG key, as the server knows it.
+     */
+    tsig_key_name?: string | null;
+    /**
+     * The TSIG key's secret, base64 as `tsig-keygen` prints it. Write it as a `${file:…}` or
+     * `${env:…}` reference.
+     */
+    tsig_secret?: string | null;
+    /**
+     * The zone to update, such as `example.com`. Found with SOA queries to `nameserver` when
+     * omitted.
+     */
+    zone?: string | null;
+    [key: string]: unknown | boolean | string | RdockDnsTransport | RdockTsigAlgorithm | string | null | string | null | string | null | undefined;
+};
+
+/**
  * An HTTP route: which requests it matches, which middlewares run, which service answers.
  */
 export type RdockRoute = {
@@ -2322,6 +2407,11 @@ export type RdockTracing = {
  * `cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.
  */
 export type RdockTrustedProxy = string;
+
+/**
+ * TSIG algorithms (RFC 8945).
+ */
+export type RdockTsigAlgorithm = 'hmac-sha256' | 'hmac-sha384' | 'hmac-sha512' | 'hmac-sha1' | 'hmac-md5';
 
 /**
  * TLS to backends.
