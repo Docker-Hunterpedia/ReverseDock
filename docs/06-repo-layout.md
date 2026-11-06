@@ -35,6 +35,7 @@ reversedock/
 │   ├── rdock-observability/        # logs, metrics, traces, ring buffer
 │   ├── rdock-admin/                # axum API + OpenAPI + embedded dashboard
 │   ├── rdock-cloudflare/           # IP sync, DNS-01, Access JWT, Origin CA
+│   ├── rdock-dns-providers/        # DNS-01 adapters: DigitalOcean, Hetzner, RFC 2136 (ADR-0026)
 │   ├── rdock-migrate/              # traefik/nginx → rdock.yaml
 │   ├── rdock-testkit/              # test harness (upstreams, Pebble, toxiproxy, containers)
 │   └── providers/

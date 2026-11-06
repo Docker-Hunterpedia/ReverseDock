@@ -57,16 +57,17 @@ rdock-limits         token bucket · concurrency gate with queue · body/header 
 rdock-observability  tracing setup · access log formatter + redaction · metrics registry · OTLP exporter · 15-min ring buffer for the dashboard
 rdock-admin          v0.1: health, readiness, metrics, status, reload on its own listener · v0.5: axum API (/api/v1), OpenAPI (utoipa), auth (tokens, sessions, RBAC), SSE, embedded dashboard (rust-embed)
 rdock-cloudflare     IP-range sync · Cloudflare `DnsProvider` impl (depends on rdock-acme) · Access JWT validator · Origin CA helpers
+rdock-dns-providers  DNS-01 adapters on the `DnsSolver` trait (depends on rdock-acme): DigitalOcean, Hetzner Cloud, RFC 2136 with TSIG · shared REST client, backoff, zone discovery (ADR-0026)
 rdock-cache          (P2) HTTP cache on pingora-cache: memory + disk storage, purge, SWR/SIE
 rdock-plugins        (P2/P3) native plugin trait, WASM host (wasmtime), out-of-process agent client
 rdock-control        (P3) optional control plane: config rollout ACK/NACK, shared cert storage, distributed limits
 rdock-provider-file  · rdock-provider-docker · rdock-provider-swarm · rdock-provider-kubernetes · rdock-provider-api
 rdock-migrate        traefik (labels + dynamic yaml) → rdock.yaml · nginx subset (later)
-rdock-testkit        spawn upstream servers, Pebble ACME, toxiproxy, docker-in-CI helpers
+rdock-testkit        spawn upstream servers, Pebble ACME, toxiproxy, docker-in-CI helpers · fake provider APIs and the DNS-01 adapter contract
 rdock                the binary (clap): run / validate / reload / status / config / cert / migrate / trust / version
 ```
 
-Dependency direction: `rdock` → `rdock-admin`, `rdock-proxy`, providers → `rdock-config` → `rdock-model` → `rdock-rules` (the model validates `match` rules with the grammar crate). No crate depends on `rdock-admin` or on any provider. `rdock-proxy` depends on `rdock-tls`, `rdock-balancer`, `rdock-middleware`, `rdock-limits`, `rdock-observability`. `rdock-cloudflare` depends on `rdock-acme` (it implements its `DnsProvider` trait).
+Dependency direction: `rdock` → `rdock-admin`, `rdock-proxy`, providers → `rdock-config` → `rdock-model` → `rdock-rules` (the model validates `match` rules with the grammar crate). No crate depends on `rdock-admin` or on any provider. `rdock-proxy` depends on `rdock-tls`, `rdock-balancer`, `rdock-middleware`, `rdock-limits`, `rdock-observability`. `rdock-cloudflare` and `rdock-dns-providers` depend on `rdock-acme` (they implement its `DnsSolver` trait); the binary chains their provider registries.
 
 ## 3. Desired-state model (`rdock-model`)
 

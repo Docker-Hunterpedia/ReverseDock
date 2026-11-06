@@ -16,6 +16,7 @@ members = [
   "crates/rdock-observability",
   "crates/rdock-admin",
   "crates/rdock-cloudflare",
+  "crates/rdock-dns-providers",
   "crates/rdock-migrate",
   "crates/rdock-testkit",
   "crates/providers/rdock-provider-file",
@@ -42,6 +43,7 @@ rdock-balancer = { path = "crates/rdock-balancer" }
 rdock-cloudflare = { path = "crates/rdock-cloudflare" }
 rdock-acme = { path = "crates/rdock-acme" }
 rdock-config = { path = "crates/rdock-config" }
+rdock-dns-providers = { path = "crates/rdock-dns-providers" }
 rdock-limits = { path = "crates/rdock-limits" }
 rdock-middleware = { path = "crates/rdock-middleware" }
 rdock-migrate = { path = "crates/rdock-migrate" }
@@ -154,6 +156,9 @@ predicates = "3.1.4"
 proptest = "1.12.0"
 # DNS-01 propagation checks (ADR-0020); no DNSSEC or encrypted transports needed.
 hickory-resolver = { version = "0.26.3", default-features = false, features = ["system-config", "tokio"] }
+# RFC 2136 updates and TSIG (ADR-0026): messages only, sent over our own sockets; ring only,
+# the `dnssec-aws-lc-rs` feature would pull in aws-lc-rs.
+hickory-proto = { version = "0.26.3", default-features = false, features = ["std", "dnssec-ring"] }
 # ring only (ADR-0013); the default features would pull in aws-lc-rs (ADR-0020).
 instant-acme = { version = "0.8.5", default-features = false, features = ["ring", "hyper-rustls", "time", "x509-parser"] }
 rcgen = { version = "0.14.10", default-features = false, features = ["crypto", "pem", "ring"] }

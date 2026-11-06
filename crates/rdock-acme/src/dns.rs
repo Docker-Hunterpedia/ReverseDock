@@ -62,10 +62,26 @@ impl DnsProviders for BuiltinProviders {
                 webhook: webhook.clone(),
                 client: WebhookClient::new().map_err(|e| DnsError(e.to_string()))?,
             })),
-            DnsProvider::Cloudflare { .. } => Err(DnsError(
-                "the Cloudflare DNS provider is not available in this build".to_owned(),
-            )),
+            DnsProvider::Cloudflare { .. }
+            | DnsProvider::DigitalOcean(_)
+            | DnsProvider::Hetzner(_)
+            | DnsProvider::Rfc2136(_) => Err(DnsError(format!(
+                "the {} DNS provider is not available in this build",
+                provider_type(config)
+            ))),
         }
+    }
+}
+
+/// The `type` of a provider, as written in the configuration.
+fn provider_type(config: &DnsProvider) -> &'static str {
+    match config {
+        DnsProvider::Cloudflare { .. } => "cloudflare",
+        DnsProvider::Exec { .. } => "exec",
+        DnsProvider::Webhook(_) => "webhook",
+        DnsProvider::DigitalOcean(_) => "digitalocean",
+        DnsProvider::Hetzner(_) => "hetzner",
+        DnsProvider::Rfc2136(_) => "rfc2136",
     }
 }
 
