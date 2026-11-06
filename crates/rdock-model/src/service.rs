@@ -318,6 +318,10 @@ impl RetryOn {
 pub struct Timeouts {
     /// Establishing a connection.
     pub connect: Duration,
+    /// Establishing a connection when a failed connect would be retried on another
+    /// backend: the attempt gives up after this long, so a stopped backend costs about a
+    /// second instead of `connect` (ADR-0026). The last attempt always waits `connect`.
+    pub connect_attempt: Duration,
     /// Waiting for response data.
     pub read: Duration,
     /// Sending request data.
@@ -330,6 +334,7 @@ impl Default for Timeouts {
     fn default() -> Self {
         Self {
             connect: Duration::from_secs(5),
+            connect_attempt: Duration::from_secs(1),
             read: Duration::from_secs(60),
             write: Duration::from_secs(60),
             idle: Duration::from_secs(90),

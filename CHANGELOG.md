@@ -7,6 +7,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 ### Added
 - **DNS-01 with DigitalOcean, Hetzner and RFC 2136** (#192, W-DNS-03, ADR-0026): `acme.dns_providers` takes `type: digitalocean` (API token with `domain:read`, `domain:create`, `domain:delete`), `type: hetzner` (the Hetzner Cloud API, where Hetzner Console DNS lives; the old `dns.hetzner.com` API is not supported) and `type: rfc2136` (dynamic updates to BIND, Knot, PowerDNS or any primary, signed with TSIG `hmac-sha256` by default over TCP; `hmac-sha384`/`-sha512` accepted, `hmac-sha1` with a warning, `hmac-md5` refused, unsigned updates only with `insecure_unsigned: true`). The zone is found by walking up from the record name unless `zone` is set; a wildcard and its base name get separate values that never remove each other; Hetzner actions are followed until they succeed before the propagation check. API calls take at most 30 s, follow no redirects and retry `429`, `409`, `423` and `5xx` up to five times with jittered backoff that honours `Retry-After` and `RateLimit-Reset`. Their secrets must be `${file:…}`/`${env:…}` references, read again for every call; `rdock validate` refuses literals. Every adapter passes one contract test against a fake of its provider (`rdock-testkit::fake_api`, and an in-process TSIG-verifying DNS server for RFC 2136).
 
+### Changed
+- A connection attempt that would be retried on another backend gives up after `timeouts.connect_attempt` (1 s) instead of the full `timeouts.connect` (5 s), so a stopped backend costs about a second per request instead of five; the last attempt keeps the full timeout (#185, ADR-0026).
+
 ## [0.5.0-alpha.1] — v0.5 "Management"
 
 ### Changed

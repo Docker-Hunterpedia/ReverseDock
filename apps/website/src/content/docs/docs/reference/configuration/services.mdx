@@ -352,7 +352,7 @@ Send only over HTTPS.
 
 ## `services.<name>.timeouts`
 
-**Type:** object · **Default:** `{"connect":"5s","idle":"1m30s","read":"1m","write":"1m"}`
+**Type:** object · **Default:** `{"connect":"5s","connect_attempt":"1s","idle":"1m30s","read":"1m","write":"1m"}`
 
 Upstream timeouts.
 
@@ -361,6 +361,12 @@ Upstream timeouts.
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
 
 Establishing a connection.
+
+### `services.<name>.timeouts.connect_attempt`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1s`
+
+Establishing a connection when a failed connect would be retried on another backend: the attempt gives up after this long, so a stopped backend costs about a second instead of `connect` (ADR-0026). The last attempt always waits `connect`.
 
 ### `services.<name>.timeouts.idle`
 

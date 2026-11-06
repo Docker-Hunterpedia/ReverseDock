@@ -4591,6 +4591,7 @@
             "$ref": "#/components/schemas/rdock.Timeouts",
             "default": {
               "connect": "5s",
+              "connect_attempt": "1s",
               "idle": "1m30s",
               "read": "1m",
               "write": "1m"
@@ -4994,6 +4995,11 @@
             "$ref": "#/components/schemas/rdock.Duration",
             "default": "5s",
             "description": "Establishing a connection."
+          },
+          "connect_attempt": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1s",
+            "description": "Establishing a connection when a failed connect would be retried on another\nbackend: the attempt gives up after this long, so a stopped backend costs about a\nsecond instead of `connect` (ADR-0026). The last attempt always waits `connect`."
           },
           "idle": {
             "$ref": "#/components/schemas/rdock.Duration",

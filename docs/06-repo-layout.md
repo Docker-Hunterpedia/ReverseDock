@@ -72,7 +72,7 @@ reversedock/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
 │   ├── conformance/gateway-api/    # upstream suite wiring
-│   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader; label parser later
+│   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello; label parser later
 ├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
 ├── scripts/                        # xlsx2md.py, schema-export, release helpers
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
