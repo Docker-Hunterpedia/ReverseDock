@@ -293,6 +293,28 @@ async fn accept_loop(
     }
 }
 
+/// The TCP routes a connection on `name` may go to: always for a `tcp` listener (possibly none),
+/// and for an `https` listener only when it has some, since it then hands matching
+/// TLS connections to them by their `ClientHello`. `None` means the connection is served as HTTP without a TCP step.
+fn tcp_routes_of(
+    shared: &Shared,
+    name: &str,
+    settings: &Settings,
+) -> Option<Arc<[Arc<crate::tcp::TcpRouteRuntime>]>> {
+    let tcp = settings.protocol == ListenerProtocol::Tcp;
+    if !tcp && settings.tls.is_none() {
+        return None;
+    }
+    let routes = shared
+        .runtime
+        .load()
+        .listeners
+        .get(name)?
+        .tcp_routes
+        .clone();
+    (tcp || !routes.is_empty()).then_some(routes)
+}
+
 /// Guard that keeps the open-connections gauge right however the task ends.
 struct Open<'a>(&'a Metrics, &'a str);
 
@@ -314,7 +336,9 @@ async fn serve(
     shared.metrics.connections.with_label_values(&[&name]).inc();
     let _open = Open(&shared.metrics, &name);
     let _ = tcp.set_nodelay(true);
-    let local = tcp.local_addr().unwrap_or(peer);
+    // Only connections that may become TCP relays look up routes and pay for `getsockname`.
+    let tcp_side = tcp_routes_of(&shared, &name, &settings)
+        .map(|routes| (routes, tcp.local_addr().unwrap_or(peer)));
     #[cfg(unix)]
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&tcp);
     let mut l4: L4Stream = tcp.into();
@@ -341,29 +365,22 @@ async fn serve(
         }
         l4.set_socket_digest(digest);
     }
-    let accepted = crate::tcp::Accepted {
-        listener: name.clone(),
-        client: source.unwrap_or(peer),
-        local,
-    };
-    let tcp_routes = shared
-        .runtime
-        .load()
-        .listeners
-        .get(&*name)
-        .map(|l| l.tcp_routes.clone());
-    let tcp_routes = tcp_routes.unwrap_or_else(|| Arc::new([]));
-    let context = crate::tcp::ListenerContext {
-        routes: &tcp_routes,
-        tls: settings.tls.as_deref(),
-        starttls: settings.starttls,
-        deadline,
-    };
-    if settings.protocol == ListenerProtocol::Tcp {
-        crate::tcp::serve(accepted, l4, context, &shared.metrics).await;
-        return;
-    }
-    if settings.tls.is_some() && !tcp_routes.is_empty() {
+    if let Some((tcp_routes, local)) = tcp_side {
+        let accepted = crate::tcp::Accepted {
+            listener: name.clone(),
+            client: source.unwrap_or(peer),
+            local,
+        };
+        let context = crate::tcp::ListenerContext {
+            routes: &tcp_routes,
+            tls: settings.tls.as_deref(),
+            starttls: settings.starttls,
+            deadline,
+        };
+        if settings.protocol == ListenerProtocol::Tcp {
+            crate::tcp::serve(accepted, l4, context, &shared.metrics).await;
+            return;
+        }
         match crate::tcp::divert(accepted, l4, context, &shared.metrics).await {
             Some(stream) => l4 = stream,
             None => return,
