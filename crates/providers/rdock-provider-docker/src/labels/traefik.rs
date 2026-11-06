@@ -9,11 +9,11 @@ use serde_json::Value;
 
 use super::native::{port, tls};
 use super::tree::{list, scalar};
-use super::{Draft, Scope};
+use super::{DOCKER_PREFIX, Draft, Platform, SWARM_PREFIX, Scope};
 
 /// Adds one `traefik.*` label to the draft.
 pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: &str) {
-    if matches!(key, "traefik.enable" | "traefik.docker.network") {
+    if key == "traefik.enable" || platform_label(scope, key) {
         return;
     }
     let result = if let Some(rest) = key.strip_prefix("traefik.http.routers.") {
@@ -29,6 +29,36 @@ pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: 
     };
     if let Err(message) = result {
         scope.warn(key, message);
+    }
+}
+
+/// Labels that configure the platform rather than objects: `traefik.docker.network` for
+/// Docker; `traefik.swarm.network` and `traefik.swarm.lbswarm` for Swarm, where the
+/// `traefik.docker.` spelling is deprecated and ignored next to a `traefik.swarm.*` label, as
+/// in Traefik (<https://github.com/traefik/traefik/blob/master/pkg/provider/docker/shared_labels.go>,
+/// checked 2026-11-06). Returns whether `key` is one of them.
+fn platform_label(scope: &mut Scope<'_>, key: &str) -> bool {
+    match scope.platform() {
+        Platform::Docker => key == "traefik.docker.network",
+        Platform::Swarm => {
+            let Some(option) = key
+                .strip_prefix(SWARM_PREFIX)
+                .or_else(|| key.strip_prefix(DOCKER_PREFIX))
+                .filter(|option| matches!(*option, "network" | "lbswarm"))
+            else {
+                return false;
+            };
+            if key.starts_with(DOCKER_PREFIX) {
+                let message = if scope.has_prefix(SWARM_PREFIX) {
+                    "both `traefik.docker.*` and `traefik.swarm.*` labels are set; the label is ignored"
+                        .to_owned()
+                } else {
+                    format!("deprecated on Swarm: use `traefik.swarm.{option}`")
+                };
+                scope.warn(key, message);
+            }
+            true
+        }
     }
 }
 

@@ -601,9 +601,10 @@ fn build_middlewares(
     built
 }
 
-/// A `static` middleware from Docker labels may serve only a directory inside
-/// `providers.docker.static_roots`, so a container cannot make ReverseDock serve its own files
-/// (certificates, keys, configuration). Both sides are resolved, so links cannot get around it.
+/// A `static` middleware from Docker or Swarm labels may serve only a directory inside that
+/// provider's `static_roots`, so a container or service cannot make ReverseDock serve its own
+/// files (certificates, keys, configuration; ADR-0027). Both sides are resolved, so links
+/// cannot get around it.
 fn check_label_root(
     config: &Config,
     name: &str,
@@ -612,15 +613,16 @@ fn check_label_root(
     let rdock_model::middleware::Middleware::Static(st) = middleware else {
         return Ok(());
     };
-    if !name.ends_with("@docker") {
+    let providers = &config.providers;
+    let (setting, allowed) = if name.ends_with("@docker") {
+        let roots = providers.docker.as_ref().map(|d| d.static_roots.as_slice());
+        ("providers.docker.static_roots", roots.unwrap_or_default())
+    } else if name.ends_with("@swarm") {
+        let roots = providers.swarm.as_ref().map(|s| s.static_roots.as_slice());
+        ("providers.swarm.static_roots", roots.unwrap_or_default())
+    } else {
         return Ok(());
-    }
-    let allowed = config
-        .providers
-        .docker
-        .as_ref()
-        .map(|d| d.static_roots.as_slice())
-        .unwrap_or_default();
+    };
     let root = std::fs::canonicalize(&st.root)
         .map_err(|e| format!("cannot read `{}`: {e}", st.root.display()))?;
     let inside = allowed
@@ -631,7 +633,7 @@ fn check_label_root(
         Ok(())
     } else {
         Err(format!(
-            "`{}` is not inside a directory listed in `providers.docker.static_roots`, so labels cannot serve it",
+            "`{}` is not inside a directory listed in `{setting}`, so labels cannot serve it",
             st.root.display()
         ))
     }
@@ -1068,6 +1070,14 @@ mod tests {
         assert!(!check(&allowed, "docs@docker", &sites.join("../other")));
         assert!(!check(&allowed, "docs@docker", &sites.join("missing")));
         assert!(!check(&with_roots(&[]), "docs@docker", &sites.join("docs")));
+        // Swarm labels have their own list; Docker's does not open it.
+        assert!(!check(&allowed, "docs@swarm", &sites.join("docs")));
+        let swarm: Config = serde_json::from_value(
+            serde_json::json!({ "providers": { "swarm": { "static_roots": [&sites] } } }),
+        )
+        .unwrap();
+        assert!(check(&swarm, "docs@swarm", &sites.join("docs")));
+        assert!(!check(&swarm, "docs@swarm", &other));
         // The file's own middlewares are the operator's and are not restricted.
         assert!(check(&with_roots(&[]), "docs", &other));
     }

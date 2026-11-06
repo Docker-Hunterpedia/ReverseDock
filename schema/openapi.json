@@ -4974,13 +4974,13 @@
         "description": "How Swarm services are reached.",
         "oneOf": [
           {
-            "const": "vip",
-            "description": "The service's virtual IP; Swarm balances between tasks.",
+            "const": "tasks",
+            "description": "Each running task directly; ReverseDock balances, health-checks and drains them.",
             "type": "string"
           },
           {
-            "const": "tasks",
-            "description": "Each running task directly; ReverseDock balances and health-checks.",
+            "const": "vip",
+            "description": "The service's virtual IP; Swarm balances between tasks. Active health checks and\nsticky sessions have nothing to act on and are ignored.",
             "type": "string"
           }
         ]
@@ -4999,8 +4999,8 @@
           },
           "endpoint_mode": {
             "$ref": "#/components/schemas/rdock.SwarmEndpointMode",
-            "default": "vip",
-            "description": "Route to the service's virtual IP or to each task."
+            "default": "tasks",
+            "description": "Route to each running task (the default) or to the service's virtual IP."
           },
           "expose_by_default": {
             "default": false,
@@ -5014,6 +5014,19 @@
               "string",
               "null"
             ]
+          },
+          "poll_interval": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "5s",
+            "description": "How often services and tasks are listed. Swarm sends no events when a task starts or\nstops, so this bounds how long a new or stopping task waits to join or leave its pool.\nAt least `1s`."
+          },
+          "static_roots": {
+            "default": [],
+            "description": "Directories on ReverseDock's file system that `static` middlewares from service labels\nmay serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a\nservice cannot read ReverseDock's own files (ADR-0027).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
           },
           "traefik_labels": {
             "default": true,
