@@ -62,7 +62,8 @@ pub(crate) struct Found {
 /// The outcome of a lookup.
 #[derive(Debug)]
 pub(crate) enum Resolution {
-    File(Found),
+    /// Boxed: `Metadata` is large on Linux.
+    File(Box<Found>),
     /// A directory with an index, named without its trailing slash.
     AddSlash,
     Missing,
@@ -153,20 +154,20 @@ impl Root {
         for coding in codings {
             let sidecar = format!("{plain}{}", sidecar_suffix(*coding));
             if let Ok((file, metadata)) = self.open_file(&sidecar) {
-                return Resolution::File(Found {
+                return Resolution::File(Box::new(Found {
                     file,
                     metadata,
                     served: plain,
                     coding: Some(*coding),
-                });
+                }));
             }
         }
-        Resolution::File(Found {
+        Resolution::File(Box::new(Found {
             file,
             metadata,
             served: plain,
             coding: None,
-        })
+        }))
     }
 
     /// What `relative` is, following the links the policy allows.

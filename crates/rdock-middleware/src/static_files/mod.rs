@@ -135,7 +135,7 @@ impl Middleware for Static {
             path,
         };
         match self.resolve(lookup).await {
-            Some(Resolution::File(found)) => Flow::Reply(self.answers.reply(req, found)),
+            Some(Resolution::File(found)) => Flow::Reply(self.answers.reply(req, *found)),
             Some(Resolution::AddSlash) => Flow::Reply(add_slash(req)),
             Some(Resolution::Missing) => self.refuse(Reply::status(404)),
             None => Flow::Reply(Reply::status(500)),
