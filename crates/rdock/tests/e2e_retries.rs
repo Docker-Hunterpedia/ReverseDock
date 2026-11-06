@@ -3,6 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::expect_used, clippy::panic)]
 
 use std::net::SocketAddr;
+use std::time::{Duration, Instant};
 
 use rdock_testkit::backend::Backend;
 use rdock_testkit::client::{self, get, request};
@@ -61,6 +62,32 @@ async fn connect_failures_go_to_another_backend_for_any_method() {
         metrics.contains("rdock_retries_total{reason=\"connect\",service=\"app\"} 12"),
         "{metrics}"
     );
+}
+
+#[tokio::test]
+async fn a_backend_that_never_answers_costs_the_attempt_budget_not_the_connect_timeout() {
+    // 192.0.2.0/24 is TEST-NET-1 (RFC 5737): never routed, so a connect gets no answer,
+    // like a stopped container whose address no longer answers ARP (ADR-0026).
+    let good = Backend::start("good").await;
+    let port = free_port();
+    let backends = ["192.0.2.1:9".to_owned(), good.addr.to_string()];
+    let _rdock = Rdock::start(
+        RDOCK,
+        &config(
+            port,
+            &backends,
+            "    retries: { attempts: 1 }\n    timeouts: { connect: 5s, connect_attempt: 500ms }",
+        ),
+    );
+    for _ in 0..4 {
+        let started = Instant::now();
+        assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
+        assert!(
+            started.elapsed() < Duration::from_secs(3),
+            "took {:?}: the dead backend should cost connect_attempt, not connect",
+            started.elapsed()
+        );
+    }
 }
 
 #[tokio::test]

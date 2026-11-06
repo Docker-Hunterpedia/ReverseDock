@@ -3813,6 +3813,7 @@
           "$ref": "#/$defs/Timeouts",
           "default": {
             "connect": "5s",
+            "connect_attempt": "1s",
             "idle": "1m30s",
             "read": "1m",
             "write": "1m"
@@ -4215,6 +4216,11 @@
           "description": "Establishing a connection.",
           "$ref": "#/$defs/Duration",
           "default": "5s"
+        },
+        "connect_attempt": {
+          "description": "Establishing a connection when a failed connect would be retried on another\nbackend: the attempt gives up after this long, so a stopped backend costs about a\nsecond instead of `connect` (ADR-0026). The last attempt always waits `connect`.",
+          "$ref": "#/$defs/Duration",
+          "default": "1s"
         },
         "idle": {
           "description": "Keeping an idle pooled connection.",
