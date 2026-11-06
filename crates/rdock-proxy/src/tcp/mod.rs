@@ -295,7 +295,7 @@ async fn answer_acme(stream: L4Stream, acceptor: &Acceptor, deadline: Instant) {
 fn reject(metrics: &Metrics, conn: &Accepted, reason: &str) {
     metrics
         .tcp_rejected
-        .with_label_values(&[&conn.listener, reason])
+        .with_label_values(&[&*conn.listener, reason])
         .inc();
 }
 
@@ -339,8 +339,8 @@ async fn forward(
             .with_label_values(&[&conn.listener, &route.name]),
     );
     let counters = Counters {
-        inbound: metrics.tcp_bytes.with_label_values(&[&route.name, "in"]),
-        outbound: metrics.tcp_bytes.with_label_values(&[&route.name, "out"]),
+        inbound: metrics.tcp_bytes.with_label_values(&[&*route.name, "in"]),
+        outbound: metrics.tcp_bytes.with_label_values(&[&*route.name, "out"]),
     };
     let timeouts = route.service.timeouts;
     let limits = Limits {
