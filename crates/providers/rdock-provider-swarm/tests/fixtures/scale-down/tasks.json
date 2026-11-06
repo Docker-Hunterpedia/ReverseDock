@@ -1,0 +1,856 @@
+[
+ {
+  "ID": "ewao24a62qvuphqrqa457ni8k",
+  "Version": {
+   "Index": 23
+  },
+  "CreatedAt": "2026-11-06T22:14:18.015127429Z",
+  "UpdatedAt": "2026-11-06T22:14:18.631246054Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab",
+    "Init": false,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     }
+    ]
+   },
+   "Networks": [
+    {
+     "Target": "07wow3n0orb19gaxu7u2ca29x"
+    },
+    {
+     "Target": "znc7ii8iy8qi64g0dcgscr6g4"
+    }
+   ],
+   "ForceUpdate": 0
+  },
+  "ServiceID": "sixw8us52gwnqa27sqi3lqo96",
+  "Slot": 1,
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:14:18.626671471Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "15ff4bd79823e32fd816e294a97513b0fa4d979c19aa11ec48e950757a8699c9",
+    "PID": 32642,
+    "ExitCode": 0
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "running",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "07wow3n0orb19gaxu7u2ca29x",
+     "Version": {
+      "Index": 14
+     },
+     "CreatedAt": "2026-11-06T22:14:13.610744843Z",
+     "UpdatedAt": "2026-11-06T22:14:13.61100501Z",
+     "Spec": {
+      "Name": "rdfx_back",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4098"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.2.0/24",
+        "Gateway": "10.0.2.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.2.3/24"
+    ]
+   },
+   {
+    "Network": {
+     "ID": "znc7ii8iy8qi64g0dcgscr6g4",
+     "Version": {
+      "Index": 12
+     },
+     "CreatedAt": "2026-11-06T22:14:13.589903427Z",
+     "UpdatedAt": "2026-11-06T22:14:13.590235593Z",
+     "Spec": {
+      "Name": "rdfx_front",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4097"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.1.0/24",
+        "Gateway": "10.0.1.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.1.3/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ },
+ {
+  "ID": "kv5n6my94m68wwvfldm8h10gs",
+  "Version": {
+   "Index": 37
+  },
+  "CreatedAt": "2026-11-06T22:14:34.077329839Z",
+  "UpdatedAt": "2026-11-06T22:14:34.435740255Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab",
+    "Init": false,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     }
+    ]
+   },
+   "Networks": [
+    {
+     "Target": "znc7ii8iy8qi64g0dcgscr6g4"
+    }
+   ],
+   "ForceUpdate": 0
+  },
+  "ServiceID": "l4q8ank5v01kbodlmxufxqhi5",
+  "Slot": 1,
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:14:34.392180214Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "405769a1c0b49ae6e21e28be0860b9d6a5da00743f4f1e321c040ed71e433d55",
+    "PID": 32817,
+    "ExitCode": 0
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "running",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "znc7ii8iy8qi64g0dcgscr6g4",
+     "Version": {
+      "Index": 12
+     },
+     "CreatedAt": "2026-11-06T22:14:13.589903427Z",
+     "UpdatedAt": "2026-11-06T22:14:13.590235593Z",
+     "Spec": {
+      "Name": "rdfx_front",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4097"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.1.0/24",
+        "Gateway": "10.0.1.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.1.8/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ },
+ {
+  "ID": "neh7yc9ud0coibyurpc9usluv",
+  "Version": {
+   "Index": 23
+  },
+  "CreatedAt": "2026-11-06T22:14:18.01526722Z",
+  "UpdatedAt": "2026-11-06T22:14:18.631154846Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab",
+    "Init": false,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     }
+    ]
+   },
+   "Networks": [
+    {
+     "Target": "07wow3n0orb19gaxu7u2ca29x"
+    },
+    {
+     "Target": "znc7ii8iy8qi64g0dcgscr6g4"
+    }
+   ],
+   "ForceUpdate": 0
+  },
+  "ServiceID": "sixw8us52gwnqa27sqi3lqo96",
+  "Slot": 2,
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:14:18.626082762Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "ef950a8d6ebcd32b2d784c4773ff2d9f567cf681bd6be0e9a0561e5e7b1f3885",
+    "PID": 32643,
+    "ExitCode": 0
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "running",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "07wow3n0orb19gaxu7u2ca29x",
+     "Version": {
+      "Index": 14
+     },
+     "CreatedAt": "2026-11-06T22:14:13.610744843Z",
+     "UpdatedAt": "2026-11-06T22:14:13.61100501Z",
+     "Spec": {
+      "Name": "rdfx_back",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4098"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.2.0/24",
+        "Gateway": "10.0.2.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.2.4/24"
+    ]
+   },
+   {
+    "Network": {
+     "ID": "znc7ii8iy8qi64g0dcgscr6g4",
+     "Version": {
+      "Index": 12
+     },
+     "CreatedAt": "2026-11-06T22:14:13.589903427Z",
+     "UpdatedAt": "2026-11-06T22:14:13.590235593Z",
+     "Spec": {
+      "Name": "rdfx_front",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4097"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.1.0/24",
+        "Gateway": "10.0.1.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.1.4/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ },
+ {
+  "ID": "oiq99ae3wipkl1f54wvxb6i1m",
+  "Version": {
+   "Index": 59
+  },
+  "CreatedAt": "2026-11-06T22:15:12.837284093Z",
+  "UpdatedAt": "2026-11-06T22:15:13.314866301Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "alpine:3@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a",
+    "Args": [
+     "sleep",
+     "3600"
+    ],
+    "Init": false,
+    "StopGracePeriod": 90000000000,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "386",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "ppc64le",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "riscv64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "s390x",
+      "OS": "linux"
+     }
+    ]
+   },
+   "Networks": [
+    {
+     "Target": "znc7ii8iy8qi64g0dcgscr6g4"
+    }
+   ],
+   "ForceUpdate": 0
+  },
+  "ServiceID": "qubf8xagqycwju223740j6cbk",
+  "Slot": 1,
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:15:13.262611926Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "f72870ae5ef9276979c71bbb3087e967bac2e0d257861ef1a06866fc769f89ae",
+    "PID": 33073,
+    "ExitCode": 0
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "running",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "znc7ii8iy8qi64g0dcgscr6g4",
+     "Version": {
+      "Index": 12
+     },
+     "CreatedAt": "2026-11-06T22:14:13.589903427Z",
+     "UpdatedAt": "2026-11-06T22:14:13.590235593Z",
+     "Spec": {
+      "Name": "rdfx_front",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4097"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.1.0/24",
+        "Gateway": "10.0.1.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.1.10/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ },
+ {
+  "ID": "ujqj3ldq2t4crb1og5nxe1ju4",
+  "Version": {
+   "Index": 31
+  },
+  "CreatedAt": "2026-11-06T22:14:26.180633293Z",
+  "UpdatedAt": "2026-11-06T22:14:26.58534346Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab",
+    "Init": false,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     }
+    ]
+   },
+   "Networks": [
+    {
+     "Target": "znc7ii8iy8qi64g0dcgscr6g4"
+    }
+   ],
+   "ForceUpdate": 0
+  },
+  "ServiceID": "xm6e2sjtdt98a9ppy8jjfy0vw",
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:14:26.526747627Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "7a691c30a14227fac5271a73150171774987012928bbee27a0ec2c517e219184",
+    "PID": 32740,
+    "ExitCode": 0
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "running",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "znc7ii8iy8qi64g0dcgscr6g4",
+     "Version": {
+      "Index": 12
+     },
+     "CreatedAt": "2026-11-06T22:14:13.589903427Z",
+     "UpdatedAt": "2026-11-06T22:14:13.590235593Z",
+     "Spec": {
+      "Name": "rdfx_front",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4097"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.1.0/24",
+        "Gateway": "10.0.1.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.1.7/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ },
+ {
+  "ID": "upbxx2sxhrndapfojqmksn8bu",
+  "Version": {
+   "Index": 62
+  },
+  "CreatedAt": "2026-11-06T22:15:12.837327009Z",
+  "UpdatedAt": "2026-11-06T22:15:21.88063293Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "alpine:3@sha256:3f4d6b32e26703c6082839234f43769d5046b3ac7c910033911d1e71d8cd630a",
+    "Args": [
+     "sleep",
+     "3600"
+    ],
+    "Init": false,
+    "StopGracePeriod": 90000000000,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "386",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "ppc64le",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "riscv64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "s390x",
+      "OS": "linux"
+     }
+    ]
+   },
+   "Networks": [
+    {
+     "Target": "znc7ii8iy8qi64g0dcgscr6g4"
+    }
+   ],
+   "ForceUpdate": 0
+  },
+  "ServiceID": "qubf8xagqycwju223740j6cbk",
+  "Slot": 2,
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:15:21.828137514Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "8ea9759fcc1fa2c1611219e607e7d84ce220d67ace59d33689ada92631db5948",
+    "PID": 33072,
+    "ExitCode": -1
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "remove",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "znc7ii8iy8qi64g0dcgscr6g4",
+     "Version": {
+      "Index": 12
+     },
+     "CreatedAt": "2026-11-06T22:14:13.589903427Z",
+     "UpdatedAt": "2026-11-06T22:14:13.590235593Z",
+     "Spec": {
+      "Name": "rdfx_front",
+      "Labels": {},
+      "DriverConfiguration": {
+       "Name": "overlay"
+      },
+      "Attachable": true,
+      "IPAMOptions": {
+       "Driver": {
+        "Name": "default"
+       }
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4097"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.1.0/24",
+        "Gateway": "10.0.1.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.1.11/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ },
+ {
+  "ID": "xgd0te8dyaassxfdguoilu7i6",
+  "Version": {
+   "Index": 44
+  },
+  "CreatedAt": "2026-11-06T22:14:41.662901717Z",
+  "UpdatedAt": "2026-11-06T22:14:42.064957259Z",
+  "Labels": {},
+  "Spec": {
+   "ContainerSpec": {
+    "Image": "traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab",
+    "Init": false,
+    "DNSConfig": {},
+    "Isolation": "default"
+   },
+   "Resources": {
+    "Limits": {},
+    "Reservations": {}
+   },
+   "Placement": {
+    "Platforms": [
+     {
+      "Architecture": "amd64",
+      "OS": "linux"
+     },
+     {
+      "Architecture": "arm64",
+      "OS": "linux"
+     },
+     {
+      "OS": "linux"
+     }
+    ]
+   },
+   "ForceUpdate": 0
+  },
+  "ServiceID": "iafwk2p4auuouw67rm8p1js3o",
+  "Slot": 1,
+  "NodeID": "hpw1u980jko6ikg4ie9mg5scy",
+  "Status": {
+   "Timestamp": "2026-11-06T22:14:42.032432134Z",
+   "State": "running",
+   "Message": "started",
+   "ContainerStatus": {
+    "ContainerID": "f541ad1738b8e4edd2541b3779ac0d137fc3dbffc2d2578ce69ef7a063272e4e",
+    "PID": 32878,
+    "ExitCode": 0
+   },
+   "PortStatus": {}
+  },
+  "DesiredState": "running",
+  "NetworksAttachments": [
+   {
+    "Network": {
+     "ID": "g07cbywj7nfb4zjxk859jfyes",
+     "Version": {
+      "Index": 6
+     },
+     "CreatedAt": "2026-11-06T22:14:13.044389635Z",
+     "UpdatedAt": "2026-11-06T22:14:13.05135001Z",
+     "Spec": {
+      "Name": "ingress",
+      "Labels": {},
+      "DriverConfiguration": {},
+      "Ingress": true,
+      "IPAMOptions": {
+       "Driver": {}
+      },
+      "Scope": "swarm"
+     },
+     "DriverState": {
+      "Name": "overlay",
+      "Options": {
+       "com.docker.network.driver.overlay.vxlanid_list": "4096"
+      }
+     },
+     "IPAMOptions": {
+      "Driver": {
+       "Name": "default"
+      },
+      "Configs": [
+       {
+        "Subnet": "10.0.0.0/24",
+        "Gateway": "10.0.0.1"
+       }
+      ]
+     }
+    },
+    "Addresses": [
+     "10.0.0.4/24"
+    ]
+   }
+  ],
+  "Volumes": null
+ }
+]

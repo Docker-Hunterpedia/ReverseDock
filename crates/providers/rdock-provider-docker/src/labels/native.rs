@@ -9,7 +9,7 @@
 use serde_json::Value;
 
 use super::tree::{list, scalar};
-use super::{Draft, Scope};
+use super::{Draft, Platform, SWARM_LBSWARM, Scope};
 
 /// Labels read elsewhere: eligibility, network and the shorthand.
 const HANDLED: [&str; 8] = [
@@ -32,7 +32,7 @@ const FILE_FIELDS: [&str; 2] = ["users_file", "file"];
 
 /// Adds one `rdock.*` label to the draft.
 pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: &str) {
-    if HANDLED.contains(&key) {
+    if HANDLED.contains(&key) || (scope.platform() == Platform::Swarm && key == SWARM_LBSWARM) {
         return;
     }
     let Some(rest) = key.strip_prefix("rdock.") else {

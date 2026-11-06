@@ -6,6 +6,7 @@
 //! service and the loop reconnects with backoff; traffic never stops because Docker did.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::future::Future;
 use std::net::IpAddr;
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ use bollard::query_parameters::{EventsOptionsBuilder, ListContainersOptionsBuild
 use futures_util::StreamExt;
 use rdock_config::merge::Snapshot;
 use rdock_model::providers::DockerProvider;
+use rdock_model::values::Endpoint;
 use tokio::sync::watch;
 
 use crate::labels::{Container, Health, translate};
@@ -22,9 +24,9 @@ use crate::labels::{Container, Health, translate};
 /// The provider's name in `name@docker` keys.
 pub const PROVIDER: &str = "docker";
 /// Seconds before an Engine API request gives up.
-const REQUEST_TIMEOUT_SECS: u64 = 30;
+pub const REQUEST_TIMEOUT_SECS: u64 = 30;
 /// Events that arrive this close together cause one listing.
-const COALESCE: Duration = Duration::from_millis(100);
+pub const COALESCE: Duration = Duration::from_millis(100);
 /// A full listing even without events, as a safety net.
 const RECONCILE: Duration = Duration::from_secs(60);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
@@ -43,20 +45,43 @@ pub struct State {
 pub async fn run(
     settings: DockerProvider,
     tx: watch::Sender<State>,
-    mut shutdown: watch::Receiver<bool>,
+    shutdown: watch::Receiver<bool>,
 ) {
+    supervise(
+        PROVIDER,
+        "Docker",
+        || session(&settings, &tx),
+        &tx,
+        shutdown,
+    )
+    .await;
+}
+
+/// Runs `session` again each time it ends, until `shutdown` turns true. A session that fails
+/// marks the provider degraded (`source` is unreachable) and is retried with backoff (1–30 s);
+/// the last snapshot stays in service meanwhile.
+pub async fn supervise<F, Fut>(
+    provider: &str,
+    source: &str,
+    mut session: F,
+    tx: &watch::Sender<State>,
+    mut shutdown: watch::Receiver<bool>,
+) where
+    F: FnMut() -> Fut,
+    Fut: Future<Output = Result<(), String>>,
+{
     let mut backoff = BACKOFF_MIN;
     loop {
         let outcome = tokio::select! {
-            outcome = session(&settings, &tx) => outcome,
+            outcome = session() => outcome,
             _ = shutdown.wait_for(|stop| *stop) => return,
         };
         match outcome {
             // The event stream ended (the daemon restarted, or a proxy closed it): start over.
             Ok(()) => backoff = BACKOFF_MIN,
             Err(reason) => {
-                tracing::warn!(provider = PROVIDER, error = %reason, retry_in = ?backoff,
-                    "Docker is unreachable; the last routes stay in service");
+                tracing::warn!(provider, error = %reason, retry_in = ?backoff,
+                    "{source} is unreachable; the last routes stay in service");
                 tx.send_modify(|state| state.degraded = Some(reason));
                 tokio::select! {
                     () = tokio::time::sleep(backoff) => {}
@@ -70,7 +95,7 @@ pub async fn run(
 
 /// One connection: list, then follow events until the stream ends or fails.
 async fn session(settings: &DockerProvider, tx: &watch::Sender<State>) -> Result<(), String> {
-    let docker = connect(settings)?;
+    let docker = connect(&settings.endpoint)?;
     let filters: HashMap<&str, Vec<&str>> = HashMap::from([
         ("type", vec!["container", "network"]),
         (
@@ -104,7 +129,7 @@ async fn session(settings: &DockerProvider, tx: &watch::Sender<State>) -> Result
             event = events.next() => match event {
                 Some(Ok(event)) => {
                     stopping.note(&event);
-                    drain(&mut events, &mut stopping).await?;
+                    drain(&mut events, |event| stopping.note(event)).await?;
                     publish(&docker, settings, tx, &mut stopping).await?;
                 }
                 Some(Err(err)) => return Err(err.to_string()),
@@ -153,38 +178,70 @@ impl Stopping {
     }
 }
 
-/// Waits for a pause in a burst of events (a Compose `up` sends dozens).
-async fn drain<S>(events: &mut S, stopping: &mut Stopping) -> Result<(), String>
+/// Waits for a pause in a burst of events (a Compose `up` sends dozens), handing each event
+/// that arrives meanwhile to `note`.
+pub async fn drain<S>(events: &mut S, mut note: impl FnMut(&EventMessage)) -> Result<(), String>
 where
-    S: futures_util::Stream<Item = Result<bollard::models::EventMessage, bollard::errors::Error>>
-        + Unpin,
+    S: futures_util::Stream<Item = Result<EventMessage, bollard::errors::Error>> + Unpin,
 {
     loop {
         match tokio::time::timeout(COALESCE, events.next()).await {
             Err(_) | Ok(None) => return Ok(()),
-            Ok(Some(Ok(event))) => stopping.note(&event),
+            Ok(Some(Ok(event))) => note(&event),
             Ok(Some(Err(err))) => return Err(err.to_string()),
         }
     }
 }
 
-fn connect(settings: &DockerProvider) -> Result<Docker, String> {
-    let url = settings.endpoint.as_url();
-    let version = bollard::API_DEFAULT_VERSION;
-    match url.scheme() {
-        "unix" => Docker::connect_with_unix(url.path(), REQUEST_TIMEOUT_SECS, version),
-        "tcp" | "http" => {
-            let host = url.host_str().unwrap_or_default();
-            let port = url.port().unwrap_or(2375);
-            Docker::connect_with_http(&format!("{host}:{port}"), REQUEST_TIMEOUT_SECS, version)
-        }
-        other => {
-            return Err(format!(
+/// Where the Engine API listens.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EngineAddress {
+    /// A unix socket path.
+    Unix(String),
+    /// `host:port` of a plain-HTTP endpoint, such as a socket proxy.
+    Tcp(String),
+}
+
+impl EngineAddress {
+    /// `unix://` and `tcp://`/`http://` endpoints; anything else is refused with the reason.
+    pub fn parse(endpoint: &Endpoint) -> Result<Self, String> {
+        let url = endpoint.as_url();
+        match url.scheme() {
+            "unix" => Ok(Self::Unix(url.path().to_owned())),
+            "tcp" | "http" => {
+                let host = url.host_str().unwrap_or_default();
+                let port = url.port().unwrap_or(2375);
+                Ok(Self::Tcp(format!("{host}:{port}")))
+            }
+            other => Err(format!(
                 "`{other}://` Docker endpoints are not supported in this version; use a unix socket or a socket proxy on tcp://"
-            ));
+            )),
+        }
+    }
+}
+
+/// A bollard client for `endpoint`.
+pub fn connect(endpoint: &Endpoint) -> Result<Docker, String> {
+    let version = bollard::API_DEFAULT_VERSION;
+    match EngineAddress::parse(endpoint)? {
+        EngineAddress::Unix(path) => {
+            Docker::connect_with_unix(&path, REQUEST_TIMEOUT_SECS, version)
+        }
+        EngineAddress::Tcp(address) => {
+            Docker::connect_with_http(&address, REQUEST_TIMEOUT_SECS, version)
         }
     }
     .map_err(|err| err.to_string())
+}
+
+/// Publishes `snapshot` and clears the degraded state; watchers wake only on a change.
+pub fn publish_snapshot(tx: &watch::Sender<State>, snapshot: Snapshot) {
+    tx.send_if_modified(|state| {
+        let changed = state.snapshot.as_ref() != Some(&snapshot) || state.degraded.is_some();
+        state.snapshot = Some(snapshot);
+        state.degraded = None;
+        changed
+    });
 }
 
 /// Lists, translates and publishes a new snapshot when it differs from the last one.
@@ -202,12 +259,7 @@ async fn publish(
         fragment: translation.fragment,
         diagnostics: translation.diagnostics,
     };
-    tx.send_if_modified(|state| {
-        let changed = state.snapshot.as_ref() != Some(&snapshot) || state.degraded.is_some();
-        state.snapshot = Some(snapshot);
-        state.degraded = None;
-        changed
-    });
+    publish_snapshot(tx, snapshot);
     Ok(())
 }
 
@@ -384,11 +436,8 @@ mod tests {
 
     #[test]
     fn unsupported_endpoints_say_why() {
-        let settings = DockerProvider {
-            endpoint: "https://docker.example.com:2376".parse().unwrap(),
-            ..DockerProvider::default()
-        };
-        let err = connect(&settings).err().unwrap();
+        let endpoint = "https://docker.example.com:2376".parse().unwrap();
+        let err = connect(&endpoint).err().unwrap();
         assert!(
             err.contains("`https://` Docker endpoints are not supported"),
             "{err}"

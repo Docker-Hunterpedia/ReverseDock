@@ -79,12 +79,13 @@ struct Applied {
 }
 
 /// Providers whose snapshots the engine merges.
-const PROVIDERS: [&str; 2] = ["docker", api::PROVIDER];
+const PROVIDERS: [&str; 3] = ["docker", "swarm", api::PROVIDER];
 
 /// Whether the file configuration enables `provider`.
 fn enabled(file: &Config, provider: &str) -> bool {
     match provider {
         "docker" => file.providers.docker.is_some(),
+        "swarm" => file.providers.swarm.is_some(),
         api::PROVIDER => true,
         _ => false,
     }

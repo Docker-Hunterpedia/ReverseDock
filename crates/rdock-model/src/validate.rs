@@ -238,6 +238,18 @@ impl Validator<'_> {
         }
     }
 
+    /// The label static roots of a provider (ADR-0027) are absolute paths.
+    fn check_static_roots(&mut self, path: &str, roots: &[std::path::PathBuf]) {
+        for (i, root) in roots.iter().enumerate() {
+            if !root.is_absolute() {
+                self.error(
+                    path_index(path, i),
+                    format!("`{}` must be an absolute path", root.display()),
+                );
+            }
+        }
+    }
+
     fn check_not_zero(&mut self, path: &str, is_zero: bool) {
         if is_zero {
             self.error(path, "must be greater than zero");
@@ -2099,6 +2111,26 @@ impl Validator<'_> {
         }
     }
 
+    /// Poll floor, label static roots (ADR-0027), and ACME on replicas that share nothing
+    /// (ADR-0026).
+    fn check_swarm(&mut self, swarm: &crate::providers::SwarmProvider) {
+        if swarm.poll_interval.as_std() < std::time::Duration::from_secs(1) {
+            self.error("providers.swarm.poll_interval", "must be at least 1s");
+        }
+        self.check_static_roots("providers.swarm.static_roots", &swarm.static_roots);
+        if self.config.effective_acme().is_some() {
+            self.push(
+                Diagnostic::warning(
+                    "providers.swarm",
+                    "automatic HTTPS is on: every replica orders and stores its own certificates",
+                )
+                .with_hint(
+                    "run one ACME replica with host-mode ports, or turn `acme` off and supply certificates as Swarm secrets; never share the data directory between replicas",
+                ),
+            );
+        }
+    }
+
     fn check_providers(&mut self) {
         let providers = &self.config.providers;
         if let Some(file) = &providers.file {
@@ -2123,14 +2155,7 @@ impl Validator<'_> {
             if docker.network.as_ref().is_some_and(|n| !network_ok(n)) {
                 self.error("providers.docker.network", "invalid Docker network name");
             }
-            for (i, root) in docker.static_roots.iter().enumerate() {
-                if !root.is_absolute() {
-                    self.error(
-                        path_index("providers.docker.static_roots", i),
-                        format!("`{}` must be an absolute path", root.display()),
-                    );
-                }
-            }
+            self.check_static_roots("providers.docker.static_roots", &docker.static_roots);
             for (entrypoint, listener) in &docker.entrypoints {
                 if !self.listeners.contains_key(listener) {
                     self.error(
@@ -2140,10 +2165,11 @@ impl Validator<'_> {
                 }
             }
         }
-        if let Some(swarm) = &providers.swarm
-            && swarm.network.as_ref().is_some_and(|n| !network_ok(n))
-        {
-            self.error("providers.swarm.network", "invalid Docker network name");
+        if let Some(swarm) = &providers.swarm {
+            if swarm.network.as_ref().is_some_and(|n| !network_ok(n)) {
+                self.error("providers.swarm.network", "invalid Docker network name");
+            }
+            self.check_swarm(swarm);
         }
         if let Some(kubernetes) = &providers.kubernetes {
             let class = &kubernetes.gateway_class;

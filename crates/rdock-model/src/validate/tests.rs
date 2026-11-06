@@ -815,6 +815,35 @@ fn alert_channels_need_safe_urls_and_smtp_needs_tls() {
     ));
 }
 
+#[test]
+fn swarm_polls_at_least_every_second_and_warns_about_acme_per_replica() {
+    let fast = with(
+        app(),
+        json!({ "acme": false, "providers": { "swarm": { "poll_interval": "500ms" } } }),
+    );
+    assert!(has(
+        &errors(fast),
+        "providers.swarm.poll_interval",
+        "at least 1s"
+    ));
+    let acme_off = with(
+        app(),
+        json!({ "acme": false, "providers": { "swarm": {} } }),
+    );
+    assert_eq!(errors(acme_off.clone()), Vec::new());
+    assert!(!has(
+        &warnings(acme_off),
+        "providers.swarm",
+        "automatic HTTPS"
+    ));
+    let acme_on = with(app(), json!({ "providers": { "swarm": {} } }));
+    assert!(has(
+        &warnings(acme_on),
+        "providers.swarm",
+        "every replica orders and stores its own certificates"
+    ));
+}
+
 fn site(static_config: Value) -> Value {
     let mut middleware = json!({ "type": "static", "root": "/srv/site" });
     merge(&mut middleware, static_config);

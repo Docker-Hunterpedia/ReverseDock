@@ -2467,7 +2467,7 @@ export type RdockStructuredMatch = {
 /**
  * How Swarm services are reached.
  */
-export type RdockSwarmEndpointMode = 'vip' | 'tasks';
+export type RdockSwarmEndpointMode = 'tasks' | 'vip';
 
 /**
  * Docker Swarm provider.
@@ -2478,7 +2478,7 @@ export type RdockSwarmProvider = {
      */
     endpoint?: RdockEndpoint;
     /**
-     * Route to the service's virtual IP or to each task.
+     * Route to each running task (the default) or to the service's virtual IP.
      */
     endpoint_mode?: RdockSwarmEndpointMode;
     /**
@@ -2490,10 +2490,22 @@ export type RdockSwarmProvider = {
      */
     network?: string | null;
     /**
+     * How often services and tasks are listed. Swarm sends no events when a task starts or
+     * stops, so this bounds how long a new or stopping task waits to join or leave its pool.
+     * At least `1s`.
+     */
+    poll_interval?: RdockDuration;
+    /**
+     * Directories on ReverseDock's file system that `static` middlewares from service labels
+     * may serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a
+     * service cannot read ReverseDock's own files (ADR-0027).
+     */
+    static_roots?: Array<string>;
+    /**
      * Also read `traefik.*` labels (supported subset).
      */
     traefik_labels?: boolean;
-    [key: string]: unknown | RdockEndpoint | RdockSwarmEndpointMode | boolean | string | null | undefined;
+    [key: string]: unknown | RdockEndpoint | RdockSwarmEndpointMode | boolean | string | null | RdockDuration | Array<string> | undefined;
 };
 
 /**

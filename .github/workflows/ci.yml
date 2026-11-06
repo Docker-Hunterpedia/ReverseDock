@@ -124,6 +124,9 @@ jobs:
           RDOCK_ACME_TESTS: "1"
           # Toxiproxy in Docker: the chaos suite (chaos.rs).
           RDOCK_CHAOS_TESTS: "1"
+          # A single-node swarm on the runner's daemon: the Swarm provider end-to-end test
+          # (e2e_swarm.rs); it leaves the swarm it created.
+          RDOCK_SWARM_TESTS: "1"
       - name: API docs build without warnings
         run: just doc
 

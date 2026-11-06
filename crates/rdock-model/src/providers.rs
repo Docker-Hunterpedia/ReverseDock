@@ -7,7 +7,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::values::Endpoint;
+use crate::values::{Duration, Endpoint};
 
 /// Configuration sources besides this file.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -87,8 +87,16 @@ pub struct SwarmProvider {
     pub network: Option<String>,
     /// Also read `traefik.*` labels (supported subset).
     pub traefik_labels: bool,
-    /// Route to the service's virtual IP or to each task.
+    /// Route to each running task (the default) or to the service's virtual IP.
     pub endpoint_mode: SwarmEndpointMode,
+    /// How often services and tasks are listed. Swarm sends no events when a task starts or
+    /// stops, so this bounds how long a new or stopping task waits to join or leave its pool.
+    /// At least `1s`.
+    pub poll_interval: Duration,
+    /// Directories on ReverseDock's file system that `static` middlewares from service labels
+    /// may serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a
+    /// service cannot read ReverseDock's own files (ADR-0027).
+    pub static_roots: Vec<PathBuf>,
 }
 
 impl Default for SwarmProvider {
@@ -98,7 +106,9 @@ impl Default for SwarmProvider {
             expose_by_default: false,
             network: None,
             traefik_labels: true,
-            endpoint_mode: SwarmEndpointMode::Vip,
+            endpoint_mode: SwarmEndpointMode::Tasks,
+            poll_interval: Duration::from_secs(5),
+            static_roots: Vec::new(),
         }
     }
 }
@@ -107,11 +117,12 @@ impl Default for SwarmProvider {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum SwarmEndpointMode {
-    /// The service's virtual IP; Swarm balances between tasks.
+    /// Each running task directly; ReverseDock balances, health-checks and drains them.
     #[default]
-    Vip,
-    /// Each running task directly; ReverseDock balances and health-checks.
     Tasks,
+    /// The service's virtual IP; Swarm balances between tasks. Active health checks and
+    /// sticky sessions have nothing to act on and are ignored.
+    Vip,
 }
 
 /// Kubernetes provider.
