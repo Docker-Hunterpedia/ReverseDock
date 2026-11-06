@@ -733,6 +733,7 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         address: listener.address,
         tls,
         timeouts: listener.timeouts,
+        proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),
         https_redirect: None,

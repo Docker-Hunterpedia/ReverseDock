@@ -492,6 +492,10 @@ impl RdockProxy {
             ts: rfc3339(ctx.started_at),
             request_id: ctx.request_id.to_string(),
             client_ip: ctx.client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
+            proxy_peer: session
+                .digest()
+                .and_then(crate::proxy_protocol::proxy_peer)
+                .map(|peer| peer.to_string()),
             method: req.method.to_string(),
             host: ctx.host.clone(),
             path: ctx.path.clone(),

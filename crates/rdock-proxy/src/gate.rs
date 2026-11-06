@@ -42,13 +42,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
         ) {
             gate.unsupported(format!("{path}.protocol"), "TCP and UDP listeners", "v0.6");
         }
-        if listener.proxy_protocol.is_some() {
-            gate.unsupported(
-                format!("{path}.proxy_protocol"),
-                "the PROXY protocol",
-                "v0.6",
-            );
-        }
     }
     if !config.tcp_routes.is_empty() {
         gate.unsupported("tcp_routes", "TCP routes", "v0.6");
@@ -97,5 +90,11 @@ mod tests {
         assert_eq!(diagnostics(yaml, Mode::Run), Vec::new());
         let acme_off = format!("acme: false\n{yaml}");
         assert_eq!(diagnostics(&acme_off, Mode::Run), Vec::new());
+        let proxy_protocol = yaml.replace(
+            "address: \":8080\"",
+            "address: \":8080\", proxy_protocol: { trusted: [10.0.0.0/8] }",
+        );
+        assert!(proxy_protocol.contains("trusted"));
+        assert_eq!(diagnostics(&proxy_protocol, Mode::Run), Vec::new());
     }
 }

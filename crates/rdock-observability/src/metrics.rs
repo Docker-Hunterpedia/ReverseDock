@@ -32,6 +32,9 @@ pub struct Metrics {
     pub connections_total: IntCounterVec,
     /// TLS handshakes that failed, by listener.
     pub tls_handshake_errors: IntCounterVec,
+    /// Connections closed by the PROXY protocol step, by listener and reason (`untrusted`,
+    /// `missing`, `malformed`, `timeout`, `too_large`).
+    pub proxy_protocol_rejected: IntCounterVec,
     /// Generation of the configuration in use.
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
@@ -136,6 +139,12 @@ impl Metrics {
             "Failed TLS handshakes.",
             &["listener"],
         )?;
+        let proxy_protocol_rejected = counters(
+            &registry,
+            "rdock_proxy_protocol_rejected_total",
+            "Connections closed for their PROXY protocol header, or its absence.",
+            &["listener", "reason"],
+        )?;
         let config_generation = registered(
             &registry,
             IntGauge::new(
@@ -239,6 +248,7 @@ impl Metrics {
             connections,
             connections_total,
             tls_handshake_errors,
+            proxy_protocol_rejected,
             config_generation,
             config_reloads,
             cert_expiry,

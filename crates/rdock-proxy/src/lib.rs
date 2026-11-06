@@ -11,6 +11,7 @@ pub mod gate;
 mod health;
 pub mod listener;
 mod proxy;
+pub mod proxy_protocol;
 pub mod router;
 pub mod runtime;
 mod server;

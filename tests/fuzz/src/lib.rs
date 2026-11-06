@@ -74,14 +74,27 @@ fn check_forwarded(req: &pingora_http::RequestHeader, body: &[u8]) {
 
     let mut slots = [httparse::EMPTY_HEADER; 512];
     let mut parsed = httparse::Request::new(&mut slots);
-    let status = parsed
-        .parse(&wire)
-        .unwrap_or_else(|e| panic!("the forwarded request does not parse ({e}): {:?}", String::from_utf8_lossy(&wire[..head])));
+    let status = parsed.parse(&wire).unwrap_or_else(|e| {
+        panic!(
+            "the forwarded request does not parse ({e}): {:?}",
+            String::from_utf8_lossy(&wire[..head])
+        )
+    });
     let httparse::Status::Complete(parsed_head) = status else {
-        panic!("the forwarded header block is incomplete: {:?}", String::from_utf8_lossy(&wire[..head]));
+        panic!(
+            "the forwarded header block is incomplete: {:?}",
+            String::from_utf8_lossy(&wire[..head])
+        );
     };
-    assert_eq!(parsed_head, head, "the forwarded header block ends where it was written");
-    assert_eq!(parsed.method, Some(req.method.as_str()), "method changed in transit");
+    assert_eq!(
+        parsed_head, head,
+        "the forwarded header block ends where it was written"
+    );
+    assert_eq!(
+        parsed.method,
+        Some(req.method.as_str()),
+        "method changed in transit"
+    );
     assert_eq!(
         parsed.path.map(str::as_bytes),
         Some(req.raw_path()),
@@ -93,16 +106,25 @@ fn check_forwarded(req: &pingora_http::RequestHeader, body: &[u8]) {
         .filter(|h| h.name.eq_ignore_ascii_case("content-length"))
         .map(|h| h.value)
         .collect();
-    assert_eq!(lengths, vec![body.len().to_string().as_bytes()], "one Content-Length");
+    assert_eq!(
+        lengths,
+        vec![body.len().to_string().as_bytes()],
+        "one Content-Length"
+    );
     assert!(
-        !parsed.headers.iter().any(|h| h.name.eq_ignore_ascii_case("transfer-encoding")),
+        !parsed
+            .headers
+            .iter()
+            .any(|h| h.name.eq_ignore_ascii_case("transfer-encoding")),
         "no second framing header"
     );
 }
 
 /// Parses a rule; a parsed rule's canonical form must parse back to the same AST.
 pub fn rules_parser(data: &[u8]) {
-    let Ok(text) = std::str::from_utf8(data) else { return };
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
+    };
     if let Ok(expr) = rdock_rules::parse(text) {
         let canonical = expr.to_string();
         let again = rdock_rules::parse(&canonical)
@@ -115,9 +137,40 @@ pub fn rules_parser(data: &[u8]) {
 
 /// Loads arbitrary text as YAML and as JSON; only errors are expected, never panics.
 pub fn config_loader(data: &[u8]) {
-    let Ok(text) = std::str::from_utf8(data) else { return };
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
+    };
     let _ = rdock_config::load_str(text, rdock_config::Format::Yaml);
     let _ = rdock_config::load_str(text, rdock_config::Format::Json);
+}
+
+/// Parses `data` and each of its prefixes as a PROXY protocol header, as rdock-proxy does with
+/// the bytes of a connection: never a panic, never more bytes consumed than given, and a parsed
+/// header encodes back to one that parses to the same addresses.
+pub fn proxy_header(data: &[u8]) {
+    use proxy_header::{Error, ParseConfig, ProxyHeader};
+    let config = ParseConfig {
+        include_tlvs: false,
+        allow_v1: true,
+        allow_v2: true,
+    };
+    for end in 0..=data.len().min(512) {
+        let buf = &data[..end];
+        match ProxyHeader::parse(buf, config) {
+            Ok((header, len)) => {
+                assert!(len <= buf.len(), "consumed {len} of {} bytes", buf.len());
+                let mut encoded = Vec::new();
+                if header.encode_v2(&mut encoded).is_ok() {
+                    let (again, again_len) =
+                        ProxyHeader::parse(&encoded, config).expect("own encoding parses");
+                    assert_eq!(again_len, encoded.len());
+                    assert_eq!(again.proxied_address(), header.proxied_address());
+                }
+            }
+            Err(Error::BufferTooShort | Error::Invalid) => {}
+            Err(other) => panic!("unexpected parse error {other:?}"),
+        }
+    }
 }
 
 /// Parses arbitrary bytes as the start of a TLS connection. Only results are expected, never
@@ -144,12 +197,17 @@ mod tests {
     use std::path::Path;
 
     fn seeds(target: &str) -> Vec<Vec<u8>> {
-        let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("seeds").join(target);
+        let dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("seeds")
+            .join(target);
         let mut files: Vec<_> = std::fs::read_dir(&dir)
             .map(|d| d.filter_map(Result::ok).map(|e| e.path()).collect())
             .unwrap_or_default();
         files.sort();
-        files.iter().map(|f| std::fs::read(f).expect("seed")).collect()
+        files
+            .iter()
+            .map(|f| std::fs::read(f).expect("seed"))
+            .collect()
     }
 
     #[test]
@@ -191,6 +249,25 @@ mod tests {
         super::config_loader(b"routes: { a: { match: \"Host(`x`)\", service: s } }");
         super::config_loader(b"{\"listeners\": {\"web\": {\"address\": \":80\"}}}");
         super::config_loader(b"\xff\xfe");
+    }
+
+    #[test]
+    fn proxy_header_seeds() {
+        let signature = b"\r\n\r\n\x00\r\nQUIT\n";
+        super::proxy_header(b"PROXY TCP4 192.168.0.1 192.168.0.11 56324 443\r\nGET /");
+        super::proxy_header(b"PROXY TCP6 2001:db8::1 2001:db8::2 1 2\r\n");
+        super::proxy_header(b"PROXY UNKNOWN\r\n");
+        super::proxy_header(b"PROXY TCP4 1.1.1.1");
+        let v4 = [
+            &signature[..],
+            &[0x21, 0x11, 0x00, 0x0C],
+            &[10, 0, 0, 1, 10, 0, 0, 2, 0, 80, 1, 187],
+        ]
+        .concat();
+        super::proxy_header(&v4);
+        super::proxy_header(&[&signature[..], &[0x20, 0x00, 0x00, 0x00]].concat());
+        super::proxy_header(&[&signature[..], &[0x21, 0x11, 0x00, 0x03, 1, 2, 3]].concat());
+        super::proxy_header(&[&signature[..], &[0x21, 0x31, 0x00, 0x10]].concat());
     }
 }
 

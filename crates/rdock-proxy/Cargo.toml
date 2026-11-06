@@ -24,6 +24,7 @@ opentelemetry.workspace = true
 ring.workspace = true
 ipnet.workspace = true
 pingora.workspace = true
+proxy-header.workspace = true
 rdock-balancer.workspace = true
 rdock-config.workspace = true
 rdock-middleware.workspace = true
@@ -44,6 +45,7 @@ uuid.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
+rdock-testkit.workspace = true
 tempfile.workspace = true
 
 [lints]

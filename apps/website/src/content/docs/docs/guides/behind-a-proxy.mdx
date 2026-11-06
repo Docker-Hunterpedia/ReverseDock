@@ -120,7 +120,37 @@ Trust only addresses that you control or that belong to the proxy in front. A tr
 
 ## PROXY protocol
 
-Load balancers that pass the client address with the PROXY protocol instead of headers are not supported yet <Status planned="v0.6" />. Configure such a load balancer to send `X-Forwarded-For`.
+A TCP load balancer (one that does not read HTTP, such as an AWS Network Load Balancer or HAProxy in `mode tcp`) cannot add `X-Forwarded-For`. It can send the client's address in a PROXY protocol header instead, as the first bytes of each connection <Status since="v0.6" />. ReverseDock reads version 1 (text) and version 2 (binary) headers on `http` and `https` listeners, before the TLS handshake:
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls: {}
+    proxy_protocol:
+      trusted: [10.0.100.0/24]
+```
+
+The address in the header then counts as the address of the connection: it is the client IP for `ClientIP`, `ip_allow`, `ip_deny`, rate limits and the access log, it is appended to `X-Forwarded-For`, and the `security.trusted_proxies` rules above apply to it. The load balancer's own address is logged as `proxy_peer`.
+
+The rules:
+
+- **Only `trusted` sources may send a header.** A connection from any other address that starts with a PROXY header is closed. Without `proxy_protocol` on the listener, ReverseDock never looks for a header, so a header sent there is an invalid HTTP request.
+- **Trusted sources must send one.** A connection from a trusted address without a header is closed, so a load balancer that stops sending headers is noticed instead of every client getting its address. `optional: true` serves such connections as plain ones; use it only while you switch a load balancer over.
+- **One header, read within limits.** The header must arrive within the listener's `timeouts.request_header` and fit in 16 KiB. Only the first header is read; anything after it belongs to the connection.
+- **`LOCAL` headers keep the real address.** Load balancers send them on health checks. Headers for other address families (`UNKNOWN`, `UNSPEC`, UDP, Unix sockets) also keep the real address. TLVs (extra fields of version 2) are ignored.
+
+Closed connections are counted in `rdock_proxy_protocol_rejected_total` by `listener` and `reason` (`untrusted`, `missing`, `malformed`, `timeout`, `too_large`).
+
+**HAProxy** sends a header with `send-proxy` (version 1) or `send-proxy-v2` on a `server` line, which "must not be used if the server isn't aware of this version of the protocol"; its health checks use the PROXY protocol too ([HAProxy 3.2 manual](https://docs.haproxy.org/3.2/configuration.html), checked 2026-11-07):
+
+```text title="haproxy.cfg (excerpt)"
+backend rdock
+  mode tcp
+  server rdock1 10.0.0.2:443 send-proxy-v2
+```
+
+**AWS Network Load Balancer:** turn on the target group attribute `proxy_protocol_v2.enabled`; health checks then carry a header as well. The load balancer "does not discard or overwrite" a PROXY header that a client sent itself, so a client can put one behind the load balancer's ([Edit target group attributes](https://docs.aws.amazon.com/elasticloadbalancing/latest/network/edit-target-group-attributes.html#proxy-protocol), checked 2026-11-07). ReverseDock reads only the first header, the load balancer's; a second one is not a valid request and the connection fails. List only the load balancer's subnet in `trusted`.
 
 ## Related
 
