@@ -83,6 +83,7 @@ A JSON line, wrapped here for reading:
 | `ts` | When the request started, RFC 3339 in UTC. |
 | `request_id` | The request ID, also sent to the backend and to the client in `x-request-id`. |
 | `client_ip` | The client IP after [trusted-proxy handling](/docs/guides/behind-a-proxy/). |
+| `proxy_peer` | The load balancer that sent a [PROXY protocol](/docs/guides/behind-a-proxy/#proxy-protocol) header naming the client, as `ip:port` <Status since="v0.6" />. |
 | `method`, `host`, `path`, `proto` | The request as received. `host` has no port. |
 | `query_len` | Length of the query string. The query itself is not logged, because it often carries tokens. |
 | `status` | Status sent to the client. |

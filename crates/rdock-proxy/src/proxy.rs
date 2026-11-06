@@ -502,6 +502,10 @@ impl RdockProxy {
             ts: rfc3339(ctx.started_at),
             request_id: ctx.request_id.to_string(),
             client_ip: ctx.client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
+            proxy_peer: session
+                .digest()
+                .and_then(crate::proxy_protocol::proxy_peer)
+                .map(|peer| peer.to_string()),
             method: req.method.to_string(),
             host: ctx.host.clone(),
             path: ctx.path.clone(),
@@ -791,7 +795,15 @@ impl ProxyHttp for RdockProxy {
         let selected = upstream::select(&service, key)
             .ok_or_else(|| status_error(503, "the service has no available backend"))?;
         ctx.tried.push(selected.member.id.clone());
-        let peer = upstream::peer(&service, &selected.member.candidate, &route.timeouts)?;
+        let mut peer = upstream::peer(&service, &selected.member.candidate, &route.timeouts)?;
+        if let Some(connect) = peer.options.connection_timeout {
+            peer.options.connection_timeout = Some(upstream::connect_budget(
+                connect,
+                &service,
+                ctx.retries,
+                &ctx.tried,
+            ));
+        }
         ctx.in_flight = Some(selected.member.state.begin());
         ctx.upstream = Some(selected.member.candidate.clone());
         ctx.member = Some(selected.member);

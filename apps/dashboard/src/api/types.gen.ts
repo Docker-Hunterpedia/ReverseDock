@@ -1873,14 +1873,22 @@ export type RdockProviders = {
 };
 
 /**
- * Inbound PROXY protocol settings.
+ * Inbound PROXY protocol settings (v1 and v2). A header is read only from `trusted` sources;
+ * a connection from anywhere else that starts with a PROXY header is closed.
  */
 export type RdockProxyProtocolIn = {
     /**
-     * Sources allowed to send a PROXY header. Others are rejected.
+     * Also accept connections from `trusted` sources that send no header. Off by default: a
+     * load balancer that stops sending headers would otherwise make every client look like
+     * the load balancer itself to IP filters, rate limits and logs.
+     */
+    optional?: boolean;
+    /**
+     * Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are
+     * rejected when they send one.
      */
     trusted: Array<RdockIpNetwork>;
-    [key: string]: unknown | Array<RdockIpNetwork>;
+    [key: string]: unknown | boolean | Array<RdockIpNetwork> | undefined;
 };
 
 /**
@@ -2336,6 +2344,12 @@ export type RdockTimeouts = {
      * Establishing a connection.
      */
     connect?: RdockDuration;
+    /**
+     * Establishing a connection when a failed connect would be retried on another
+     * backend: the attempt gives up after this long, so a stopped backend costs about a
+     * second instead of `connect` (ADR-0026). The last attempt always waits `connect`.
+     */
+    connect_attempt?: RdockDuration;
     /**
      * Keeping an idle pooled connection.
      */

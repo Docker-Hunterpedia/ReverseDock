@@ -1,12 +1,5 @@
 [
   {
-    "path": "listeners.<name>.proxy_protocol",
-    "planned": "v0.6",
-    "what": "The PROXY protocol",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\", proxy_protocol: { trusted: [\"10.0.0.0/8\"] } }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
-  },
-  {
     "path": "listeners.<name>.protocol",
     "planned": "v0.6",
     "what": "TCP and UDP listeners (`tcp`, `udp`)",

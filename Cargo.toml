@@ -119,6 +119,8 @@ httpdate = "1.0.3"
 ring = "0.17.14"
 # fast-rng: request ids from a thread-local generator, not a getrandom call per request (#93).
 uuid = { version = "1.29.0", features = ["v7", "fast-rng"] }
+# PROXY protocol v1/v2 parse and encode (ADR-0026; 0.1.3, MIT, released 2026-09-23). 0.x: pinned exactly.
+proxy-header = { version = "=0.1.3", default-features = false }
 
 # Providers (bollard 0.21.1 released 2026-08-16; no TLS features, Docker endpoints are unix sockets or plain tcp://)
 bollard = { version = "0.21.1", default-features = false, features = ["http", "pipe"] }
@@ -187,3 +189,10 @@ missing_errors_doc = "allow"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# The release build with symbols and line tables, for `perf` (benchmarks/README.md, "Profiling").
+# Build with `RUSTFLAGS="-C force-frame-pointers=yes"` so call graphs work without DWARF unwinding.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"

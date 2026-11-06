@@ -4,3 +4,9 @@ packages:
 
 # Exact versions in package.json; Dependabot proposes updates.
 saveExact: true
+
+# @hey-api/json-schema-ref-parser 1.4.4 (via @hey-api/openapi-ts, dashboard build only)
+# pins js-yaml 4.2.0, which has GHSA-52cp-r559-cp3m, GHSA-5p4m-2wfm-xmqj and
+# GHSA-2883-xcg3-v3hh (fixed in 4.3.2). Remove when a parser release depends on >= 4.3.2.
+overrides:
+  '@hey-api/json-schema-ref-parser>js-yaml': 4.3.2

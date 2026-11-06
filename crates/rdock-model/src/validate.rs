@@ -693,6 +693,7 @@ impl Validator<'_> {
         let t = &service.timeouts;
         for (field, zero) in [
             ("connect", t.connect.is_zero()),
+            ("connect_attempt", t.connect_attempt.is_zero()),
             ("read", t.read.is_zero()),
             ("write", t.write.is_zero()),
             ("idle", t.idle.is_zero()),

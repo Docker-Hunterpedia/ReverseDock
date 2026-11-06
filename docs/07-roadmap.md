@@ -50,6 +50,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 
 ## v0.6 — Swarm, L4, static (P1 breadth)
 **Scope:** W-SWM-01…03, M-L4-01…03, F-WEB-01, W-DNS-03, Traefik `tcp.*` label subset, PROXY protocol, SNI passthrough, static files with SPA fallback.
+**Status:** research done ([v0.6 research](research/v0.6-swarm-l4-static.md), 2026-11-06); design: [ADR-0026](decisions/0026-swarm-l4-static.md); then the issues. Performance work follows [#181](https://github.com/Docker-Hunterpedia/ReverseDock/issues/181).
 **Done when:** 3-node Swarm e2e (scale up/down, rolling update without 5xx); passthrough of a TLS database connection; static-file suite (ranges, conditionals, traversal attempts); every DNS adapter has a mocked-API test.
 
 ## v0.7 — Kubernetes (P2)

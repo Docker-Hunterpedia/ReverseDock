@@ -364,7 +364,7 @@ labels:
 
 ## 12. Swarm and Kubernetes (summary)
 
-- **Swarm** (`rdock-provider-swarm`, P1): reads `services` + `tasks`; labels from `Spec.Labels` (i.e. `deploy.labels`); endpoint mode `vip` (service VIP on the overlay) or `dnsrr`/tasks (each running task's IP with health). Proxy runs as a global service on manager/worker nodes attached to the ingress/overlay network.
+- **Swarm** (`rdock-provider-swarm`, P1, [ADR-0026](decisions/0026-swarm-l4-static.md)): the Docker provider's translator over running tasks; labels from `Spec.Labels` (Compose `deploy.labels`); events for services, nodes, networks, secrets and configs plus a task poll every `poll_interval` (5 s), because tasks emit no events. Endpoint mode `tasks` (default: each running task's address, our health checks, sticky sessions, drain on `DesiredState: shutdown`) or `vip` (the service VIP, Swarm balances). Network: label, provider setting, or the one overlay network shared with the proxy, never `ingress`. Replicas share nothing until v0.9: one ACME replica, or global mode with certificates from secrets.
 - **Kubernetes** (`rdock-provider-kubernetes`, P2): a controller built on `kube` 4.x + the `gateway-api` crate: watches `GatewayClass` (`controllerName: reversedock.dev/gateway-controller`), `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`, `TCPRoute`, `UDPRoute`, `ReferenceGrant`, `ListenerSet` (once Standard), `Service`/`EndpointSlice`, `Secret` (TLS). Writes status conditions. Leader election via `Lease`. Gateway API conformance suite runs in CI on `kind`. `Ingress` v1 support is a translation layer for migrations. Deployed by Helm as a `Deployment` (or `DaemonSet` + hostPorts) with the data plane and controller in the same binary (`--mode kubernetes`).
 
 ## 13. Admin API and dashboard (`rdock-admin`)
@@ -409,8 +409,8 @@ labels:
 
 ## 17. Layer 4 (`rdock-proxy::l4`, P1)
 
-- `listeners.<name>.protocol: tcp|udp` are Pingora listening services: TCP routes implement `pingora_core::apps::ServerApp` under `services::listening::Service`, so they get Pingora's fd transfer, PROXY-protocol pre-TLS callback and graceful shutdown for free; UDP (P2) is a Tokio `UdpSocket` loop registered as a background service (sessions are short, no fd transfer needed).
-- TCP: optional PROXY protocol v1/v2 parse (only from `trusted_proxies`); optional TLS termination; `HostSNI()` routing via ClientHello peek without termination (passthrough); byte-copy with `tokio::io::copy_bidirectional`, idle timeouts, per-connection byte metrics; outbound PROXY protocol per service.
+- `listeners.<name>.protocol: tcp` uses our own accept loop like HTTP listeners ([ADR-0012](decisions/0012-own-listeners-pingora-http-engine.md), [ADR-0026](decisions/0026-swarm-l4-static.md)), with a different per-connection `serve()`; UDP (P2) is a Tokio `UdpSocket` loop.
+- TCP, per connection: PROXY protocol v1/v2 (only from the listener's `trusted` sources, required once trusted, shared with HTTP listeners) → optional `starttls: postgres` → ClientHello peek with our own parser (reassembled across records, 16 KiB cap, rewound) → `HostSNI`/`HostSNIRegexp`/`ALPN`/`ClientIP` match → passthrough or termination with the listener's rustls acceptor → `tokio::io::copy_bidirectional` under an idle timeout and a termination delay; outbound PROXY header per service; `rdock_tcp_*` metrics.
 - UDP (P2): session table keyed by `(client, listener)`, idle timeout, per-session backend affinity, size limits.
 - Shares `rdock-balancer` (TCP health checks) and `rdock-limits` (connection caps).
 
