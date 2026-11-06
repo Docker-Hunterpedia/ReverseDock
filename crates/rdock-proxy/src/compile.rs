@@ -584,6 +584,10 @@ fn build_middlewares(
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
+        if let Err(message) = check_label_root(config, name, middleware) {
+            out.push(Diagnostic::error(path_key("middlewares", name), message));
+            continue;
+        }
         match rdock_middleware::build(name, middleware, &build_env) {
             Ok(m) => {
                 built.insert(name.clone(), m);
@@ -595,6 +599,42 @@ fn build_middlewares(
         }
     }
     built
+}
+
+/// A `static` middleware from Docker labels may serve only a directory inside
+/// `providers.docker.static_roots`, so a container cannot make ReverseDock serve its own files
+/// (certificates, keys, configuration). Both sides are resolved, so links cannot get around it.
+fn check_label_root(
+    config: &Config,
+    name: &str,
+    middleware: &rdock_model::middleware::Middleware,
+) -> Result<(), String> {
+    let rdock_model::middleware::Middleware::Static(st) = middleware else {
+        return Ok(());
+    };
+    if !name.ends_with("@docker") {
+        return Ok(());
+    }
+    let allowed = config
+        .providers
+        .docker
+        .as_ref()
+        .map(|d| d.static_roots.as_slice())
+        .unwrap_or_default();
+    let root = std::fs::canonicalize(&st.root)
+        .map_err(|e| format!("cannot read `{}`: {e}", st.root.display()))?;
+    let inside = allowed
+        .iter()
+        .filter_map(|dir| std::fs::canonicalize(dir).ok())
+        .any(|dir| root.starts_with(dir));
+    if inside {
+        Ok(())
+    } else {
+        Err(format!(
+            "`{}` is not inside a directory listed in `providers.docker.static_roots`, so labels cannot serve it",
+            st.root.display()
+        ))
+    }
 }
 
 /// Rules that match every request.
@@ -678,6 +718,7 @@ fn compile_listeners(
         let context = RouteContext {
             services,
             middlewares,
+            configs: &config.middlewares,
             live: rings.ring(name),
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
@@ -764,6 +805,8 @@ fn client_auth(config: &rdock_model::config::ClientAuth) -> Result<rdock_tls::Cl
 struct RouteContext<'a> {
     services: &'a HashMap<String, Arc<ServiceRuntime>>,
     middlewares: &'a HashMap<String, Arc<dyn Middleware>>,
+    /// The middlewares' configurations, by the same keys.
+    configs: &'a std::collections::BTreeMap<String, rdock_model::middleware::Middleware>,
     live: Arc<rdock_observability::live::Ring>,
 }
 
@@ -786,9 +829,15 @@ fn compile_route(
     let unavailable = |what: &str, reference: &str| {
         Diagnostic::error(&path, format!("{what} `{reference}` does not exist"))
     };
-    let Some(service) = services.get(key(&route.service)) else {
-        out.push(unavailable("service", &route.service));
-        return None;
+    let service = match &route.service {
+        Some(reference) => {
+            let Some(service) = services.get(key(reference)) else {
+                out.push(unavailable("service", reference));
+                return None;
+            };
+            Some(service.clone())
+        }
+        None => None,
     };
     let mut chain = Vec::new();
     for reference in &route.middlewares {
@@ -797,6 +846,19 @@ fn compile_route(
             return None;
         };
         chain.push(m.clone());
+    }
+    // Validation checks this too, except for another provider's last middleware.
+    let terminal = route
+        .middlewares
+        .last()
+        .and_then(|m| context.configs.get(key(m)))
+        .is_some_and(rdock_model::middleware::Middleware::is_terminal);
+    if service.is_none() && !terminal {
+        out.push(Diagnostic::error(
+            format!("{path}.service"),
+            "the route needs a service: its last middleware does not answer every request",
+        ));
+        return None;
     }
     let priority = if route.priority == 0 {
         i64::try_from(length).unwrap_or(i64::MAX)
@@ -821,7 +883,7 @@ fn compile_route(
         name: Arc::from(name),
         priority,
         rule,
-        service: service.clone(),
+        service,
         expr: expr.to_string(),
         max_body: route.max_body,
         grpc_web: chain.iter().any(|m| m.translates_grpc_web()),
@@ -965,5 +1027,47 @@ impl AutoTls<'_> {
             }
             .with_hint(hint),
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::Path;
+
+    use rdock_model::middleware::Middleware;
+
+    use super::*;
+
+    fn files(root: &Path) -> Middleware {
+        serde_json::from_value(serde_json::json!({ "type": "static", "root": root })).unwrap()
+    }
+
+    fn with_roots(roots: &[&Path]) -> Config {
+        serde_json::from_value(
+            serde_json::json!({ "providers": { "docker": { "static_roots": roots } } }),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn label_roots_stay_inside_the_allowed_directories() {
+        let base = tempfile::tempdir().unwrap();
+        let sites = base.path().join("sites");
+        let other = base.path().join("other");
+        std::fs::create_dir_all(sites.join("docs")).unwrap();
+        std::fs::create_dir_all(&other).unwrap();
+        std::os::unix::fs::symlink(&other, sites.join("escape")).unwrap();
+        let allowed = with_roots(&[&sites]);
+        let check = |config: &Config, name: &str, root: &Path| {
+            check_label_root(config, name, &files(root)).is_ok()
+        };
+        assert!(check(&allowed, "docs@docker", &sites.join("docs")));
+        assert!(!check(&allowed, "docs@docker", &other));
+        assert!(!check(&allowed, "docs@docker", &sites.join("escape")));
+        assert!(!check(&allowed, "docs@docker", &sites.join("../other")));
+        assert!(!check(&allowed, "docs@docker", &sites.join("missing")));
+        assert!(!check(&with_roots(&[]), "docs@docker", &sites.join("docs")));
+        // The file's own middlewares are the operator's and are not restricted.
+        assert!(check(&with_roots(&[]), "docs", &other));
     }
 }

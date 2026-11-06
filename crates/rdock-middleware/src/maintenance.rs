@@ -55,7 +55,7 @@ impl Middleware for Maintenance {
                 http::header::CONTENT_TYPE,
                 HeaderValue::from_static("text/html; charset=utf-8"),
             );
-            reply.body = Some(page.clone());
+            reply.body = Some(page.clone().into());
         }
         Flow::Reply(reply)
     }
@@ -66,7 +66,7 @@ mod tests {
     use rdock_model::values::Duration;
 
     use super::*;
-    use crate::test_support::{block_on, cx, reply_header, request};
+    use crate::test_support::{block_on, cx, reply_bytes, reply_header, request};
 
     #[test]
     fn answers_everyone_except_allowed_networks() {
@@ -87,7 +87,7 @@ mod tests {
         assert_eq!(reply.status, 503);
         assert_eq!(reply_header(&reply, "retry-after"), Some("120"));
         assert_eq!(reply_header(&reply, "cache-control"), Some("no-store"));
-        assert_eq!(reply.body.as_deref(), Some(&b"<h1>Back soon</h1>"[..]));
+        assert_eq!(reply_bytes(&reply), Some(&b"<h1>Back soon</h1>"[..]));
         let mut office = cx();
         office.client_ip = "10.1.2.3".parse().unwrap();
         assert_eq!(block_on(mw.request(&mut req, &mut office)), Flow::Next);

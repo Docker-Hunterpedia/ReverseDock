@@ -74,7 +74,11 @@ export function RouteTester() {
             <div className="mt-5 flex flex-col gap-4">
               <Alert tone={r.outcome.result === "route" ? "ok" : "warn"}>
                 {r.outcome.result === "route" ? (
-                  <>Route <strong className="font-mono">{r.outcome.route}</strong> → service <strong className="font-mono">{r.outcome.service}</strong>{r.outcome.middlewares?.length ? <> through {r.outcome.middlewares.join(" → ")}</> : null}</>
+                  r.outcome.service ? (
+                    <>Route <strong className="font-mono">{r.outcome.route}</strong> → service <strong className="font-mono">{r.outcome.service}</strong>{r.outcome.middlewares?.length ? <> through {r.outcome.middlewares.join(" → ")}</> : null}</>
+                  ) : (
+                    <>Route <strong className="font-mono">{r.outcome.route}</strong>: {r.outcome.reason}</>
+                  )
                 ) : (
                   <><strong>{r.outcome.result}</strong>: {r.outcome.reason}</>
                 )}

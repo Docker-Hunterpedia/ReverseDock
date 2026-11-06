@@ -640,3 +640,172 @@ fn alert_channels_need_safe_urls_and_smtp_needs_tls() {
         "15m"
     ));
 }
+
+fn site(static_config: Value) -> Value {
+    let mut middleware = json!({ "type": "static", "root": "/srv/site" });
+    merge(&mut middleware, static_config);
+    json!({
+        "routes": { "site": { "match": "Host(`site.example.com`)", "middlewares": ["files"] } },
+        "middlewares": { "files": middleware }
+    })
+}
+
+#[test]
+fn a_route_ending_with_a_terminal_middleware_needs_no_service() {
+    assert_eq!(validate(site(json!({}))), Vec::new());
+    let maintenance = json!({
+        "routes": { "down": { "match": "Host(`a.example.com`)", "middlewares": ["down"] } },
+        "middlewares": { "down": { "type": "maintenance" } }
+    });
+    assert_eq!(validate(maintenance), Vec::new());
+}
+
+#[test]
+fn a_route_without_service_must_end_with_a_terminal_middleware() {
+    let found = errors(json!({
+        "routes": { "app": { "match": "Host(`app.example.com`)" } }
+    }));
+    assert!(
+        has(&found, "routes.app.service", "the route needs a service"),
+        "{found:?}"
+    );
+    let found = errors(site(json!({ "pass_through": true })));
+    assert!(
+        has(&found, "routes.site.service", "the route needs a service"),
+        "{found:?}"
+    );
+    let diagnostics = validate(site(json!({ "pass_through": true })));
+    assert!(
+        diagnostics.iter().any(|d| d
+            .hint
+            .as_deref()
+            .is_some_and(|h| h.contains("pass_through"))),
+        "{diagnostics:?}"
+    );
+    let found = errors(json!({
+        "routes": { "down": { "match": "Host(`a.example.com`)", "middlewares": ["down"] } },
+        "middlewares": { "down": { "type": "maintenance", "allow": ["10.0.0.0/8"] } }
+    }));
+    assert!(
+        has(&found, "routes.down.service", "the route needs a service"),
+        "{found:?}"
+    );
+    // Another provider's middleware is checked when the configuration compiles.
+    let other = json!({
+        "routes": { "app": { "match": "Host(`app.example.com`)", "middlewares": ["files@docker"] } }
+    });
+    assert_eq!(errors(other), Vec::new());
+}
+
+#[test]
+fn middlewares_after_a_terminal_one_are_reported() {
+    let mut config = site(json!({}));
+    merge(
+        &mut config,
+        json!({
+            "routes": { "site": { "middlewares": ["files", "hdr"] } },
+            "middlewares": { "hdr": { "type": "headers" } }
+        }),
+    );
+    let found = warnings(config);
+    assert!(
+        has(
+            &found,
+            "routes.site.middlewares[1]",
+            "answers every request"
+        ),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn static_settings_are_checked() {
+    let found = errors(site(json!({
+        "index": ["a/b.html", ".."],
+        "fallback": "index.html",
+        "fallback_except": ["api"],
+        "max_ranges": 17,
+        "cache_control": { "default": "", "assets/": "public", "/x/": "bad\u{1}" },
+        "types": { ".ts": "text/typescript", "md": "markdown" }
+    })));
+    for (path, fragment) in [
+        ("middlewares.files.index[0]", "must be a file name"),
+        ("middlewares.files.index[1]", "must be a file name"),
+        ("middlewares.files.fallback", "must be the path of a file"),
+        (
+            "middlewares.files.fallback_except[0]",
+            "must start with `/`",
+        ),
+        ("middlewares.files.max_ranges", "between 1 and 16"),
+        (
+            "middlewares.files.cache_control.default",
+            "valid `Cache-Control`",
+        ),
+        (
+            "middlewares.files.cache_control[\"assets/\"]",
+            "path prefix starting with `/`",
+        ),
+        (
+            "middlewares.files.cache_control[\"/x/\"]",
+            "valid `Cache-Control`",
+        ),
+        ("middlewares.files.types[\".ts\"]", "without the dot"),
+        ("middlewares.files.types.md", "not a media type"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    assert!(has(
+        &errors(site(json!({ "max_ranges": 0 }))),
+        "middlewares.files.max_ranges",
+        "between 1 and 16"
+    ));
+    assert!(has(
+        &errors(site(json!({ "fallback": "/../etc/passwd" }))),
+        "middlewares.files.fallback",
+        "must be the path of a file"
+    ));
+}
+
+#[test]
+fn risky_static_options_are_warnings() {
+    let found = warnings(site(json!({
+        "symlinks": "all",
+        "hidden": "allow",
+        "fallback_except": ["/api/"]
+    })));
+    assert!(
+        has(&found, "middlewares.files.symlinks", "also out of `root`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.files.hidden", "`.env`"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.files.fallback_except",
+            "without `fallback`"
+        ),
+        "{found:?}"
+    );
+    assert_eq!(
+        errors(site(json!({ "symlinks": "within_root", "max_ranges": 16 }))),
+        Vec::new()
+    );
+}
+
+#[test]
+fn docker_static_roots_are_absolute() {
+    let found = errors(with(
+        app(),
+        json!({ "providers": { "docker": { "static_roots": ["/srv/sites", "sites"] } } }),
+    ));
+    assert_eq!(
+        found,
+        vec![(
+            "providers.docker.static_roots[1]".to_owned(),
+            "`sites` must be an absolute path".to_owned()
+        )]
+    );
+}

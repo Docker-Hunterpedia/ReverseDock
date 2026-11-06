@@ -4,6 +4,7 @@
 
 use rdock_model::config::{Config, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
+use rdock_model::middleware::Middleware;
 
 /// Why compilation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,6 +57,17 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     if !config.tcp_services.is_empty() {
         gate.unsupported("tcp_services", "TCP services", "v0.6");
     }
+    for (name, middleware) in &config.middlewares {
+        if let Middleware::Static(st) = middleware
+            && st.listing
+        {
+            gate.unsupported(
+                format!("{}.listing", path_key("middlewares", name)),
+                "directory listing (F-WEB-02)",
+                "v0.8",
+            );
+        }
+    }
     let providers = &config.providers;
     if providers.swarm.is_some() {
         gate.unsupported("providers.swarm", "the Swarm provider", "v0.6");
@@ -89,6 +101,19 @@ mod tests {
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
         assert!(run.iter().any(|d| d.path == "providers.swarm"));
+    }
+
+    #[test]
+    fn directory_listing_is_planned() {
+        let yaml = "middlewares:\n  site: { type: static, root: /srv, listing: true }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "middlewares.site.listing");
+        assert_eq!(
+            run[0].message,
+            "directory listing (F-WEB-02): not supported in this version (planned for v0.8)"
+        );
+        assert!(run[0].is_error());
     }
 
     #[test]

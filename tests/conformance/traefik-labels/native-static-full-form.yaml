@@ -1,0 +1,32 @@
+description: "A static middleware in the full form, as the terminal middleware of a route without a service."
+containers:
+  - name: "shop"
+    labels:
+      rdock.enable: "true"
+      rdock.routes.shop.match: "Host(`shop.example.com`)"
+      rdock.routes.shop.middlewares: "shop-files"
+      rdock.middlewares.shop-files.type: "static"
+      rdock.middlewares.shop-files.root: "/srv/sites/shop"
+      rdock.middlewares.shop-files.fallback: "/index.html"
+      rdock.middlewares.shop-files.fallback_except: "[/api/]"
+      rdock.middlewares.shop-files.cache_control./assets/: "public, max-age=31536000, immutable"
+    networks:
+      web: "172.18.0.5"
+expect:
+  routes:
+    shop:
+      service: null
+      middlewares:
+        - "shop-files"
+  services: {}
+  middlewares:
+    shop-files:
+      type: "static"
+      root: "/srv/sites/shop"
+      fallback: "/index.html"
+      fallback_except:
+        - "/api/"
+      cache_control:
+        default: "no-cache"
+        /assets/: "public, max-age=31536000, immutable"
+  diagnostics: []

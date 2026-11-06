@@ -133,7 +133,7 @@ impl Middleware for Redirect {
         Flow::Reply(Reply {
             status: status(self.permanent, &req.method),
             headers: vec![(http::header::LOCATION, value)],
-            body: Some(Bytes::new()),
+            body: Some(Bytes::new().into()),
         })
     }
 }

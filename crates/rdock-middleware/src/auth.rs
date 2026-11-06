@@ -78,7 +78,7 @@ impl BasicAuth {
                     HeaderValue::from_static("text/plain; charset=utf-8"),
                 ),
             ],
-            body: Some(Bytes::from_static(b"401 Unauthorized\n")),
+            body: Some(Bytes::from_static(b"401 Unauthorized\n").into()),
         })
     }
 }

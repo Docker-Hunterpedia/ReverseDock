@@ -177,6 +177,43 @@ async fn ip_filters_rate_limits_and_maintenance() {
     assert_eq!(down.text(), "<h1>Back soon</h1>");
 }
 
+/// Answers made by middlewares pass through `compress` like backend responses, and a route
+/// that ends with an enabled `maintenance` needs no service.
+#[tokio::test]
+async fn middleware_answers_are_compressed() {
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let html = format!(
+        "<h1>Back soon</h1>{}",
+        "<p>We are upgrading.</p>".repeat(100)
+    );
+    let page = write(dir.path(), "down.html", &html);
+    let routes = r#"
+  down: { match: "PathPrefix(`/down`)", middlewares: [gz, maintenance] }
+"#;
+    let middlewares = format!(
+        r#"
+  gz: {{ type: compress, algorithms: [gzip] }}
+  maintenance: {{ type: maintenance, file: "{}" }}
+"#,
+        page.display()
+    );
+    let _rdock = Rdock::start(RDOCK, &config(port, backend.addr, routes, &middlewares));
+    let mut req = get("a", "/down");
+    req.headers_mut()
+        .insert("accept-encoding", "gzip".parse().unwrap());
+    let down = client::http1(addr(port), req).await;
+    assert_eq!(down.status, 503);
+    assert_eq!(down.header("content-encoding"), Some("gzip"));
+    let mut text = String::new();
+    flate2::read::GzDecoder::new(&down.body[..])
+        .read_to_string(&mut text)
+        .unwrap();
+    assert_eq!(text, html);
+    assert_eq!(backend.requests(), 0);
+}
+
 #[tokio::test]
 async fn cors_compress_and_error_pages() {
     let backend = Backend::start("app").await;

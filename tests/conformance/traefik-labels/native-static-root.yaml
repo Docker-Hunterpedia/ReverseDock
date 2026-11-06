@@ -1,0 +1,25 @@
+description: "rdock.static.root ends the shorthand route with a static middleware and needs no port or service."
+containers:
+  - name: "docs"
+    labels:
+      rdock.enable: "true"
+      rdock.host: "docs.example.com"
+      rdock.middlewares: "secure@file"
+      rdock.static.root: "/srv/sites/docs"
+    networks:
+      web: "172.18.0.4"
+expect:
+  routes:
+    docs:
+      match: "Host(`docs.example.com`)"
+      service: null
+      middlewares:
+        - "secure@file"
+        - "docs-static"
+  services: {}
+  middlewares:
+    docs-static:
+      type: "static"
+      root: "/srv/sites/docs"
+      pass_through: false
+  diagnostics: []

@@ -45,7 +45,7 @@ fn provider_objects_get_qualified_keys_and_same_provider_references() {
     assert_eq!(merged.errors, Vec::new());
     assert_eq!(merged.skipped, Vec::new());
     let route = &merged.config.routes["app@docker"];
-    assert_eq!(route.service, "app@docker");
+    assert_eq!(route.service.as_deref(), Some("app@docker"));
     // `secure` exists only in the file; `limit` is the container's own.
     assert_eq!(route.middlewares, ["secure", "limit@docker"]);
     assert!(merged.config.services.contains_key("app@docker"));

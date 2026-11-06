@@ -2077,6 +2077,14 @@
               "null"
             ]
           },
+          "static_roots": {
+            "default": [],
+            "description": "Directories on ReverseDock's file system that `static` middlewares from labels may\nserve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a\ncontainer cannot read ReverseDock's own files.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "traefik_labels": {
             "default": true,
             "description": "Also read `traefik.*` labels (supported subset).",
@@ -2294,6 +2302,21 @@
           {
             "const": "grpc",
             "description": "The gRPC health protocol (`grpc.health.v1.Health/Check`); healthy when `SERVING`.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.HiddenFiles": {
+        "description": "How `static` treats names starting with `.`.",
+        "oneOf": [
+          {
+            "const": "refuse",
+            "description": "A path with any component starting with `.` answers `404`.",
+            "type": "string"
+          },
+          {
+            "const": "allow",
+            "description": "Hidden files and directories are served like any other.",
             "type": "string"
           }
         ]
@@ -3698,6 +3721,118 @@
               "type"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Serve files from a directory on ReverseDock's own file system. It answers the request,\nso a route that ends with it needs no service (unless `pass_through` is on).",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "cache_control": {
+                "$ref": "#/components/schemas/rdock.StaticCacheControl",
+                "default": {
+                  "default": "no-cache"
+                },
+                "description": "`Cache-Control` of served files."
+              },
+              "directory_redirect": {
+                "default": true,
+                "description": "Redirect (`308`) a directory path without a trailing slash to the path with one when the\ndirectory has an index file.",
+                "type": "boolean"
+              },
+              "fallback": {
+                "default": null,
+                "description": "File served (with status 200) for a GET or HEAD whose last path segment has no `.` and\nthat names no file, e.g. `/index.html` for a single-page app. Off when unset.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "fallback_except": {
+                "default": [],
+                "description": "Path prefixes that never get the `fallback`, e.g. `/api/`; they stay `404`.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "hidden": {
+                "$ref": "#/components/schemas/rdock.HiddenFiles",
+                "default": "refuse",
+                "description": "Files and directories whose name starts with `.` (`.env`, `.git/`)."
+              },
+              "index": {
+                "default": [
+                  "index.html"
+                ],
+                "description": "File names tried, in order, for a request that names a directory.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "listing": {
+                "default": false,
+                "description": "Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).",
+                "type": "boolean"
+              },
+              "max_ranges": {
+                "default": 1,
+                "description": "Most byte ranges answered in one request, from 1 to 16. A request for more gets the\nwhole file (`200`); more than 1 allows `multipart/byteranges` answers.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "nosniff": {
+                "default": true,
+                "description": "Send `X-Content-Type-Options: nosniff`.",
+                "type": "boolean"
+              },
+              "pass_through": {
+                "default": false,
+                "description": "Send requests that name no file (and methods other than GET and HEAD) on to the route's\nservice instead of answering `404` or `405`. The route then needs a service.",
+                "type": "boolean"
+              },
+              "precompressed": {
+                "default": [
+                  "zstd",
+                  "br",
+                  "gzip"
+                ],
+                "description": "Precompressed sidecar files (`app.js.zst`, `app.js.br`, `app.js.gz`) served to clients\nthat accept the coding, in this order of preference. `[]` turns them off.",
+                "items": {
+                  "$ref": "#/components/schemas/rdock.CompressAlgorithm"
+                },
+                "type": "array"
+              },
+              "root": {
+                "description": "Directory to serve. It must exist and be a directory when the configuration is applied.",
+                "type": "string"
+              },
+              "symlinks": {
+                "$ref": "#/components/schemas/rdock.SymlinkPolicy",
+                "default": "none",
+                "description": "Which symbolic links are followed."
+              },
+              "type": {
+                "const": "static",
+                "type": "string"
+              },
+              "types": {
+                "additionalProperties": {
+                  "type": "string"
+                },
+                "default": {},
+                "description": "File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.",
+                "type": "object"
+              }
+            },
+            "required": [
+              "type",
+              "root"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -4087,8 +4222,12 @@
             "type": "integer"
           },
           "service": {
-            "description": "Service that handles matching requests (`name` or `name@provider`).",
-            "type": "string"
+            "default": null,
+            "description": "Service that handles matching requests (`name` or `name@provider`). Required unless the\nlast middleware answers every request itself (`static` without `pass_through`, or\n`maintenance` enabled for everyone).",
+            "type": [
+              "string",
+              "null"
+            ]
           },
           "timeouts": {
             "$ref": "#/components/schemas/rdock.RouteTimeouts",
@@ -4113,8 +4252,7 @@
           }
         },
         "required": [
-          "match",
-          "service"
+          "match"
         ],
         "type": "object"
       },
@@ -4457,6 +4595,20 @@
         ],
         "type": "object"
       },
+      "rdock.StaticCacheControl": {
+        "additionalProperties": {
+          "type": "string"
+        },
+        "description": "`Cache-Control` of static files: a default and overrides by path prefix.",
+        "properties": {
+          "default": {
+            "default": "no-cache",
+            "description": "Value for files no prefix matches. `no-cache` makes clients revalidate with the `ETag`.",
+            "type": "string"
+          }
+        },
+        "type": "object"
+      },
       "rdock.Sticky": {
         "additionalProperties": false,
         "description": "Session affinity.",
@@ -4665,6 +4817,26 @@
           }
         },
         "type": "object"
+      },
+      "rdock.SymlinkPolicy": {
+        "description": "Which symbolic links `static` follows.",
+        "oneOf": [
+          {
+            "const": "none",
+            "description": "None: a path with a symbolic link in it answers `404`.",
+            "type": "string"
+          },
+          {
+            "const": "within_root",
+            "description": "Links that stay inside `root`; the kernel refuses any resolution that leaves it.",
+            "type": "string"
+          },
+          {
+            "const": "all",
+            "description": "Every link, also out of `root`. `rdock validate` warns about it.",
+            "type": "string"
+          }
+        ]
       },
       "rdock.SyslogTransport": {
         "description": "How syslog messages travel.",

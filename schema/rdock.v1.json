@@ -1497,6 +1497,14 @@
           ],
           "default": null
         },
+        "static_roots": {
+          "description": "Directories on ReverseDock's file system that `static` middlewares from labels may\nserve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a\ncontainer cannot read ReverseDock's own files.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "traefik_labels": {
           "description": "Also read `traefik.*` labels (supported subset).",
           "type": "boolean",
@@ -1718,6 +1726,21 @@
           "description": "The gRPC health protocol (`grpc.health.v1.Health/Check`); healthy when `SERVING`.",
           "type": "string",
           "const": "grpc"
+        }
+      ]
+    },
+    "HiddenFiles": {
+      "description": "How `static` treats names starting with `.`.",
+      "oneOf": [
+        {
+          "description": "A path with any component starting with `.` answers `404`.",
+          "type": "string",
+          "const": "refuse"
+        },
+        {
+          "description": "Hidden files and directories are served like any other.",
+          "type": "string",
+          "const": "allow"
         }
       ]
     },
@@ -3121,6 +3144,118 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "Serve files from a directory on ReverseDock's own file system. It answers the request,\nso a route that ends with it needs no service (unless `pass_through` is on).",
+          "type": "object",
+          "properties": {
+            "cache_control": {
+              "description": "`Cache-Control` of served files.",
+              "$ref": "#/$defs/StaticCacheControl",
+              "default": {
+                "default": "no-cache"
+              }
+            },
+            "directory_redirect": {
+              "description": "Redirect (`308`) a directory path without a trailing slash to the path with one when the\ndirectory has an index file.",
+              "type": "boolean",
+              "default": true
+            },
+            "fallback": {
+              "description": "File served (with status 200) for a GET or HEAD whose last path segment has no `.` and\nthat names no file, e.g. `/index.html` for a single-page app. Off when unset.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "fallback_except": {
+              "description": "Path prefixes that never get the `fallback`, e.g. `/api/`; they stay `404`.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "hidden": {
+              "description": "Files and directories whose name starts with `.` (`.env`, `.git/`).",
+              "$ref": "#/$defs/HiddenFiles",
+              "default": "refuse"
+            },
+            "index": {
+              "description": "File names tried, in order, for a request that names a directory.",
+              "type": "array",
+              "default": [
+                "index.html"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "listing": {
+              "description": "Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).",
+              "type": "boolean",
+              "default": false
+            },
+            "max_ranges": {
+              "description": "Most byte ranges answered in one request, from 1 to 16. A request for more gets the\nwhole file (`200`); more than 1 allows `multipart/byteranges` answers.",
+              "type": "integer",
+              "format": "uint32",
+              "default": 1,
+              "minimum": 0
+            },
+            "nosniff": {
+              "description": "Send `X-Content-Type-Options: nosniff`.",
+              "type": "boolean",
+              "default": true
+            },
+            "pass_through": {
+              "description": "Send requests that name no file (and methods other than GET and HEAD) on to the route's\nservice instead of answering `404` or `405`. The route then needs a service.",
+              "type": "boolean",
+              "default": false
+            },
+            "precompressed": {
+              "description": "Precompressed sidecar files (`app.js.zst`, `app.js.br`, `app.js.gz`) served to clients\nthat accept the coding, in this order of preference. `[]` turns them off.",
+              "type": "array",
+              "default": [
+                "zstd",
+                "br",
+                "gzip"
+              ],
+              "items": {
+                "$ref": "#/$defs/CompressAlgorithm"
+              }
+            },
+            "root": {
+              "description": "Directory to serve. It must exist and be a directory when the configuration is applied.",
+              "type": "string"
+            },
+            "symlinks": {
+              "description": "Which symbolic links are followed.",
+              "$ref": "#/$defs/SymlinkPolicy",
+              "default": "none"
+            },
+            "type": {
+              "type": "string",
+              "const": "static"
+            },
+            "types": {
+              "description": "File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "root"
+          ]
         }
       ]
     },
@@ -3507,8 +3642,12 @@
           "default": 0
         },
         "service": {
-          "description": "Service that handles matching requests (`name` or `name@provider`).",
-          "type": "string"
+          "description": "Service that handles matching requests (`name` or `name@provider`). Required unless the\nlast middleware answers every request itself (`static` without `pass_through`, or\n`maintenance` enabled for everyone).",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
         },
         "timeouts": {
           "description": "Upstream timeouts for this route, overriding the service's.",
@@ -3537,8 +3676,7 @@
         "^x-": {}
       },
       "required": [
-        "match",
-        "service"
+        "match"
       ]
     },
     "RouteTimeouts": {
@@ -3880,6 +4018,20 @@
         "weight"
       ]
     },
+    "StaticCacheControl": {
+      "description": "`Cache-Control` of static files: a default and overrides by path prefix.",
+      "type": "object",
+      "properties": {
+        "default": {
+          "description": "Value for files no prefix matches. `no-cache` makes clients revalidate with the `ETag`.",
+          "type": "string",
+          "default": "no-cache"
+        }
+      },
+      "additionalProperties": {
+        "type": "string"
+      }
+    },
     "Sticky": {
       "description": "Session affinity.",
       "type": "object",
@@ -4088,6 +4240,26 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "SymlinkPolicy": {
+      "description": "Which symbolic links `static` follows.",
+      "oneOf": [
+        {
+          "description": "None: a path with a symbolic link in it answers `404`.",
+          "type": "string",
+          "const": "none"
+        },
+        {
+          "description": "Links that stay inside `root`; the kernel refuses any resolution that leaves it.",
+          "type": "string",
+          "const": "within_root"
+        },
+        {
+          "description": "Every link, also out of `root`. `rdock validate` warns about it.",
+          "type": "string",
+          "const": "all"
+        }
+      ]
     },
     "SyslogTransport": {
       "description": "How syslog messages travel.",
