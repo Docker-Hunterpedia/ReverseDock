@@ -9,6 +9,14 @@ sidebar:
 
 ## [Unreleased]
 
+### Added
+- **Static files** (#191, F-WEB-01, ADR-0026): a `static` middleware serves a directory of ReverseDock's file system (a volume in Docker), so sites and single-page apps need no web server next to the proxy. Strong `ETag`s from modification time and size, `Last-Modified`, every RFC 9110 precondition in its order (304, 412), byte ranges with `If-Range` (206, 416; `max_ranges` up to 16 as `multipart/byteranges`), HEAD, precompressed `.zst`/`.br`/`.gz` sidecars chosen by `Accept-Encoding` with `Vary` on every answer, `index` files and `308` to the trailing slash, a single-page-app `fallback` that leaves asset paths and `fallback_except` prefixes a 404, `Cache-Control` by path prefix, media types with `charset=utf-8` and `nosniff`, and `pass_through` to the route's service for everything else. Safe by default: the root is opened once as a directory handle (cap-std; `openat2` with `RESOLVE_BENEATH` on Linux), the path is decoded once and `..`, `\`, NUL and invalid UTF-8 answer 404, hidden files, symbolic links and directory listings are refused (`hidden: allow`, `symlinks: within_root|all`; listings are planned for v0.8). Files over 1 MiB are streamed in 256 KiB chunks, so `bandwidth`, `compress` and HTTP/2 flow control apply.
+- A route needs no `service` when its last middleware answers every request: `static` without `pass_through`, or an enabled `maintenance` without `allow`. `rdock validate` reports a route that needs one.
+- Docker labels: `rdock.static.root` ends the container's route with a `static` middleware, and `rdock.middlewares.<name>.type=static` works like any other middleware. Label roots must be inside a directory listed in the new `providers.docker.static_roots` (empty by default), so a container cannot serve ReverseDock's own files.
+
+### Fixed
+- Answers produced by middlewares (maintenance pages, redirects, error pages) now pass through `compress` and `bandwidth` like backend responses; before, a `compress` middleware ahead of a large `maintenance` page could announce a `Content-Encoding` the body did not have. `compress` no longer adds a second `Vary: Accept-Encoding`.
+
 ## [0.5.0-alpha.1] — v0.5 "Management"
 
 ### Changed

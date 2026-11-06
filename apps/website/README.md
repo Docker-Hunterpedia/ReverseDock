@@ -16,7 +16,7 @@ pnpm build && pnpm check:a11y        # build (links checked) and axe in light an
 ## Writing pages
 
 - Pages are MDX under `src/content/docs/docs/<section>/`. The sidebar follows the folders; `sidebar.order` sorts them.
-- A complete configuration is a block titled `rdock.yaml`; an excerpt gets another title, such as `rdock.yaml (excerpt)`. Use `example.com` names and the paths `scripts/lib.ts` knows (`/etc/rdock/certs/*.pem|.key`, `/run/secrets/*`, `/etc/rdock/*.htpasswd`).
+- A complete configuration is a block titled `rdock.yaml`; an excerpt gets another title, such as `rdock.yaml (excerpt)`. Use `example.com` names and the paths `scripts/lib.ts` knows (`/etc/rdock/certs/*.pem|.key`, `/run/secrets/*`, `/etc/rdock/*.htpasswd`, `/srv/www/…` for static files).
 - Mark availability with `<Status since="v0.1" />` or `<Status planned="v0.3" />`. Settings that `rdock` refuses as "planned" are listed in `src/data/status.json`, which `check:status` proves against the binary.
 - Never edit `reference/configuration/`, `reference/cli.mdx` or `project/changelog.md` by hand: `pnpm gen` writes them from `schema/rdock.v1.json`, `rdock --help` and `CHANGELOG.md`.
 

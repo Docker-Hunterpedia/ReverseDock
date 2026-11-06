@@ -67,9 +67,9 @@ Higher priorities are evaluated first. `0` uses the rule length, like Traefik.
 
 ## `routes.<name>.service`
 
-**Type:** `string` · **Required**
+**Type:** `string`
 
-Service that handles matching requests (`name` or `name@provider`).
+Service that handles matching requests (`name` or `name@provider`). Required unless the last middleware answers every request itself (`static` without `pass_through`, or `maintenance` enabled for everyone).
 
 ## `routes.<name>.timeouts`
 

@@ -111,7 +111,7 @@ labels:
 
 Existing `traefik.*` labels work as they are, within the [supported subset](/docs/reference/docker-labels/#traefik-labels). Labels outside it are reported in the logs and in `rdock status`, never ignored silently.
 
-Label values are taken literally. `${…}` references are refused in labels, and labels cannot name files on the proxy's host, so a container cannot read ReverseDock's secrets or files.
+Label values are taken literally. `${…}` references are refused in labels, and labels cannot name files on the proxy's host, so a container cannot read ReverseDock's secrets or files. The one exception is a [static site](/docs/guides/static-files/#docker-labels) <Status since="v0.6" />, whose directory must be inside one you list in `providers.docker.static_roots`.
 
 ## Which address and port
 
