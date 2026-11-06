@@ -181,3 +181,10 @@ missing_errors_doc = "allow"
 lto = "thin"
 codegen-units = 1
 strip = "symbols"
+
+# The release build with symbols and line tables, for `perf` (benchmarks/README.md, "Profiling").
+# Build with `RUSTFLAGS="-C force-frame-pointers=yes"` so call graphs work without DWARF unwinding.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
