@@ -565,3 +565,108 @@ Answer `403` to requests without a verified client certificate.
 ## `type: grpc_web`
 
 Translate gRPC-Web from browsers into gRPC for the backend (binary `application/grpc-web`; the service needs `scheme: h2c` or `https`).
+
+## `type: static`
+
+Serve files from a directory on ReverseDock's own file system. It answers the request, so a route that ends with it needs no service (unless `pass_through` is on).
+
+### `middlewares.<name>.cache_control`
+
+**Type:** object · **Default:** `{"default":"no-cache"}`
+
+`Cache-Control` of served files.
+
+#### `middlewares.<name>.cache_control.default`
+
+**Type:** `string` · **Default:** `no-cache`
+
+Value for files no prefix matches. `no-cache` makes clients revalidate with the `ETag`.
+
+### `middlewares.<name>.directory_redirect`
+
+**Type:** `boolean` · **Default:** `true`
+
+Redirect (`308`) a directory path without a trailing slash to the path with one when the directory has an index file.
+
+### `middlewares.<name>.fallback`
+
+**Type:** `string`
+
+File served (with status 200) for a GET or HEAD whose last path segment has no `.` and that names no file, e.g. `/index.html` for a single-page app. Off when unset.
+
+### `middlewares.<name>.fallback_except`
+
+**Type:** list of `string`
+
+Path prefixes that never get the `fallback`, e.g. `/api/`; they stay `404`.
+
+### `middlewares.<name>.hidden`
+
+**Type:** `refuse` · `allow` · **Default:** `refuse`
+
+Files and directories whose name starts with `.` (`.env`, `.git/`).
+
+- `refuse`: A path with any component starting with `.` answers `404`.
+- `allow`: Hidden files and directories are served like any other.
+
+### `middlewares.<name>.index`
+
+**Type:** list of `string` · **Default:** `["index.html"]`
+
+File names tried, in order, for a request that names a directory.
+
+### `middlewares.<name>.listing`
+
+**Type:** `boolean` · **Default:** `false`
+
+Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+
+:::note[Planned for v0.8]
+Directory listing (F-WEB-02): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.8.
+:::
+
+### `middlewares.<name>.max_ranges`
+
+**Type:** `integer` · **Default:** `1`
+
+Most byte ranges answered in one request, from 1 to 16. A request for more gets the whole file (`200`); more than 1 allows `multipart/byteranges` answers.
+
+### `middlewares.<name>.nosniff`
+
+**Type:** `boolean` · **Default:** `true`
+
+Send `X-Content-Type-Options: nosniff`.
+
+### `middlewares.<name>.pass_through`
+
+**Type:** `boolean` · **Default:** `false`
+
+Send requests that name no file (and methods other than GET and HEAD) on to the route's service instead of answering `404` or `405`. The route then needs a service.
+
+### `middlewares.<name>.precompressed`
+
+**Type:** list of `gzip` · `br` · `zstd` · **Default:** `["zstd","br","gzip"]`
+
+Precompressed sidecar files (`app.js.zst`, `app.js.br`, `app.js.gz`) served to clients that accept the coding, in this order of preference. `[]` turns them off.
+
+### `middlewares.<name>.root`
+
+**Type:** `string` · **Required**
+
+Directory to serve. It must exist and be a directory when the configuration is applied.
+
+### `middlewares.<name>.symlinks`
+
+**Type:** `none` · `within_root` · `all` · **Default:** `none`
+
+Which symbolic links are followed.
+
+- `none`: None: a path with a symbolic link in it answers `404`.
+- `within_root`: Links that stay inside `root`; the kernel refuses any resolution that leaves it.
+- `all`: Every link, also out of `root`. `rdock validate` warns about it.
+
+### `middlewares.<name>.types`
+
+**Type:** map of names to `string`
+
+File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.

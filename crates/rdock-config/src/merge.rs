@@ -211,7 +211,7 @@ fn add(config: &mut Config, provider: &str, fragment: &Fragment) {
     let own_middleware = |name: &str| fragment.middlewares.contains_key(name);
     for (name, route) in &fragment.routes {
         let mut route = route.clone();
-        route.service = qualify(&route.service, &own_service);
+        route.service = route.service.map(|service| qualify(&service, &own_service));
         for middleware in &mut route.middlewares {
             *middleware = qualify(middleware, &own_middleware);
         }

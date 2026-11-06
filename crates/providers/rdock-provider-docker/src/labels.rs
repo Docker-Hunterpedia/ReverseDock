@@ -93,6 +93,23 @@ pub fn translate(containers: &[Container], settings: &DockerProvider) -> Transla
     out
 }
 
+/// Whether the route's last middleware is a `static` of the same container that answers every
+/// request (no `pass_through`).
+fn ends_with_static(middlewares: &BTreeMap<String, Tree>, route: &Tree) -> bool {
+    let Some(Value::Array(chain)) = route.top("middlewares") else {
+        return false;
+    };
+    let Some(middleware) = chain
+        .last()
+        .and_then(Value::as_str)
+        .and_then(|last| middlewares.get(last))
+    else {
+        return false;
+    };
+    middleware.top("type").and_then(Value::as_str) == Some("static")
+        && middleware.top("pass_through") != Some(&Value::Bool(true))
+}
+
 /// Objects one container declares, before decoding.
 #[derive(Debug, Default)]
 pub(crate) struct Draft {
@@ -267,12 +284,13 @@ impl<'a> Scope<'a> {
     }
 
     /// Routes without a service get the container's only service, or a default one when the
-    /// container declares none (Traefik's behaviour).
+    /// container declares none (Traefik's behaviour). A route that ends with this container's
+    /// `static` middleware is answered by it and needs none.
     fn link_services(&mut self, draft: &mut Draft) {
         let unlinked: Vec<String> = draft
             .routes
             .iter()
-            .filter(|(_, tree)| !tree.has("service"))
+            .filter(|(_, tree)| !tree.has("service") && !ends_with_static(&draft.middlewares, tree))
             .map(|(name, _)| name.clone())
             .collect();
         if unlinked.is_empty() {

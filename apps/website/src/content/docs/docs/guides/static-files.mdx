@@ -1,0 +1,285 @@
+---
+title: Serve static files
+description: Serve a website or a single-page app from a directory with the static middleware, with ETags, conditional requests, byte ranges, precompressed files and safe defaults, without a separate web server.
+sidebar:
+  order: 22
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `static` middleware <Status since="v0.6" /> answers requests with files from a directory,
+so a website, a single-page app or a folder of downloads needs no web server next to
+ReverseDock.
+
+**The directory is on ReverseDock's own file system.** When ReverseDock runs in Docker, mount
+the files into the ReverseDock container as a volume (for example `./site:/srv/www/example:ro`);
+a path inside another container means nothing to ReverseDock. The directory is opened when the
+configuration is applied, so it must exist then.
+
+## Serve a directory
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  site:
+    match: "Host(`www.example.com`)"
+    middlewares: [site]
+
+middlewares:
+  site:
+    type: static
+    root: /srv/www/example
+```
+
+The route has no `service`: `static` answers every request itself, so it is the last
+middleware of the route. A route without a service is accepted only when its last middleware
+answers every request (`static` without `pass_through`, or an enabled `maintenance`);
+`rdock validate` says so otherwise.
+
+Middlewares before `static` run as usual, so you can put `basic_auth`, `ip_allow`, `headers`,
+`compress` or `bandwidth` in front of it. Nothing is stripped from the path implicitly: to serve
+`/docs/…` from the top of the directory, put a `strip_prefix` middleware before `static`.
+
+## Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `root` | required | The directory to serve. |
+| `index` | `[index.html]` | Files tried, in order, for a request that names a directory. |
+| `fallback` | unset | File answered with 200 for page paths that name no file, e.g. `/index.html` for a single-page app. |
+| `fallback_except` | `[]` | Path prefixes that never get the fallback, e.g. `/api/`. |
+| `precompressed` | `[zstd, br, gzip]` | Sidecar files (`.zst`, `.br`, `.gz`) sent to clients that accept them; `[]` turns them off. |
+| `cache_control` | `default: no-cache` | `Cache-Control` by path prefix; see [caching](#caching). |
+| `symlinks` | `none` | `none`, `within_root` or `all`; see [safety](#what-is-never-served). |
+| `hidden` | `refuse` | `refuse` answers 404 for any name starting with `.`; `allow` serves them. |
+| `directory_redirect` | `true` | `/docs` → `/docs/` with 308 when the directory has an index file. |
+| `max_ranges` | `1` | Most byte ranges in one request, 1 to 16; more get the whole file. |
+| `nosniff` | `true` | Send `X-Content-Type-Options: nosniff`. |
+| `types` | `{}` | Extension → media type, overriding the built-in table. |
+| `pass_through` | `false` | Send requests that name no file on to the route's service. |
+| `listing` | `false` | Directory listings are <Status planned="v0.8" />; `true` is refused until then. |
+
+## A single-page app
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    middlewares: [app]
+
+middlewares:
+  app:
+    type: static
+    root: /srv/www/app
+    fallback: /index.html
+    fallback_except: [/api/]
+    cache_control:
+      default: no-cache
+      /assets/: public, max-age=31536000, immutable
+```
+
+A request for `/settings/profile` gets `index.html` with status 200, so the app's own router
+takes over. The fallback applies only to GET and HEAD requests whose last path segment has no
+`.` and that do not start with a `fallback_except` prefix: a missing `/assets/app.3f2a.js`
+stays a 404 instead of returning HTML, which would make a stale page fail in confusing ways.
+
+## Files and an API on the same host
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  shop:
+    match: "Host(`shop.example.com`)"
+    middlewares: [shop-files]
+    service: shop-api
+
+services:
+  shop-api:
+    backends: [{ address: "api:8080" }]
+
+middlewares:
+  shop-files:
+    type: static
+    root: /srv/www/shop
+    pass_through: true
+```
+
+With `pass_through: true`, a request is answered from the directory when a file matches, and
+everything else goes to the route's service: paths with no file, methods other than GET and
+HEAD, and names `static` refuses (such as dot-files). Such a route needs a `service`.
+
+## Caching
+
+Every file answer carries a strong `ETag`, made from the file's modification time in
+nanoseconds and its size (`"<hex time>-<hex size>"`, like NGINX's), and `Last-Modified`.
+Clients that send them back get `304 Not Modified` without the body. All of the conditional
+request headers of [RFC 9110 §13](https://www.rfc-editor.org/rfc/rfc9110.html#section-13)
+are handled, in its order: `If-Match` and `If-Unmodified-Since` answer 412 when they fail,
+`If-None-Match` and `If-Modified-Since` answer 304 when the file is unchanged.
+
+`Cache-Control` defaults to `no-cache`: browsers keep the file but check with the `ETag` before
+using it, which costs a short request and never shows an outdated page. For files whose names
+change when their content changes (`app.3f2a.js`, as most bundlers write them), add a prefix
+with `public, max-age=31536000, immutable`
+([RFC 8246](https://www.rfc-editor.org/rfc/rfc8246.html), checked 2026-11-06). Prefixes are
+compared literally, not as globs, and the longest matching prefix wins. With Docker labels,
+label keys are lower-cased, so use lower-case prefixes there.
+
+## Ranges and large files
+
+Answers carry `Accept-Ranges: bytes`. A `Range` header on a GET gets `206 Partial Content`
+with `Content-Range`, which lets video players seek and download managers resume;
+`If-Range` makes sure a resumed download still belongs to the same file. A range that starts
+past the end answers `416` with `Content-Range: bytes */<size>`, and a malformed `Range` is
+ignored. A request for more ranges than `max_ranges` gets the whole file; raise it (up to 16)
+to answer several ranges as `multipart/byteranges`.
+
+Files up to 1 MiB are read in one go; larger ones are read and sent in 256 KiB chunks, so a
+large download uses little memory, HTTP/2 flow control and the listener's write timeout apply,
+and a `bandwidth` middleware before `static` limits the rate.
+
+## Precompressed files
+
+Compress your build output ahead of time at the highest levels and keep the files next to the
+originals:
+
+```sh
+cd dist
+find . -type f \( -name '*.js' -o -name '*.css' -o -name '*.html' -o -name '*.svg' \) \
+  -exec zstd -19 -k -q {} \; -exec brotli -k -Z {} \; -exec gzip -k -9 {} \;
+```
+
+A client that accepts Brotli then gets `app.js.br` for `/app.js`, with
+`Content-Encoding: br`, the media type of `app.js` and its own `ETag`. The client's
+`Accept-Encoding` weights (`q=`) choose the coding; equal weights follow the order of
+`precompressed`. A sidecar that does not exist is skipped, and the original is sent when none
+fits. Every answer carries `Vary: Accept-Encoding`, 304 and 416 included, so caches keep the
+versions apart.
+
+A `compress` middleware before `static` compresses files without a sidecar on the fly
+(text types of 1 KiB or more), and leaves sidecars, partial answers and HEAD requests alone, so
+nothing is compressed twice.
+
+## Media types
+
+The media type comes from the file extension (the `mime_guess` table), with
+`charset=utf-8` added for text, JavaScript, JSON, XML and SVG. `.mjs` is `text/javascript`
+([RFC 9239](https://www.rfc-editor.org/rfc/rfc9239.html), checked 2026-11-06). Files with an
+unknown extension are sent as `application/octet-stream`, and `X-Content-Type-Options: nosniff`
+stops browsers from guessing. `.ts` is MPEG transport stream video in the table; set
+`types: { ts: text/typescript }` if you serve TypeScript sources.
+
+## What is never served
+
+- **Paths that leave the directory.** The path is decoded once more after ReverseDock's
+  normalisation, and any `..` or `.` segment, a backslash, a NUL byte or bytes that are not
+  valid UTF-8 answer 404 before the file system is touched. The directory is opened once as a
+  handle, and every file is opened beneath it, so the kernel enforces that no path leaves it.
+- **Hidden files.** Any path component starting with `.` (`.env`, `.git/config`,
+  `.well-known/…`) answers 404 unless you set `hidden: allow`.
+- **Symbolic links.** With `symlinks: none`, a path with a link in it answers 404.
+  `within_root` follows links that stay inside the directory; `all` follows every link, also
+  out of it, and `rdock validate` warns about it.
+- **Directory listings.** A directory without an index file answers 404.
+- **Other methods.** Methods other than GET and HEAD get `405` with `Allow: GET, HEAD`.
+
+When the directory is renamed or deleted while ReverseDock runs, the open handle keeps serving
+what is left, and the next reload reports the missing directory and keeps the running
+configuration.
+
+## Docker labels
+
+A container can describe a site with labels, while the files stay on ReverseDock's side. To keep
+containers from serving ReverseDock's own files (its certificates, keys and configuration),
+labels may only name directories inside one listed in `providers.docker.static_roots`:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+providers:
+  docker:
+    network: proxy
+    static_roots: [/srv/www]
+```
+
+```yaml title="compose.yaml"
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.6.0-alpha.1
+    volumes:
+      - ./config:/etc/rdock:ro
+      - ./sites:/srv/www:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    networks: [proxy]
+
+  docs:
+    image: busybox:1.37
+    command: ["sleep", "infinity"]
+    labels:
+      rdock.enable: "true"
+      rdock.host: docs.example.com
+      rdock.static.root: /srv/www/docs
+    networks: [proxy]
+
+networks:
+  proxy:
+    name: proxy
+```
+
+Labels are read from running containers, so the container carrying them must keep running; it
+can be the job that builds or syncs the site into `./sites/docs`. `rdock.static.root` makes a
+`static` middleware named `<route>-static`, puts it last on the container's route and drops the
+route's service, so the container needs no port. For the other
+settings, use the full form:
+`rdock.middlewares.docs.type=static`, `rdock.middlewares.docs.root=/srv/www/docs`,
+`rdock.middlewares.docs.fallback=/index.html`, and the route label
+`rdock.routes.docs.middlewares=docs`. A label root outside `static_roots` (links resolved) is
+reported in `rdock status` and its route is left out.
+
+## Check that it worked
+
+```sh
+curl -sI https://www.example.com/
+curl -s -o /dev/null -w '%{http_code}\n' -H 'If-None-Match: "<etag from above>"' https://www.example.com/
+curl -s -H 'Range: bytes=0-99' -D - -o /dev/null https://www.example.com/video.mp4
+```
+
+The first shows `etag`, `last-modified`, `accept-ranges: bytes` and the media type; the second
+prints `304`; the third shows `206` with `content-range: bytes 0-99/<size>`.
+
+## Related
+
+- [Compress responses](/docs/guides/compression/)
+- [Error pages and maintenance mode](/docs/guides/error-pages-and-maintenance/)
+- [Docker containers and labels](/docs/guides/docker-labels/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

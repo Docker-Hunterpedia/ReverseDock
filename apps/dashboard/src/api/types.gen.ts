@@ -1023,12 +1023,18 @@ export type RdockDockerProvider = {
      */
     network?: string | null;
     /**
+     * Directories on ReverseDock's file system that `static` middlewares from labels may
+     * serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a
+     * container cannot read ReverseDock's own files.
+     */
+    static_roots?: Array<string>;
+    /**
      * Also read `traefik.*` labels (supported subset).
      */
     traefik_labels?: boolean;
     [key: string]: unknown | RdockEndpoint | {
         [key: string]: string;
-    } | boolean | string | string | null | undefined;
+    } | boolean | string | string | null | Array<string> | undefined;
 };
 
 /**
@@ -1166,6 +1172,11 @@ export type RdockHetznerProvider = {
     zone?: string | null;
     [key: string]: unknown | string | RdockHttpUrl | null | string | null | undefined;
 };
+
+/**
+ * How `static` treats names starting with `.`.
+ */
+export type RdockHiddenFiles = 'refuse' | 'allow';
 
 /**
  * `Strict-Transport-Security` settings. Browsers then refuse plain HTTP for the host, so
@@ -1748,6 +1759,74 @@ export type RdockMiddleware = {
 } | {
     type: 'grpc_web';
     [key: string]: unknown | 'grpc_web';
+} | {
+    /**
+     * `Cache-Control` of served files.
+     */
+    cache_control?: RdockStaticCacheControl;
+    /**
+     * Redirect (`308`) a directory path without a trailing slash to the path with one when the
+     * directory has an index file.
+     */
+    directory_redirect?: boolean;
+    /**
+     * File served (with status 200) for a GET or HEAD whose last path segment has no `.` and
+     * that names no file, e.g. `/index.html` for a single-page app. Off when unset.
+     */
+    fallback?: string | null;
+    /**
+     * Path prefixes that never get the `fallback`, e.g. `/api/`; they stay `404`.
+     */
+    fallback_except?: Array<string>;
+    /**
+     * Files and directories whose name starts with `.` (`.env`, `.git/`).
+     */
+    hidden?: RdockHiddenFiles;
+    /**
+     * File names tried, in order, for a request that names a directory.
+     */
+    index?: Array<string>;
+    /**
+     * Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+     */
+    listing?: boolean;
+    /**
+     * Most byte ranges answered in one request, from 1 to 16. A request for more gets the
+     * whole file (`200`); more than 1 allows `multipart/byteranges` answers.
+     */
+    max_ranges?: number;
+    /**
+     * Send `X-Content-Type-Options: nosniff`.
+     */
+    nosniff?: boolean;
+    /**
+     * Send requests that name no file (and methods other than GET and HEAD) on to the route's
+     * service instead of answering `404` or `405`. The route then needs a service.
+     */
+    pass_through?: boolean;
+    /**
+     * Precompressed sidecar files (`app.js.zst`, `app.js.br`, `app.js.gz`) served to clients
+     * that accept the coding, in this order of preference. `[]` turns them off.
+     */
+    precompressed?: Array<RdockCompressAlgorithm>;
+    /**
+     * Directory to serve. It must exist and be a directory when the configuration is applied.
+     */
+    root: string;
+    /**
+     * Which symbolic links are followed.
+     */
+    symlinks?: RdockSymlinkPolicy;
+    type: 'static';
+    /**
+     * File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.
+     */
+    types?: {
+        [key: string]: string;
+    };
+    [key: string]: unknown | RdockStaticCacheControl | boolean | string | null | Array<string> | RdockHiddenFiles | Array<string> | number | Array<RdockCompressAlgorithm> | string | RdockSymlinkPolicy | 'static' | {
+        [key: string]: string;
+    } | undefined;
 };
 
 /**
@@ -1971,9 +2050,11 @@ export type RdockRoute = {
      */
     priority?: number;
     /**
-     * Service that handles matching requests (`name` or `name@provider`).
+     * Service that handles matching requests (`name` or `name@provider`). Required unless the
+     * last middleware answers every request itself (`static` without `pass_through`, or
+     * `maintenance` enabled for everyone).
      */
-    service: string;
+    service?: string | null;
     /**
      * Upstream timeouts for this route, overriding the service's.
      */
@@ -1982,7 +2063,7 @@ export type RdockRoute = {
      * TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
      */
     tls?: RdockRouteTls | null;
-    [key: string]: unknown | boolean | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | RdockRouteTimeouts | RdockRouteTls | null | undefined;
+    [key: string]: unknown | boolean | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
 };
 
 /**
@@ -2137,6 +2218,17 @@ export type RdockSplitTarget = {
 };
 
 /**
+ * `Cache-Control` of static files: a default and overrides by path prefix.
+ */
+export type RdockStaticCacheControl = {
+    /**
+     * Value for files no prefix matches. `no-cache` makes clients revalidate with the `ETag`.
+     */
+    default?: string;
+    [key: string]: string | undefined;
+};
+
+/**
  * Session affinity.
  */
 export type RdockSticky = {
@@ -2265,6 +2357,11 @@ export type RdockSwarmProvider = {
     traefik_labels?: boolean;
     [key: string]: unknown | RdockEndpoint | RdockSwarmEndpointMode | boolean | string | null | undefined;
 };
+
+/**
+ * Which symbolic links `static` follows.
+ */
+export type RdockSymlinkPolicy = 'none' | 'within_root' | 'all';
 
 /**
  * How syslog messages travel.

@@ -25,8 +25,11 @@ pub struct Route {
     /// Middlewares applied in order (`name` or `name@provider`).
     #[serde(default)]
     pub middlewares: Vec<String>,
-    /// Service that handles matching requests (`name` or `name@provider`).
-    pub service: String,
+    /// Service that handles matching requests (`name` or `name@provider`). Required unless the
+    /// last middleware answers every request itself (`static` without `pass_through`, or
+    /// `maintenance` enabled for everyone).
+    #[serde(default)]
+    pub service: Option<String>,
     /// TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
     #[serde(default)]
     pub tls: Option<RouteTls>,

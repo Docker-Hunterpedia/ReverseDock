@@ -1,7 +1,8 @@
 //! Native labels: the `rdock.*` shorthand and full form (W-DKR-02).
 //!
 //! Shorthand: `rdock.host`, `rdock.path`, `rdock.port`, `rdock.tls` and `rdock.middlewares` make
-//! one route and one service named after the container. Full form:
+//! one route and one service named after the container; `rdock.static.root` ends the route with
+//! a `static` middleware instead of the service. Full form:
 //! `rdock.routes.<name>.<field>`, `rdock.services.<name>.<field>` and
 //! `rdock.middlewares.<name>.<field>`, where `<field>` is a dotted path of the YAML model.
 
@@ -11,7 +12,7 @@ use super::tree::{list, scalar};
 use super::{Draft, Scope};
 
 /// Labels read elsewhere: eligibility, network and the shorthand.
-const HANDLED: [&str; 7] = [
+const HANDLED: [&str; 8] = [
     "rdock.enable",
     "rdock.network",
     "rdock.host",
@@ -19,7 +20,11 @@ const HANDLED: [&str; 7] = [
     "rdock.port",
     "rdock.tls",
     "rdock.middlewares",
+    STATIC_ROOT,
 ];
+
+/// The shorthand for a site served from a directory of ReverseDock's file system.
+const STATIC_ROOT: &str = "rdock.static.root";
 
 /// Fields that would make ReverseDock read files on its own host; a container must not name
 /// them.
@@ -140,11 +145,16 @@ pub(super) fn shorthand(scope: &mut Scope<'_>, draft: &mut Draft) {
     let port_label = scope.label("rdock.port");
     let tls_label = scope.label("rdock.tls");
     let middlewares = scope.label("rdock.middlewares");
+    let static_root = scope
+        .label(STATIC_ROOT)
+        .map(str::trim)
+        .filter(|r| !r.is_empty());
     let name = scope.default_name();
     if hosts.is_empty() && path.is_none() {
         for (label, set) in [
             ("rdock.tls", tls_label.is_some()),
             ("rdock.middlewares", middlewares.is_some()),
+            (STATIC_ROOT, static_root.is_some()),
         ] {
             if set {
                 scope.warn(
@@ -181,24 +191,54 @@ pub(super) fn shorthand(scope: &mut Scope<'_>, draft: &mut Draft) {
             format!("{rule} && {prefix}")
         };
     }
-    let route = draft.routes.entry(name.clone()).or_default();
-    let mut fields = vec![
-        ("match", Value::String(rule)),
-        ("service", Value::String(name.clone())),
-    ];
+    let mut chain = middlewares.map_or_else(Vec::new, |value| match list(value) {
+        Value::Array(items) => items,
+        other => vec![other],
+    });
+    let site = static_root.and_then(|root| static_site(scope, draft, &name, root));
+    let mut fields = vec![("match", Value::String(rule))];
+    match &site {
+        Some(middleware) => chain.push(Value::String(middleware.clone())),
+        None => fields.push(("service", Value::String(name.clone()))),
+    }
     if let Some(value) = tls_label {
         fields.push(("tls", tls(value)));
     }
-    if let Some(value) = middlewares {
-        fields.push(("middlewares", list(value)));
+    if !chain.is_empty() {
+        fields.push(("middlewares", Value::Array(chain)));
     }
+    let route = draft.routes.entry(name.clone()).or_default();
     for (field, value) in fields {
         let _ = route.set(field, value);
     }
-    draft.services.entry(name.clone()).or_default();
+    if site.is_none() {
+        draft.services.entry(name.clone()).or_default();
+    }
     if let Some(value) = port_label {
         set_port(scope, draft, &name, value);
     }
+}
+
+/// The `static` middleware of `rdock.static.root`, named `<route>-static`; `None` when the
+/// full form already declares a middleware of that name.
+fn static_site(
+    scope: &mut Scope<'_>,
+    draft: &mut Draft,
+    route: &str,
+    root: &str,
+) -> Option<String> {
+    let name = format!("{route}-static");
+    if draft.middlewares.contains_key(&name) {
+        scope.warn(
+            STATIC_ROOT,
+            format!("the full form already declares middleware `{name}`; the label is ignored"),
+        );
+        return None;
+    }
+    let middleware = draft.middlewares.entry(name.clone()).or_default();
+    let _ = middleware.set("type", Value::String("static".to_owned()));
+    let _ = middleware.set("root", Value::String(root.to_owned()));
+    Some(name)
 }
 
 fn set_port(scope: &mut Scope<'_>, draft: &mut Draft, service: &str, value: &str) {

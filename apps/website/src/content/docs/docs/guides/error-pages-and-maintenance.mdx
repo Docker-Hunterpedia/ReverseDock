@@ -157,6 +157,9 @@ after you finish. Keep 503: it tells search engines and monitors the outage is t
 To switch maintenance on and off, change `enabled` and save the file. ReverseDock reloads on
 its own; see [Reloads](/docs/guides/reloads/).
 
+A route whose last middleware is an enabled `maintenance` without `allow` needs no `service`
+<Status since="v0.6" />, for example a placeholder page for a site that has no backend yet.
+
 ## Check that it worked
 
 ```sh

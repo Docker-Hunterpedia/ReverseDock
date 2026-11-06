@@ -16,7 +16,7 @@ use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 use pingora::{Error, ErrorSource, ErrorType};
 use rdock_balancer::{Ejection, RetryPermit};
-use rdock_middleware::{Context as MwContext, Flow, Middleware, Reply};
+use rdock_middleware::{Body, Context as MwContext, Flow, Middleware, Reply};
 use rdock_model::service::RetryOn;
 use rdock_observability::{AccessRecord, Metrics, rfc3339};
 
@@ -363,7 +363,7 @@ impl RdockProxy {
                     HeaderValue::from_static("no-store"),
                 ),
             ],
-            body: Some(body),
+            body: Some(Body::Bytes(body)),
         };
         if listener.tls.is_none()
             && let Some(answer) = self.http01_answer(req)
@@ -417,7 +417,9 @@ impl RdockProxy {
         Ok(())
     }
 
-    /// Writes a complete response produced by rdock (redirects, middleware answers, 404).
+    /// Writes a response produced by rdock (redirects, middleware answers, 404). Bodies in
+    /// memory are sent at once, files chunk by chunk; both pass the response compression and
+    /// the `bandwidth` throttle chosen by the middlewares.
     async fn reply(
         &self,
         session: &mut Session,
@@ -440,9 +442,12 @@ impl RdockProxy {
             let (content_type, body) = errorpage::render(reply.status, &ctx.request_id, accept);
             resp.insert_header(http::header::CONTENT_TYPE, content_type)?;
             resp.insert_header(http::header::CACHE_CONTROL, "no-store")?;
-            body
+            Body::Bytes(body)
         };
-        resp.set_content_length(body.len())?;
+        // RFC 9110 §8.6: a 304 must not carry a Content-Length other than the full one.
+        if !matches!(reply.status, 204 | 304) {
+            resp.insert_header(http::header::CONTENT_LENGTH, body.len())?;
+        }
         if let Some(cx) = ctx.mw.as_mut() {
             for mw in chain.iter().rev() {
                 mw.response(&mut resp, cx).await;
@@ -452,12 +457,17 @@ impl RdockProxy {
             .mw
             .as_mut()
             .and_then(|cx| cx.replace_body.take())
-            .unwrap_or(body);
+            .map_or(body, Body::Bytes);
         resp.insert_header("x-request-id", &*ctx.request_id)?;
         let head = session.req_header().method == http::Method::HEAD;
+        let compressed = ctx.mw.as_ref().is_some_and(|cx| cx.compression.is_some());
+        if compressed && !head && session.req_header().version == Version::HTTP_11 {
+            // `compress` removed the length; HTTP/1.0 clients get a close-delimited body.
+            resp.insert_header(http::header::TRANSFER_ENCODING, "chunked")?;
+        }
         session.write_response_header(Box::new(resp), head).await?;
         if !head {
-            session.write_response_body(Some(body), true).await?;
+            send_body(session, ctx.mw.as_mut(), body).await?;
         }
         Ok(())
     }
@@ -1160,6 +1170,57 @@ fn client_identity(session: &mut Session) -> Option<Arc<rdock_middleware::Client
         .and_then(|h| h.client_cert.clone())
 }
 
+/// Sends a reply body: one write for bytes in memory, chunk by chunk for a file.
+async fn send_body(
+    session: &mut Session,
+    mut cx: Option<&mut MwContext>,
+    body: Body,
+) -> pingora::Result<()> {
+    let mut file = match body {
+        Body::Bytes(bytes) => return send_chunk(session, cx, bytes, true).await,
+        Body::File(file) => file,
+    };
+    loop {
+        let chunk = file
+            .next_chunk()
+            .await
+            .map_err(|e| Error::because(ErrorType::ReadError, "reading a static file failed", e))?;
+        let end = file.is_finished();
+        send_chunk(session, cx.as_deref_mut(), chunk, end).await?;
+        if end {
+            return Ok(());
+        }
+    }
+}
+
+/// Writes one chunk of a reply body through the response compression, then waits as long as
+/// the `bandwidth` throttle asks.
+async fn send_chunk(
+    session: &mut Session,
+    cx: Option<&mut MwContext>,
+    chunk: Bytes,
+    end: bool,
+) -> pingora::Result<()> {
+    let Some(cx) = cx else {
+        return session.write_response_body(Some(chunk), end).await;
+    };
+    let chunk = match cx.compression.as_mut() {
+        Some(encoder) => encoder
+            .encode(&chunk, end)
+            .map_err(|e| Error::because(ErrorType::InternalError, "compression failed", e))?,
+        None => chunk,
+    };
+    let wait = cx
+        .throttle
+        .as_ref()
+        .map_or(Duration::ZERO, |throttle| throttle.take(chunk.len()));
+    session.write_response_body(Some(chunk), end).await?;
+    if !wait.is_zero() {
+        tokio::time::sleep(wait).await;
+    }
+    Ok(())
+}
+
 /// Per-request state that follows from the matched route: the service (a `split` picks its
 /// target here), gRPC-Web translation and the route's body limit.
 fn start_route(
@@ -1167,7 +1228,7 @@ fn start_route(
     ctx: &mut RequestCtx,
     route: &RouteRuntime,
 ) -> pingora::Result<()> {
-    ctx.service = Some(upstream::resolve(&route.service));
+    ctx.service = route.service.as_ref().map(upstream::resolve);
     if route.grpc_web {
         let mut grpc_web = GrpcWebCtx::default();
         grpc_web.init();
@@ -1358,7 +1419,7 @@ fn https_redirect(req: &RequestHeader, authority: &str, port: u16) -> Reply {
         308
     };
     let mut reply = Reply::status(status);
-    reply.body = Some(Bytes::new());
+    reply.body = Some(Body::Bytes(Bytes::new()));
     if let Ok(value) = HeaderValue::from_str(&location) {
         reply.headers.push((http::header::LOCATION, value));
     }

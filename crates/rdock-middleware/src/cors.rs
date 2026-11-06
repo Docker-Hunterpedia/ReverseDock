@@ -109,7 +109,7 @@ impl Middleware for Cors {
         Flow::Reply(Reply {
             status: 204,
             headers,
-            body: Some(Bytes::new()),
+            body: Some(Bytes::new().into()),
         })
     }
 

@@ -10,7 +10,7 @@ use http::HeaderMap;
 use serde_json::{Value, json};
 
 use crate::router::{Facts, normalize_host};
-use crate::runtime::Runtime;
+use crate::runtime::{RouteRuntime, Runtime};
 
 /// The request to explain.
 #[derive(Debug, Default)]
@@ -84,29 +84,7 @@ pub fn explain(runtime: &Runtime, listener: &str, request: &Request) -> Result<V
         .collect();
     let now = Instant::now();
     let outcome = match &winner {
-        Some(route) => {
-            let service = &route.service;
-            let backends: Vec<Value> = service
-                .members()
-                .iter()
-                .map(|m| {
-                    let exclusion = m.state.exclusion(now);
-                    let ramp = m.state.ramping(m.weight, service.health.slow_start, now);
-                    json!({
-                        "address": m.id,
-                        "weight": m.weight,
-                        "backup": m.backup,
-                        "considered": exclusion.is_none() && m.weight > 0,
-                        "reason": exclusion
-                            .or_else(|| (m.weight == 0).then(|| "weight 0".to_owned()))
-                            .or_else(|| m.backup.then(|| "backup: used only when no primary backend is available".to_owned())),
-                        "slow_start_weight": ramp,
-                        "in_flight": m.state.in_flight(),
-                    })
-                })
-                .collect();
-            json!({ "result": "route", "route": &*route.name, "service": &*service.name, "backends": backends })
-        }
+        Some(route) => route_outcome(route, now),
         None if listener
             .https_redirect
             .as_ref()
@@ -122,4 +100,34 @@ pub fn explain(runtime: &Runtime, listener: &str, request: &Request) -> Result<V
         "routes": routes,
         "outcome": outcome,
     }))
+}
+
+/// The outcome for the winning route: its service and the backends it would consider.
+fn route_outcome(route: &RouteRuntime, now: Instant) -> Value {
+    let Some(service) = &route.service else {
+        return json!({
+            "result": "route", "route": &*route.name,
+            "reason": "the route's middlewares answer every request; it has no service",
+        });
+    };
+    let backends: Vec<Value> = service
+        .members()
+        .iter()
+        .map(|m| {
+            let exclusion = m.state.exclusion(now);
+            let ramp = m.state.ramping(m.weight, service.health.slow_start, now);
+            json!({
+                "address": m.id,
+                "weight": m.weight,
+                "backup": m.backup,
+                "considered": exclusion.is_none() && m.weight > 0,
+                "reason": exclusion
+                    .or_else(|| (m.weight == 0).then(|| "weight 0".to_owned()))
+                    .or_else(|| m.backup.then(|| "backup: used only when no primary backend is available".to_owned())),
+                "slow_start_weight": ramp,
+                "in_flight": m.state.in_flight(),
+            })
+        })
+        .collect();
+    json!({ "result": "route", "route": &*route.name, "service": &*service.name, "backends": backends })
 }

@@ -2,6 +2,7 @@
 
 use std::collections::BTreeMap;
 use std::net::{IpAddr, Ipv4Addr};
+use std::path::PathBuf;
 
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
@@ -48,6 +49,10 @@ pub struct DockerProvider {
     pub entrypoints: BTreeMap<String, String>,
     /// Address used for containers in host network mode.
     pub host_address: IpAddr,
+    /// Directories on ReverseDock's file system that `static` middlewares from labels may
+    /// serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a
+    /// container cannot read ReverseDock's own files.
+    pub static_roots: Vec<PathBuf>,
 }
 
 impl Default for DockerProvider {
@@ -59,6 +64,7 @@ impl Default for DockerProvider {
             traefik_labels: true,
             entrypoints: BTreeMap::new(),
             host_address: IpAddr::V4(Ipv4Addr::LOCALHOST),
+            static_roots: Vec::new(),
         }
     }
 }

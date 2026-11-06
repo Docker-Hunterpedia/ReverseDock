@@ -47,6 +47,12 @@ Address used for containers in host network mode.
 
 Network used to reach containers that are on several networks.
 
+### `providers.docker.static_roots`
+
+**Type:** list of `string`
+
+Directories on ReverseDock's file system that `static` middlewares from labels may serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a container cannot read ReverseDock's own files.
+
 ### `providers.docker.traefik_labels`
 
 **Type:** `boolean` · **Default:** `true`

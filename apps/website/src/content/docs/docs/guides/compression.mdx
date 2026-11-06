@@ -81,7 +81,8 @@ A response is left as it is when any of these holds:
   are never compressed, even if your list includes them, because buffering would break them.
 - It answers a `HEAD` request.
 - Its status is 1xx, 204, 206 (partial content) or 304, or it has a `Content-Range`.
-- It already has a `Content-Encoding` other than `identity`.
+- It already has a `Content-Encoding` other than `identity`, such as a precompressed file sent
+  by the [`static` middleware](/docs/guides/static-files/#precompressed-files).
 - Its `Content-Length` is below `min_size`. A response without a length, for example a chunked
   stream, is compressed when its type allows it.
 - The client's `Accept-Encoding` accepts none of the configured algorithms.

@@ -389,16 +389,20 @@ impl Validator<'_> {
                     );
                 }
             }
-            self.check_reference(
-                &format!("{path}.service"),
-                "service",
-                &route.service,
-                &self.config.services,
-            );
+            match &route.service {
+                Some(service) => self.check_reference(
+                    &format!("{path}.service"),
+                    "service",
+                    service,
+                    &self.config.services,
+                ),
+                None => self.check_route_without_service(&path, route),
+            }
             for (i, middleware) in route.middlewares.iter().enumerate() {
                 let p = path_index(&format!("{path}.middlewares"), i);
                 self.check_reference(&p, "middleware", middleware, &self.config.middlewares);
             }
+            self.check_terminal_position(&path, route);
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
                 self.check_reference(
@@ -410,10 +414,16 @@ impl Validator<'_> {
                 if !(1..=100).contains(&mirror.percent) {
                     self.error(format!("{p}.percent"), "must be between 1 and 100");
                 }
-                if mirror.service == route.service {
+                if route.service.as_deref() == Some(mirror.service.as_str()) {
                     self.warning(
                         format!("{p}.service"),
                         "the mirror is the route's own service, so it gets every request twice",
+                    );
+                }
+                if route.service.is_none() {
+                    self.warning(
+                        format!("{p}.service"),
+                        "the route's middlewares answer every request, so nothing is mirrored",
                     );
                 }
             }
@@ -422,10 +432,10 @@ impl Validator<'_> {
                 .iter()
                 .any(|m| matches!(self.config.middlewares.get(m), Some(Middleware::GrpcWeb(_))));
             if grpc_web
-                && self
-                    .config
-                    .services
-                    .get(&route.service)
+                && route
+                    .service
+                    .as_ref()
+                    .and_then(|service| self.config.services.get(service))
                     .is_some_and(|s| s.scheme == Scheme::Http && s.split.is_empty())
             {
                 self.error(
@@ -434,6 +444,57 @@ impl Validator<'_> {
                 );
             }
             self.check_route_tls(&path, route, expr.as_ref());
+        }
+    }
+
+    /// A route without a service is valid only when its last middleware answers every request.
+    /// A last middleware that is not defined here (another provider's, checked when the
+    /// configuration compiles, or a missing one, reported by its reference check) passes.
+    fn check_route_without_service(&mut self, path: &str, route: &Route) {
+        let last = route.middlewares.last();
+        let defined = last.map(|m| self.config.middlewares.get(reference_key(m)));
+        let terminal = match defined {
+            Some(Some(middleware)) => middleware.is_terminal(),
+            Some(None) => true,
+            None => false,
+        };
+        if terminal {
+            return;
+        }
+        let hint = match defined.flatten() {
+            Some(Middleware::Static(_)) => {
+                "the last middleware is a `static` with `pass_through: true`, which sends requests for missing files to the service"
+            }
+            Some(Middleware::Maintenance(_)) => {
+                "the last middleware is a `maintenance` that is disabled or lets `allow` networks through to the service"
+            }
+            _ => {
+                "set `service`, or end `middlewares` with a `static` middleware (without `pass_through`) or an enabled `maintenance`"
+            }
+        };
+        self.push(
+            Diagnostic::error(format!("{path}.service"), "the route needs a service")
+                .with_hint(hint),
+        );
+    }
+
+    /// Middlewares after one that answers every request never run.
+    fn check_terminal_position(&mut self, path: &str, route: &Route) {
+        let count = route.middlewares.len();
+        let position = route.middlewares.iter().position(|m| {
+            self.config
+                .middlewares
+                .get(reference_key(m))
+                .is_some_and(Middleware::is_terminal)
+        });
+        if let Some(i) = position.filter(|i| i + 1 < count) {
+            self.warning(
+                path_index(&format!("{path}.middlewares"), i + 1),
+                format!(
+                    "`{}` answers every request, so the middlewares after it never run",
+                    route.middlewares[i]
+                ),
+            );
         }
     }
 
@@ -918,6 +979,7 @@ impl Validator<'_> {
                     }
                 }
                 Middleware::GrpcWeb(_) => {}
+                Middleware::Static(st) => self.check_static(&path, st),
                 Middleware::Jwt(j) => self.check_jwt(&path, j),
                 Middleware::ClientCert(c) => {
                     for (i, pattern) in c.allow.iter().enumerate() {
@@ -1945,6 +2007,14 @@ impl Validator<'_> {
             if docker.network.as_ref().is_some_and(|n| !network_ok(n)) {
                 self.error("providers.docker.network", "invalid Docker network name");
             }
+            for (i, root) in docker.static_roots.iter().enumerate() {
+                if !root.is_absolute() {
+                    self.error(
+                        path_index("providers.docker.static_roots", i),
+                        format!("`{}` must be an absolute path", root.display()),
+                    );
+                }
+            }
             for (entrypoint, listener) in &docker.entrypoints {
                 if !self.listeners.contains_key(listener) {
                     self.error(
@@ -1990,5 +2060,6 @@ fn public_ip(host: &str) -> Option<IpAddr> {
     (!local).then_some(ip)
 }
 
+mod static_files;
 #[cfg(test)]
 mod tests;
