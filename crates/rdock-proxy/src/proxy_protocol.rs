@@ -337,7 +337,8 @@ pub struct Terminated<'a> {
 ///
 /// # Errors
 ///
-/// Only when proxy-header cannot encode the addresses, which [`same_family`] rules out.
+/// Only when proxy-header cannot encode the addresses, which never happens once both are in
+/// one family, as this function makes them.
 pub fn encode(
     version: ProxyProtocolVersion,
     source: SocketAddr,

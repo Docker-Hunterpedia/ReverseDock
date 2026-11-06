@@ -158,24 +158,14 @@ pub(crate) async fn serve(
     listener: ListenerContext<'_>,
     metrics: &Metrics,
 ) {
-    let starttls = match listener.starttls {
-        Some(StartTls::Postgres) => {
-            match starttls::postgres(&mut stream, listener.deadline).await {
-                Ok(starttls::Negotiated::Tls) => true,
-                Ok(starttls::Negotiated::Plain { read }) => {
-                    stream.rewind(&read);
-                    false
-                }
-                Err(starttls::Closed) => return,
-            }
-        }
-        None => false,
+    let Ok(answered_ssl_request) = answer_starttls(&mut stream, &listener).await else {
+        return;
     };
     let hello = if reads_hello(listener.routes) || listener.tls.is_some() {
-        match read_hello(&conn, &mut stream, listener.deadline, metrics).await {
-            Some(hello) => hello,
-            None => return,
-        }
+        let Ok(hello) = read_hello(&conn, &mut stream, listener.deadline, metrics).await else {
+            return;
+        };
+        hello
     } else {
         None
     };
@@ -200,11 +190,32 @@ pub(crate) async fn serve(
         stream,
         &route,
         hello.as_ref(),
-        starttls,
+        answered_ssl_request,
         &listener,
         metrics,
     )
     .await;
+}
+
+/// The connection is to be closed; whatever made it so is already counted.
+struct Close;
+
+/// The listener's `starttls` step: whether a request to start TLS was answered here.
+async fn answer_starttls(
+    stream: &mut L4Stream,
+    listener: &ListenerContext<'_>,
+) -> Result<bool, Close> {
+    let Some(StartTls::Postgres) = listener.starttls else {
+        return Ok(false);
+    };
+    match starttls::postgres(stream, listener.deadline).await {
+        Ok(starttls::Negotiated::Tls) => Ok(true),
+        Ok(starttls::Negotiated::Plain { read }) => {
+            stream.rewind(&read);
+            Ok(false)
+        }
+        Err(starttls::Closed) => Err(Close),
+    }
 }
 
 /// On an `https` listener with TCP routes: relays the connection if a TCP route matches its
@@ -245,27 +256,27 @@ pub(crate) async fn divert(
     None
 }
 
-/// Peeks the ClientHello and puts the bytes back. `Some(None)` means the connection does not
-/// start with TLS; `None` that it is to be closed.
+/// Peeks the ClientHello and puts the bytes back; `None` when the connection does not start
+/// with TLS.
 async fn read_hello(
     conn: &Accepted,
     stream: &mut L4Stream,
     deadline: Instant,
     metrics: &Metrics,
-) -> Option<Option<ClientHello>> {
+) -> Result<Option<ClientHello>, Close> {
     let peeked = clienthello::peek(stream, deadline).await;
     stream.rewind(&peeked.bytes);
     match peeked.result {
-        Ok(Detected::Hello(hello)) => Some(Some(hello)),
-        Ok(Detected::NotTls) => Some(None),
+        Ok(Detected::Hello(hello)) => Ok(Some(hello)),
+        Ok(Detected::NotTls) => Ok(None),
         Err(PeekError::Hello(err)) => {
             tracing::debug!(listener = %conn.listener, client = %conn.client, error = %err, "unusable ClientHello");
             reject(metrics, conn, "bad_client_hello");
-            None
+            Err(Close)
         }
         Err(err) => {
             tracing::debug!(listener = %conn.listener, client = %conn.client, error = %err, "no ClientHello");
-            None
+            Err(Close)
         }
     }
 }
@@ -310,7 +321,7 @@ async fn forward(
     stream: L4Stream,
     route: &TcpRouteRuntime,
     hello: Option<&ClientHello>,
-    starttls: bool,
+    answered_ssl_request: bool,
     listener: &ListenerContext<'_>,
     metrics: &Metrics,
 ) {
@@ -365,7 +376,8 @@ async fn forward(
                 alpn: hello.and_then(|h| h.alpn.first()).map(Vec::as_slice),
                 terminated: None,
             };
-            let Some(backend) = connect(conn, route, outbound, starttls, metrics).await else {
+            let Some(backend) = connect(conn, route, outbound, answered_ssl_request, metrics).await
+            else {
                 return;
             };
             relay::relay(stream, backend, limits, &counters).await

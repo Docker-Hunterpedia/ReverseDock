@@ -61,7 +61,7 @@ tcp_services:
   broker: { backends: [{ address: "10.0.0.30:1883" }] }
 ```
 
-Without a configured certificate, a terminating route gets one from the [automatic certificates](/docs/guides/automatic-https/) for each name in its `HostSNI` matchers, like an HTTP route. ReverseDock agrees on the ALPN protocol the client asks for, since the backend speaks whatever the client wants.
+The listener's `client_auth` applies to terminating routes; passthrough routes on the same listener leave client certificates to the backend. Without a configured certificate, a terminating route gets one from the [automatic certificates](/docs/guides/automatic-https/) for each name in its `HostSNI` matchers, like an HTTP route. ReverseDock agrees on the ALPN protocol the client asks for, since the backend speaks whatever the client wants.
 
 ## Relay any bytes
 
