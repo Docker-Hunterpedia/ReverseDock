@@ -56,11 +56,7 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     if !config.tcp_services.is_empty() {
         gate.unsupported("tcp_services", "TCP services", "v0.6");
     }
-    let providers = &config.providers;
-    if providers.swarm.is_some() {
-        gate.unsupported("providers.swarm", "the Swarm provider", "v0.6");
-    }
-    if providers.kubernetes.is_some() {
+    if config.providers.kubernetes.is_some() {
         gate.unsupported("providers.kubernetes", "the Kubernetes provider", "v0.7");
     }
 }
@@ -80,7 +76,7 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "tcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  swarm: {}\n";
+        let yaml = "tcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  kubernetes: {}\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
@@ -88,7 +84,7 @@ mod tests {
             && d.message == "TCP services: not supported in this version (planned for v0.6)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert!(run.iter().any(|d| d.path == "providers.swarm"));
+        assert!(run.iter().any(|d| d.path == "providers.kubernetes"));
     }
 
     #[test]

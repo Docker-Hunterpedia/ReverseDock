@@ -95,6 +95,15 @@ fn note(diagnostic: &Diagnostic) -> String {
     format!("{path}: {}", diagnostic.message)
 }
 
+/// Swarm provider labels with no meaning in a migrated configuration.
+const SWARM_OPTIONS: [&str; 5] = [
+    "traefik.swarm.network",
+    "traefik.swarm.lbswarm",
+    "traefik.docker.network",
+    "traefik.docker.lbswarm",
+    "rdock.swarm.lbswarm",
+];
+
 /// Services of a Compose file as containers reachable by their service name.
 fn compose(document: &Value) -> Result<(Vec<Container>, Vec<String>), String> {
     let Some(Value::Object(services)) = document.get("services") else {
@@ -104,11 +113,14 @@ fn compose(document: &Value) -> Result<(Vec<Container>, Vec<String>), String> {
     let mut containers = Vec::new();
     for (service, spec) in services {
         let mut labels = labels_of(spec.get("labels"));
-        let deploy = labels_of(spec.pointer("/deploy/labels"));
+        let mut deploy = labels_of(spec.pointer("/deploy/labels"));
         if !deploy.is_empty() {
             notes.push(format!(
-                "{service}: `deploy.labels` (Swarm) were read as container labels; the Swarm provider arrives in v0.6"
+                "{service}: `deploy.labels` (Swarm) were read as container labels; to keep them on the stack instead, run ReverseDock with `providers.swarm`"
             ));
+            // They choose how the Swarm provider reaches tasks; migrated backends are
+            // addressed by service name.
+            deploy.retain(|key, _| !SWARM_OPTIONS.contains(&key.to_ascii_lowercase().as_str()));
             labels.extend(deploy);
         }
         let mut ports = BTreeSet::new();

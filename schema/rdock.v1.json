@@ -4040,14 +4040,14 @@
       "description": "How Swarm services are reached.",
       "oneOf": [
         {
-          "description": "The service's virtual IP; Swarm balances between tasks.",
-          "type": "string",
-          "const": "vip"
-        },
-        {
-          "description": "Each running task directly; ReverseDock balances and health-checks.",
+          "description": "Each running task directly; ReverseDock balances, health-checks and drains them.",
           "type": "string",
           "const": "tasks"
+        },
+        {
+          "description": "The service's virtual IP; Swarm balances between tasks. Active health checks and\nsticky sessions have nothing to act on and are ignored.",
+          "type": "string",
+          "const": "vip"
         }
       ]
     },
@@ -4061,9 +4061,9 @@
           "default": "unix:///var/run/docker.sock"
         },
         "endpoint_mode": {
-          "description": "Route to the service's virtual IP or to each task.",
+          "description": "Route to each running task (the default) or to the service's virtual IP.",
           "$ref": "#/$defs/SwarmEndpointMode",
-          "default": "vip"
+          "default": "tasks"
         },
         "expose_by_default": {
           "description": "Expose services without `rdock.enable=true`. Off by default.",
@@ -4077,6 +4077,11 @@
             "null"
           ],
           "default": null
+        },
+        "poll_interval": {
+          "description": "How often services and tasks are listed. Swarm sends no events when a task starts or\nstops, so this bounds how long a new or stopping task waits to join or leave its pool.\nAt least `1s`.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
         },
         "traefik_labels": {
           "description": "Also read `traefik.*` labels (supported subset).",

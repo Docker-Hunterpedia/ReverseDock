@@ -127,3 +127,31 @@ fn other_documents_are_refused() {
             .contains("neither a Compose file")
     );
 }
+
+#[test]
+fn swarm_deploy_labels_are_read_without_their_swarm_options() {
+    let stack = r#"
+services:
+  web:
+    image: traefik/whoami
+    deploy:
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.web.rule: Host(`web.example.com`)
+        traefik.http.services.web.loadbalancer.server.port: "80"
+        traefik.swarm.network: proxy
+        traefik.swarm.lbswarm: "true"
+"#;
+    let m = traefik(stack, false).unwrap();
+    assert!(m.yaml.contains("address: web:80"), "{}", m.yaml);
+    assert!(
+        !m.notes.iter().any(|n| n.contains("traefik.swarm")),
+        "{:?}",
+        m.notes
+    );
+    assert!(
+        m.notes.iter().any(|n| n.contains("`providers.swarm`")),
+        "{:?}",
+        m.notes
+    );
+}

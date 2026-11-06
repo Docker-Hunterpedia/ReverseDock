@@ -28,13 +28,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\ntcp_services:\n  db: { backends: [{ address: \"127.0.0.1:5433\" }] }\n"
   },
   {
-    "path": "providers.swarm",
-    "planned": "v0.6",
-    "what": "The Swarm provider",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  swarm: {}\n"
-  },
-  {
     "path": "providers.kubernetes",
     "planned": "v0.7",
     "what": "The Kubernetes provider",

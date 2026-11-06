@@ -4,6 +4,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Added
+- **Docker Swarm provider** (#190, W-SWM-01…03, ADR-0026): `providers.swarm` routes Swarm services from their `deploy.labels` with the Docker provider's translator, so `rdock.*` labels and the Traefik subset work unchanged. Each running task is a backend (`endpoint_mode: tasks`, now the default instead of `vip`): ReverseDock balances, health-checks and drains a task as soon as Swarm starts stopping it (`DesiredState: shutdown` or `remove`). `vip` (or `rdock.swarm.lbswarm` / `traefik.swarm.lbswarm` per service) routes to the service's virtual IP and ignores active health checks and sticky sessions with a warning; a `dnsrr` service in that mode is diagnosed. Swarm sends no task events, so services and tasks are listed every `providers.swarm.poll_interval` (5 s, at least 1 s) and at once on service, node, network, secret and config events; the last routes stay in service while the manager is unreachable. The network is the label (`rdock.network`, `traefik.swarm.network`), then `providers.swarm.network`, then the one the task shares with ReverseDock's own container, never `ingress` and never random. `traefik.docker.network` and `traefik.docker.lbswarm` are accepted on Swarm with a deprecation warning. A missing port label says that Swarm reports no ports. `rdock validate` warns when automatic HTTPS is on with `providers.swarm`, because replicas share no certificates in v0.6. Tasks are read with a small `/tasks` client of our own (Engine API 1.44), because bollard 0.21.1 lacks `NetworksAttachments`. New guide: [Docker Swarm](https://reversedock.oday-bakkour.com/docs/guides/docker-swarm/).
+
 ## [0.5.0-alpha.1] — v0.5 "Management"
 
 ### Changed

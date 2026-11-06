@@ -95,7 +95,7 @@ Also translate `networking.k8s.io/v1` Ingress resources.
 
 Namespaces to watch; all when empty.
 
-## `providers.swarm` <Status planned="v0.6" />
+## `providers.swarm`
 
 **Type:** object
 
@@ -109,12 +109,12 @@ Docker Engine API endpoint of a manager node.
 
 ### `providers.swarm.endpoint_mode`
 
-**Type:** `vip` · `tasks` · **Default:** `vip`
+**Type:** `tasks` · `vip` · **Default:** `tasks`
 
-Route to the service's virtual IP or to each task.
+Route to each running task (the default) or to the service's virtual IP.
 
-- `vip`: The service's virtual IP; Swarm balances between tasks.
-- `tasks`: Each running task directly; ReverseDock balances and health-checks.
+- `tasks`: Each running task directly; ReverseDock balances, health-checks and drains them.
+- `vip`: The service's virtual IP; Swarm balances between tasks. Active health checks and sticky sessions have nothing to act on and are ignored.
 
 ### `providers.swarm.expose_by_default`
 
@@ -127,6 +127,12 @@ Expose services without `rdock.enable=true`. Off by default.
 **Type:** `string`
 
 Overlay network used to reach services.
+
+### `providers.swarm.poll_interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+How often services and tasks are listed. Swarm sends no events when a task starts or stops, so this bounds how long a new or stopping task waits to join or leave its pool. At least `1s`.
 
 ### `providers.swarm.traefik_labels`
 

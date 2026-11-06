@@ -18,6 +18,14 @@ The Docker provider <Status since="v0.2" /> reads these labels from running cont
 | `traefik.enable` | Same as `rdock.enable`, when `providers.docker.traefik_labels` is on (the default). `rdock.enable` wins when both are set. |
 | `traefik.docker.network` | Same as `rdock.network`. |
 
+The Swarm provider <Status since="v0.6" /> reads the same labels from each service's `deploy.labels`, not from containers, and these as well ([Docker Swarm](/docs/guides/docker-swarm/)):
+
+| Label | Meaning |
+|---|---|
+| `traefik.swarm.network` | Same as `rdock.network`. |
+| `rdock.swarm.lbswarm`, `traefik.swarm.lbswarm` | `true`: route to the service's virtual IP; `false`: to each task. Overrides `providers.swarm.endpoint_mode`. |
+| `traefik.docker.network`, `traefik.docker.lbswarm` | Deprecated on Swarm: read with a warning, and ignored when a `traefik.swarm.*` label is also set. |
+
 ## rdock.* shorthand
 
 One route and one service named after the Compose service and project (`<service>-<project>`), or the container name.

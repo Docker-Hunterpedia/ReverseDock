@@ -1,0 +1,186 @@
+---
+title: Docker Swarm
+description: Route Docker Swarm services from their deploy.labels, balance over each running task, and run ReverseDock itself on a swarm with certificates that replicas do not fight over.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+The Swarm provider <Status since="v0.6" /> reads the labels of Swarm services and turns them into routes, services and middlewares. Every running task of a service becomes one backend, so ReverseDock balances, health-checks and drains the tasks itself. The labels are the ones the [Docker provider](/docs/guides/docker-labels/) reads: `rdock.*` and the supported `traefik.*` subset.
+
+## What you need
+
+- ReverseDock on a **manager** node: only managers serve the Swarm API (services and tasks).
+- Read access to that manager's Docker socket, or a socket proxy with `SERVICES`, `TASKS`, `NETWORKS`, `NODES` and `EVENTS` turned on and `POST` off ([Docker socket access](/docs/guides/docker-socket/)). Add `CONTAINERS` so ReverseDock can find its own container and the networks it is on (see [Which address](#which-address-and-port)). ReverseDock only reads.
+- An **attachable overlay network** that ReverseDock and the services it routes are both on.
+
+## A first stack
+
+Create the overlay network once:
+
+```sh
+docker network create --driver overlay --attachable proxy
+```
+
+```yaml title="stack.yaml"
+services:
+  rdock:
+    image: ghcr.io/docker-hunterpedia/rdock:0.5.0-alpha.1
+    ports:
+      - { target: 80, published: 80, mode: host }
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+      - rdock-data:/var/lib/rdock
+    configs:
+      - { source: rdock_yaml, target: /etc/rdock/rdock.yaml }
+    networks: [proxy]
+    deploy:
+      replicas: 1
+      placement:
+        constraints: [node.role == manager]
+
+  web:
+    image: traefik/whoami:v1.11.0
+    networks: [proxy]
+    deploy:
+      replicas: 3
+      labels:
+        rdock.enable: "true"
+        rdock.host: shop.example.com
+        rdock.port: "80"
+        rdock.tls: "off"
+      update_config:
+        order: start-first
+
+configs:
+  rdock_yaml:
+    file: ./rdock.yaml
+
+networks:
+  proxy:
+    external: true
+
+volumes:
+  rdock-data:
+```
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+acme: false
+
+providers:
+  swarm:
+    network: proxy
+```
+
+```sh
+docker stack deploy -c stack.yaml shop
+curl -s -H 'Host: shop.example.com' http://127.0.0.1/ | head -3
+```
+
+The image runs as an unprivileged user: give it the socket's group or use a socket proxy, as described in [Docker socket access](/docs/guides/docker-socket/). `rdock status` lists the `swarm` provider, whether it is connected, how many routes it contributes and every label it could not use.
+
+## Labels go under `deploy.labels`
+
+Swarm keeps two sets of labels. `deploy.labels` in a stack file (`docker service create --label`) are set on the **service**; `labels` are set on each container. The Swarm provider reads only the service's labels, as Traefik's Swarm provider does ([Compose deploy specification](https://docs.docker.com/reference/compose-file/deploy/), [Traefik Swarm provider](https://doc.traefik.io/traefik/reference/install-configuration/providers/swarm/), checked 2026-11-06).
+
+Services are **opt-in** (`rdock.enable=true` or `traefik.enable=true`) unless `providers.swarm.expose_by_default` is `true`. The shorthand and the full form are described in the [Docker guide](/docs/guides/docker-labels/#labels) and the [label reference](/docs/reference/docker-labels/). The default route and service are named after the Swarm service (`shop_web` above, prefixed with the stack name).
+
+**The port label is required.** Swarm reports no ports for its tasks, so set `rdock.port`, `rdock.services.<name>.port` or `traefik.http.services.<name>.loadbalancer.server.port`. A service without one is reported and not routed.
+
+Job-mode services (`replicated-job`, `global-job`) run to completion and are reported, not routed.
+
+## Which address and port
+
+Each task is reached at its address on one network, chosen in this order:
+
+1. `rdock.network` (or `traefik.swarm.network`) on the service;
+2. `providers.swarm.network`;
+3. the one network the task shares with ReverseDock's own container. ReverseDock finds its container by its host name, which Docker sets to the short container ID unless `hostname:` is set. When it does not run in a container of that Engine, the task's only network is used instead.
+
+A task on several networks with none chosen is reported and not routed; the choice is never random. The `ingress` network is never used: it carries the routing mesh's published ports, and ReverseDock cannot join it. A service whose only network is `ingress` is reported with a hint to attach it to an overlay network.
+
+## Endpoint modes
+
+| `providers.swarm.endpoint_mode` | Backends | What ReverseDock does |
+|---|---|---|
+| `tasks` (default) | Each running task's address | Balances, runs health checks, keeps sticky sessions, retries another task, and drains a task as soon as Swarm starts stopping it. |
+| `vip` | The service's virtual IP | Sends everything to the virtual IP and lets Swarm's IPVS pick a task per connection. Active health checks and sticky sessions have nothing to act on and are ignored with a warning. |
+
+A service can choose for itself with `rdock.swarm.lbswarm` (or Traefik's `traefik.swarm.lbswarm`): `true` for the virtual IP, `false` for its tasks. A service deployed with `endpoint_mode: dnsrr` has no virtual IP; asking for `vip` mode on it is reported and gives no backends.
+
+Swarm reports a task as `running` only after its Docker health check has passed and replaces tasks that turn unhealthy, so a running task counts as healthy. When every task of a service is stopping, they stay in the pool with a warning, rather than the route disappearing.
+
+## Updates and the poll interval
+
+Swarm sends events for services, nodes, networks, secrets and configs, but none for tasks ([Engine API](https://docs.docker.com/reference/api/engine/version/v1.52/), checked 2026-11-06). ReverseDock lists services and tasks every `providers.swarm.poll_interval` (default `5s`, at least `1s`) and at once when one of those events arrives. A task that starts or stops therefore joins or leaves its pool within one poll interval.
+
+```yaml title="rdock.yaml (excerpt)"
+providers:
+  swarm:
+    poll_interval: 2s
+```
+
+When Swarm starts stopping a task (scale-down, rolling update, removal), the task keeps running for its `stop_grace_period` (10 s by default) while ReverseDock takes it out of the pool at the next poll. For updates without errors, use `update_config.order: start-first`, so the new task runs before the old one stops, and keep `stop_grace_period` longer than the poll interval.
+
+If the manager stops answering, the last routes stay in service, the provider shows as `degraded` in `rdock status`, and it reconnects every 1 to 30 seconds.
+
+## Traefik labels
+
+Existing Swarm stacks with `traefik.*` labels work within the [supported subset](/docs/reference/docker-labels/#traefik-labels). The two Swarm-specific labels are read too:
+
+| Label | Meaning |
+|---|---|
+| `traefik.swarm.network` | Same as `rdock.network`. |
+| `traefik.swarm.lbswarm` | `true`: route to the service's virtual IP. |
+| `traefik.docker.network`, `traefik.docker.lbswarm` | The deprecated spelling of the same labels: still read, with a warning. When a service has both `traefik.docker.*` and `traefik.swarm.*` labels, the `traefik.docker.*` ones are ignored with a warning. |
+
+Traefik also requires the port label on Swarm, and decodes both prefixes the same way ([Traefik's label parsing](https://github.com/traefik/traefik/blob/master/pkg/provider/docker/shared_labels.go), checked 2026-11-06). Unlike Traefik, ReverseDock never picks one of several networks at random, and services are opt-in.
+
+## HTTPS and certificates
+
+In v0.6 replicas of ReverseDock share nothing: each keeps its own certificates, ACME account and admin users in its own data directory (shared state across replicas is planned for v0.9). Several replicas each running automatic HTTPS would order the same certificates several times and run into Let's Encrypt's limit of 5 certificates per exact set of names per week ([rate limits](https://letsencrypt.org/docs/rate-limits/), checked 2026-11-06), and an HTTP-01 challenge can reach a replica that did not ask for it. `rdock validate` warns when `providers.swarm` is set and automatic HTTPS is on. Two shapes are supported:
+
+1. **One ACME replica.** `replicas: 1`, a placement constraint, ports published with `mode: host`, and DNS (or an outside load balancer) pointing at that node, as in the stack above.
+2. **Global mode without ACME on every replica.** `mode: global` with `acme: false` and certificates mounted as Swarm secrets, or DNS-01 on exactly one replica that holds the certificates.
+
+```yaml title="rdock.yaml (excerpt)"
+acme: false
+
+certificates:
+  example:
+    cert_file: /run/secrets/example_cert
+    key_file: /run/secrets/example_key
+```
+
+**Never put the data directory on shared storage** (an NFS volume mounted by several replicas). Two ACME managers writing one account and one certificate store race each other. ReverseDock cannot reliably tell that a directory is shared, so it does not detect this: give each replica its own volume.
+
+## Secrets and configs
+
+Nothing Swarm-specific is needed. `rdock.yaml` can be a Swarm config, as above, and refer to Swarm secrets, which are mounted at `/run/secrets/<name>`, through `${file:…}` ([Docker secrets](https://docs.docker.com/engine/swarm/secrets/), checked 2026-11-06):
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  backend-key:
+    type: headers
+    request:
+      set:
+        X-Api-Key: "${file:/run/secrets/backend_api_key}"
+```
+
+Swarm configs and secrets cannot be changed once created: rotating one means creating a new one and updating the service, which replaces its tasks and starts ReverseDock with the new files. Labels never carry secrets (`${…}` is refused in labels).
+
+## Related
+
+- [Docker containers and labels](/docs/guides/docker-labels/)
+- [Docker label reference](/docs/reference/docker-labels/)
+- [Docker socket access](/docs/guides/docker-socket/)
+- [Secrets](/docs/guides/secrets/)
+- [`providers.swarm` reference](/docs/reference/configuration/providers/)

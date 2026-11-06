@@ -49,6 +49,7 @@ rdock-model = { path = "crates/rdock-model" }
 rdock-observability = { path = "crates/rdock-observability" }
 rdock-provider-docker = { path = "crates/providers/rdock-provider-docker" }
 rdock-provider-file = { path = "crates/providers/rdock-provider-file" }
+rdock-provider-swarm = { path = "crates/providers/rdock-provider-swarm" }
 rdock-proxy = { path = "crates/rdock-proxy" }
 rdock-rules = { path = "crates/rdock-rules" }
 rdock-testkit = { path = "crates/rdock-testkit" }
