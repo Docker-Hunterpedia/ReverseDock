@@ -34,8 +34,8 @@ Protocol. Inferred when omitted: `https` if `tls` is set, otherwise `http`.
 - `tcp`: Raw TCP, optionally with TLS termination or SNI passthrough.
 - `udp`: UDP datagrams.
 
-:::note[Planned for v0.6]
-TCP and UDP listeners (`tcp`, `udp`): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.6.
+:::note[Planned for v0.8]
+UDP listeners (`udp`): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.8.
 :::
 
 ## `listeners.<name>.proxy_protocol`
@@ -55,6 +55,14 @@ Also accept connections from `trusted` sources that send no header. Off by defau
 **Type:** list of [`IpNetwork`](/docs/reference/configuration/#ipnetwork) · **Required**
 
 Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are rejected when they send one.
+
+## `listeners.<name>.starttls`
+
+**Type:** `postgres`
+
+`tcp` listeners: answer a protocol's request to start TLS before reading the TLS ClientHello. Off by default.
+
+- `postgres`: PostgreSQL: answer the 8-byte `SSLRequest` with `S` (and a `GSSENCRequest` with `N`), so clients with the default `sslnegotiation=postgres` reach TCP routes that read SNI.
 
 ## `listeners.<name>.timeouts`
 

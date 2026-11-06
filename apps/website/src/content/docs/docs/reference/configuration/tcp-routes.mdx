@@ -11,8 +11,6 @@ import Status from '../../../../../components/Status.astro';
 
 TCP routes (SNI routing, passthrough, plain TCP).
 
-<Status planned="v0.6" />
-
 ## `tcp_routes.<name>.listeners`
 
 **Type:** list of `string`
@@ -24,6 +22,12 @@ Listeners (`tcp` or `https`) the route is attached to.
 **Type:** `string` · **Required**
 
 Rule with TCP matchers: ``HostSNI(`db.example.com`)``, ``HostSNI(`*`)``, `ClientIP`, `ALPN`.
+
+## `tcp_routes.<name>.middlewares`
+
+**Type:** list of `string`
+
+Middlewares checked before connecting to the service: `ip_allow`, `ip_deny` and `in_flight` (counted per client IP).
 
 ## `tcp_routes.<name>.priority`
 
@@ -41,7 +45,7 @@ TCP service (a key of `tcp_services`).
 
 **Type:** object
 
-TLS handling.
+TLS handling. Without it the bytes are relayed as they arrive; with it the route matches TLS connections only and terminates TLS unless `passthrough` is set.
 
 ### `tcp_routes.<name>.tls.passthrough`
 

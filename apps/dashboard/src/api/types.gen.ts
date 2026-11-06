@@ -1330,6 +1330,11 @@ export type RdockListener = {
      */
     proxy_protocol?: RdockProxyProtocolIn | null;
     /**
+     * `tcp` listeners: answer a protocol's request to start TLS before reading the TLS
+     * ClientHello. Off by default.
+     */
+    starttls?: RdockStartTls | null;
+    /**
      * Client-side timeouts.
      */
     timeouts?: RdockListenerTimeouts;
@@ -1337,7 +1342,7 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
 };
 
 /**
@@ -2218,6 +2223,12 @@ export type RdockSplitTarget = {
 };
 
 /**
+ * PostgreSQL: answer the 8-byte `SSLRequest` with `S` (and a `GSSENCRequest` with `N`),
+ * so clients with the default `sslnegotiation=postgres` reach TCP routes that read SNI.
+ */
+export type RdockStartTls = 'postgres';
+
+/**
  * `Cache-Control` of static files: a default and overrides by path prefix.
  */
 export type RdockStaticCacheControl = {
@@ -2393,6 +2404,11 @@ export type RdockTcpRoute = {
      */
     match: string;
     /**
+     * Middlewares checked before connecting to the service: `ip_allow`, `ip_deny` and
+     * `in_flight` (counted per client IP).
+     */
+    middlewares?: Array<string>;
+    /**
      * Higher priorities are evaluated first. `0` uses the rule length.
      */
     priority?: number;
@@ -2401,10 +2417,11 @@ export type RdockTcpRoute = {
      */
     service: string;
     /**
-     * TLS handling.
+     * TLS handling. Without it the bytes are relayed as they arrive; with it the route
+     * matches TLS connections only and terminates TLS unless `passthrough` is set.
      */
     tls?: RdockTcpRouteTls | null;
-    [key: string]: unknown | Array<string> | null | string | number | RdockTcpRouteTls | null | undefined;
+    [key: string]: unknown | Array<string> | null | string | Array<string> | number | RdockTcpRouteTls | null | undefined;
 };
 
 /**
@@ -2430,7 +2447,32 @@ export type RdockTcpService = {
      * Send a PROXY protocol header to backends.
      */
     proxy_protocol?: RdockProxyProtocolVersion | null;
-    [key: string]: unknown | Array<RdockBackend> | RdockProxyProtocolVersion | null | undefined;
+    /**
+     * Connection timeouts.
+     */
+    timeouts?: RdockTcpTimeouts;
+    [key: string]: unknown | Array<RdockBackend> | RdockProxyProtocolVersion | null | RdockTcpTimeouts | undefined;
+};
+
+/**
+ * Timeouts of a TCP service.
+ */
+export type RdockTcpTimeouts = {
+    /**
+     * Establishing a connection to a backend.
+     */
+    connect?: RdockDuration;
+    /**
+     * A connection with no data in either direction for this long is closed (NGINX
+     * `proxy_timeout`).
+     */
+    idle?: RdockDuration;
+    /**
+     * Once one side has finished sending, the other side gets this long to finish too
+     * before both are closed (Traefik `terminationDelay`).
+     */
+    termination_delay?: RdockDuration;
+    [key: string]: unknown | RdockDuration | undefined;
 };
 
 /**

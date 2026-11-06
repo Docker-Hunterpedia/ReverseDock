@@ -47,6 +47,9 @@ One route and one service named after the Compose service and project (`<service
 | `rdock.services.<name>.port` | The container port of the service's backend |
 | `rdock.services.<name>.<field>` | Any other field of [`services.<name>`](/docs/reference/configuration/services/) as a dotted path, such as `scheme` or `health.active.path`; not `backends` or `split` |
 | `rdock.middlewares.<name>.<field>` | A field of [`middlewares.<name>`](/docs/reference/configuration/middlewares/) as a dotted path, starting with `type`; not `users_file` or `file`. A `static` middleware's `root` must be inside `providers.docker.static_roots` |
+| `rdock.tcp_routes.<name>.<field>` <Status since="v0.6" /> | A field of [`tcp_routes.<name>`](/docs/reference/configuration/tcp-routes/): `match`, `service`, `priority`, `listeners`, `middlewares` (comma-separated), `tls` (`true` terminates TLS), `tls.passthrough` |
+| `rdock.tcp_services.<name>.port` <Status since="v0.6" /> | The container port of the TCP service's backend |
+| `rdock.tcp_services.<name>.<field>` <Status since="v0.6" /> | `proxy_protocol` (`v1`, `v2`) or `timeouts.*` of [`tcp_services.<name>`](/docs/reference/configuration/tcp-services/) |
 
 Values `true`/`false` and whole numbers become booleans and numbers where a field expects them; `[a, b]` is a list.
 
@@ -105,7 +108,24 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 | `passtlsclientcert.pem`, `.info.*` | `client_cert` with `required: false`, `forward: traefik` |
 | `circuitbreaker.*` | reported: use `health.passive` and `max_requests` on the service |
 
-`traefik.tcp.*` and `traefik.udp.*` labels are reported as planned for v0.6.
+## TCP routes
+
+<Status since="v0.6" /> `traefik.tcp.*` labels make [TCP routes](/docs/guides/tcp-routes/) and TCP services. A TCP route needs listeners: a router without `entrypoints` is ignored with a warning. TCP middlewares share one namespace with HTTP middlewares.
+
+| Label | Becomes |
+|---|---|
+| `traefik.tcp.routers.<name>.rule` | `match` (`HostSNI`, `HostSNIRegexp`, `ALPN`, `ClientIP`) |
+| `traefik.tcp.routers.<name>.entrypoints` | `listeners`, through `providers.docker.entrypoints` |
+| `traefik.tcp.routers.<name>.service`, `.priority`, `.middlewares` | `service` (the container's only TCP service when unset), `priority`, `middlewares` |
+| `traefik.tcp.routers.<name>.tls` | `true`: `tls: {}`, TLS terminated with the listener's settings and certificates |
+| `traefik.tcp.routers.<name>.tls.passthrough` | `tls: { passthrough: true }` |
+| `traefik.tcp.routers.<name>.tls.certresolver`, `.tls.options`, `.tls.domains[n].*` | reported: the listener's TLS settings and certificates are used |
+| `traefik.tcp.services.<name>.loadbalancer.server.port` | the container port of the TCP service's backend |
+| `traefik.tcp.services.<name>.loadbalancer.serverstransport`, `.server.tls` | reported |
+| `traefik.tcp.middlewares.<name>.ipallowlist.sourcerange` | `ip_allow` |
+| `traefik.tcp.middlewares.<name>.inflightconn.amount` | `in_flight` (per client IP) |
+
+`traefik.udp.*` labels are reported as planned for v0.8.
 
 ## Differences from Traefik
 
@@ -116,7 +136,7 @@ Deliberate, and pinned by the conformance suite:
 | `exposedByDefault` is `true` | `expose_by_default` is `false`: containers opt in |
 | Several exposed ports and no port label: the lowest port | Reported; set a port label |
 | Containers without router labels get a router from `defaultRule` | No route until labels ask for one |
-| A router without `entrypoints` attaches to every entry point | It uses `defaults.listeners`, like a route in the file |
+| A router without `entrypoints` attaches to every entry point | It uses `defaults.listeners`, like a route in the file; a TCP router without `entrypoints` is ignored |
 | The `retry` middleware on a router | `retries` on the router's service. `attempts` counts every try in Traefik and the tries after the first here, so `attempts: 4` becomes `3`; only 502, 503 and 504 of `status` are retried |
 
 Two containers that declare the same router, service or middleware name differently are both reported and left out; identical declarations, such as replicas, are merged.
