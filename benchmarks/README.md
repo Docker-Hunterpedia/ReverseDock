@@ -48,6 +48,24 @@ SCENARIO=lb VERSION=0.4.0-alpha.1 ./run.sh # another scenario, see above
 
 Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/<scenario>/` for the other scenarios), and `report.md` in the same folder sums them up. Requirements: Docker with Compose and Python 3.
 
+## Profiling
+
+Release images strip symbols and have no frame pointers, so `perf` cannot show where the time goes. The `profiling` Cargo profile is the release build with line tables and symbols; built with frame pointers it gives call graphs at almost no cost ([rustc codegen options](https://doc.rust-lang.org/rustc/codegen-options/index.html), checked 2026-11-06). On the Linux benchmark host, with `perf` and `strace` installed:
+
+```sh
+docker build -t rdock:profiling --build-arg CARGO_PROFILE=profiling \
+  --build-arg RUSTFLAGS="-C force-frame-pointers=yes" ..            # or: just docker-profiling
+RDOCK_IMAGE=rdock:profiling PROXIES=rdock RATES=10000 DURATION=60s ./run.sh &
+sleep 20                                                            # past the warm-up
+pid=$(docker inspect -f '{{.State.Pid}}' rdock-bench-rdock-1)
+perf record -F 999 --call-graph fp -p "$pid" -o rdock.perf -- sleep 30
+perf report -i rdock.perf --no-children --sort symbol | head -60
+perf stat -e task-clock,context-switches,cpu-migrations -p "$pid" -- sleep 30
+timeout -s INT 30 strace -c -f -p "$pid" -o rdock.strace           # syscalls per request
+```
+
+Measure over the same 30 seconds as the `cpu.stat` ladder (µs per request = `usage_usec` ÷ (rate × 30)) so the numbers line up, and divide context switches and syscalls by the requests completed in that window. `perf` resolves symbols through `/proc/<pid>/root`, so the distroless image needs nothing extra. The profiling image is for measurement only; its numbers include a small cost for frame pointers, so publish results from release images.
+
 ## Reading the results
 
 - Numbers depend on the machine. Compare proxies within one run, never across runs on different hardware.

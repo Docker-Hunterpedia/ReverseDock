@@ -67,6 +67,10 @@ docker tag="rdock:dev":
     docker build --tag {{tag}} .
     docker run --rm {{tag}} version
 
+# Build the image with symbols and frame pointers for perf (benchmarks/README.md, "Profiling")
+docker-profiling tag="rdock:profiling":
+    docker build --tag {{tag}} --build-arg CARGO_PROFILE=profiling --build-arg RUSTFLAGS="-C force-frame-pointers=yes" .
+
 # Rebuild the Graphify code graph (optional tool, see docs/06-repo-layout.md)
 graph:
     graphify update .
