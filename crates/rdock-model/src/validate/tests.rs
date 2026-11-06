@@ -253,6 +253,114 @@ fn checks_exec_and_webhook_dns_providers() {
 }
 
 #[test]
+fn api_dns_providers_need_secret_references_and_safe_urls() {
+    let config = with(
+        app(),
+        json!({
+            "acme": { "dns_providers": {
+                "do": { "type": "digitalocean", "api_token": "dop_v1_plain", "zone": "" },
+                "hz": { "type": "hetzner", "api_token": "${file:/run/secrets/hz}", "api_url": "http://api.example.com/" },
+                "test": { "type": "hetzner", "api_token": "${env:HETZNER_API_TOKEN}", "api_url": "http://127.0.0.1:9000/" },
+                "good": { "type": "digitalocean", "api_token": "${file:/run/secrets/do}", "zone": "example.com" }
+            } }
+        }),
+    );
+    let found = errors(config);
+    assert!(has(
+        &found,
+        "acme.dns_providers.do.api_token",
+        "a secret is written in the configuration file"
+    ));
+    assert!(has(&found, "acme.dns_providers.do.zone", "zone is empty"));
+    assert!(has(
+        &found,
+        "acme.dns_providers.hz.api_url",
+        "not encrypted"
+    ));
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("acme.dns_providers.test")
+                || p.starts_with("acme.dns_providers.good")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn rfc2136_refuses_md5_and_unsigned_updates_without_consent() {
+    let provider = |extra: Value| {
+        let mut base = json!({
+            "type": "rfc2136",
+            "nameserver": "192.0.2.53",
+            "tsig_key_name": "rdock-acme",
+            "tsig_secret": "${file:/run/secrets/tsig}"
+        });
+        merge(&mut base, extra);
+        with(
+            app(),
+            json!({ "acme": { "dns_providers": { "ns": base } } }),
+        )
+    };
+    assert_eq!(errors(provider(json!({}))), []);
+    assert_eq!(warnings(provider(json!({}))), []);
+    let md5 = errors(provider(json!({ "tsig_algorithm": "hmac-md5" })));
+    assert!(has(
+        &md5,
+        "acme.dns_providers.ns.tsig_algorithm",
+        "hmac-md5 must not be used"
+    ));
+    let sha1 = warnings(provider(json!({ "tsig_algorithm": "hmac-sha1" })));
+    assert!(has(
+        &sha1,
+        "acme.dns_providers.ns.tsig_algorithm",
+        "not recommended"
+    ));
+    let literal = errors(provider(json!({ "tsig_secret": "c2VjcmV0" })));
+    assert!(has(
+        &literal,
+        "acme.dns_providers.ns.tsig_secret",
+        "a secret is written"
+    ));
+    let bad = errors(provider(
+        json!({ "nameserver": "ns1.example.com", "tsig_key_name": null }),
+    ));
+    assert!(has(
+        &bad,
+        "acme.dns_providers.ns.nameserver",
+        "not an IP address"
+    ));
+    assert!(has(&bad, "acme.dns_providers.ns.tsig_key_name", "required"));
+
+    let unsigned = |extra: Value| {
+        let mut base = json!({ "type": "rfc2136", "nameserver": "[2001:db8::53]:5353", "insecure_unsigned": true });
+        merge(&mut base, extra);
+        with(
+            app(),
+            json!({ "acme": { "dns_providers": { "ns": base } } }),
+        )
+    };
+    assert_eq!(errors(unsigned(json!({}))), []);
+    assert!(has(
+        &warnings(unsigned(json!({}))),
+        "acme.dns_providers.ns.insecure_unsigned",
+        "without TSIG"
+    ));
+    assert!(has(
+        &errors(unsigned(json!({ "tsig_key_name": "k" }))),
+        "acme.dns_providers.ns.insecure_unsigned",
+        "a TSIG key is set"
+    ));
+    assert!(has(
+        &errors(with(
+            app(),
+            json!({ "acme": { "dns_providers": { "ns": { "type": "rfc2136", "nameserver": "192.0.2.53" } } } })
+        )),
+        "acme.dns_providers.ns.tsig_secret",
+        "required"
+    ));
+}
+
+#[test]
 fn checks_dns_resolvers_and_propagation_timeout() {
     let config = with(
         app(),

@@ -34,6 +34,7 @@ rdock-balancer.workspace = true
 rdock-admin.workspace = true
 rdock-cloudflare.workspace = true
 rdock-config.workspace = true
+rdock-dns-providers.workspace = true
 rdock-middleware.workspace = true
 rdock-migrate.workspace = true
 rdock-model.workspace = true

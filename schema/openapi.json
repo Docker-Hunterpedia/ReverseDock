@@ -1950,6 +1950,43 @@
         },
         "type": "object"
       },
+      "rdock.DigitalOceanProvider": {
+        "additionalProperties": false,
+        "description": "DigitalOcean DNS (`type: digitalocean`).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "api_token": {
+            "description": "API token with the custom scopes `domain:read`, `domain:create` and `domain:delete`.\nWrite it as a `${file:…}` or `${env:…}` reference.",
+            "type": "string"
+          },
+          "api_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.HttpUrl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For tests only: another API base URL, `http://` only on a loopback address."
+          },
+          "zone": {
+            "default": null,
+            "description": "The domain (zone) holding the records, such as `example.com`. Found by asking for each\nparent of the name when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "api_token"
+        ],
+        "type": "object"
+      },
       "rdock.DnsProvider": {
         "description": "A DNS provider for DNS-01 challenges.",
         "oneOf": [
@@ -2035,6 +2072,75 @@
               "type"
             ],
             "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.DigitalOceanProvider",
+            "additionalProperties": false,
+            "description": "DigitalOcean DNS, with a token allowed to read domains and to create and delete records.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "digitalocean",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.HetznerProvider",
+            "additionalProperties": false,
+            "description": "Hetzner DNS through the Hetzner Cloud API (the zone moved to the Hetzner Console), with an\nAPI token of the project that holds the zone.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "hetzner",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.Rfc2136Provider",
+            "additionalProperties": false,
+            "description": "Dynamic updates (RFC 2136) signed with TSIG, sent to a primary nameserver such as BIND,\nKnot or PowerDNS.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "rfc2136",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "rdock.DnsTransport": {
+        "description": "The transport for DNS messages.",
+        "oneOf": [
+          {
+            "const": "tcp",
+            "description": "TCP: every answer arrives, whatever its size.",
+            "type": "string"
+          },
+          {
+            "const": "udp",
+            "description": "UDP.",
+            "type": "string"
           }
         ]
       },
@@ -2305,6 +2411,43 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.HetznerProvider": {
+        "additionalProperties": false,
+        "description": "Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "api_token": {
+            "description": "Read & Write API token of the Cloud project that holds the zone; tokens from the old DNS\nConsole do not work. Write it as a `${file:…}` or `${env:…}` reference.",
+            "type": "string"
+          },
+          "api_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.HttpUrl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For tests only: another API base URL, `http://` only on a loopback address."
+          },
+          "zone": {
+            "default": null,
+            "description": "The name of the zone holding the records, such as `example.com`. Found by asking for each\nparent of the name when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "api_token"
+        ],
+        "type": "object"
       },
       "rdock.HiddenFiles": {
         "description": "How `static` treats names starting with `.`.",
@@ -4161,6 +4304,62 @@
           }
         ]
       },
+      "rdock.Rfc2136Provider": {
+        "additionalProperties": false,
+        "description": "RFC 2136 dynamic updates (`type: rfc2136`).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "insecure_unsigned": {
+            "default": false,
+            "description": "Send updates without TSIG. Anyone who can reach the server could then change the zone, so\nthis is only for servers that authorize updates by address.",
+            "type": "boolean"
+          },
+          "nameserver": {
+            "description": "IP address of the primary nameserver: `ip` (port 53), `ip:port` or `[ipv6]:port`.",
+            "type": "string"
+          },
+          "transport": {
+            "$ref": "#/components/schemas/rdock.DnsTransport",
+            "default": "tcp",
+            "description": "How updates are sent."
+          },
+          "tsig_algorithm": {
+            "$ref": "#/components/schemas/rdock.TsigAlgorithm",
+            "default": "hmac-sha256",
+            "description": "The TSIG algorithm."
+          },
+          "tsig_key_name": {
+            "default": null,
+            "description": "Name of the TSIG key, as the server knows it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tsig_secret": {
+            "default": null,
+            "description": "The TSIG key's secret, base64 as `tsig-keygen` prints it. Write it as a `${file:…}` or\n`${env:…}` reference.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zone": {
+            "default": null,
+            "description": "The zone to update, such as `example.com`. Found with SOA queries to `nameserver` when\nomitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "nameserver"
+        ],
+        "type": "object"
+      },
       "rdock.Route": {
         "additionalProperties": false,
         "description": "An HTTP route: which requests it matches, which middlewares run, which service answers.",
@@ -5091,6 +5290,36 @@
           "10.0.0.0/8"
         ],
         "type": "string"
+      },
+      "rdock.TsigAlgorithm": {
+        "description": "TSIG algorithms (RFC 8945).",
+        "oneOf": [
+          {
+            "const": "hmac-sha256",
+            "description": "HMAC-SHA256, the one RFC 8945 recommends.",
+            "type": "string"
+          },
+          {
+            "const": "hmac-sha384",
+            "description": "HMAC-SHA384.",
+            "type": "string"
+          },
+          {
+            "const": "hmac-sha512",
+            "description": "HMAC-SHA512.",
+            "type": "string"
+          },
+          {
+            "const": "hmac-sha1",
+            "description": "HMAC-SHA1: accepted with a warning; RFC 8945 does not recommend it.",
+            "type": "string"
+          },
+          {
+            "const": "hmac-md5",
+            "description": "HMAC-MD5: refused by validation; RFC 8945 says it must not be used.",
+            "type": "string"
+          }
+        ]
       },
       "rdock.UpstreamTls": {
         "additionalProperties": false,
