@@ -7,7 +7,7 @@
 
 use std::net::IpAddr;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use async_trait::async_trait;
 use pingora::http::RequestHeader;
@@ -15,7 +15,7 @@ use pingora::upstreams::peer::HttpPeer;
 use rdock_balancer::{Availability, Choice};
 use rdock_middleware::{FetchError, Fetched, HttpClient, ServiceClient};
 use rdock_model::route::RouteTimeouts;
-use rdock_model::service::Scheme;
+use rdock_model::service::{RetryOn, Scheme};
 
 use crate::runtime::{Candidate, HashOn, Member, ServiceRuntime, StickyRuntime};
 
@@ -250,6 +250,36 @@ pub fn peer(
     peer.client_cert_key.clone_from(&service.tls.client_cert);
     peer.group_key = service.tls.group_key;
     Ok(peer)
+}
+
+/// How long an attempt may wait for its connection. When a failed connect would be retried
+/// on another backend (`retries.on` has `connect`, attempts are left and an untried backend
+/// is eligible), the attempt is not the last one and gives up after
+/// `timeouts.connect_attempt`; otherwise it waits the full `connect` (ADR-0026).
+#[must_use]
+pub fn connect_budget(
+    connect: Duration,
+    service: &ServiceRuntime,
+    retries_made: u32,
+    tried: &[String],
+) -> Duration {
+    let retried_on_connect = service
+        .retries
+        .as_ref()
+        .is_some_and(|r| r.on.contains(&RetryOn::Connect) && retries_made < r.attempts);
+    if retried_on_connect && has_untried(service, tried) {
+        connect.min(service.timeouts.connect_attempt.as_std())
+    } else {
+        connect
+    }
+}
+
+/// Whether a backend this request has not tried yet would be eligible now.
+fn has_untried(service: &ServiceRuntime, tried: &[String]) -> bool {
+    let members = service.members();
+    eligible(service, &members, Instant::now())
+        .iter()
+        .any(|m| !tried.contains(&m.id))
 }
 
 /// Lets middlewares fetch pages from a service (custom error pages).

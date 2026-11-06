@@ -4,6 +4,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
+### Changed
+- A connection attempt that would be retried on another backend gives up after `timeouts.connect_attempt` (1 s) instead of the full `timeouts.connect` (5 s), so a stopped backend costs about a second per request instead of five; the last attempt keeps the full timeout (#185, ADR-0026).
+
 ## [0.5.0-alpha.1] — v0.5 "Management"
 
 ### Changed
