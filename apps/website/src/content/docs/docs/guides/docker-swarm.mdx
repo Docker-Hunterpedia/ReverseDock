@@ -162,6 +162,18 @@ certificates:
 
 **Never put the data directory on shared storage** (an NFS volume mounted by several replicas). Two ACME managers writing one account and one certificate store race each other. ReverseDock cannot reliably tell that a directory is shared, so it does not detect this: give each replica its own volume.
 
+## Static sites from labels
+
+A service can describe a [static site](/docs/guides/static-files/) with `rdock.static.root` in its `deploy.labels`, as a container can with the Docker provider. The files are on ReverseDock's side, so labels may only name directories inside one listed in `providers.swarm.static_roots` (empty by default, links resolved). A service therefore cannot make ReverseDock serve its own certificates, keys or configuration:
+
+```yaml title="rdock.yaml (excerpt)"
+providers:
+  swarm:
+    static_roots: [/srv/www]
+```
+
+Mount the sites into the ReverseDock service at that path, for example as a volume on every node that runs it.
+
 ## Secrets and configs
 
 Nothing Swarm-specific is needed. `rdock.yaml` can be a Swarm config, as above, and refer to Swarm secrets, which are mounted at `/run/secrets/<name>`, through `${file:…}` ([Docker secrets](https://docs.docker.com/engine/swarm/secrets/), checked 2026-11-06):

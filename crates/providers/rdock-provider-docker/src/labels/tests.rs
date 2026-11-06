@@ -68,7 +68,7 @@ fn shorthand_makes_one_route_and_one_service() {
                 .to_owned()
         )
     );
-    assert_eq!(route.service, "web-shop");
+    assert_eq!(route.service.as_deref(), Some("web-shop"));
     assert_eq!(route.middlewares, ["secure@file", "limit"]);
     assert_eq!(route.tls, Some(RouteTls::Mode(TlsMode::Off)));
     assert_eq!(backends(&t, "web-shop"), ["172.18.0.5:3000"]);
@@ -202,7 +202,10 @@ fn full_form_objects_decode_into_the_model() {
     )]);
     assert_eq!(messages(&t), Vec::<String>::new());
     let route = &t.fragment.routes["api"];
-    assert_eq!((route.priority, route.service.as_str()), (10, "api"));
+    assert_eq!(
+        (route.priority, route.service.as_deref()),
+        (10, Some("api"))
+    );
     let service = &t.fragment.services["api"];
     assert_eq!(service.scheme, rdock_model::service::Scheme::H2c);
     assert_eq!(
@@ -267,7 +270,7 @@ fn a_router_without_a_service_uses_the_containers_only_service() {
             ("traefik.http.routers.web.rule", "Host(`web.example.com`)"),
         ],
     )]);
-    assert_eq!(t.fragment.routes["web"].service, "web");
+    assert_eq!(t.fragment.routes["web"].service.as_deref(), Some("web"));
     assert_eq!(backends(&t, "web"), ["172.18.0.4:8080"]);
 }
 

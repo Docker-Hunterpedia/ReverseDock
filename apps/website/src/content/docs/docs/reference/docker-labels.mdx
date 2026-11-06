@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The Docker provider <Status since="v0.2" /> reads these labels from running containers. Label keys are case-insensitive. Values are taken literally: `${…}` is refused (except in regular-expression `replacement` labels, where `${1}` is a capture group), and labels cannot name files on the proxy's host. Every label the provider cannot use is reported with its exact name in the logs and in `rdock status`. The [Traefik conformance suite](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/tests/conformance/traefik-labels) pins the behaviour of each label below.
+The Docker provider <Status since="v0.2" /> reads these labels from running containers. Label keys are case-insensitive. Values are taken literally: `${…}` is refused (except in regular-expression `replacement` labels, where `${1}` is a capture group), and labels cannot name files on the proxy's host (a `static` root only inside a directory listed in `providers.docker.static_roots`). Every label the provider cannot use is reported with its exact name in the logs and in `rdock status`. The [Traefik conformance suite](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/tests/conformance/traefik-labels) pins the behaviour of each label below.
 
 ## Container labels
 
@@ -37,6 +37,7 @@ One route and one service named after the Compose service and project (`<service
 | `rdock.port` | The service's backend port |
 | `rdock.tls` | `tls: auto`, `tls: off`, or `tls: { dns_provider: <name> }` for `dns:<name>` |
 | `rdock.middlewares` | The route's middlewares, comma-separated |
+| `rdock.static.root` <Status since="v0.6" /> | A [`static`](/docs/guides/static-files/) middleware `<name>-static` serving this directory of ReverseDock's file system, last on the route, which then has no service. The directory must be inside `providers.docker.static_roots`. |
 
 ## rdock.* full form
 
@@ -45,7 +46,7 @@ One route and one service named after the Compose service and project (`<service
 | `rdock.routes.<name>.<field>` | A field of [`routes.<name>`](/docs/reference/configuration/routes/): `match`, `service`, `priority`, `middlewares`, `listeners` (comma-separated), `tls`, `enabled`, `timeouts.*` |
 | `rdock.services.<name>.port` | The container port of the service's backend |
 | `rdock.services.<name>.<field>` | Any other field of [`services.<name>`](/docs/reference/configuration/services/) as a dotted path, such as `scheme` or `health.active.path`; not `backends` or `split` |
-| `rdock.middlewares.<name>.<field>` | A field of [`middlewares.<name>`](/docs/reference/configuration/middlewares/) as a dotted path, starting with `type`; not `users_file` or `file` |
+| `rdock.middlewares.<name>.<field>` | A field of [`middlewares.<name>`](/docs/reference/configuration/middlewares/) as a dotted path, starting with `type`; not `users_file` or `file`. A `static` middleware's `root` must be inside `providers.docker.static_roots` |
 
 Values `true`/`false` and whole numbers become booleans and numbers where a field expects them; `[a, b]` is a list.
 

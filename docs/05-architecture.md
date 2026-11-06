@@ -76,7 +76,7 @@ The model is deliberately a **superset of Traefik's dynamic configuration** (ent
 | Entity | Purpose | Key fields |
 |---|---|---|
 | `Listener` | A bound socket | `address`, `protocol` (`http`,`https`,`tcp`,`udp`), `tls` policy, `proxy_protocol`, `http3` (later) |
-| `Route` | HTTP match → service | `match` (rule string **or** structured), `listeners`, `priority`, `middlewares[]`, `service`, `tls` (`auto` / cert ref / dns provider / off) |
+| `Route` | HTTP match → service | `match` (rule string **or** structured), `listeners`, `priority`, `middlewares[]`, `service` (optional when the last middleware answers every request: `static` without `pass_through`, enabled `maintenance`; ADR-0026), `tls` (`auto` / cert ref / dns provider / off) |
 | `Service` | A backend pool | `backends[]` (`address`, `weight`, `unix:` sockets), `scheme` (`http`,`https`,`h2c`; gRPC rides on `h2c` or `https`), `load_balancer`, `health`, `retries`, `timeouts`, `tls` (upstream), `sticky`, `mirror`, `split[]` |
 | `Middleware` | Typed, reusable policy | `type` + typed config (see §8) |
 | `TcpRoute`/`UdpRoute` + `TcpService` | L4 routing | `match: HostSNI(...)`, `passthrough`, `tls` termination |
@@ -284,6 +284,8 @@ pub trait Middleware: Send + Sync {
 Built-ins (P0 unless noted): `headers`, `redirect` (scheme/regex), `rewrite`/`strip_prefix`/`add_prefix`/`replace_path`, `basic_auth`, `forward_auth`, `ip_allow`/`ip_deny`, `rate_limit`, `inflight_limit` (P1), `cors`, `compress` (gzip P0; br/zstd P1), `errors` (custom pages), `maintenance`, `static` (P1), `jwt` (P1), `mirror` (P1), `buffering` (P1), `cache` (P2), `wasm` (P3), `agent` (out-of-process, P3). Retries and circuit breakers are **service** fields (§9), not middlewares; Traefik's `retry.*` label maps onto `services.<s>.retries` and `inflightreq.*` onto `inflight_limit`.
 
 Chains are per route, evaluated in declared order for `request`, **reverse** order for `response` (like Traefik/Envoy onion). Each middleware declares what it needs (body? headers only?) so streaming is preserved unless a middleware explicitly buffers.
+
+A middleware answers a request with a `Reply` whose body is in memory or, for `static`, ranges of an open file that the proxy reads and writes in 256 KiB chunks; both pass the response phase of the earlier middlewares, their compression and their `bandwidth` throttle (ADR-0026).
 
 ## 9. Load balancing, health, retries (`rdock-balancer`)
 

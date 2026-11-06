@@ -1,7 +1,7 @@
 // Shared helpers for the website's checks: run the real `rdock` binary against configuration
 // written in the docs, with throw-away files standing in for the paths the docs use.
 import { execFileSync, spawnSync } from 'node:child_process';
-import { mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join, resolve } from 'node:path';
 
@@ -15,10 +15,11 @@ export interface Validation {
 }
 
 /**
- * A scratch directory holding a certificate for example.com and *.example.com, a secret and an
- * htpasswd file. `localize` points the docs' absolute paths at them:
+ * A scratch directory holding a certificate for example.com and *.example.com, a secret, an
+ * htpasswd file and a site directory. `localize` points the docs' absolute paths at them:
  *   /etc/rdock/certs/<name>.pem|.crt → the certificate   /etc/rdock/certs/<name>.key → the key
  *   /run/secrets/<name>               → a secret          /etc/rdock/*.htpasswd       → users
+ *   /srv/www and anything below it    → the site directory (static files)
  */
 export function scratch() {
   const dir = mkdtempSync(join(tmpdir(), 'rdock-docs-'));
@@ -31,6 +32,9 @@ export function scratch() {
   writeFileSync(secret, 'not-a-real-secret\n');
   const users = join(dir, 'users.htpasswd');
   writeFileSync(users, `${hash('alice', 'example-password')}\n`);
+  const www = join(dir, 'www');
+  mkdirSync(www);
+  writeFileSync(join(www, 'index.html'), '<h1>example</h1>\n');
   return {
     dir,
     localize(text: string): string {
@@ -38,7 +42,8 @@ export function scratch() {
         .replace(/\/etc\/rdock\/certs\/[\w.-]+\.(pem|crt)/g, cert)
         .replace(/\/etc\/rdock\/certs\/[\w.-]+\.key/g, key)
         .replace(/\/run\/secrets\/[\w.-]+/g, secret)
-        .replace(/\/etc\/rdock\/[\w.-]+\.htpasswd/g, users);
+        .replace(/\/etc\/rdock\/[\w.-]+\.htpasswd/g, users)
+        .replace(/\/srv\/www(\/[\w.-]+)*/g, www);
     },
   };
 }

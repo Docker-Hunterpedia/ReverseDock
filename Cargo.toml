@@ -102,6 +102,12 @@ fastrand = "2.5.0"
 md-5 = "0.11.0"
 sha1 = "0.11.0"
 subtle = "2.6.1"
+# Static files (ADR-0026): the root opened once as a directory handle (openat2 RESOLVE_BENEATH on
+# Linux 5.6+; 4.0.3 released 2026-08-20), `Range` parsing (0.4.2 released 2024-11-28), and media
+# types (2.0.5, already built for rust-embed).
+cap-std = "4.0.3"
+http-range-header = "0.4.2"
+mime_guess = "2.0.5"
 # Tracing (ADR-0022): OTLP over HTTP/protobuf through our own hyper-rustls client; no tonic, no reqwest.
 opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }
 opentelemetry_sdk = { version = "0.33.1", default-features = false, features = ["trace"] }

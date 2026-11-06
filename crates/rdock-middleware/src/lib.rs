@@ -29,11 +29,13 @@ mod maintenance;
 mod paths;
 mod ratelimit;
 mod redirect;
+mod static_files;
 
 pub use client::{FetchError, Fetched, HttpClient};
 pub use client_cert::{ClientIdentity, IDENTITY_HEADERS};
 pub use compress::Encoder;
 pub use limits::Throttle;
+pub use static_files::FileBody;
 
 /// What middlewares know about a request and share between its request and response phases.
 #[derive(Debug)]
@@ -105,7 +107,48 @@ pub struct Reply {
     /// Headers to send.
     pub headers: Vec<(HeaderName, HeaderValue)>,
     /// Body; `None` means the proxy's standard error page for `status`.
-    pub body: Option<Bytes>,
+    pub body: Option<Body>,
+}
+
+/// The body of a [`Reply`].
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Body {
+    /// Bytes in memory, sent at once.
+    Bytes(Bytes),
+    /// Ranges of an open file (`static`), read and sent chunk by chunk.
+    File(FileBody),
+}
+
+impl Body {
+    /// Length in bytes: the `Content-Length` of the reply.
+    #[must_use]
+    pub fn len(&self) -> u64 {
+        match self {
+            Self::Bytes(bytes) => bytes.len() as u64,
+            Self::File(file) => file.remaining(),
+        }
+    }
+
+    /// Whether the body has no bytes.
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// The bytes of an in-memory body.
+    #[must_use]
+    pub fn as_bytes(&self) -> Option<&Bytes> {
+        match self {
+            Self::Bytes(bytes) => Some(bytes),
+            Self::File(_) => None,
+        }
+    }
+}
+
+impl From<Bytes> for Body {
+    fn from(bytes: Bytes) -> Self {
+        Self::Bytes(bytes)
+    }
 }
 
 impl Reply {
@@ -238,6 +281,7 @@ pub fn build(
         Config::Compress(c) => Arc::new(compress::Compress::new(c)),
         Config::Errors(c) => Arc::new(errors::Errors::new(c, env)?),
         Config::Maintenance(c) => Arc::new(maintenance::Maintenance::new(c)?),
+        Config::Static(c) => Arc::new(static_files::Static::new(c)?),
         // The proxy converts the protocol itself (it needs the trailers); see `rdock-proxy`.
         Config::GrpcWeb(_) => Arc::new(GrpcWeb),
     })
@@ -271,6 +315,10 @@ pub(crate) mod test_support {
 
     pub(crate) fn header<'a>(headers: &'a http::HeaderMap, name: &str) -> Option<&'a str> {
         headers.get(name).and_then(|v| v.to_str().ok())
+    }
+
+    pub(crate) fn reply_bytes(reply: &Reply) -> Option<&[u8]> {
+        reply.body.as_ref().and_then(Body::as_bytes).map(|b| &b[..])
     }
 
     pub(crate) fn reply_header<'a>(reply: &'a Reply, name: &str) -> Option<&'a str> {

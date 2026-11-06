@@ -81,6 +81,10 @@ impl Tree {
     }
 
     /// The value at the top-level `key`, to edit.
+    pub(crate) fn top(&self, key: &str) -> Option<&Value> {
+        self.0.get(key)
+    }
+
     pub(crate) fn top_mut(&mut self, key: &str) -> Option<&mut Value> {
         self.0.get_mut(key)
     }

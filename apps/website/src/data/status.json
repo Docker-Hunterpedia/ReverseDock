@@ -26,5 +26,12 @@
     "what": "The Kubernetes provider",
     "value": false,
     "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  kubernetes: {}\n"
+  },
+  {
+    "path": "middlewares.<name>.listing",
+    "planned": "v0.8",
+    "what": "Directory listing (F-WEB-02)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  site: { match: \"PathPrefix(`/`)\", middlewares: [site] }\nmiddlewares:\n  site: { type: static, root: /srv/www/example, listing: true }\n"
   }
 ]

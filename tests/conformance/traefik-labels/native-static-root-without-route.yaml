@@ -1,0 +1,14 @@
+description: "rdock.static.root without rdock.host or rdock.path has no route to end and is reported."
+containers:
+  - name: "docs"
+    labels:
+      rdock.enable: "true"
+      rdock.static.root: "/srv/sites/docs"
+    networks:
+      web: "172.18.0.4"
+expect:
+  routes: {}
+  services: {}
+  middlewares: {}
+  diagnostics:
+    - "rdock.static.root\"]: needs `rdock.host` or `rdock.path`; the label is ignored"

@@ -120,8 +120,8 @@ pub struct RouteRuntime {
     pub rule: Rule,
     /// The rule in canonical form, to find routes that can never match.
     pub expr: String,
-    /// Target service.
-    pub service: Arc<ServiceRuntime>,
+    /// Target service; none when the last middleware answers every request.
+    pub service: Option<Arc<ServiceRuntime>>,
     /// Middlewares, in order.
     pub middlewares: Arc<[Arc<dyn Middleware>]>,
     /// Per-route timeout overrides.

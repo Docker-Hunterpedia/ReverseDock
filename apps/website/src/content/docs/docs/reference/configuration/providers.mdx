@@ -47,6 +47,12 @@ Address used for containers in host network mode.
 
 Network used to reach containers that are on several networks.
 
+### `providers.docker.static_roots`
+
+**Type:** list of `string`
+
+Directories on ReverseDock's file system that `static` middlewares from labels may serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a container cannot read ReverseDock's own files.
+
 ### `providers.docker.traefik_labels`
 
 **Type:** `boolean` · **Default:** `true`
@@ -133,6 +139,12 @@ Overlay network used to reach services.
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
 
 How often services and tasks are listed. Swarm sends no events when a task starts or stops, so this bounds how long a new or stopping task waits to join or leave its pool. At least `1s`.
+
+### `providers.swarm.static_roots`
+
+**Type:** list of `string`
+
+Directories on ReverseDock's file system that `static` middlewares from service labels may serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a service cannot read ReverseDock's own files (ADR-0027).
 
 ### `providers.swarm.traefik_labels`
 

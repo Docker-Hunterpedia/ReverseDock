@@ -211,6 +211,15 @@ impl Compress {
 /// highest in `Accept-Encoding`; ties go to the server's order. `*` covers codings not named.
 /// `None` when the client accepts none of them.
 fn negotiate(req: &RequestHeader, offered: &[CompressAlgorithm]) -> Option<CompressAlgorithm> {
+    preferences(req, offered).first().copied()
+}
+
+/// The codings of `offered` (in server preference order) that the client accepts, best first:
+/// by `Accept-Encoding` weight, ties in the server's order. `*` covers codings not named.
+pub(crate) fn preferences(
+    req: &RequestHeader,
+    offered: &[CompressAlgorithm],
+) -> Vec<CompressAlgorithm> {
     let mut named: Vec<(String, f32)> = Vec::new();
     for value in req.headers.get_all(http::header::ACCEPT_ENCODING) {
         let Ok(text) = value.to_str() else { continue };
@@ -238,14 +247,17 @@ fn negotiate(req: &RequestHeader, offered: &[CompressAlgorithm]) -> Option<Compr
             .or_else(|| named.iter().find(|(c, _)| c == "*"))
             .map_or(0.0, |(_, q)| *q)
     };
-    let mut best: Option<(CompressAlgorithm, f32)> = None;
-    for algorithm in offered {
-        let q = weight(*algorithm);
-        if q > 0.0 && best.is_none_or(|(_, top)| q > top) {
-            best = Some((*algorithm, q));
-        }
-    }
-    best.map(|(algorithm, _)| algorithm)
+    let mut accepted: Vec<(CompressAlgorithm, f32)> = offered
+        .iter()
+        .map(|algorithm| (*algorithm, weight(*algorithm)))
+        .filter(|(_, q)| *q > 0.0)
+        .collect();
+    // Stable: equal weights keep the server's order.
+    accepted.sort_by(|a, b| b.1.total_cmp(&a.1));
+    accepted
+        .into_iter()
+        .map(|(algorithm, _)| algorithm)
+        .collect()
 }
 
 #[async_trait]
@@ -260,10 +272,19 @@ impl Middleware for Compress {
         if cx.compression.is_some() || !self.eligible(resp) {
             return;
         }
-        let _ = resp.append_header(
-            http::header::VARY,
-            HeaderValue::from_static("Accept-Encoding"),
-        );
+        let varies = resp
+            .headers
+            .get_all(http::header::VARY)
+            .iter()
+            .filter_map(|v| v.to_str().ok())
+            .flat_map(|v| v.split(','))
+            .any(|name| name.trim().eq_ignore_ascii_case("accept-encoding"));
+        if !varies {
+            let _ = resp.append_header(
+                http::header::VARY,
+                HeaderValue::from_static("Accept-Encoding"),
+            );
+        }
         let Some(algorithm) = cx.encoding.filter(|_| !cx.head_request) else {
             return;
         };

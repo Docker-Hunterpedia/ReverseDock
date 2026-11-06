@@ -53,6 +53,23 @@ pub enum Middleware {
     /// Translate gRPC-Web from browsers into gRPC for the backend (binary
     /// `application/grpc-web`; the service needs `scheme: h2c` or `https`).
     GrpcWeb(GrpcWebConfig),
+    /// Serve files from a directory on ReverseDock's own file system. It answers the request,
+    /// so a route that ends with it needs no service (unless `pass_through` is on).
+    Static(StaticConfig),
+}
+
+impl Middleware {
+    /// Whether this middleware answers every request itself, so a route whose chain ends with
+    /// it needs no service: `static` without `pass_through`, and `maintenance` that is enabled
+    /// for everyone.
+    #[must_use]
+    pub fn is_terminal(&self) -> bool {
+        match self {
+            Self::Static(s) => !s.pass_through,
+            Self::Maintenance(m) => m.enabled && m.allow.is_empty(),
+            _ => false,
+        }
+    }
 }
 
 /// JWT validation (RFC 7519, RFC 8725).
@@ -541,4 +558,131 @@ impl Default for MaintenanceConfig {
             allow: Vec::new(),
         }
     }
+}
+
+/// Static files from a directory (F-WEB-01, ADR-0026).
+///
+/// The directory is on ReverseDock's file system (with Docker, a volume mounted into the
+/// ReverseDock container). It is opened once when the configuration is applied. Requests are
+/// answered with strong `ETag`s, `Last-Modified`, conditional requests, byte ranges and
+/// precompressed sidecar files.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent switches of the YAML model"
+)]
+pub struct StaticConfig {
+    /// Directory to serve. It must exist and be a directory when the configuration is applied.
+    pub root: PathBuf,
+    /// File names tried, in order, for a request that names a directory.
+    #[serde(default = "default_index")]
+    pub index: Vec<String>,
+    /// File served (with status 200) for a GET or HEAD whose last path segment has no `.` and
+    /// that names no file, e.g. `/index.html` for a single-page app. Off when unset.
+    #[serde(default)]
+    pub fallback: Option<String>,
+    /// Path prefixes that never get the `fallback`, e.g. `/api/`; they stay `404`.
+    #[serde(default)]
+    pub fallback_except: Vec<String>,
+    /// Precompressed sidecar files (`app.js.zst`, `app.js.br`, `app.js.gz`) served to clients
+    /// that accept the coding, in this order of preference. `[]` turns them off.
+    #[serde(default = "default_precompressed")]
+    pub precompressed: Vec<CompressAlgorithm>,
+    /// Which symbolic links are followed.
+    #[serde(default)]
+    pub symlinks: SymlinkPolicy,
+    /// Files and directories whose name starts with `.` (`.env`, `.git/`).
+    #[serde(default)]
+    pub hidden: HiddenFiles,
+    /// Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+    #[serde(default)]
+    pub listing: bool,
+    /// Redirect (`308`) a directory path without a trailing slash to the path with one when the
+    /// directory has an index file.
+    #[serde(default = "crate::defaults::yes")]
+    pub directory_redirect: bool,
+    /// Most byte ranges answered in one request, from 1 to 16. A request for more gets the
+    /// whole file (`200`); more than 1 allows `multipart/byteranges` answers.
+    #[serde(default = "one")]
+    pub max_ranges: u32,
+    /// `Cache-Control` of served files.
+    #[serde(default)]
+    pub cache_control: StaticCacheControl,
+    /// Send `X-Content-Type-Options: nosniff`.
+    #[serde(default = "crate::defaults::yes")]
+    pub nosniff: bool,
+    /// File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.
+    #[serde(default)]
+    pub types: BTreeMap<String, String>,
+    /// Send requests that name no file (and methods other than GET and HEAD) on to the route's
+    /// service instead of answering `404` or `405`. The route then needs a service.
+    #[serde(default)]
+    pub pass_through: bool,
+}
+
+fn default_index() -> Vec<String> {
+    vec!["index.html".to_owned()]
+}
+
+fn default_precompressed() -> Vec<CompressAlgorithm> {
+    vec![
+        CompressAlgorithm::Zstd,
+        CompressAlgorithm::Br,
+        CompressAlgorithm::Gzip,
+    ]
+}
+
+const fn one() -> u32 {
+    1
+}
+
+/// Which symbolic links `static` follows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum SymlinkPolicy {
+    /// None: a path with a symbolic link in it answers `404`.
+    #[default]
+    None,
+    /// Links that stay inside `root`; the kernel refuses any resolution that leaves it.
+    WithinRoot,
+    /// Every link, also out of `root`. `rdock validate` warns about it.
+    All,
+}
+
+/// How `static` treats names starting with `.`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum HiddenFiles {
+    /// A path with any component starting with `.` answers `404`.
+    #[default]
+    Refuse,
+    /// Hidden files and directories are served like any other.
+    Allow,
+}
+
+/// `Cache-Control` of static files: a default and overrides by path prefix.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct StaticCacheControl {
+    /// Value for files no prefix matches. `no-cache` makes clients revalidate with the `ETag`.
+    #[serde(default = "no_cache")]
+    pub default: String,
+    /// Path prefix (starting with `/`, compared literally, not a glob) → value; the longest
+    /// matching prefix wins, e.g. `/assets/: public, max-age=31536000, immutable` for files
+    /// with hashed names.
+    #[serde(flatten)]
+    pub paths: BTreeMap<String, String>,
+}
+
+impl Default for StaticCacheControl {
+    fn default() -> Self {
+        Self {
+            default: no_cache(),
+            paths: BTreeMap::new(),
+        }
+    }
+}
+
+fn no_cache() -> String {
+    "no-cache".to_owned()
 }

@@ -137,7 +137,7 @@ impl ForwardAuth {
         Reply {
             status,
             headers: out,
-            body: Some(body),
+            body: Some(body.into()),
         }
     }
 }
@@ -255,7 +255,7 @@ mod tests {
             .find(|(n, _)| n == http::header::LOCATION)
             .map(|(_, v)| v.to_str().unwrap().to_owned());
         assert_eq!(location, Some(format!("http://{addr}/login")));
-        assert_eq!(reply.body.as_deref(), Some(&b"no"[..]));
+        assert_eq!(crate::test_support::reply_bytes(&reply), Some(&b"no"[..]));
 
         let closed = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let dead = closed.local_addr().unwrap();
