@@ -690,6 +690,9 @@ async fn pass_through_sends_misses_to_the_service() {
     assert_eq!(hidden.json()["target"], "/.env");
 }
 
+/// Parallel downloads in the concurrency check; see the comment there for macOS.
+const PARALLEL_DOWNLOADS: usize = if cfg!(target_os = "macos") { 32 } else { 100 };
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn large_files_stream_byte_exact_with_bandwidth_and_concurrency() {
     let served = serve().await;
@@ -712,9 +715,12 @@ async fn large_files_stream_byte_exact_with_bandwidth_and_concurrency() {
         started.elapsed()
     );
 
-    // Many downloads at once, and a small request still answers quickly.
+    // Many downloads at once, and a small request still answers quickly. On macOS, 100 parallel
+    // 5 MiB downloads over loopback inside one test process exhaust the kernel's socket buffers:
+    // writes fail with ENOBUFS ("No buffer space available", os error 55) on both ends, which is
+    // the machine's limit, not rdock's (100 separate curl processes complete every download).
     let port = served.port;
-    let downloads: Vec<_> = (0..100)
+    let downloads: Vec<_> = (0..PARALLEL_DOWNLOADS)
         .map(|_| {
             tokio::spawn(async move {
                 client::http1(addr(port), get("site.test", "/big.bin"))
@@ -738,7 +744,7 @@ async fn large_files_stream_byte_exact_with_bandwidth_and_concurrency() {
     assert_eq!(failed, 0, "{}", served.rdock.log());
     assert!(
         tiny_took < Duration::from_secs(2),
-        "a small file took {tiny_took:?} during 100 downloads"
+        "a small file took {tiny_took:?} during {PARALLEL_DOWNLOADS} downloads"
     );
 }
 
