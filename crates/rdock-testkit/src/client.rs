@@ -114,6 +114,18 @@ pub async fn h2c(addr: SocketAddr, req: Request<Full<Bytes>>) -> Reply {
     http2_on(TcpStream::connect(addr).await.unwrap(), req).await
 }
 
+/// One HTTP/1.1 request on a new connection that first sends `prefix` (a PROXY header).
+pub async fn http1_after(addr: SocketAddr, prefix: &[u8], req: Request<Full<Bytes>>) -> Reply {
+    http1_on(connect_sending(addr, prefix).await, req).await
+}
+
+/// A TCP connection that has sent `prefix`.
+pub async fn connect_sending(addr: SocketAddr, prefix: &[u8]) -> TcpStream {
+    let mut tcp = TcpStream::connect(addr).await.unwrap();
+    tcp.write_all(prefix).await.unwrap();
+    tcp
+}
+
 /// One request over TLS; the protocol follows the negotiated ALPN.
 pub async fn tls(
     addr: SocketAddr,
@@ -121,7 +133,19 @@ pub async fn tls(
     config: Arc<rustls::ClientConfig>,
     req: Request<Full<Bytes>>,
 ) -> Reply {
-    let stream = tls_connect(addr, server_name, config).await.unwrap();
+    tls_after(addr, b"", server_name, config, req).await
+}
+
+/// Like [`tls`], on a connection that sends `prefix` (a PROXY header) before the `ClientHello`.
+pub async fn tls_after(
+    addr: SocketAddr,
+    prefix: &[u8],
+    server_name: &str,
+    config: Arc<rustls::ClientConfig>,
+    req: Request<Full<Bytes>>,
+) -> Reply {
+    let tcp = connect_sending(addr, prefix).await;
+    let stream = tls_on(tcp, server_name, config).await.unwrap();
     let h2 = stream.get_ref().1.alpn_protocol() == Some(b"h2");
     if h2 {
         http2_on(stream, req).await
@@ -136,7 +160,14 @@ pub async fn tls_connect(
     server_name: &str,
     config: Arc<rustls::ClientConfig>,
 ) -> std::io::Result<tokio_rustls::client::TlsStream<TcpStream>> {
-    let tcp = TcpStream::connect(addr).await?;
+    tls_on(TcpStream::connect(addr).await?, server_name, config).await
+}
+
+async fn tls_on(
+    tcp: TcpStream,
+    server_name: &str,
+    config: Arc<rustls::ClientConfig>,
+) -> std::io::Result<tokio_rustls::client::TlsStream<TcpStream>> {
     let name = rustls_pki_types::ServerName::try_from(server_name.to_owned()).unwrap();
     tokio_rustls::TlsConnector::from(config)
         .connect(name, tcp)

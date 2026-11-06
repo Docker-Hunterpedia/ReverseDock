@@ -38,17 +38,23 @@ Protocol. Inferred when omitted: `https` if `tls` is set, otherwise `http`.
 TCP and UDP listeners (`tcp`, `udp`): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.6.
 :::
 
-## `listeners.<name>.proxy_protocol` <Status planned="v0.6" />
+## `listeners.<name>.proxy_protocol`
 
 **Type:** object
 
 Accept the PROXY protocol (v1 or v2) from these sources only.
 
+### `listeners.<name>.proxy_protocol.optional`
+
+**Type:** `boolean` · **Default:** `false`
+
+Also accept connections from `trusted` sources that send no header. Off by default: a load balancer that stops sending headers would otherwise make every client look like the load balancer itself to IP filters, rate limits and logs.
+
 ### `listeners.<name>.proxy_protocol.trusted`
 
 **Type:** list of [`IpNetwork`](/docs/reference/configuration/#ipnetwork) · **Required**
 
-Sources allowed to send a PROXY header. Others are rejected.
+Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are rejected when they send one.
 
 ## `listeners.<name>.timeouts`
 

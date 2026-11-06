@@ -3456,11 +3456,16 @@
       }
     },
     "ProxyProtocolIn": {
-      "description": "Inbound PROXY protocol settings.",
+      "description": "Inbound PROXY protocol settings (v1 and v2). A header is read only from `trusted` sources;\na connection from anywhere else that starts with a PROXY header is closed.",
       "type": "object",
       "properties": {
+        "optional": {
+          "description": "Also accept connections from `trusted` sources that send no header. Off by default: a\nload balancer that stops sending headers would otherwise make every client look like\nthe load balancer itself to IP filters, rate limits and logs.",
+          "type": "boolean",
+          "default": false
+        },
         "trusted": {
-          "description": "Sources allowed to send a PROXY header. Others are rejected.",
+          "description": "Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are\nrejected when they send one.",
           "type": "array",
           "items": {
             "$ref": "#/$defs/IpNetwork"

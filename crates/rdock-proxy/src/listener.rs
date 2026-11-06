@@ -20,7 +20,7 @@ use pingora::protocols::{GetSocketDigest, SocketDigest, Stream};
 use pingora::proxy::HttpProxy;
 use pingora::server::configuration::ServerConf;
 use rdock_middleware::ClientIdentity;
-use rdock_model::config::ListenerTimeouts;
+use rdock_model::config::{ListenerTimeouts, ProxyProtocolIn};
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::SniResolver;
@@ -180,6 +180,8 @@ pub struct Settings {
     pub tls: Option<Arc<Acceptor>>,
     /// Client timeouts.
     pub timeouts: ListenerTimeouts,
+    /// Inbound PROXY protocol.
+    pub proxy_protocol: Option<ProxyProtocolIn>,
 }
 
 /// A running listener.
@@ -294,7 +296,7 @@ impl Drop for Open<'_> {
 async fn serve(
     name: Arc<str>,
     tcp: tokio::net::TcpStream,
-    _peer: SocketAddr,
+    peer: SocketAddr,
     settings: Arc<Settings>,
     engine: Arc<HttpProxy<RdockProxy>>,
     closing: watch::Receiver<bool>,
@@ -306,11 +308,31 @@ async fn serve(
     #[cfg(unix)]
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&tcp);
     let mut l4: L4Stream = tcp.into();
-    #[cfg(unix)]
-    l4.set_socket_digest(SocketDigest::from_raw_fd(fd));
     let header_timeout = settings.timeouts.request_header.as_std();
+    // Everything before HTTP (PROXY header, TLS handshake, h2c preface) shares one deadline.
+    let deadline = tokio::time::Instant::now() + header_timeout;
+    let Ok(source) = crate::proxy_protocol::accept(
+        &name,
+        settings.proxy_protocol.as_ref(),
+        peer,
+        &mut l4,
+        deadline,
+        &shared.metrics,
+    )
+    .await
+    else {
+        return;
+    };
+    #[cfg(unix)]
+    {
+        let digest = SocketDigest::from_raw_fd(fd);
+        if let Some(source) = source {
+            crate::proxy_protocol::set_peer(&digest, source);
+        }
+        l4.set_socket_digest(digest);
+    }
     let stream: ConnStream = if let Some(acceptor) = &settings.tls {
-        let handshake = tokio::time::timeout(header_timeout, acceptor.tls_handshake(l4)).await;
+        let handshake = tokio::time::timeout_at(deadline, acceptor.tls_handshake(l4)).await;
         let tls = match handshake {
             Ok(Ok(tls)) => tls,
             Ok(Err(err)) => {
@@ -341,8 +363,7 @@ async fn serve(
         let h2 = matches!(alpn, Some(pingora::protocols::ALPN::H2));
         ConnStream::new(Box::new(tls) as Stream, None, !h2, header_timeout)
     } else {
-        let Ok(Some(first)) = tokio::time::timeout(header_timeout, read_preface(&mut l4)).await
-        else {
+        let Ok(Some(first)) = tokio::time::timeout_at(deadline, read_preface(&mut l4)).await else {
             return;
         };
         l4.rewind(&first);

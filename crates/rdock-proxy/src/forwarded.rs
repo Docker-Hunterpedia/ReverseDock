@@ -152,7 +152,7 @@ impl Trust<'_> {
 }
 
 /// IPv4-mapped IPv6 addresses are treated as IPv4.
-fn canonical(ip: IpAddr) -> IpAddr {
+pub(crate) fn canonical(ip: IpAddr) -> IpAddr {
     match ip {
         IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
         IpAddr::V4(_) => ip,

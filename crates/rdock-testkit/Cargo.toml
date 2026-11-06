@@ -17,6 +17,7 @@ h2.workspace = true
 http.workspace = true
 http-body-util.workspace = true
 percent-encoding.workspace = true
+proxy-header.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
 rcgen.workspace = true

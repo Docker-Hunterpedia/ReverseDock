@@ -35,6 +35,7 @@ fn exported() -> BTreeMap<String, Exported> {
         Box::new(m.connections.clone()),
         Box::new(m.connections_total.clone()),
         Box::new(m.tls_handshake_errors.clone()),
+        Box::new(m.proxy_protocol_rejected.clone()),
         Box::new(m.config_generation.clone()),
         Box::new(m.config_reloads.clone()),
         Box::new(m.cert_expiry.clone()),
