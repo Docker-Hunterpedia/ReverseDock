@@ -77,6 +77,7 @@ struct Wanted {
     address: ListenAddress,
     tls: Option<ListenerTls>,
     timeouts: rdock_model::config::ListenerTimeouts,
+    proxy_protocol: Option<rdock_model::config::ProxyProtocolIn>,
 }
 
 /// The data plane.
@@ -256,6 +257,7 @@ impl DataPlane {
                 address: l.address,
                 tls: l.tls.clone(),
                 timeouts: l.timeouts,
+                proxy_protocol: l.proxy_protocol.clone(),
             })
             .collect();
         let generation = runtime.generation;
@@ -303,6 +305,7 @@ impl DataPlane {
             let settings = Settings {
                 tls,
                 timeouts: w.timeouts,
+                proxy_protocol: w.proxy_protocol,
             };
             if let Some(socket) = prepared.sockets.remove(&w.name) {
                 let running = Running::start(

@@ -22,6 +22,9 @@ pub struct AccessRecord {
     pub request_id: String,
     /// Client IP after trusted-proxy handling.
     pub client_ip: String,
+    /// The load balancer that sent a PROXY protocol header naming the client, as `ip:port`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub proxy_peer: Option<String>,
     /// Method.
     pub method: String,
     /// Host without port.

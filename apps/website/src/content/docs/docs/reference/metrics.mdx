@@ -76,6 +76,14 @@ Errors after the connection is open, such as a read timeout, show up as 502 or 5
 **Counter.** TLS handshakes that failed or did not finish within the listener's
 `timeouts.request_header`. Label: `listener`.
 
+### `rdock_proxy_protocol_rejected_total` <Status since="v0.6" />
+
+**Counter.** Connections closed by the [PROXY protocol](/docs/guides/behind-a-proxy/#proxy-protocol)
+step of a listener with `proxy_protocol`. Labels: `listener` and `reason`: `untrusted` (a
+header from a source outside `trusted`), `missing` (no header from a trusted source),
+`malformed`, `timeout` (not complete within `timeouts.request_header`) and `too_large` (over
+16 KiB).
+
 ### `rdock_cert_expiry_timestamp_seconds`
 
 **Gauge.** Expiry (`notAfter`) of each certificate in `certificates`, in seconds since the Unix

@@ -18,6 +18,8 @@ httparse = "1.10.1"
 libfuzzer-sys = "0.4.13"
 pingora-core = { version = "0.9.0", default-features = false }
 pingora-http = "0.9.0"
+# The PROXY protocol parser rdock-proxy uses on network bytes (pinned like the main workspace).
+proxy-header = { version = "=0.1.3", default-features = false }
 rdock-config = { path = "../../crates/rdock-config" }
 rdock-middleware = { path = "../../crates/rdock-middleware" }
 rdock-rules = { path = "../../crates/rdock-rules" }
@@ -40,6 +42,13 @@ bench = false
 [[bin]]
 name = "jwt_verify"
 path = "fuzz_targets/jwt_verify.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "proxy_header"
+path = "fuzz_targets/proxy_header.rs"
 test = false
 doc = false
 bench = false
