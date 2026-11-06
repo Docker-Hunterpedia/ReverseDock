@@ -255,9 +255,14 @@ pub struct TcpRoute {
     pub priority: i64,
     /// TCP service (a key of `tcp_services`).
     pub service: String,
-    /// TLS handling.
+    /// TLS handling. Without it the bytes are relayed as they arrive; with it the route
+    /// matches TLS connections only and terminates TLS unless `passthrough` is set.
     #[serde(default)]
     pub tls: Option<TcpRouteTls>,
+    /// Middlewares checked before connecting to the service: `ip_allow`, `ip_deny` and
+    /// `in_flight` (counted per client IP).
+    #[serde(default)]
+    pub middlewares: Vec<String>,
 }
 
 /// TLS handling of a TCP route.

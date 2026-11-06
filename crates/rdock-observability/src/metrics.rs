@@ -3,9 +3,9 @@
 //! bounded.
 
 use prometheus::{
-    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGauge, IntGaugeVec, Opts, Registry,
-    TextEncoder,
+    Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
 };
+pub use prometheus::{IntCounter, IntGauge};
 
 /// Methods reported as themselves; others count as `OTHER`.
 const KNOWN_METHODS: [&str; 9] = [
@@ -35,6 +35,13 @@ pub struct Metrics {
     /// Connections closed by the PROXY protocol step, by listener and reason (`untrusted`,
     /// `missing`, `malformed`, `timeout`, `too_large`).
     pub proxy_protocol_rejected: IntCounterVec,
+    /// Open TCP-route connections by listener and route.
+    pub tcp_connections: IntGaugeVec,
+    /// Bytes relayed by TCP routes, by route and direction (`in` from the client, `out` to it).
+    pub tcp_bytes: IntCounterVec,
+    /// Connections a `tcp` listener closed without relaying them, by listener and reason
+    /// (`no_route`, `bad_client_hello`, `denied`, `in_flight`, `no_backend`, `connect_failed`).
+    pub tcp_rejected: IntCounterVec,
     /// Generation of the configuration in use.
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
@@ -145,6 +152,24 @@ impl Metrics {
             "Connections closed for their PROXY protocol header, or its absence.",
             &["listener", "reason"],
         )?;
+        let tcp_connections = gauges(
+            &registry,
+            "rdock_tcp_connections",
+            "Open connections of TCP routes.",
+            &["listener", "route"],
+        )?;
+        let tcp_bytes = counters(
+            &registry,
+            "rdock_tcp_bytes_total",
+            "Bytes relayed by TCP routes (`in` from the client, `out` to the client).",
+            &["route", "direction"],
+        )?;
+        let tcp_rejected = counters(
+            &registry,
+            "rdock_tcp_rejected_total",
+            "TCP connections closed without being relayed.",
+            &["listener", "reason"],
+        )?;
         let config_generation = registered(
             &registry,
             IntGauge::new(
@@ -249,6 +274,9 @@ impl Metrics {
             connections_total,
             tls_handshake_errors,
             proxy_protocol_rejected,
+            tcp_connections,
+            tcp_bytes,
+            tcp_rejected,
             config_generation,
             config_reloads,
             cert_expiry,

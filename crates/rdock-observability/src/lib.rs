@@ -10,6 +10,6 @@ pub mod otel;
 
 pub use access::{AccessLog, AccessRecord, rfc3339};
 pub use logging::{LogFormat, init_logging};
-pub use metrics::{Metrics, status_class};
+pub use metrics::{IntCounter, IntGauge, Metrics, status_class};
 pub use opentelemetry::KeyValue;
 pub use otel::{Tracer, TracingError};

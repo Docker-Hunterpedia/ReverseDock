@@ -121,7 +121,7 @@ impl Rule {
     }
 }
 
-fn regex(pattern: &str) -> Result<Regex, RuleCompileError> {
+pub(crate) fn regex(pattern: &str) -> Result<Regex, RuleCompileError> {
     RegexBuilder::new(pattern)
         .size_limit(REGEX_SIZE_LIMIT)
         .build()

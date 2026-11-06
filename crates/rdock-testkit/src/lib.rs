@@ -15,8 +15,10 @@ pub mod dns_contract;
 pub mod fake_api;
 pub mod haproxy;
 pub mod pebble;
+pub mod postgres;
 pub mod proxy_protocol;
 pub mod rdock;
+pub mod tcp;
 pub mod toxiproxy;
 
 /// A free TCP port on the loopback interface, taken by nobody else in this test run.

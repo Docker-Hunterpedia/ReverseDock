@@ -163,7 +163,9 @@ pub async fn tls_connect(
     tls_on(TcpStream::connect(addr).await?, server_name, config).await
 }
 
-async fn tls_on(
+/// A TLS handshake on a connection that is already open (after a PROXY header or a
+/// PostgreSQL `SSLRequest`).
+pub async fn tls_on(
     tcp: TcpStream,
     server_name: &str,
     config: Arc<rustls::ClientConfig>,

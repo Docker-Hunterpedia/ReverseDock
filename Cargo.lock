@@ -3800,6 +3800,7 @@ dependencies = [
  "proxy-header",
  "rdock-balancer",
  "rdock-config",
+ "rdock-limits",
  "rdock-middleware",
  "rdock-model",
  "rdock-observability",
