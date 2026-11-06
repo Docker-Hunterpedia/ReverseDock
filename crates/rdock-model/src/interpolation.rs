@@ -22,6 +22,7 @@ const SECRETS: &[&[&str]] = &[
     &["acme", "dns_providers", "*", "api_token"],
     &["acme", "eab", "hmac_key"],
     &["acme", "dns_providers", "*", "token"],
+    &["acme", "dns_providers", "*", "tsig_secret"],
     &["observability", "alerts", "webhook", "token"],
     &["observability", "alerts", "channels", "*", "url"],
     &["observability", "alerts", "channels", "*", "secret"],
@@ -63,6 +64,10 @@ mod tests {
     fn classifies_fields_by_location() {
         assert_eq!(
             field_kind(&["acme", "dns_providers", "cf", "api_token"]),
+            FieldKind::Secret
+        );
+        assert_eq!(
+            field_kind(&["acme", "dns_providers", "ns", "tsig_secret"]),
             FieldKind::Secret
         );
         assert_eq!(

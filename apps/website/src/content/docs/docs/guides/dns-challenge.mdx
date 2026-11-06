@@ -1,6 +1,6 @@
 ---
 title: Wildcards and DNS-01
-description: Get wildcard certificates, or certificates for hosts the CA cannot reach, through DNS-01 with Cloudflare, your own script or a webhook.
+description: Get wildcard certificates, or certificates for hosts the CA cannot reach, through DNS-01 with Cloudflare, DigitalOcean, Hetzner, any RFC 2136 nameserver, your own script or a webhook.
 sidebar:
   order: 3
 ---
@@ -17,6 +17,17 @@ acme:
     cf:
       type: cloudflare
       api_token: "${file:/run/secrets/cf_token}"
+    do:
+      type: digitalocean
+      api_token: "${file:/run/secrets/do_token}"
+    hz:
+      type: hetzner
+      api_token: "${env:HETZNER_API_TOKEN}"
+    bind:
+      type: rfc2136
+      nameserver: 192.0.2.53
+      tsig_key_name: rdock-acme
+      tsig_secret: "${file:/run/secrets/tsig_secret}"
     script:
       type: exec
       command: /usr/local/bin/dns-hook
@@ -30,10 +41,101 @@ acme:
 | Type | How it works |
 |---|---|
 | `cloudflare` | The Cloudflare API with a token limited to **Zone → DNS → Edit** for the zone. The zone is looked up from the name, which also needs Zone → Zone → Read, unless you set `zone_id`. |
+| `digitalocean` <Status since="v0.6" /> | The DigitalOcean API: one TXT record per value. [Details](#digitalocean). |
+| `hetzner` <Status since="v0.6" /> | The Hetzner Cloud API (Hetzner Console DNS): values added to and removed from the TXT record set. [Details](#hetzner). |
+| `rfc2136` <Status since="v0.6" /> | Dynamic updates signed with TSIG, sent to your primary nameserver: BIND, Knot, PowerDNS and others. [Details](#rfc-2136-bind-knot-powerdns). |
 | `exec` | Runs `command args… present <fqdn> <value>` and later `cleanup <fqdn> <value>`, directly, never through a shell. `command` must be an absolute path; `timeout` defaults to 30 seconds. A non-zero exit fails the attempt. |
 | `webhook` | `POST`s `{"action": "present" \| "cleanup", "name": "<fqdn>", "value": "<value>"}` to an `https://` URL with an optional bearer token. Any 2xx answer is success. |
 
-Write tokens as `${file:…}` or `${env:…}` references: ReverseDock keeps them out of its configuration history and logs.
+Write tokens as `${file:…}` or `${env:…}` references: ReverseDock keeps them out of its configuration history and logs, and reads them again for every call, so a rotated file is used without a reload. For `digitalocean`, `hetzner` and `rfc2136`, `rdock validate` refuses a secret written into the file; for the others it warns.
+
+The API adapters wait up to 30 seconds per call, follow no redirects, and retry rate limits (`429`, honouring `Retry-After` and `RateLimit-Reset`), conflicts and server errors up to five times with growing random waits. A provider asking to wait longer than 30 seconds fails the attempt, which is tried again at the next renewal pass. Errors carry the provider's message, never the token.
+
+The zone holding `_acme-challenge.<name>` is found by asking the provider about the record name and each parent in turn, unless you set `zone`. Setting it saves requests and lets you give the credential less access.
+
+### DigitalOcean
+
+Create a [personal access token](https://docs.digitalocean.com/reference/api/create-personal-access-token/) with the custom scopes `domain:read`, `domain:create` and `domain:delete`. DigitalOcean scopes cover all domains of the team; a token cannot be limited to one domain ([scopes](https://docs.digitalocean.com/reference/api/scopes/), checked 2026-11-06).
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    do:
+      type: digitalocean
+      api_token: "${env:DO_AUTH_TOKEN}"  # or "${file:/run/secrets/do_token}"
+      zone: example.com                  # optional
+```
+
+Each value is its own TXT record with a TTL of 30 seconds; cleanup deletes the records holding that value. `DO_AUTH_TOKEN` is the name lego and Traefik use, so an existing `.env` file keeps working.
+
+### Hetzner
+
+Hetzner DNS moved into the Hetzner Console, and its API into the [Hetzner Cloud API](https://docs.hetzner.cloud/reference/cloud#zones). Create a **Read & Write** API token in the Cloud project that holds the zone; tokens from the old DNS Console do not work with the Cloud API, and zones still on `dns.hetzner.com` must be migrated first ([Hetzner](https://docs.hetzner.com/networking/dns/migration-to-hetzner-console/features-and-differences), checked 2026-11-06). Tokens are per project: a zone in a project of its own limits what the token can change.
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    hz:
+      type: hetzner
+      api_token: "${env:HETZNER_API_TOKEN}"  # or "${file:/run/secrets/hetzner_token}"
+      zone: example.com                      # optional, the zone's name
+```
+
+Values are added with the `add_records` action and removed with `remove_records` (TTL 60 seconds), so the values of a wildcard and its base name coexist. ReverseDock follows each action until it succeeds, then checks the authoritative nameservers as described under [Propagation](#propagation).
+
+### RFC 2136: BIND, Knot, PowerDNS
+
+ReverseDock sends dynamic updates ([RFC 2136](https://www.rfc-editor.org/rfc/rfc2136.html)) to the primary nameserver of the zone. Present adds one TXT record and cleanup deletes that one record by its value; the rest of the record set is never touched.
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    bind:
+      type: rfc2136
+      nameserver: 192.0.2.53          # IP address of the primary, optionally with :port
+      tsig_key_name: rdock-acme
+      tsig_secret: "${file:/run/secrets/tsig_secret}"
+      tsig_algorithm: hmac-sha256     # the default
+      transport: tcp                  # the default; or udp
+      zone: example.com               # optional: found with SOA queries to the nameserver
+```
+
+- Updates are signed with TSIG ([RFC 8945](https://www.rfc-editor.org/rfc/rfc8945.html)) and the server's answers are checked against the same key. `hmac-sha256` is the default and the algorithm RFC 8945 recommends; `hmac-sha384` and `hmac-sha512` work too. `hmac-sha1` works with a warning from `rdock validate`; `hmac-md5` is refused, because RFC 8945 says it must not be used.
+- Unsigned updates need `insecure_unsigned: true` instead of the key, and `rdock validate` warns: anyone who can reach the server could then change the zone.
+- `tsig_secret` is the base64 secret, as `tsig-keygen -a hmac-sha256 rdock-acme` prints it.
+
+Allow the key to change only the challenge records. In BIND, with the key from `tsig-keygen` included in `named.conf` (one `grant` per name on your certificates; [certbot's RFC 2136 guide](https://certbot-dns-rfc2136.readthedocs.io/en/stable/), checked 2026-11-06):
+
+```text title="named.conf (excerpt)"
+zone "example.com" {
+    type primary;
+    file "/var/lib/bind/example.com.zone";
+    update-policy {
+        grant rdock-acme. name _acme-challenge.example.com. txt;
+    };
+};
+```
+
+In Knot DNS ([configuration](https://www.knot-dns.cz/docs/latest/html/configuration.html), checked 2026-11-06):
+
+```yaml title="knot.conf (excerpt)"
+key:
+  - id: rdock-acme
+    algorithm: hmac-sha256
+    secret: <base64 secret>
+acl:
+  - id: acme
+    key: rdock-acme
+    action: update
+    update-type: [TXT]
+    update-owner: name
+    update-owner-name: [_acme-challenge]
+zone:
+  - domain: example.com
+    acl: acme
+```
+
+PowerDNS Authoritative needs `dnsupdate=yes`, the server's address in `allow-dnsupdate-from` and the key in the zone's `TSIG-ALLOW-DNSUPDATE` metadata ([PowerDNS](https://doc.powerdns.com/authoritative/dnsupdate.html), checked 2026-11-06).
 
 ## Use it
 

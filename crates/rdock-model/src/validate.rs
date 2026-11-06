@@ -6,7 +6,9 @@ use std::net::IpAddr;
 use rdock_rules::{Context, Expr, check_host};
 use regex::RegexBuilder;
 
-use crate::acme::{AcmeProfile, Challenge, DnsProvider, KnownCa, Webhook};
+use crate::acme::{
+    AcmeProfile, Challenge, DnsProvider, KnownCa, Rfc2136Provider, TsigAlgorithm, Webhook,
+};
 use crate::config::{Config, Listener, ListenerProtocol};
 use crate::diagnostics::{Diagnostic, path_index, path_key};
 use crate::middleware::{
@@ -16,6 +18,7 @@ use crate::middleware::{
 use crate::route::{MatchSpec, Route, RouteTls, TlsMode};
 use crate::service::{HealthMode, LbPolicy, SameSite, Scheme, Service};
 use crate::settings::ClientIpHeader;
+use crate::values::HttpUrl;
 use crate::values::is_token;
 use rdock_rules::closest_match;
 
@@ -1360,6 +1363,117 @@ impl Validator<'_> {
                 }
             }
             DnsProvider::Webhook(webhook) => self.check_webhook(path, webhook, "dns_webhook_token"),
+            DnsProvider::DigitalOcean(provider) => self.check_api_provider(
+                path,
+                &provider.api_token,
+                provider.zone.as_deref(),
+                provider.api_url.as_ref(),
+                "do_token",
+            ),
+            DnsProvider::Hetzner(provider) => self.check_api_provider(
+                path,
+                &provider.api_token,
+                provider.zone.as_deref(),
+                provider.api_url.as_ref(),
+                "hetzner_token",
+            ),
+            DnsProvider::Rfc2136(provider) => self.check_rfc2136(path, provider),
+        }
+    }
+
+    /// A DNS provider reached over an HTTP API with a token.
+    fn check_api_provider(
+        &mut self,
+        path: &str,
+        token: &str,
+        zone: Option<&str>,
+        api_url: Option<&HttpUrl>,
+        file_name: &str,
+    ) {
+        self.check_secret_reference(&format!("{path}.api_token"), token, file_name);
+        if zone.is_some_and(str::is_empty) {
+            self.error(format!("{path}.zone"), "zone is empty");
+        }
+        if let Some(url) = api_url.filter(|url| !url.is_https_or_loopback()) {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.api_url"),
+                    format!("`{url}` is not encrypted"),
+                )
+                .with_hint("api_url is for tests: use https://, or http:// on a loopback address"),
+            );
+        }
+    }
+
+    fn check_rfc2136(&mut self, path: &str, provider: &Rfc2136Provider) {
+        if crate::acme::parse_resolver(&provider.nameserver).is_none() {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.nameserver"),
+                    format!(
+                        "`{}` is not an IP address with an optional port",
+                        provider.nameserver
+                    ),
+                )
+                .with_hint(
+                    "write the primary's address, such as `192.0.2.53` or `[2001:db8::53]:5353`",
+                ),
+            );
+        }
+        if provider.zone.as_deref().is_some_and(str::is_empty) {
+            self.error(format!("{path}.zone"), "zone is empty");
+        }
+        let has_key = provider.tsig_key_name.is_some() || provider.tsig_secret.is_some();
+        if provider.insecure_unsigned {
+            if has_key {
+                self.push(
+                    Diagnostic::error(
+                        format!("{path}.insecure_unsigned"),
+                        "a TSIG key is set and `insecure_unsigned` is on",
+                    )
+                    .with_hint("remove `insecure_unsigned` to sign updates with the key"),
+                );
+            } else {
+                self.warning(
+                    format!("{path}.insecure_unsigned"),
+                    "updates are sent without TSIG: anyone who can reach the server could change the zone",
+                );
+            }
+            return;
+        }
+        self.check_tsig(path, provider);
+    }
+
+    fn check_tsig(&mut self, path: &str, provider: &Rfc2136Provider) {
+        match provider.tsig_key_name.as_deref() {
+            None | Some("") => self.push(
+                Diagnostic::error(format!("{path}.tsig_key_name"), "a TSIG key name is required")
+                    .with_hint("set `tsig_key_name` and `tsig_secret` to the key the server allows to update `_acme-challenge` TXT records"),
+            ),
+            Some(_) => {}
+        }
+        match provider.tsig_secret.as_deref() {
+            Some(secret) => {
+                self.check_secret_reference(&format!("{path}.tsig_secret"), secret, "tsig_secret");
+            }
+            None => self.error(format!("{path}.tsig_secret"), "a TSIG secret is required"),
+        }
+        match provider.tsig_algorithm {
+            TsigAlgorithm::HmacMd5 => self.push(
+                Diagnostic::error(
+                    format!("{path}.tsig_algorithm"),
+                    "hmac-md5 must not be used (RFC 8945)",
+                )
+                .with_hint("create a key with `tsig-keygen -a hmac-sha256` and use `hmac-sha256`"),
+            ),
+            TsigAlgorithm::HmacSha1 => self.push(
+                Diagnostic::warning(
+                    format!("{path}.tsig_algorithm"),
+                    "hmac-sha1 is not recommended (RFC 8945)",
+                )
+                .with_hint("create a key with `tsig-keygen -a hmac-sha256` and use `hmac-sha256`"),
+            ),
+            TsigAlgorithm::HmacSha256 | TsigAlgorithm::HmacSha384 | TsigAlgorithm::HmacSha512 => {}
         }
     }
 
@@ -1422,6 +1536,18 @@ impl Validator<'_> {
             self.push(
                 Diagnostic::warning(path, "a secret is written in the configuration file")
                     .with_hint(format!("store it as a file and reference it: \"${{file:/run/secrets/{file_name}}}\"")),
+            );
+        }
+    }
+
+    /// Secrets that must be references: providers added since v0.6 accept no literal.
+    fn check_secret_reference(&mut self, path: &str, value: &str, file_name: &str) {
+        if value.is_empty() {
+            self.error(path, "the secret is empty");
+        } else if !value.starts_with("${") {
+            self.push(
+                Diagnostic::error(path, "a secret is written in the configuration file")
+                    .with_hint(format!("store it as a file and reference it: \"${{file:/run/secrets/{file_name}}}\", or use \"${{env:NAME}}\"")),
             );
         }
     }

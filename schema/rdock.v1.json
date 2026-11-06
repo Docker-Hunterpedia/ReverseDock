@@ -1373,6 +1373,43 @@
         "^x-": {}
       }
     },
+    "DigitalOceanProvider": {
+      "description": "DigitalOcean DNS (`type: digitalocean`).",
+      "type": "object",
+      "properties": {
+        "api_token": {
+          "description": "API token with the custom scopes `domain:read`, `domain:create` and `domain:delete`.\nWrite it as a `${file:…}` or `${env:…}` reference.",
+          "type": "string"
+        },
+        "api_url": {
+          "description": "For tests only: another API base URL, `http://` only on a loopback address.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "zone": {
+          "description": "The domain (zone) holding the records, such as `example.com`. Found by asking for each\nparent of the name when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "api_token"
+      ]
+    },
     "DnsProvider": {
       "description": "A DNS provider for DNS-01 challenges.",
       "oneOf": [
@@ -1458,6 +1495,75 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "DigitalOcean DNS, with a token allowed to read domains and to create and delete records.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "digitalocean"
+            }
+          },
+          "$ref": "#/$defs/DigitalOceanProvider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Hetzner DNS through the Hetzner Cloud API (the zone moved to the Hetzner Console), with an\nAPI token of the project that holds the zone.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "hetzner"
+            }
+          },
+          "$ref": "#/$defs/HetznerProvider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Dynamic updates (RFC 2136) signed with TSIG, sent to a primary nameserver such as BIND,\nKnot or PowerDNS.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "rfc2136"
+            }
+          },
+          "$ref": "#/$defs/Rfc2136Provider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        }
+      ]
+    },
+    "DnsTransport": {
+      "description": "The transport for DNS messages.",
+      "oneOf": [
+        {
+          "description": "TCP: every answer arrives, whatever its size.",
+          "type": "string",
+          "const": "tcp"
+        },
+        {
+          "description": "UDP.",
+          "type": "string",
+          "const": "udp"
         }
       ]
     },
@@ -1719,6 +1825,43 @@
           "type": "string",
           "const": "grpc"
         }
+      ]
+    },
+    "HetznerProvider": {
+      "description": "Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).",
+      "type": "object",
+      "properties": {
+        "api_token": {
+          "description": "Read & Write API token of the Cloud project that holds the zone; tokens from the old DNS\nConsole do not work. Write it as a `${file:…}` or `${env:…}` reference.",
+          "type": "string"
+        },
+        "api_url": {
+          "description": "For tests only: another API base URL, `http://` only on a loopback address.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "zone": {
+          "description": "The name of the zone holding the records, such as `example.com`. Found by asking for each\nparent of the name when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "api_token"
       ]
     },
     "Hsts": {
@@ -3444,6 +3587,62 @@
         }
       ]
     },
+    "Rfc2136Provider": {
+      "description": "RFC 2136 dynamic updates (`type: rfc2136`).",
+      "type": "object",
+      "properties": {
+        "insecure_unsigned": {
+          "description": "Send updates without TSIG. Anyone who can reach the server could then change the zone, so\nthis is only for servers that authorize updates by address.",
+          "type": "boolean",
+          "default": false
+        },
+        "nameserver": {
+          "description": "IP address of the primary nameserver: `ip` (port 53), `ip:port` or `[ipv6]:port`.",
+          "type": "string"
+        },
+        "transport": {
+          "description": "How updates are sent.",
+          "$ref": "#/$defs/DnsTransport",
+          "default": "tcp"
+        },
+        "tsig_algorithm": {
+          "description": "The TSIG algorithm.",
+          "$ref": "#/$defs/TsigAlgorithm",
+          "default": "hmac-sha256"
+        },
+        "tsig_key_name": {
+          "description": "Name of the TSIG key, as the server knows it.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "tsig_secret": {
+          "description": "The TSIG key's secret, base64 as `tsig-keygen` prints it. Write it as a `${file:…}` or\n`${env:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "zone": {
+          "description": "The zone to update, such as `example.com`. Found with SOA queries to `nameserver` when\nomitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "nameserver"
+      ]
+    },
     "Route": {
       "description": "An HTTP route: which requests it matches, which middlewares run, which service answers.",
       "type": "object",
@@ -4330,6 +4529,36 @@
       "examples": [
         "cloudflare",
         "10.0.0.0/8"
+      ]
+    },
+    "TsigAlgorithm": {
+      "description": "TSIG algorithms (RFC 8945).",
+      "oneOf": [
+        {
+          "description": "HMAC-SHA256, the one RFC 8945 recommends.",
+          "type": "string",
+          "const": "hmac-sha256"
+        },
+        {
+          "description": "HMAC-SHA384.",
+          "type": "string",
+          "const": "hmac-sha384"
+        },
+        {
+          "description": "HMAC-SHA512.",
+          "type": "string",
+          "const": "hmac-sha512"
+        },
+        {
+          "description": "HMAC-SHA1: accepted with a warning; RFC 8945 does not recommend it.",
+          "type": "string",
+          "const": "hmac-sha1"
+        },
+        {
+          "description": "HMAC-MD5: refused by validation; RFC 8945 says it must not be used.",
+          "type": "string",
+          "const": "hmac-md5"
+        }
       ]
     },
     "UpstreamTls": {

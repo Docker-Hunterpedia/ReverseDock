@@ -11,6 +11,8 @@
 pub mod backend;
 pub mod certs;
 pub mod client;
+pub mod dns_contract;
+pub mod fake_api;
 pub mod pebble;
 pub mod rdock;
 pub mod toxiproxy;
