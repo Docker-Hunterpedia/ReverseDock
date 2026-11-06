@@ -65,7 +65,11 @@ impl DnsProviders for BuiltinProviders {
             DnsProvider::Cloudflare { .. }
             | DnsProvider::DigitalOcean(_)
             | DnsProvider::Hetzner(_)
-            | DnsProvider::Rfc2136(_) => Err(DnsError(format!(
+            | DnsProvider::Rfc2136(_)
+            | DnsProvider::Desec(_)
+            | DnsProvider::Route53(_)
+            | DnsProvider::GoogleCloudDns(_)
+            | DnsProvider::AzureDns(_) => Err(DnsError(format!(
                 "the {} DNS provider is not available in this build",
                 provider_type(config)
             ))),
@@ -82,6 +86,10 @@ fn provider_type(config: &DnsProvider) -> &'static str {
         DnsProvider::DigitalOcean(_) => "digitalocean",
         DnsProvider::Hetzner(_) => "hetzner",
         DnsProvider::Rfc2136(_) => "rfc2136",
+        DnsProvider::Desec(_) => "desec",
+        DnsProvider::Route53(_) => "route53",
+        DnsProvider::GoogleCloudDns(_) => "google_cloud_dns",
+        DnsProvider::AzureDns(_) => "azure_dns",
     }
 }
 

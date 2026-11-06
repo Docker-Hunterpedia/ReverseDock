@@ -206,6 +206,126 @@ pub enum DnsProvider {
     /// Dynamic updates (RFC 2136) signed with TSIG, sent to a primary nameserver such as BIND,
     /// Knot or PowerDNS.
     Rfc2136(Rfc2136Provider),
+    /// deSEC, with a token allowed to write the domain's `_acme-challenge` TXT RRsets.
+    Desec(DesecProvider),
+    /// Amazon Route 53, signed with an access key allowed to change the hosted zone's TXT
+    /// records.
+    #[serde(rename = "route53")]
+    Route53(Route53Provider),
+    /// Google Cloud DNS, with a service account key allowed to change the managed zone.
+    GoogleCloudDns(GoogleCloudDnsProvider),
+    /// Azure DNS, with a service principal (client secret or certificate) or a managed identity
+    /// allowed to change the zone's TXT record sets.
+    AzureDns(AzureDnsProvider),
+}
+
+/// deSEC (`type: desec`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct DesecProvider {
+    /// API token; a token policy can limit it to writing the `_acme-challenge` TXT RRsets of one
+    /// domain. Write it as a `${file:…}` or `${env:…}` reference.
+    pub token: String,
+    /// The domain holding the records, such as `example.com`. Asked from deSEC when omitted.
+    #[serde(default)]
+    pub zone: Option<String>,
+    /// For tests only: another API base URL, `http://` only on a loopback address.
+    #[serde(default)]
+    pub api_url: Option<HttpUrl>,
+}
+
+/// Amazon Route 53 (`type: route53`), in the standard AWS partition.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Route53Provider {
+    /// Access key ID of the key pair. Read for every call like the secret, so both can rotate
+    /// together; a `${file:…}` or `${env:…}` reference or the ID itself.
+    pub access_key_id: String,
+    /// Secret access key. Write it as a `${file:…}` or `${env:…}` reference.
+    pub secret_access_key: String,
+    /// Session token of temporary (STS) credentials. Write it as a `${file:…}` or `${env:…}`
+    /// reference.
+    #[serde(default)]
+    pub session_token: Option<String>,
+    /// The hosted zone ID, such as `Z0123456789ABCDEFGHIJ`; it may name a private zone. Public
+    /// zones are found by name when omitted; private zones are skipped.
+    #[serde(default)]
+    pub hosted_zone_id: Option<String>,
+    /// The AWS region of the deployment. Route 53 is global and signed as `us-east-1` in the
+    /// standard partition; the China and GovCloud partitions are not supported.
+    #[serde(default)]
+    pub region: Option<String>,
+    /// For tests only: another API base URL, `http://` only on a loopback address.
+    #[serde(default)]
+    pub api_url: Option<HttpUrl>,
+}
+
+/// Google Cloud DNS (`type: google_cloud_dns`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct GoogleCloudDnsProvider {
+    /// Path of the service account key file (JSON). Read for every call, so a rotated key is used
+    /// without a reload.
+    pub credentials_file: PathBuf,
+    /// The project of the managed zones. Taken from the key file when omitted.
+    #[serde(default)]
+    pub project: Option<String>,
+    /// The managed zone's name or ID, such as `example-com`; it may name a private zone. Public
+    /// zones are found by DNS name when omitted; private zones are skipped.
+    #[serde(default)]
+    pub zone: Option<String>,
+    /// For tests only: another base URL for the token and DNS APIs, `http://` only on a loopback
+    /// address.
+    #[serde(default)]
+    pub api_url: Option<HttpUrl>,
+}
+
+/// Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and
+/// `managed_identity` is set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct AzureDnsProvider {
+    /// Directory (tenant) ID of the service principal; needed with a client secret or certificate.
+    #[serde(default)]
+    pub tenant_id: Option<String>,
+    /// Application (client) ID of the service principal, or of a user-assigned managed identity.
+    #[serde(default)]
+    pub client_id: Option<String>,
+    /// Client secret of the service principal. Write it as a `${file:…}` or `${env:…}`
+    /// reference.
+    #[serde(default)]
+    pub client_secret: Option<String>,
+    /// The service principal's certificate and its RSA private key, PEM, in one file. Write it
+    /// as a `${file:…}` reference.
+    #[serde(default)]
+    pub client_certificate: Option<String>,
+    /// Authenticate as the managed identity of the Azure VM or service ReverseDock runs on,
+    /// through the instance metadata service.
+    #[serde(default)]
+    pub managed_identity: bool,
+    /// Subscription ID of the DNS zone.
+    pub subscription_id: String,
+    /// Resource group of the DNS zone.
+    pub resource_group: String,
+    /// The DNS zone's name, such as `example.com`.
+    pub zone: String,
+    /// The Azure cloud: its sign-in and Resource Manager endpoints.
+    #[serde(default)]
+    pub environment: AzureEnvironment,
+    /// For tests only: another base URL for sign-in, managed identity and Resource Manager,
+    /// `http://` only on a loopback address.
+    #[serde(default)]
+    pub api_url: Option<HttpUrl>,
+}
+
+/// An Azure cloud.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "lowercase")]
+pub enum AzureEnvironment {
+    /// Global Azure: `login.microsoftonline.com`, `management.azure.com`.
+    #[default]
+    Public,
+    /// Azure Government: `login.microsoftonline.us`, `management.usgovcloudapi.net`.
+    UsGovernment,
+    /// Azure operated by 21Vianet: `login.partner.microsoftonline.cn`,
+    /// `management.chinacloudapi.cn`.
+    China,
 }
 
 /// DigitalOcean DNS (`type: digitalocean`).

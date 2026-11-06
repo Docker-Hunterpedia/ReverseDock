@@ -1107,6 +1107,107 @@
         "syslog"
       ]
     },
+    "AzureDnsProvider": {
+      "description": "Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and\n`managed_identity` is set.",
+      "type": "object",
+      "properties": {
+        "api_url": {
+          "description": "For tests only: another base URL for sign-in, managed identity and Resource Manager,\n`http://` only on a loopback address.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "client_certificate": {
+          "description": "The service principal's certificate and its RSA private key, PEM, in one file. Write it\nas a `${file:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "client_id": {
+          "description": "Application (client) ID of the service principal, or of a user-assigned managed identity.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "client_secret": {
+          "description": "Client secret of the service principal. Write it as a `${file:…}` or `${env:…}`\nreference.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "environment": {
+          "description": "The Azure cloud: its sign-in and Resource Manager endpoints.",
+          "$ref": "#/$defs/AzureEnvironment",
+          "default": "public"
+        },
+        "managed_identity": {
+          "description": "Authenticate as the managed identity of the Azure VM or service ReverseDock runs on,\nthrough the instance metadata service.",
+          "type": "boolean",
+          "default": false
+        },
+        "resource_group": {
+          "description": "Resource group of the DNS zone.",
+          "type": "string"
+        },
+        "subscription_id": {
+          "description": "Subscription ID of the DNS zone.",
+          "type": "string"
+        },
+        "tenant_id": {
+          "description": "Directory (tenant) ID of the service principal; needed with a client secret or certificate.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "zone": {
+          "description": "The DNS zone's name, such as `example.com`.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "subscription_id",
+        "resource_group",
+        "zone"
+      ]
+    },
+    "AzureEnvironment": {
+      "description": "An Azure cloud.",
+      "oneOf": [
+        {
+          "description": "Global Azure: `login.microsoftonline.com`, `management.azure.com`.",
+          "type": "string",
+          "const": "public"
+        },
+        {
+          "description": "Azure Government: `login.microsoftonline.us`, `management.usgovcloudapi.net`.",
+          "type": "string",
+          "const": "usgovernment"
+        },
+        {
+          "description": "Azure operated by 21Vianet: `login.partner.microsoftonline.cn`,\n`management.chinacloudapi.cn`.",
+          "type": "string",
+          "const": "china"
+        }
+      ]
+    },
     "Backend": {
       "description": "One backend server.",
       "type": "object",
@@ -1373,6 +1474,43 @@
         "^x-": {}
       }
     },
+    "DesecProvider": {
+      "description": "deSEC (`type: desec`).",
+      "type": "object",
+      "properties": {
+        "api_url": {
+          "description": "For tests only: another API base URL, `http://` only on a loopback address.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "token": {
+          "description": "API token; a token policy can limit it to writing the `_acme-challenge` TXT RRsets of one\ndomain. Write it as a `${file:…}` or `${env:…}` reference.",
+          "type": "string"
+        },
+        "zone": {
+          "description": "The domain holding the records, such as `example.com`. Asked from deSEC when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "token"
+      ]
+    },
     "DigitalOceanProvider": {
       "description": "DigitalOcean DNS (`type: digitalocean`).",
       "type": "object",
@@ -1549,6 +1687,78 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "deSEC, with a token allowed to write the domain's `_acme-challenge` TXT RRsets.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "desec"
+            }
+          },
+          "$ref": "#/$defs/DesecProvider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Amazon Route 53, signed with an access key allowed to change the hosted zone's TXT\nrecords.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "route53"
+            }
+          },
+          "$ref": "#/$defs/Route53Provider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Google Cloud DNS, with a service account key allowed to change the managed zone.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "google_cloud_dns"
+            }
+          },
+          "$ref": "#/$defs/GoogleCloudDnsProvider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Azure DNS, with a service principal (client secret or certificate) or a managed identity\nallowed to change the zone's TXT record sets.",
+          "type": "object",
+          "properties": {
+            "type": {
+              "type": "string",
+              "const": "azure_dns"
+            }
+          },
+          "$ref": "#/$defs/AzureDnsProvider",
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -1713,6 +1923,51 @@
       },
       "required": [
         "paths"
+      ]
+    },
+    "GoogleCloudDnsProvider": {
+      "description": "Google Cloud DNS (`type: google_cloud_dns`).",
+      "type": "object",
+      "properties": {
+        "api_url": {
+          "description": "For tests only: another base URL for the token and DNS APIs, `http://` only on a loopback\naddress.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "credentials_file": {
+          "description": "Path of the service account key file (JSON). Read for every call, so a rotated key is used\nwithout a reload.",
+          "type": "string"
+        },
+        "project": {
+          "description": "The project of the managed zones. Taken from the key file when omitted.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "zone": {
+          "description": "The managed zone's name or ID, such as `example-com`; it may name a private zone. Public\nzones are found by DNS name when omitted; private zones are skipped.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "credentials_file"
       ]
     },
     "HeaderRules": {
@@ -3881,6 +4136,64 @@
       },
       "required": [
         "match"
+      ]
+    },
+    "Route53Provider": {
+      "description": "Amazon Route 53 (`type: route53`), in the standard AWS partition.",
+      "type": "object",
+      "properties": {
+        "access_key_id": {
+          "description": "Access key ID of the key pair. Read for every call like the secret, so both can rotate\ntogether; a `${file:…}` or `${env:…}` reference or the ID itself.",
+          "type": "string"
+        },
+        "api_url": {
+          "description": "For tests only: another API base URL, `http://` only on a loopback address.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/HttpUrl"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "hosted_zone_id": {
+          "description": "The hosted zone ID, such as `Z0123456789ABCDEFGHIJ`; it may name a private zone. Public\nzones are found by name when omitted; private zones are skipped.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "region": {
+          "description": "The AWS region of the deployment. Route 53 is global and signed as `us-east-1` in the\nstandard partition; the China and GovCloud partitions are not supported.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "secret_access_key": {
+          "description": "Secret access key. Write it as a `${file:…}` or `${env:…}` reference.",
+          "type": "string"
+        },
+        "session_token": {
+          "description": "Session token of temporary (STS) credentials. Write it as a `${file:…}` or `${env:…}`\nreference.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "access_key_id",
+        "secret_access_key"
       ]
     },
     "RouteTimeouts": {

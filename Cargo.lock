@@ -3623,9 +3623,11 @@ dependencies = [
  "rdock-model",
  "rdock-testkit",
  "ring",
+ "rustls-pki-types",
  "serde_json",
  "tempfile",
  "thiserror 2.0.21",
+ "time",
  "tokio",
  "tracing",
 ]

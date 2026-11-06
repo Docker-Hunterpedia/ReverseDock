@@ -75,11 +75,9 @@ impl Rfc2136Dns {
     /// The zone of `fqdn`: the closest name whose SOA the server answers with.
     async fn zone(&self, fqdn: &str) -> Result<String, DnsError> {
         self.zones
-            .zone(
-                "RFC 2136",
-                fqdn,
-                |name| async move { self.has_soa(&name).await },
-            )
+            .zone("RFC 2136", fqdn, |name| async move {
+                Ok(self.has_soa(&name).await?.then_some(name))
+            })
             .await
     }
 
