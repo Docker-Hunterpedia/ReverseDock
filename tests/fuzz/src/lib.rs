@@ -173,6 +173,25 @@ pub fn proxy_header(data: &[u8]) {
     }
 }
 
+/// Parses arbitrary bytes as the start of a TLS connection. Only results are expected, never
+/// panics; a request for more bytes asks for more than were given and stays within the cap; a
+/// ClientHello fits in the bytes given and depends on no byte after its records.
+pub fn clienthello(data: &[u8]) {
+    use rdock_tls::clienthello::{MAX_PEEK, Parsed, parse};
+    match parse(data) {
+        Ok(Parsed::NeedMore { total }) => {
+            assert!(total > data.len(), "NeedMore {total} for {} bytes", data.len());
+            assert!(total <= MAX_PEEK, "NeedMore {total} beyond the cap");
+        }
+        Ok(Parsed::Hello { hello, len }) => {
+            assert!(len <= data.len(), "a hello of {len} bytes in {} bytes", data.len());
+            let again = parse(&data[..len]);
+            assert_eq!(again, Ok(Parsed::Hello { hello, len }), "later bytes changed the hello");
+        }
+        Ok(Parsed::NotTls) | Err(_) => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -197,6 +216,22 @@ mod tests {
         assert!(all.len() >= 20, "seed corpus present");
         for seed in all {
             super::h1_framing(&seed);
+        }
+    }
+
+    #[test]
+    fn clienthello_seeds() {
+        let all = seeds("clienthello");
+        assert!(all.len() >= 5, "seed corpus present");
+        for seed in all {
+            let parsed = rdock_tls::clienthello::parse(&seed);
+            assert!(
+                matches!(parsed, Ok(rdock_tls::clienthello::Parsed::Hello { .. })),
+                "every seed is a complete ClientHello: {parsed:?}"
+            );
+            for cut in 0..=seed.len() {
+                super::clienthello(&seed[..cut]);
+            }
         }
     }
 

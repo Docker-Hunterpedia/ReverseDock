@@ -3,6 +3,7 @@
 pub mod cert;
 pub mod challenge;
 pub mod client_auth;
+pub mod clienthello;
 pub mod index;
 pub mod policy;
 pub mod request;

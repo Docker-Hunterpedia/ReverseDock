@@ -7,6 +7,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 ### Added
 - **PROXY protocol on listeners** (#187, M-L4-03, ADR-0026): `listeners.<l>.proxy_protocol` reads version 1 and 2 headers on `http` and `https` listeners, before the TLS handshake, from `trusted` sources only. The header's address becomes the connection's address (client IP, `ClientIP`, IP filters, rate limits, `X-Forwarded-For`, access log), and the load balancer is logged as `proxy_peer`. Trusted sources must send a header unless `optional: true`; other sources that send one are closed; `LOCAL` headers keep the real address; headers must fit in 16 KiB and arrive within `timeouts.request_header`. Closed connections are counted in `rdock_proxy_protocol_rejected_total{listener,reason}`. Parsed with proxy-header 0.1.3, with a fuzz target and an HAProxy `send-proxy`/`send-proxy-v2` interoperability test.
 
+### Changed
+- A connection attempt that would be retried on another backend gives up after `timeouts.connect_attempt` (1 s) instead of the full `timeouts.connect` (5 s), so a stopped backend costs about a second per request instead of five; the last attempt keeps the full timeout (#185, ADR-0026).
+
 ## [0.5.0-alpha.1] — v0.5 "Management"
 
 ### Changed

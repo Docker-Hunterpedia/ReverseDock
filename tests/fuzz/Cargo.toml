@@ -23,6 +23,7 @@ proxy-header = { version = "=0.1.3", default-features = false }
 rdock-config = { path = "../../crates/rdock-config" }
 rdock-middleware = { path = "../../crates/rdock-middleware" }
 rdock-rules = { path = "../../crates/rdock-rules" }
+rdock-tls = { path = "../../crates/rdock-tls" }
 tokio = { version = ">=1.53.3, <1.54", features = ["io-util", "rt", "time"] }
 
 [[bin]]
@@ -56,6 +57,13 @@ bench = false
 [[bin]]
 name = "config_loader"
 path = "fuzz_targets/config_loader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "clienthello"
+path = "fuzz_targets/clienthello.rs"
 test = false
 doc = false
 bench = false

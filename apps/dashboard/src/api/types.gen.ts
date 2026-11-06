@@ -2248,6 +2248,12 @@ export type RdockTimeouts = {
      */
     connect?: RdockDuration;
     /**
+     * Establishing a connection when a failed connect would be retried on another
+     * backend: the attempt gives up after this long, so a stopped backend costs about a
+     * second instead of `connect` (ADR-0026). The last attempt always waits `connect`.
+     */
+    connect_attempt?: RdockDuration;
+    /**
      * Keeping an idle pooled connection.
      */
     idle?: RdockDuration;
