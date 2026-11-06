@@ -11,7 +11,9 @@
 pub mod backend;
 pub mod certs;
 pub mod client;
+pub mod haproxy;
 pub mod pebble;
+pub mod proxy_protocol;
 pub mod rdock;
 pub mod toxiproxy;
 

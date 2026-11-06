@@ -8,7 +8,7 @@ use std::sync::Arc;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use rdock_balancer::{BackendState, Balancer, Pool, StickyKeys};
 use rdock_middleware::Middleware;
-use rdock_model::config::{ListenerTimeouts, TlsPolicy};
+use rdock_model::config::{ListenerTimeouts, ProxyProtocolIn, TlsPolicy};
 use rdock_model::route::RouteTimeouts;
 use rdock_model::service::{Scheme, Timeouts};
 use rdock_model::settings::Limits;
@@ -80,6 +80,8 @@ pub struct ListenerRuntime {
     pub tls: Option<ListenerTls>,
     /// Client-side timeouts.
     pub timeouts: ListenerTimeouts,
+    /// Inbound PROXY protocol.
+    pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.
     pub routes: Vec<Arc<RouteRuntime>>,
     /// Path answered `200 OK` before routing, for load-balancer monitors.

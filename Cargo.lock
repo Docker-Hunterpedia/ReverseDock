@@ -3209,6 +3209,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "proxy-header"
+version = "0.1.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "accf7ba1ae5e4f5b6acfb2d88d3cf68d03c333fca0260b06fb9aafcfcf22e2f5"
+
+[[package]]
 name = "quick-error"
 version = "1.2.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -3672,12 +3678,14 @@ dependencies = [
  "ipnet",
  "opentelemetry",
  "pingora",
+ "proxy-header",
  "rdock-balancer",
  "rdock-config",
  "rdock-middleware",
  "rdock-model",
  "rdock-observability",
  "rdock-rules",
+ "rdock-testkit",
  "rdock-tls",
  "regex",
  "ring",
@@ -3715,6 +3723,7 @@ dependencies = [
  "http-body-util",
  "hyper",
  "hyper-util",
+ "proxy-header",
  "rcgen",
  "rustls",
  "rustls-pki-types",
@@ -3731,12 +3740,14 @@ version = "0.5.0-alpha.1"
 dependencies = [
  "arc-swap",
  "pkcs8",
+ "proptest",
  "rcgen",
  "rdock-model",
  "rustls",
  "rustls-pki-types",
  "tempfile",
  "thiserror 2.0.21",
+ "tokio",
  "x509-parser 0.18.1",
 ]
 

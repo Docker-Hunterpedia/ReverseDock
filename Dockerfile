@@ -29,6 +29,9 @@ ARG RDOCK_BUILD_COMMIT=docker
 ENV RDOCK_BUILD_COMMIT=${RDOCK_BUILD_COMMIT}
 # Extra Cargo features; only the isolation test sets one (fault-injection, benchmarks/isolation).
 ARG CARGO_FEATURES=
+# `profiling` keeps symbols for perf; with RUSTFLAGS="-C force-frame-pointers=yes" (benchmarks/README.md).
+ARG CARGO_PROFILE=release
+ARG RUSTFLAGS=
 # Pingora builds zlib-ng with CMake; ring and zstd need a C compiler.
 RUN apk add --no-cache musl-dev cmake make
 WORKDIR /src
@@ -36,8 +39,8 @@ COPY . .
 COPY --from=dashboard /src/apps/dashboard/dist apps/dashboard/dist
 RUN --mount=type=cache,target=/usr/local/cargo/registry \
     --mount=type=cache,target=/src/target \
-    cargo build --release --locked -p rdock --features "${CARGO_FEATURES}" \
- && install -D -m 0755 target/release/rdock /out/rdock \
+    cargo build --profile "${CARGO_PROFILE}" --locked -p rdock --features "${CARGO_FEATURES}" \
+ && install -D -m 0755 "target/${CARGO_PROFILE}/rdock" /out/rdock \
  && mkdir -p /out/data
 
 FROM gcr.io/distroless/static-debian13:nonroot

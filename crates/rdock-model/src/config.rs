@@ -275,11 +275,18 @@ pub enum TlsPolicy {
     Intermediate,
 }
 
-/// Inbound PROXY protocol settings.
+/// Inbound PROXY protocol settings (v1 and v2). A header is read only from `trusted` sources;
+/// a connection from anywhere else that starts with a PROXY header is closed.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct ProxyProtocolIn {
-    /// Sources allowed to send a PROXY header. Others are rejected.
+    /// Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are
+    /// rejected when they send one.
     pub trusted: Vec<IpNetwork>,
+    /// Also accept connections from `trusted` sources that send no header. Off by default: a
+    /// load balancer that stops sending headers would otherwise make every client look like
+    /// the load balancer itself to IP filters, rate limits and logs.
+    #[serde(default)]
+    pub optional: bool,
 }
 
 /// A certificate and private key provided as files. Changes to the files are picked up

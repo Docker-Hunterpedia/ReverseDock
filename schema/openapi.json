@@ -3891,13 +3891,18 @@
       },
       "rdock.ProxyProtocolIn": {
         "additionalProperties": false,
-        "description": "Inbound PROXY protocol settings.",
+        "description": "Inbound PROXY protocol settings (v1 and v2). A header is read only from `trusted` sources;\na connection from anywhere else that starts with a PROXY header is closed.",
         "patternProperties": {
           "^x-": {}
         },
         "properties": {
+          "optional": {
+            "default": false,
+            "description": "Also accept connections from `trusted` sources that send no header. Off by default: a\nload balancer that stops sending headers would otherwise make every client look like\nthe load balancer itself to IP filters, rate limits and logs.",
+            "type": "boolean"
+          },
           "trusted": {
-            "description": "Sources allowed to send a PROXY header. Others are rejected.",
+            "description": "Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are\nrejected when they send one.",
             "items": {
               "$ref": "#/components/schemas/rdock.IpNetwork"
             },
@@ -4392,6 +4397,7 @@
             "$ref": "#/components/schemas/rdock.Timeouts",
             "default": {
               "connect": "5s",
+              "connect_attempt": "1s",
               "idle": "1m30s",
               "read": "1m",
               "write": "1m"
@@ -4800,6 +4806,11 @@
             "$ref": "#/components/schemas/rdock.Duration",
             "default": "5s",
             "description": "Establishing a connection."
+          },
+          "connect_attempt": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "1s",
+            "description": "Establishing a connection when a failed connect would be retried on another\nbackend: the attempt gives up after this long, so a stopped backend costs about a\nsecond instead of `connect` (ADR-0026). The last attempt always waits `connect`."
           },
           "idle": {
             "$ref": "#/components/schemas/rdock.Duration",
