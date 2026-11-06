@@ -181,10 +181,17 @@ pub(crate) fn masked(mut value: Value, root: &[&str]) -> Value {
     value
 }
 
-/// Which provider owns each route, service and middleware (`name@provider`, else `file`).
+/// Which provider owns each route, service, middleware, TCP route and TCP service
+/// (`name@provider`, else `file`).
 pub(crate) fn owners(config: &Value) -> Value {
     let mut out = Map::new();
-    for section in ["routes", "services", "middlewares"] {
+    for section in [
+        "routes",
+        "services",
+        "middlewares",
+        "tcp_routes",
+        "tcp_services",
+    ] {
         let names = config[section].as_object().map(|m| {
             m.keys()
                 .map(|name| {

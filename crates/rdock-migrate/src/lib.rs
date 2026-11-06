@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 use rdock_config::merge::Fragment;
 use rdock_model::providers::DockerProvider;
-use rdock_model::route::Route;
-use rdock_model::service::Service;
+use rdock_model::route::{Route, TcpRoute};
+use rdock_model::service::{Service, TcpService};
 use rdock_model::{Config, Diagnostic};
 use rdock_provider_docker::labels::{Container, Health, translate};
 use serde_json::{Map, Value};
@@ -228,12 +228,16 @@ fn dynamic(document: &Value) -> (Container, BTreeMap<String, Vec<String>>, Vec<S
             }
         }
     }
-    for section in ["tcp", "udp"] {
-        if document.get(section).is_some() {
-            notes.push(format!(
-                "`{section}`: TCP and UDP routing are not supported in this version (planned for v0.6)"
-            ));
-        }
+    if document.get("tcp").is_some() {
+        notes.push(
+            "`tcp`: TCP routers of a dynamic configuration are not migrated; write `tcp_routes` and `tcp_services` in rdock.yaml (`traefik.tcp.*` Compose labels are migrated)"
+                .to_owned(),
+        );
+    }
+    if document.get("udp").is_some() {
+        notes.push(
+            "`udp`: UDP routing is not supported in this version (planned for v0.8)".to_owned(),
+        );
     }
     if document.get("tls").is_some() {
         notes.push(
@@ -320,6 +324,8 @@ fn check(fragment: &Fragment) -> Vec<String> {
         routes: fragment.routes.clone(),
         services: fragment.services.clone(),
         middlewares: fragment.middlewares.clone(),
+        tcp_routes: fragment.tcp_routes.clone(),
+        tcp_services: fragment.tcp_services.clone(),
         ..Config::default()
     };
     config
@@ -335,7 +341,9 @@ fn render(fragment: &Fragment, notes: &[String]) -> Result<String, String> {
     let route_base = baseline::<Route>(&serde_json::json!({ "match": "", "service": "" }));
     let service_base = baseline::<Service>(&serde_json::json!({ "backends": [] }));
     let mut document = Map::new();
-    let sections: [(&str, Value, Option<&Value>); 3] = [
+    let tcp_route_base = baseline::<TcpRoute>(&serde_json::json!({ "match": "", "service": "" }));
+    let tcp_service_base = baseline::<TcpService>(&serde_json::json!({ "backends": [] }));
+    let sections: [(&str, Value, Option<&Value>); 5] = [
         ("routes", to_value(&fragment.routes)?, route_base.as_ref()),
         (
             "services",
@@ -343,6 +351,16 @@ fn render(fragment: &Fragment, notes: &[String]) -> Result<String, String> {
             service_base.as_ref(),
         ),
         ("middlewares", to_value(&fragment.middlewares)?, None),
+        (
+            "tcp_routes",
+            to_value(&fragment.tcp_routes)?,
+            tcp_route_base.as_ref(),
+        ),
+        (
+            "tcp_services",
+            to_value(&fragment.tcp_services)?,
+            tcp_service_base.as_ref(),
+        ),
     ];
     for (key, mut objects, base) in sections {
         if let Value::Object(map) = &mut objects {

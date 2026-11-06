@@ -111,6 +111,47 @@ fn owners_are_found_in_both_path_forms() {
         owner("middlewares.limit"),
         Some((Section::Middlewares, "limit".to_owned()))
     );
-    assert_eq!(owner("tcp_routes.db"), None);
+    assert_eq!(
+        owner("tcp_routes.db.match"),
+        Some((Section::TcpRoutes, "db".to_owned()))
+    );
+    assert_eq!(
+        owner("tcp_services[\"pg@docker\"].backends"),
+        Some((Section::TcpServices, "pg@docker".to_owned()))
+    );
     assert_eq!(owner("defaults.certificate"), None);
+}
+
+#[test]
+fn provider_tcp_routes_are_qualified_and_left_out_when_invalid() {
+    let file = FILE.replace(
+        "  web: { address: \":8080\" }\n",
+        "  web: { address: \":8080\" }\n  db: { address: \":5432\", protocol: tcp }\n",
+    );
+    let snapshot = docker(
+        "
+tcp_routes:
+  pg: { match: \"HostSNI(`*`)\", listeners: [db], service: pg, middlewares: [allow] }
+  broken: { match: \"Host(`x.example.com`)\", listeners: [db], service: pg }
+tcp_services:
+  pg: { backends: [{ address: \"10.0.0.7:5432\" }] }
+middlewares:
+  allow: { type: ip_allow, cidrs: [10.0.0.0/8] }
+",
+    );
+    let merged = assemble(&base(&file), &[&snapshot], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    let route = &merged.config.tcp_routes["pg@docker"];
+    assert_eq!(route.service, "pg@docker");
+    assert_eq!(route.middlewares, ["allow@docker"]);
+    assert!(merged.config.tcp_services.contains_key("pg@docker"));
+    assert!(!merged.config.tcp_routes.contains_key("broken@docker"));
+    assert!(
+        merged
+            .skipped
+            .iter()
+            .any(|d| d.path == "tcp_routes[\"broken@docker\"]"),
+        "{:?}",
+        merged.skipped
+    );
 }

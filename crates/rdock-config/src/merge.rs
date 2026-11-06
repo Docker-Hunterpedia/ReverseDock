@@ -1,15 +1,15 @@
 //! Merging other providers' objects into the file configuration (ADR-0009, ADR-0018).
 //!
 //! The file configuration owns listeners, defaults, certificates and every setting; providers
-//! add routes, services and middlewares under `name@provider` keys. The merged configuration
+//! add routes, services, middlewares, TCP routes and TCP services under `name@provider` keys. The merged configuration
 //! goes through the model's validator, and an object with an error is left out (with the
 //! objects that need it) instead of rejecting everything.
 
 use std::collections::{BTreeMap, BTreeSet};
 
 use rdock_model::middleware::Middleware;
-use rdock_model::route::Route;
-use rdock_model::service::Service;
+use rdock_model::route::{Route, TcpRoute};
+use rdock_model::service::{Service, TcpService};
 use rdock_model::{Config, Diagnostic};
 use serde::{Deserialize, Serialize};
 
@@ -26,6 +26,10 @@ pub struct Fragment {
     pub services: BTreeMap<String, Service>,
     /// Middlewares.
     pub middlewares: BTreeMap<String, Middleware>,
+    /// TCP routes.
+    pub tcp_routes: BTreeMap<String, TcpRoute>,
+    /// TCP backend pools.
+    pub tcp_services: BTreeMap<String, TcpService>,
 }
 
 /// A provider's complete view: never a diff (ADR-0009).
@@ -48,10 +52,20 @@ pub enum Section {
     Services,
     /// `middlewares`
     Middlewares,
+    /// `tcp_routes`
+    TcpRoutes,
+    /// `tcp_services`
+    TcpServices,
 }
 
 impl Section {
-    const ALL: [Self; 3] = [Self::Routes, Self::Services, Self::Middlewares];
+    const ALL: [Self; 5] = [
+        Self::Routes,
+        Self::Services,
+        Self::Middlewares,
+        Self::TcpRoutes,
+        Self::TcpServices,
+    ];
 
     /// The section's key in the configuration.
     #[must_use]
@@ -60,6 +74,8 @@ impl Section {
             Self::Routes => "routes",
             Self::Services => "services",
             Self::Middlewares => "middlewares",
+            Self::TcpRoutes => "tcp_routes",
+            Self::TcpServices => "tcp_services",
         }
     }
 }
@@ -171,6 +187,8 @@ fn remove(config: &mut Config, (section, name): &ObjectKey) -> bool {
         Section::Routes => config.routes.remove(name).is_some(),
         Section::Services => config.services.remove(name).is_some(),
         Section::Middlewares => config.middlewares.remove(name).is_some(),
+        Section::TcpRoutes => config.tcp_routes.remove(name).is_some(),
+        Section::TcpServices => config.tcp_services.remove(name).is_some(),
     }
 }
 
@@ -236,6 +254,22 @@ fn add(config: &mut Config, provider: &str, fragment: &Fragment) {
         config
             .middlewares
             .insert(format!("{name}@{provider}"), middleware);
+    }
+    let own_tcp_service = |name: &str| fragment.tcp_services.contains_key(name);
+    for (name, route) in &fragment.tcp_routes {
+        let mut route = route.clone();
+        route.service = qualify(&route.service, &own_tcp_service);
+        for middleware in &mut route.middlewares {
+            *middleware = qualify(middleware, &own_middleware);
+        }
+        config
+            .tcp_routes
+            .insert(format!("{name}@{provider}"), route);
+    }
+    for (name, service) in &fragment.tcp_services {
+        config
+            .tcp_services
+            .insert(format!("{name}@{provider}"), service.clone());
     }
 }
 

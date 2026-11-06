@@ -807,6 +807,8 @@ impl Engine {
                         "routes": s.fragment.routes.len(),
                         "services": s.fragment.services.len(),
                         "middlewares": s.fragment.middlewares.len(),
+                        "tcp_routes": s.fragment.tcp_routes.len(),
+                        "tcp_services": s.fragment.tcp_services.len(),
                         "diagnostics": s.diagnostics,
                     }),
                 )

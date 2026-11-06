@@ -1,15 +1,26 @@
-description: "TCP routers are planned for v0.6 and say so."
+description: "A TCP router with HostSNI(`*`) relays to the container's port; it needs entrypoints."
 containers:
   - name: "db"
     labels:
       traefik.enable: "true"
       traefik.tcp.routers.db.rule: "HostSNI(`*`)"
+      traefik.tcp.routers.db.entrypoints: "postgres"
       traefik.tcp.services.db.loadbalancer.server.port: "5432"
     networks:
       web: "172.18.0.2"
     ports:
       - 5432
 expect:
-  diagnostics:
-    - "traefik.tcp.routers.db.rule\"]: TCP and UDP routing are not supported in this version (planned for v0.6)"
-    - "traefik.tcp.services.db.loadbalancer.server.port\"]: TCP and UDP routing"
+  tcp_routes:
+    db:
+      match: "HostSNI(`*`)"
+      listeners: ["postgres"]
+      service: "db"
+      priority: 0
+      middlewares: []
+  tcp_services:
+    db:
+      backends:
+        - address: "172.18.0.2:5432"
+          weight: 1
+          backup: false

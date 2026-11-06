@@ -288,7 +288,7 @@ fn unsupported_and_unsafe_labels_are_warnings() {
                 "traefik.http.middlewares.auth.basicauth.usersfile",
                 "/etc/passwd",
             ),
-            ("traefik.tcp.routers.db.rule", "HostSNI(`*`)"),
+            ("traefik.udp.routers.dns.entrypoints", "dns"),
             ("rdock.routes.x.tls", "${file:/run/secrets/x}"),
         ],
     )]);
@@ -301,7 +301,11 @@ fn unsupported_and_unsafe_labels_are_warnings() {
             .iter()
             .any(|m| m.contains("usersfile") && m.contains("must not name files"))
     );
-    assert!(found.iter().any(|m| m.contains("planned for v0.6")));
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("UDP routing") && m.contains("planned for v0.8"))
+    );
     assert!(
         found
             .iter()
@@ -408,4 +412,51 @@ fn a_stopping_replica_leaves_the_pool_at_once() {
     leaving.stopping = true;
     let t = run(&[container("demo-app-1", 2, &[80], &labels), leaving]);
     assert_eq!(backends(&t, "app-demo"), ["172.18.0.2:80"]);
+}
+
+#[test]
+fn native_tcp_labels_build_tcp_routes_that_pass_the_merged_validation() {
+    let t = run(&[container(
+        "db",
+        9,
+        &[5432],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.tcp_routes.pg.match", "HostSNI(`db.example.com`)"),
+            ("rdock.tcp_routes.pg.listeners", "postgres"),
+            ("rdock.tcp_routes.pg.tls.passthrough", "true"),
+            ("rdock.tcp_routes.pg.middlewares", "office"),
+            ("rdock.tcp_services.pg.proxy_protocol", "v2"),
+            ("rdock.tcp_services.pg.timeouts.idle", "1h"),
+            ("rdock.middlewares.office.type", "ip_allow"),
+            ("rdock.middlewares.office.cidrs", "[10.0.0.0/8]"),
+        ],
+    )]);
+    assert_eq!(messages(&t), Vec::<String>::new());
+    let route = &t.fragment.tcp_routes["pg"];
+    assert_eq!(route.service, "pg");
+    assert_eq!(route.tls.map(|t| t.passthrough), Some(true));
+    let service = &t.fragment.tcp_services["pg"];
+    assert_eq!(service.backends[0].address.to_string(), "172.18.0.9:5432");
+    assert_eq!(
+        service.proxy_protocol,
+        Some(rdock_model::service::ProxyProtocolVersion::V2)
+    );
+    let base: rdock_model::Config = serde_json::from_value(serde_json::json!({
+        "listeners": { "postgres": { "address": ":5432", "protocol": "tcp" } }
+    }))
+    .unwrap();
+    let snapshot = rdock_config::merge::Snapshot {
+        provider: "docker".to_owned(),
+        fragment: t.fragment,
+        diagnostics: t.diagnostics,
+    };
+    let merged =
+        rdock_config::merge::assemble(&base, &[&snapshot], &std::collections::BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    assert_eq!(merged.skipped, Vec::new());
+    assert_eq!(
+        merged.config.tcp_routes["pg@docker"].middlewares,
+        ["office@docker"]
+    );
 }

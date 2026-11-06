@@ -1,0 +1,60 @@
+description: "TCP routers: passthrough by SNI, termination with the listener's certificates, middlewares; resolvers, TLS options and servers transports are reported."
+settings:
+  entrypoints: { websecure: "edge" }
+containers:
+  - name: "pg"
+    labels:
+      traefik.enable: "true"
+      traefik.tcp.routers.pg.rule: "HostSNI(`db.example.com`)"
+      traefik.tcp.routers.pg.entrypoints: "websecure"
+      traefik.tcp.routers.pg.priority: "10"
+      traefik.tcp.routers.pg.tls: "true"
+      traefik.tcp.routers.pg.tls.passthrough: "true"
+      traefik.tcp.routers.pg.middlewares: "office, two"
+      traefik.tcp.routers.mqtt.rule: "HostSNI(`mqtt.example.com`)"
+      traefik.tcp.routers.mqtt.entrypoints: "mqtts"
+      traefik.tcp.routers.mqtt.service: "pg"
+      traefik.tcp.routers.mqtt.tls: "true"
+      traefik.tcp.routers.mqtt.tls.certresolver: "le"
+      traefik.tcp.routers.mqtt.tls.options: "modern@file"
+      traefik.tcp.middlewares.office.ipallowlist.sourcerange: "10.0.0.0/8, 192.168.1.0/24"
+      traefik.tcp.middlewares.two.inflightconn.amount: "2"
+      traefik.tcp.services.pg.loadbalancer.server.port: "5432"
+      traefik.tcp.services.pg.loadbalancer.serverstransport: "pg-transport@file"
+      traefik.udp.routers.dns.entrypoints: "dns"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 5432
+expect:
+  tcp_routes:
+    pg:
+      match: "HostSNI(`db.example.com`)"
+      listeners: ["edge"]
+      priority: 10
+      service: "pg"
+      tls: { passthrough: true }
+      middlewares: ["office", "two"]
+    mqtt:
+      match: "HostSNI(`mqtt.example.com`)"
+      listeners: ["mqtts"]
+      service: "pg"
+      tls: { passthrough: false }
+  tcp_services:
+    pg:
+      backends:
+        - address: "172.18.0.3:5432"
+          weight: 1
+          backup: false
+  middlewares:
+    office:
+      type: "ip_allow"
+      cidrs: ["10.0.0.0/8", "192.168.1.0/24"]
+    two:
+      type: "in_flight"
+      amount: 2
+  diagnostics:
+    - "traefik.tcp.routers.mqtt.tls.certresolver\"]: `tls.certresolver` is not supported on TCP routers"
+    - "traefik.tcp.routers.mqtt.tls.options\"]: `tls.options` is not supported on TCP routers"
+    - "traefik.tcp.services.pg.loadbalancer.serverstransport\"]: servers transports are not supported on TCP services"
+    - "traefik.udp.routers.dns.entrypoints\"]: UDP routing is not supported in this version (planned for v0.8)"

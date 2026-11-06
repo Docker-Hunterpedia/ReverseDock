@@ -1,4 +1,5 @@
-//! Container labels into routes, services and middlewares (ADR-0018). Pure: no I/O.
+//! Container labels into routes, services, middlewares, TCP routes and TCP services
+//! (ADR-0018). Pure: no I/O.
 //!
 //! [`translate`] takes what the Engine API reports about running containers and returns the
 //! Docker provider's [`Fragment`] with its diagnostics. The provider, the conformance suite and
@@ -11,13 +12,15 @@ use std::net::IpAddr;
 use rdock_config::merge::Fragment;
 use rdock_model::middleware::Middleware;
 use rdock_model::providers::DockerProvider;
-use rdock_model::route::Route;
-use rdock_model::service::Service;
+use rdock_model::route::{Route, TcpRoute};
+use rdock_model::service::{Service, TcpService};
 use rdock_model::{Diagnostic, path_key};
+use serde::de::DeserializeOwned;
 use serde_json::Value;
 
 mod native;
 mod traefik;
+mod traefik_tcp;
 pub(crate) mod tree;
 
 use tree::{Tree, decode};
@@ -289,6 +292,8 @@ pub(crate) struct Draft {
     /// Traefik `retry` middlewares, which become `retries` of the services that routes using
     /// them point to.
     pub(crate) retries: BTreeMap<String, traefik::Retry>,
+    pub(crate) tcp_routes: BTreeMap<String, Tree>,
+    pub(crate) tcp_services: BTreeMap<String, ServiceDraft>,
 }
 
 /// A service as labels describe it.
@@ -440,13 +445,17 @@ impl<'a> Scope<'a> {
     /// Fills in default services, decodes the objects and adds them to the fragment.
     fn build(&mut self, mut draft: Draft, pools: &mut Pools, fragment: &mut Fragment) {
         draft.routes.retain(|_, tree| !tree.is_empty());
-        self.link_services(&mut draft);
+        self.link_services(&mut draft.routes, &mut draft.services, &draft.middlewares);
         traefik::apply_retries(self, &mut draft);
         for (name, service) in std::mem::take(&mut draft.services) {
-            if let Some((service, backend)) = self.service(&name, service) {
-                pools.add(self, name, &service, backend);
+            if let Some((mut service, backend)) = self.service::<Service>(&name, service) {
+                if self.virtual_ip {
+                    self.drop_per_task_settings(&name, &mut service);
+                }
+                pools.add(self, name, service, backend);
             }
         }
+        self.build_tcp(&mut draft, pools, fragment);
         // Objects whose every label was rejected are already explained by those warnings.
         draft.middlewares.retain(|_, tree| !tree.is_empty());
         for (name, tree) in std::mem::take(&mut draft.routes) {
@@ -468,45 +477,85 @@ impl<'a> Scope<'a> {
         self.warn_container(message, None);
     }
 
-    /// Routes without a service get the container's only service, or a default one when the
-    /// container declares none (Traefik's behaviour). A route that ends with this container's
-    /// `static` middleware is answered by it and needs none.
-    fn link_services(&mut self, draft: &mut Draft) {
-        let unlinked: Vec<String> = draft
-            .routes
+    /// TCP routes and services: like HTTP ones, except that a TCP route must name its
+    /// listeners (Traefik attaches a router without entry points to all of them).
+    fn build_tcp(&mut self, draft: &mut Draft, pools: &mut Pools, fragment: &mut Fragment) {
+        draft.tcp_routes.retain(|_, tree| !tree.is_empty());
+        let unattached: Vec<String> = draft
+            .tcp_routes
             .iter()
-            .filter(|(_, tree)| !tree.has("service") && !ends_with_static(&draft.middlewares, tree))
+            .filter(|(_, tree)| !tree.has("listeners"))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in unattached {
+            draft.tcp_routes.remove(&name);
+            let message = format!("TCP route `{name}` names no listener; the route is ignored");
+            let hint = "set `traefik.tcp.routers.<name>.entrypoints` or `rdock.tcp_routes.<name>.listeners`";
+            self.warn_container(message, Some(hint.to_owned()));
+        }
+        self.link_services(
+            &mut draft.tcp_routes,
+            &mut draft.tcp_services,
+            &BTreeMap::new(),
+        );
+        for (name, service) in std::mem::take(&mut draft.tcp_services) {
+            if let Some((service, backend)) = self.service::<TcpService>(&name, service) {
+                pools.add_tcp(self, name, service, backend);
+            }
+        }
+        for (name, tree) in std::mem::take(&mut draft.tcp_routes) {
+            match decode::<TcpRoute>(tree.into_value()) {
+                Ok(route) => pools.add_tcp_route(self, name, route, fragment),
+                Err(err) => self.warn_object("TCP route", &name, &err),
+            }
+        }
+    }
+
+    /// Routes without a service get the container's only service, or a default one when the
+    /// container declares none (Traefik's behaviour). A route that ends with one of
+    /// `middlewares` that is a `static` middleware is answered by it and needs none.
+    fn link_services(
+        &mut self,
+        routes: &mut BTreeMap<String, Tree>,
+        services: &mut BTreeMap<String, ServiceDraft>,
+        middlewares: &BTreeMap<String, Tree>,
+    ) {
+        let unlinked: Vec<String> = routes
+            .iter()
+            .filter(|(_, tree)| !tree.has("service") && !ends_with_static(middlewares, tree))
             .map(|(name, _)| name.clone())
             .collect();
         if unlinked.is_empty() {
             return;
         }
-        if draft.services.is_empty() {
-            draft
-                .services
-                .insert(self.default_name(), ServiceDraft::default());
+        if services.is_empty() {
+            services.insert(self.default_name(), ServiceDraft::default());
         }
-        if draft.services.len() > 1 {
+        if services.len() > 1 {
             for name in unlinked {
-                draft.routes.remove(&name);
+                routes.remove(&name);
                 let message = format!(
                     "route `{name}` names no service and the container has {} services; the route is ignored",
-                    draft.services.len()
+                    services.len()
                 );
                 self.warn_container(message, Some("set the route's `service` label".to_owned()));
             }
             return;
         }
-        let service = draft.services.keys().next().cloned().unwrap_or_default();
+        let service = services.keys().next().cloned().unwrap_or_default();
         for name in unlinked {
-            if let Some(tree) = draft.routes.get_mut(&name) {
+            if let Some(tree) = routes.get_mut(&name) {
                 let _ = tree.set("service", Value::String(service.clone()));
             }
         }
     }
 
-    /// Decodes a service and works out its backend for this container.
-    fn service(&mut self, name: &str, draft: ServiceDraft) -> Option<(Service, Backend)> {
+    /// Decodes a service (HTTP or TCP) and works out its backend for this container.
+    fn service<T: DeserializeOwned>(
+        &mut self,
+        name: &str,
+        draft: ServiceDraft,
+    ) -> Option<(T, Backend)> {
         let (address, healthy) = if let Some(address) = draft.address {
             (address, true)
         } else {
@@ -531,20 +580,15 @@ impl<'a> Scope<'a> {
             self.warn_object("service", name, &err);
             return None;
         }
-        match decode::<Service>(tree.into_value()) {
-            Ok(mut service) => {
-                if self.virtual_ip {
-                    self.drop_per_task_settings(name, &mut service);
-                }
-                Some((
-                    service,
-                    Backend {
-                        address,
-                        healthy,
-                        container: self.container.name.clone(),
-                    },
-                ))
-            }
+        match decode::<T>(tree.into_value()) {
+            Ok(service) => Some((
+                service,
+                Backend {
+                    address,
+                    healthy,
+                    container: self.container.name.clone(),
+                },
+            )),
             Err(err) => {
                 self.warn_object("service", name, &err);
                 None
@@ -748,30 +792,65 @@ struct Backend {
     container: String,
 }
 
+/// A service type whose backends are the containers that declare it.
+trait Pooled: Clone + PartialEq {
+    fn backends_mut(&mut self) -> &mut Vec<rdock_model::service::Backend>;
+}
+
+impl Pooled for Service {
+    fn backends_mut(&mut self) -> &mut Vec<rdock_model::service::Backend> {
+        &mut self.backends
+    }
+}
+
+impl Pooled for TcpService {
+    fn backends_mut(&mut self) -> &mut Vec<rdock_model::service::Backend> {
+        &mut self.backends
+    }
+}
+
+/// Services by name, each with the backends of every container that declares it.
+type PoolMap<T> = BTreeMap<String, (T, Vec<Backend>)>;
+
 /// Services with the backends of every container that declares them (replicas share names).
 #[derive(Debug, Default)]
 struct Pools {
-    services: BTreeMap<String, (Service, Vec<Backend>)>,
-    conflicts: BTreeSet<(String, String)>,
+    services: PoolMap<Service>,
+    tcp_services: PoolMap<TcpService>,
+    /// (kind, name) of objects declared differently by two containers.
+    conflicts: BTreeSet<(&'static str, String)>,
 }
 
 impl Pools {
-    fn add(&mut self, scope: &mut Scope<'_>, name: String, service: &Service, backend: Backend) {
-        let mut shape = service.clone();
-        shape.backends.clear();
-        match self.services.get_mut(&name) {
-            None => {
-                self.services.insert(name, (shape, vec![backend]));
-            }
-            Some((existing, backends)) if *existing == shape => backends.push(backend),
-            Some(_) => {
-                self.conflicts.insert(("service".to_owned(), name.clone()));
-                let message = format!(
-                    "service `{name}` is declared differently by another container; both are ignored"
-                );
-                scope.warn_container(message, None);
-            }
-        }
+    fn add(&mut self, scope: &mut Scope<'_>, name: String, service: Service, backend: Backend) {
+        pool(
+            &mut self.services,
+            &mut self.conflicts,
+            "service",
+            scope,
+            name,
+            service,
+            backend,
+        );
+    }
+
+    fn add_tcp(
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: String,
+        service: TcpService,
+        backend: Backend,
+    ) {
+        let (services, conflicts) = (&mut self.tcp_services, &mut self.conflicts);
+        pool(
+            services,
+            conflicts,
+            "TCP service",
+            scope,
+            name,
+            service,
+            backend,
+        );
     }
 
     fn add_route(
@@ -781,18 +860,19 @@ impl Pools {
         route: Route,
         fragment: &mut Fragment,
     ) {
-        match fragment.routes.get(&name) {
-            Some(existing) if *existing != route => {
-                self.conflicts.insert(("route".to_owned(), name.clone()));
-                let message = format!(
-                    "route `{name}` is declared differently by another container; both are ignored"
-                );
-                scope.warn_container(message, None);
-            }
-            _ => {
-                fragment.routes.insert(name, route);
-            }
-        }
+        let routes = &mut fragment.routes;
+        insert(routes, &mut self.conflicts, "route", scope, name, route);
+    }
+
+    fn add_tcp_route(
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: String,
+        route: TcpRoute,
+        fragment: &mut Fragment,
+    ) {
+        let routes = &mut fragment.tcp_routes;
+        insert(routes, &mut self.conflicts, "TCP route", scope, name, route);
     }
 
     fn add_middleware(
@@ -802,62 +882,131 @@ impl Pools {
         middleware: Middleware,
         fragment: &mut Fragment,
     ) {
-        match fragment.middlewares.get(&name) {
-            Some(existing) if *existing != middleware => {
-                self.conflicts
-                    .insert(("middleware".to_owned(), name.clone()));
-                let message = format!(
-                    "middleware `{name}` is declared differently by another container; both are ignored"
-                );
-                scope.warn_container(message, None);
-            }
-            _ => {
-                fragment.middlewares.insert(name, middleware);
-            }
-        }
+        let middlewares = &mut fragment.middlewares;
+        insert(
+            middlewares,
+            &mut self.conflicts,
+            "middleware",
+            scope,
+            name,
+            middleware,
+        );
     }
 
-    /// Drops conflicting objects and fills each service with its serving backends: the healthy
-    /// ones, or all of them when none is healthy (fail open, with a warning).
+    /// Drops conflicting objects and fills each service with its serving backends.
     fn finish(self, out: &mut Translation) {
         for (kind, name) in &self.conflicts {
-            if kind == "route" {
-                out.fragment.routes.remove(name);
-            } else if kind == "middleware" {
-                out.fragment.middlewares.remove(name);
+            match *kind {
+                "route" => drop(out.fragment.routes.remove(name)),
+                "TCP route" => drop(out.fragment.tcp_routes.remove(name)),
+                "middleware" => drop(out.fragment.middlewares.remove(name)),
+                _ => {}
             }
         }
-        for (name, (mut service, backends)) in self.services {
-            if self
-                .conflicts
-                .contains(&("service".to_owned(), name.clone()))
-            {
-                continue;
-            }
-            let healthy: Vec<&Backend> = backends.iter().filter(|b| b.healthy).collect();
-            let serving: Vec<&Backend> = if healthy.is_empty() {
-                let containers: Vec<&str> = backends.iter().map(|b| b.container.as_str()).collect();
-                out.diagnostics.push(Diagnostic::warning(
-                    path_key("services", &name),
-                    format!(
-                        "no container of service `{name}` is healthy ({}); sending traffic to all of them",
-                        containers.join(", ")
-                    ),
-                ));
-                backends.iter().collect()
-            } else {
-                healthy
-            };
-            let mut addresses: Vec<&str> = serving.iter().map(|b| b.address.as_str()).collect();
-            addresses.sort_unstable();
-            addresses.dedup();
-            service.backends = addresses
-                .into_iter()
-                .filter_map(|a| decode(serde_json::json!({ "address": a })).ok())
-                .collect();
-            out.fragment.services.insert(name, service);
+        let conflicts = &self.conflicts;
+        out.fragment.services = fill(self.services, "service", conflicts, &mut out.diagnostics);
+        out.fragment.tcp_services = fill(
+            self.tcp_services,
+            "TCP service",
+            conflicts,
+            &mut out.diagnostics,
+        );
+    }
+}
+
+/// Adds one container's backend to the service `name`; a container that declares the service
+/// differently makes it a conflict.
+fn pool<T: Pooled>(
+    services: &mut PoolMap<T>,
+    conflicts: &mut BTreeSet<(&'static str, String)>,
+    kind: &'static str,
+    scope: &mut Scope<'_>,
+    name: String,
+    mut shape: T,
+    backend: Backend,
+) {
+    shape.backends_mut().clear();
+    match services.get_mut(&name) {
+        None => {
+            services.insert(name, (shape, vec![backend]));
+        }
+        Some((existing, backends)) if *existing == shape => backends.push(backend),
+        Some(_) => {
+            let message = format!(
+                "{kind} `{name}` is declared differently by another container; both are ignored"
+            );
+            conflicts.insert((kind, name));
+            scope.warn_container(message, None);
         }
     }
+}
+
+/// Adds an object to the fragment; another container's different object of the same name
+/// makes it a conflict.
+fn insert<T: PartialEq>(
+    objects: &mut BTreeMap<String, T>,
+    conflicts: &mut BTreeSet<(&'static str, String)>,
+    kind: &'static str,
+    scope: &mut Scope<'_>,
+    name: String,
+    object: T,
+) {
+    match objects.get(&name) {
+        Some(existing) if *existing != object => {
+            let message = format!(
+                "{kind} `{name}` is declared differently by another container; both are ignored"
+            );
+            conflicts.insert((kind, name));
+            scope.warn_container(message, None);
+        }
+        _ => {
+            objects.insert(name, object);
+        }
+    }
+}
+
+/// Each service with its serving backends: the healthy ones, or all of them when none is
+/// healthy (fail open, with a warning).
+fn fill<T: Pooled>(
+    services: PoolMap<T>,
+    kind: &'static str,
+    conflicts: &BTreeSet<(&'static str, String)>,
+    diagnostics: &mut Vec<Diagnostic>,
+) -> BTreeMap<String, T> {
+    let mut filled = BTreeMap::new();
+    for (name, (mut service, backends)) in services {
+        if conflicts.contains(&(kind, name.clone())) {
+            continue;
+        }
+        let healthy: Vec<&Backend> = backends.iter().filter(|b| b.healthy).collect();
+        let serving: Vec<&Backend> = if healthy.is_empty() {
+            let containers: Vec<&str> = backends.iter().map(|b| b.container.as_str()).collect();
+            let section = if kind == "service" {
+                "services"
+            } else {
+                "tcp_services"
+            };
+            diagnostics.push(Diagnostic::warning(
+                path_key(section, &name),
+                format!(
+                    "no container of {kind} `{name}` is healthy ({}); sending traffic to all of them",
+                    containers.join(", ")
+                ),
+            ));
+            backends.iter().collect()
+        } else {
+            healthy
+        };
+        let mut addresses: Vec<&str> = serving.iter().map(|b| b.address.as_str()).collect();
+        addresses.sort_unstable();
+        addresses.dedup();
+        *service.backends_mut() = addresses
+            .into_iter()
+            .filter_map(|a| decode(serde_json::json!({ "address": a })).ok())
+            .collect();
+        filled.insert(name, service);
+    }
+    filled
 }
 
 #[cfg(test)]

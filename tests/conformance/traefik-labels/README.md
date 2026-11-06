@@ -17,6 +17,8 @@ expect:
   routes:      { app: { service: app } }   # exactly these objects; fields compared as a subset
   services:    { app: { backends: [{ address: "172.18.0.2:80", weight: 1 }] } }
   middlewares: {}
+  tcp_routes:  {}                          # TCP routers and services, the same way
+  tcp_services: {}
   diagnostics: []                          # one text per diagnostic, in order, contained in "path: message"
 ```
 
@@ -25,6 +27,9 @@ Known differences from Traefik, on purpose:
 - Containers are opt-in (`exposedByDefault` is `true` in Traefik, `expose_by_default` is `false` here).
 - Several exposed ports and no port label is a warning; Traefik picks the lowest port.
 - A router without entrypoints uses `defaults.listeners`; Traefik attaches it to every entrypoint.
+- A TCP router without entrypoints is ignored with a warning: TCP routes name their listeners.
+- TCP middlewares (`ipallowlist`, `inflightconn`) share one namespace with HTTP middlewares.
+- `tls.certresolver`, `tls.options` and `tls.domains` on TCP routers, and TCP `serverstransport`, are warnings: a terminating TCP route uses its listener's TLS settings and certificates.
 - No default router for containers without router labels (Traefik's `defaultRule`).
 - The `retry` middleware is a warning: retries are a service setting (`rdock.services.<name>.retries`).
 
