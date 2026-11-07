@@ -21,13 +21,14 @@ The goal is one proxy for a laptop, a VPS, a Docker Swarm or a Kubernetes cluste
 
 Every feature is designed so that the first group never pays in complexity for the last.
 
-## What works in 0.5.0-alpha.1
+## What works in 0.6.0-alpha.1
 
-The current release is a pre-release of milestone v0.5, "Management". It replaces NGINX for host and path routing <Status since="v0.1" />, Traefik on a Docker host using your existing labels <Status since="v0.2" />, and Caddy's automatic HTTPS, with certificates from Let's Encrypt or any ACME CA, wildcards through DNS-01 and a local CA for private names <Status since="v0.3" />. It runs busy APIs with health checks, retries, more balancing policies, limits, mTLS, JWT and tracing <Status since="v0.4" />.
+The current release is a pre-release of milestone v0.6, "Swarm, L4, static". It replaces NGINX for host and path routing <Status since="v0.1" />, Traefik on a Docker host using your existing labels <Status since="v0.2" />, and Caddy's automatic HTTPS, with certificates from Let's Encrypt or any ACME CA, wildcards through DNS-01 and a local CA for private names <Status since="v0.3" />. It runs busy APIs with health checks, retries, more balancing policies, limits, mTLS, JWT and tracing <Status since="v0.4" />.
 
 - **Reliability:** least-requests, power-of-two-choices and consistent-hash balancing, signed sticky sessions, active (HTTP, TCP, gRPC) and passive health checks with fail-open, backups, slow start, retries with a retry budget, weighted splits and mirroring. See [Backends and load balancing](/docs/guides/backends/).
 - **Security and limits:** client certificates (mTLS) and Cloudflare Authenticated Origin Pulls, JWT validation, requests in flight, load shedding and bandwidth limits. See [Client certificates](/docs/guides/client-certificates/) and [JWT authentication](/docs/guides/jwt/).
 - **Observability:** OpenTelemetry traces, per-backend metrics, sampled access logs. See [Logs and metrics](/docs/guides/logs-and-metrics/).
+- **Swarm, TCP and static sites:** Docker Swarm services from `deploy.labels`, TCP routes by server name with TLS passthrough or termination, the PROXY protocol, static sites with SPA fallback, and DNS-01 with Route 53, Google Cloud DNS, Azure DNS, DigitalOcean, Hetzner, deSEC and RFC 2136. See [Docker Swarm](/docs/guides/docker-swarm/), [TCP routes](/docs/guides/tcp-routes/) and [Static files](/docs/guides/static-files/).
 - **Management:** an embedded dashboard and a versioned REST API with OpenAPI, admin users with two-step verification, scoped tokens, an audit log, configuration history and rollback, live traffic and logs, routing explanations and alerts. See [Open the dashboard](/docs/guides/dashboard/), [Configuration API](/docs/guides/config-api/) and [Alerts](/docs/guides/alerts/).
 
 - **Docker:** routes from container labels, `rdock.*` and a documented subset of `traefik.*`; opt-in containers, replicas, health checks and draining; zero-config mode; `rdock migrate traefik`. See [Docker containers and labels](/docs/guides/docker-labels/).
@@ -53,7 +54,7 @@ Settings for these features are already part of the configuration model. `rdock 
 | Dashboard and REST API with history and rollback | <Status since="v0.5" /> |
 | Docker Swarm services and `deploy.labels` | <Status since="v0.6" /> |
 | TCP routing with SNI passthrough and TLS termination, PROXY protocol | <Status since="v0.6" /> |
-| Static files | <Status planned="v0.6" /> |
+| Static files | <Status since="v0.6" /> |
 | UDP routing | <Status planned="v0.8" /> |
 | Kubernetes Gateway API controller | <Status planned="v0.7" /> |
 
