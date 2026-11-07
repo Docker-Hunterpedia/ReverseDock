@@ -25,7 +25,9 @@ pub struct Service {
     /// Active and passive health checks.
     #[serde(default)]
     pub health: Option<Health>,
-    /// Retries of failed requests (ADR-0010, ADR-0015, ADR-0022).
+    /// Retries of failed requests (ADR-0010, ADR-0015, ADR-0022). Without this setting the
+    /// defaults below apply: a connection that cannot be opened is tried again on another
+    /// backend, up to twice, within the retry budget (ADR-0028). `attempts: 0` turns retries off.
     #[serde(default)]
     pub retries: Option<Retries>,
     /// Upstream timeouts.

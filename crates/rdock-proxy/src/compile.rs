@@ -333,7 +333,8 @@ fn compile_service(
         health: compile_health(service.health.as_ref())?,
         split,
         split_balancer: RoundRobin::default(),
-        retries: service.retries.clone().filter(|r| r.attempts > 0),
+        // No `retries` means the defaults (connection failures only), as `retries: {}` (ADR-0028).
+        retries: Some(service.retries.clone().unwrap_or_default()).filter(|r| r.attempts > 0),
         max_requests: service.max_requests,
         max_per_backend: service.max_connections_per_backend,
         timeouts: service.timeouts,

@@ -91,6 +91,65 @@ async fn a_backend_that_never_answers_costs_the_attempt_budget_not_the_connect_t
 }
 
 #[tokio::test]
+async fn a_service_without_retries_still_moves_a_failed_connect_to_another_backend() {
+    // ADR-0028: no `retries` means the `retries: {}` defaults, which retry connect failures.
+    let good = Backend::start("good").await;
+    let dead = SocketAddr::from(([127, 0, 0, 1], free_port())).to_string();
+    let port = free_port();
+    let _rdock = Rdock::start(RDOCK, &config(port, &[dead, good.addr.to_string()], ""));
+    for _ in 0..6 {
+        assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
+        let order = request("POST", "a", "/", "body");
+        assert_eq!(client::http1(addr(port), order).await.status, 200);
+    }
+}
+
+#[tokio::test]
+async fn attempts_zero_turns_the_default_retries_off() {
+    let good = Backend::start("good").await;
+    let dead = SocketAddr::from(([127, 0, 0, 1], free_port())).to_string();
+    let port = free_port();
+    let _rdock = Rdock::start(
+        RDOCK,
+        &config(
+            port,
+            &[dead, good.addr.to_string()],
+            "    retries: { attempts: 0 }",
+        ),
+    );
+    let mut statuses = Vec::new();
+    for _ in 0..4 {
+        statuses.push(client::http1(addr(port), get("a", "/")).await.status);
+    }
+    assert!(
+        statuses.contains(&502),
+        "round-robin meets the dead backend: {statuses:?}"
+    );
+}
+
+#[tokio::test]
+async fn a_timed_out_connect_is_not_repeated_on_the_same_backend() {
+    // The only backend never answers (TEST-NET-1): one connect timeout, not three.
+    let port = free_port();
+    let _rdock = Rdock::start(
+        RDOCK,
+        &config(
+            port,
+            &["192.0.2.1:9".to_owned()],
+            "    timeouts: { connect: 1s }",
+        ),
+    );
+    let started = Instant::now();
+    let status = client::http1(addr(port), get("a", "/")).await.status;
+    assert_eq!(status, 504);
+    assert!(
+        started.elapsed() < Duration::from_millis(1900),
+        "took {:?}: the timed-out connect was repeated",
+        started.elapsed()
+    );
+}
+
+#[tokio::test]
 async fn status_retries_skip_post_and_pass_the_last_answer_through() {
     let sick = Backend::start("sick").await;
     let fine = Backend::start("fine").await;

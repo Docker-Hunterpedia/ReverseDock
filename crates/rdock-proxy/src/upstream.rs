@@ -275,7 +275,7 @@ pub fn connect_budget(
 }
 
 /// Whether a backend this request has not tried yet would be eligible now.
-fn has_untried(service: &ServiceRuntime, tried: &[String]) -> bool {
+pub(crate) fn has_untried(service: &ServiceRuntime, tried: &[String]) -> bool {
     let members = service.members();
     eligible(service, &members, Instant::now())
         .iter()

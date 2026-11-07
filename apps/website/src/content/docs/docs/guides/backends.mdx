@@ -207,6 +207,8 @@ services:
       budget_percent: 20
 ```
 
+**By default** <Status since="v0.6" />, a service without `retries` behaves as if it had `retries: {}`: a connection that cannot be opened is tried again on another backend, up to twice, so a backend that stops (a rolling update, a scale-down, a stopped container) does not fail requests while ReverseDock catches up. A connection that timed out is only retried on a backend not tried yet. `retries: { attempts: 0 }` turns retries off. NGINX (`proxy_next_upstream error timeout`) and HAProxy (`retries 3`) retry failed connections by default too ([NGINX](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_next_upstream), [HAProxy](https://docs.haproxy.org/3.2/configuration.html#4.2-retries), checked 2026-11-07).
+
 A failed attempt is sent again, to another backend when there is one:
 
 - **`connect`** (default): the connection could not be opened. Nothing reached the backend, so this is retried for every method.
