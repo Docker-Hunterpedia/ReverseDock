@@ -819,12 +819,6 @@ impl Validator<'_> {
     fn check_service_retries(&mut self, path: &str, service: &Service) {
         if let Some(retries) = &service.retries {
             let p = format!("{path}.retries");
-            if retries.attempts == 0 {
-                self.warning(
-                    format!("{p}.attempts"),
-                    "attempts is 0, so retries are disabled",
-                );
-            }
             if retries.attempts > MAX_RETRY_ATTEMPTS {
                 self.error(
                     format!("{p}.attempts"),

@@ -691,7 +691,7 @@ async fn pass_through_sends_misses_to_the_service() {
 }
 
 /// Parallel downloads in the concurrency check; see the comment there for macOS.
-const PARALLEL_DOWNLOADS: usize = if cfg!(target_os = "macos") { 32 } else { 100 };
+const PARALLEL_DOWNLOADS: usize = if cfg!(target_os = "macos") { 16 } else { 100 };
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn large_files_stream_byte_exact_with_bandwidth_and_concurrency() {

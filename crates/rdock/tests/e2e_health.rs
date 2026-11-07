@@ -130,7 +130,9 @@ async fn passive_health_ejects_a_failing_backend_and_retries_it_later() {
     // Nothing listens here: every request to it fails to connect.
     let dead = SocketAddr::from(([127, 0, 0, 1], free_port()));
     let port = free_port();
-    let passive = "    health:\n      passive: { failures: 2, window: 10s, ejection: 1s }";
+    // Retries off, so the client sees each failure that counts towards the ejection (the
+    // default retry would hide them, ADR-0028).
+    let passive = "    health:\n      passive: { failures: 2, window: 10s, ejection: 1s }\n    retries: { attempts: 0 }";
     let backends = format!("{}, {{ address: \"{dead}\" }}", list(&[&good]));
     let rdock = Rdock::start(RDOCK, &config(port, "http", &backends, passive));
     let mut failures = 0;

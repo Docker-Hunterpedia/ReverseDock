@@ -996,7 +996,11 @@ impl ProxyHttp for RdockProxy {
         }
         let mut e = e;
         let service = ctx.service.clone();
+        // A timed-out connect is retried only on a backend not tried yet: waiting again on the
+        // same address cannot help (ADR-0028). A refused connect is quick and may be repeated.
+        let timed_out = matches!(e.etype(), ErrorType::ConnectTimedout);
         if let Some(service) = service
+            && (!timed_out || upstream::has_untried(&service, &ctx.tried))
             && self.take_retry(session, ctx, &service, RetryOn::Connect)
         {
             e.set_retry(true);

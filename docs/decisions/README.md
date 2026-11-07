@@ -31,3 +31,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0025](0025-admin-limits-and-review-fixes.md) | Admin limits and changes from the v0.5 security review: connection, request and write limits, token and session rules, client addresses, secrets, audit over TLS, strict CSP |
 | [0026](0026-swarm-l4-static.md) | v0.6: TCP routes and PROXY protocol in our accept loop, polling Swarm provider in task mode, static files as a terminal middleware, DNS adapters on raw REST, per-attempt connect budget |
 | [0027](0027-static-roots-for-labels.md) | Docker labels may serve static files only inside `providers.docker.static_roots` (empty by default) |
+| [0028](0028-default-connect-retries.md) | A service without `retries` retries failed connections on another backend (the `retries: {}` defaults); `attempts: 0` turns it off |
