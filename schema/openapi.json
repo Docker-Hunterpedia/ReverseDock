@@ -5825,7 +5825,7 @@
       "name": "Apache-2.0"
     },
     "title": "ReverseDock admin API",
-    "version": "0.5.0-alpha.1"
+    "version": "0.6.0-alpha.1"
   },
   "openapi": "3.1.0",
   "paths": {

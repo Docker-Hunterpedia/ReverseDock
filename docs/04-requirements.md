@@ -127,9 +127,9 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [ ] M-ADM-04 Import/export full config; GitOps reconciliation mode (file provider wins)
 
 ### M-L4 · Layer 4
-- [ ] M-L4-01 TCP proxy listeners with `HostSNI` routing (SNI passthrough, no termination)
-- [ ] M-L4-02 TLS termination for TCP routes (databases, MQTT, SMTP-with-TLS)
-- [ ] M-L4-03 PROXY protocol v1/v2 inbound (trusted sources only) and outbound
+- [x] M-L4-01 TCP proxy listeners with `HostSNI` routing (SNI passthrough, no termination)
+- [x] M-L4-02 TLS termination for TCP routes (databases, MQTT, SMTP-with-TLS)
+- [x] M-L4-03 PROXY protocol v1/v2 inbound (trusted sources only) and outbound
 - [ ] M-L4-04 UDP relay with session idle timeouts (P2)
 - [x] M-L4-05 TCP health checks shared with HTTP checker framework
 
@@ -205,7 +205,7 @@ Tracked as W-SWM-01…03 below.
 - [ ] F-GW-05 Usage metering events export (OTLP/webhook) — no billing in core
 
 ### F-WEB · Web server and legacy compatibility
-- [ ] F-WEB-01 Static files: MIME, ranges, conditional requests, cache headers, SPA fallback, precompressed assets (P1)
+- [x] F-WEB-01 Static files: MIME, ranges, conditional requests, cache headers, SPA fallback, precompressed assets (P1)
 - [ ] F-WEB-02 Directory listing (off by default, hardened path resolution) (P3)
 - [ ] F-WEB-03 HTTP cache: memory + disk, RFC 9111, `Vary`, SWR/SIE, purge API (URL/tag), coalescing (P2)
 - [ ] F-WEB-04 FastCGI (PHP) gateway (P3, optional crate)
@@ -251,9 +251,9 @@ Tracked as W-SWM-01…03 below.
 - [ ] W-DKR-08 Dokploy / Coolify / Portainer compatibility examples (labels + networks)
 
 ### W-SWM · Docker Swarm (P1)
-- [ ] W-SWM-01 Separate provider: services + `deploy.labels`; task vs VIP endpoint modes
-- [ ] W-SWM-02 Overlay networks; replica scale events; task health/readiness; rolling-update draining
-- [ ] W-SWM-03 Swarm secrets/configs; multi-node replicated proxies (global mode)
+- [x] W-SWM-01 Separate provider: services + `deploy.labels`; task vs VIP endpoint modes
+- [x] W-SWM-02 Overlay networks; replica scale events; task health/readiness; rolling-update draining
+- [x] W-SWM-03 Swarm secrets/configs; multi-node replicated proxies (global mode)
 
 ### W-K8S · Kubernetes (P2)
 - [ ] W-K8S-01 Gateway API controller targeting the latest Standard channel (v1.6+; v1.7 at rc as of Oct 2026): GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet once Standard; upstream conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` in CI
@@ -278,7 +278,7 @@ Tracked as W-SWM-01…03 below.
 ### W-DNS · DNS providers for DNS-01
 - [ ] W-DNS-01 `DnsProvider` trait, propagation check with retries, Cloudflare adapter (P0)
 - [ ] W-DNS-02 Exec/webhook provider for anything else (P1)
-- [ ] W-DNS-03 Route 53, Google Cloud DNS, Azure DNS, DigitalOcean, Hetzner, deSEC, RFC 2136 adapters (P1–P2)
+- [x] W-DNS-03 Route 53, Google Cloud DNS, Azure DNS, DigitalOcean, Hetzner, deSEC, RFC 2136 adapters (P1–P2)
 
 ### W-OBS · Monitoring, config and secrets
 - [ ] W-OBS-01 Prometheus, Grafana, OTLP (Tempo/Jaeger), Loki/OpenSearch via stdout or OTLP, syslog (P0–P1)
