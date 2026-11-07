@@ -57,7 +57,7 @@ rdock-limits         token bucket · concurrency gate with queue · body/header 
 rdock-observability  tracing setup · access log formatter + redaction · metrics registry · OTLP exporter · 15-min ring buffer for the dashboard
 rdock-admin          v0.1: health, readiness, metrics, status, reload on its own listener · v0.5: axum API (/api/v1), OpenAPI (utoipa), auth (tokens, sessions, RBAC), SSE, embedded dashboard (rust-embed)
 rdock-cloudflare     IP-range sync · Cloudflare `DnsProvider` impl (depends on rdock-acme) · Access JWT validator · Origin CA helpers
-rdock-dns-providers  DNS-01 adapters on the `DnsSolver` trait (depends on rdock-acme): DigitalOcean, Hetzner Cloud, RFC 2136 with TSIG · shared REST client, backoff, zone discovery (ADR-0026)
+rdock-dns-providers  DNS-01 adapters on the `DnsSolver` trait (depends on rdock-acme): Route 53 (SigV4), Google Cloud DNS (RS256 service-account JWT), Azure DNS, DigitalOcean, Hetzner Cloud, deSEC, RFC 2136 with TSIG · shared REST client, OAuth token cache, backoff, zone discovery, per-zone record-set lock (ADR-0026)
 rdock-cache          (P2) HTTP cache on pingora-cache: memory + disk storage, purge, SWR/SIE
 rdock-plugins        (P2/P3) native plugin trait, WASM host (wasmtime), out-of-process agent client
 rdock-control        (P3) optional control plane: config rollout ACK/NACK, shared cert storage, distributed limits

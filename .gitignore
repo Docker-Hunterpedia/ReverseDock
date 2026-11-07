@@ -39,6 +39,8 @@ graphify-out/
 *.p12
 !examples/**/*.pem
 !tests/**/fixtures/**/*.pem
+# Throwaway test-only keys of a crate's tests (named test-only-*).
+!crates/*/tests/fixtures/**/test-only-*.pem
 !tests/**/fixtures/**/*.key
 
 # ---- OS / editors ----

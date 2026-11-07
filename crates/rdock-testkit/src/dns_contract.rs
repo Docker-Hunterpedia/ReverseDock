@@ -3,15 +3,14 @@
 //! The fake serves one zone, `example.com`, and refuses writes anywhere else, so a passing run
 //! also shows that the adapter found the zone by walking up from [`FQDN`]. The run:
 //!
-//! 1. builds the solver with its credential as a `${file:…}` reference;
-//! 2. presents two values on one name (a wildcard and its base name) and checks both are served;
-//! 3. cleans up one and checks the other stays;
-//! 4. rotates the credential file and checks the next call reads the new one;
-//! 5. makes the next write fail once with a transient error and checks the call still succeeds;
-//! 6. cleans up everything.
-//!
-//! Private-zone skipping joins the contract with the first adapter whose provider has private
-//! zones.
+//! 1. for providers with private zones, adds a private zone `app.example.com`, closer to
+//!    [`FQDN`] than `example.com`, which refuses writes: the adapter must skip it;
+//! 2. builds the solver with its credential as a `${file:…}` reference;
+//! 3. presents two values on one name (a wildcard and its base name) and checks both are served;
+//! 4. cleans up one and checks the other stays;
+//! 5. rotates the credential file and checks the next call reads the new one;
+//! 6. makes the next write fail once with a transient error and checks the call still succeeds;
+//! 7. cleans up everything.
 
 use std::sync::Arc;
 
@@ -28,6 +27,9 @@ pub trait ContractFake: Send + Sync {
     fn accept_only(&self, credential: &str);
     /// Fails the next write once with a transient error: `429` with `Retry-After`, `SERVFAIL`.
     fn fail_next_write(&self);
+    /// For providers with private zones: adds a private zone `app.example.com` that refuses
+    /// writes. Fakes of providers without private zones keep this default, which does nothing.
+    fn add_private_zone(&self) {}
 }
 
 /// Runs the contract. `credentials` are two valid credentials for the fake, used before and
@@ -37,6 +39,8 @@ pub async fn run(
     credentials: [&str; 2],
     build: impl Fn(&str) -> Arc<dyn DnsSolver>,
 ) {
+    // Every write below lands in `example.com` only when the adapter skips this zone.
+    fake.add_private_zone();
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("credential");
     std::fs::write(&file, format!("{}\n", credentials[0])).unwrap();

@@ -1,6 +1,6 @@
 ---
 title: Wildcards and DNS-01
-description: Get wildcard certificates, or certificates for hosts the CA cannot reach, through DNS-01 with Cloudflare, DigitalOcean, Hetzner, any RFC 2136 nameserver, your own script or a webhook.
+description: Get wildcard certificates, or certificates for hosts the CA cannot reach, through DNS-01 with Cloudflare, Route 53, Google Cloud DNS, Azure DNS, DigitalOcean, Hetzner, deSEC, any RFC 2136 nameserver, your own script or a webhook.
 sidebar:
   order: 3
 ---
@@ -23,6 +23,24 @@ acme:
     hz:
       type: hetzner
       api_token: "${env:HETZNER_API_TOKEN}"
+    desec:
+      type: desec
+      token: "${file:/run/secrets/desec_token}"
+    aws:
+      type: route53
+      access_key_id: "${env:AWS_ACCESS_KEY_ID}"
+      secret_access_key: "${env:AWS_SECRET_ACCESS_KEY}"
+    gcp:
+      type: google_cloud_dns
+      credentials_file: /run/secrets/gcp-dns.json
+    azure:
+      type: azure_dns
+      tenant_id: 00000000-0000-0000-0000-000000000000
+      client_id: 00000000-0000-0000-0000-000000000000
+      client_secret: "${file:/run/secrets/azure_client_secret}"
+      subscription_id: 00000000-0000-0000-0000-000000000000
+      resource_group: dns
+      zone: example.com
     bind:
       type: rfc2136
       nameserver: 192.0.2.53
@@ -43,15 +61,21 @@ acme:
 | `cloudflare` | The Cloudflare API with a token limited to **Zone → DNS → Edit** for the zone. The zone is looked up from the name, which also needs Zone → Zone → Read, unless you set `zone_id`. |
 | `digitalocean` <Status since="v0.6" /> | The DigitalOcean API: one TXT record per value. [Details](#digitalocean). |
 | `hetzner` <Status since="v0.6" /> | The Hetzner Cloud API (Hetzner Console DNS): values added to and removed from the TXT record set. [Details](#hetzner). |
+| `route53` <Status since="v0.6" /> | Amazon Route 53, signed with an access key: the TXT record set is updated and ReverseDock waits until Route 53 reports it in sync. [Details](#amazon-route-53). |
+| `google_cloud_dns` <Status since="v0.6" /> | Google Cloud DNS with a service account key: the TXT record set is replaced in one change. [Details](#google-cloud-dns). |
+| `azure_dns` <Status since="v0.6" /> | Azure DNS with a client secret, a certificate or a managed identity. [Details](#azure-dns). |
+| `desec` <Status since="v0.6" /> | deSEC, with a token that can be limited to the challenge records. [Details](#desec). |
 | `rfc2136` <Status since="v0.6" /> | Dynamic updates signed with TSIG, sent to your primary nameserver: BIND, Knot, PowerDNS and others. [Details](#rfc-2136-bind-knot-powerdns). |
 | `exec` | Runs `command args… present <fqdn> <value>` and later `cleanup <fqdn> <value>`, directly, never through a shell. `command` must be an absolute path; `timeout` defaults to 30 seconds. A non-zero exit fails the attempt. |
 | `webhook` | `POST`s `{"action": "present" \| "cleanup", "name": "<fqdn>", "value": "<value>"}` to an `https://` URL with an optional bearer token. Any 2xx answer is success. |
 
-Write tokens as `${file:…}` or `${env:…}` references: ReverseDock keeps them out of its configuration history and logs, and reads them again for every call, so a rotated file is used without a reload. For `digitalocean`, `hetzner` and `rfc2136`, `rdock validate` refuses a secret written into the file; for the others it warns.
+Write tokens as `${file:…}` or `${env:…}` references: ReverseDock keeps them out of its configuration history and logs, and reads them again for every call, so a rotated file is used without a reload. For the providers added in v0.6 (`route53`, `google_cloud_dns`, `azure_dns`, `digitalocean`, `hetzner`, `desec` and `rfc2136`), `rdock validate` refuses a secret written into the file; for the others it warns.
 
 The API adapters wait up to 30 seconds per call, follow no redirects, and retry rate limits (`429`, honouring `Retry-After` and `RateLimit-Reset`), conflicts and server errors up to five times with growing random waits. A provider asking to wait longer than 30 seconds fails the attempt, which is tried again at the next renewal pass. Errors carry the provider's message, never the token.
 
-The zone holding `_acme-challenge.<name>` is found by asking the provider about the record name and each parent in turn, unless you set `zone`. Setting it saves requests and lets you give the credential less access.
+The zone holding `_acme-challenge.<name>` is found by asking the provider about the record name and each parent in turn, unless you set `zone` (`hosted_zone_id` for Route 53). Setting it saves requests and lets you give the credential less access. Private zones (Route 53, Google Cloud DNS) are skipped when looking a zone up; name one explicitly to use it.
+
+Providers that keep all values of a name in one record set (Route 53, Google Cloud DNS, Azure DNS, deSEC) are changed by reading the set, adding or removing one value and writing it back, one change per zone at a time, so the values of a wildcard and its base name never remove each other.
 
 ### DigitalOcean
 
@@ -82,6 +106,120 @@ acme:
 ```
 
 Values are added with the `add_records` action and removed with `remove_records` (TTL 60 seconds), so the values of a wildcard and its base name coexist. ReverseDock follows each action until it succeeds, then checks the authoritative nameservers as described under [Propagation](#propagation).
+
+### Amazon Route 53
+
+ReverseDock signs its requests with [AWS Signature Version 4](https://docs.aws.amazon.com/IAM/latest/UserGuide/create-signed-request.html) itself; no AWS SDK is involved. Only static credentials are read: an access key pair, with `session_token` for temporary STS credentials. Instance roles and the rest of the AWS credential chain are not supported yet.
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    aws:
+      type: route53
+      access_key_id: "${env:AWS_ACCESS_KEY_ID}"
+      secret_access_key: "${env:AWS_SECRET_ACCESS_KEY}"
+      session_token: "${env:AWS_SESSION_TOKEN}"   # optional, for temporary credentials
+      hosted_zone_id: Z0123456789ABCDEFGHIJ       # optional; may name a private zone
+```
+
+Present updates the TXT record set with `UPSERT` (TTL 60 seconds) and then polls `GetChange` until Route 53 reports `INSYNC`, which AWS says generally happens within 60 seconds ([GetChange](https://docs.aws.amazon.com/Route53/latest/APIReference/API_GetChange.html), checked 2026-11-07). A concurrent change to the zone (`PriorRequestNotComplete`) and throttling are retried. Requests go to `route53.amazonaws.com`, signed for `us-east-1` ([endpoints](https://docs.aws.amazon.com/general/latest/gr/r53.html), checked 2026-11-07); the China and GovCloud partitions are not supported, and `rdock validate` refuses a `region` in them.
+
+Limit the key to the challenge records with the condition keys Route 53 offers ([conditions](https://docs.aws.amazon.com/Route53/latest/DeveloperGuide/specifying-rrset-conditions.html), checked 2026-11-07: names lowercase without the trailing dot, one `_acme-challenge` name per certificate name; a wildcard and its base name share one). With `hosted_zone_id` set, the `ListHostedZonesByName` statement can go.
+
+```json title="IAM policy"
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    { "Effect": "Allow", "Action": "route53:GetChange", "Resource": "arn:aws:route53:::change/*" },
+    { "Effect": "Allow", "Action": "route53:ListHostedZonesByName", "Resource": "*" },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ListResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/Z0123456789ABCDEFGHIJ"
+    },
+    {
+      "Effect": "Allow",
+      "Action": "route53:ChangeResourceRecordSets",
+      "Resource": "arn:aws:route53:::hostedzone/Z0123456789ABCDEFGHIJ",
+      "Condition": {
+        "ForAllValues:StringEquals": {
+          "route53:ChangeResourceRecordSetsNormalizedRecordNames": ["_acme-challenge.example.com"],
+          "route53:ChangeResourceRecordSetsRecordTypes": ["TXT"],
+          "route53:ChangeResourceRecordSetsActions": ["UPSERT", "DELETE"]
+        }
+      }
+    }
+  ]
+}
+```
+
+### Google Cloud DNS
+
+Create a service account and a JSON key for it. ReverseDock signs an RS256 token with the key and exchanges it for an access token ([service accounts](https://developers.google.com/identity/protocols/oauth2/service-account), checked 2026-11-07), with the scope `https://www.googleapis.com/auth/ndev.clouddns.readwrite`. The key file is read for every call, so replacing it takes effect at once; access tokens are kept until five minutes before they expire.
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    gcp:
+      type: google_cloud_dns
+      credentials_file: /run/secrets/gcp-dns.json   # the service account key
+      project: my-project                          # optional: the key's project_id
+      zone: example-com                            # optional: the managed zone's name; may be private
+```
+
+Each change deletes the current TXT record set and adds the new one atomically (TTL 60 seconds), and ReverseDock follows the change until it is `done`. `done` means the update was sent to Google's nameservers, so the authoritative check under [Propagation](#propagation) still runs ([changes](https://cloud.google.com/dns/docs/reference/rest/v1/changes), checked 2026-11-07).
+
+For the least access, grant the service account **DNS Administrator** (`roles/dns.admin`) on the one managed zone instead of the project ([per-zone IAM](https://docs.cloud.google.com/dns/docs/zones/iam-per-resource-zones), checked 2026-11-07) and set `zone`: looking a zone up by name lists the project's zones, which needs `dns.managedZones.list` on the project.
+
+### Azure DNS
+
+Choose exactly one way to sign in; `rdock validate` refuses none or several:
+
+- `client_secret`: a service principal's secret, sent to Microsoft Entra ID in the client credentials grant ([Entra](https://learn.microsoft.com/en-us/entra/identity-platform/v2-oauth2-client-creds-grant-flow), checked 2026-11-07).
+- `client_certificate`: the service principal's certificate and RSA private key, PEM, in one file. ReverseDock signs a PS256 assertion carrying the certificate's SHA-256 thumbprint, as Microsoft specifies ([certificate credentials](https://learn.microsoft.com/en-us/entra/identity-platform/certificate-credentials), checked 2026-11-07). No secret ever leaves the server.
+- `managed_identity: true`: the managed identity of the Azure VM or service ReverseDock runs on, through the instance metadata service at `http://169.254.169.254` ([IMDS](https://learn.microsoft.com/en-us/entra/identity/managed-identities-azure-resources/how-to-use-vm-token), checked 2026-11-07). Set `client_id` to pick a user-assigned identity; `tenant_id` is not needed.
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    azure:
+      type: azure_dns
+      tenant_id: 00000000-0000-0000-0000-000000000000
+      client_id: 00000000-0000-0000-0000-000000000000
+      client_certificate: "${file:/run/secrets/azure-dns.pem}"   # or client_secret, or managed_identity: true
+      subscription_id: 00000000-0000-0000-0000-000000000000
+      resource_group: dns
+      zone: example.com
+      environment: public   # the default; or usgovernment, china
+```
+
+`environment` fixes the endpoints: `login.microsoftonline.com` and `management.azure.com` for `public`, `login.microsoftonline.us` and `management.usgovcloudapi.net` for `usgovernment`, `login.partner.microsoftonline.cn` and `management.chinacloudapi.cn` for `china` ([national clouds](https://learn.microsoft.com/en-us/entra/identity-platform/authentication-national-cloud), [Azure Government](https://learn.microsoft.com/en-us/azure/azure-government/compare-azure-government-global-azure), [Azure in China](https://learn.microsoft.com/en-us/azure/china/concepts-service-availability), checked 2026-11-07). Azure DNS has no lookup by name, so `zone`, `resource_group` and `subscription_id` are required.
+
+Record sets are written with `If-Match` on their etag (`If-None-Match: *` when new), TTL 60 seconds; when another writer got there first (`412`), ReverseDock reads the set again ([record sets](https://learn.microsoft.com/en-us/rest/api/dns/record-sets/create-or-update?view=rest-dns-2018-05-01), checked 2026-11-07). Assign the identity the built-in **DNS Zone Contributor** role on the zone only, not on the resource group or subscription ([built-in roles](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/networking), checked 2026-11-06).
+
+### deSEC
+
+```yaml title="rdock.yaml (excerpt)"
+acme:
+  dns_providers:
+    desec:
+      type: desec
+      token: "${env:DESEC_TOKEN}"   # or "${file:/run/secrets/desec_token}"
+      zone: example.com             # optional: asked from deSEC otherwise
+```
+
+The domain is found with one `owns_qname` query. A new TXT record set gets the domain's `minimum_ttl`; values are added to and removed from it, and the last cleanup deletes it. deSEC allows few record set writes per domain (2 per second, 15 per minute, 100 per hour, 300 per day), so a value already present costs no write and a `429` is retried after the wait deSEC asks for, up to 30 seconds ([rate limits](https://desec.readthedocs.io/en/latest/rate-limits.html), checked 2026-11-06).
+
+Limit the token to the challenge records with token policies: first a default policy that denies writes, then one that allows writing the `_acme-challenge` TXT record set of your domain, one per name below it ([token policies](https://desec.readthedocs.io/en/latest/auth/tokens.html), checked 2026-11-07). Policies restrict record set writes only; every token can still read all record sets.
+
+```bash title="Token policies"
+curl -X POST https://desec.io/api/v1/auth/tokens/<token id>/policies/rrsets/ \
+  -H "Authorization: Token <a token that may manage tokens>" -H "Content-Type: application/json" \
+  -d '{"domain": null, "subname": null, "type": null}'
+curl -X POST https://desec.io/api/v1/auth/tokens/<token id>/policies/rrsets/ \
+  -H "Authorization: Token <a token that may manage tokens>" -H "Content-Type: application/json" \
+  -d '{"domain": "example.com", "subname": "_acme-challenge", "type": "TXT", "perm_write": true}'
+```
 
 ### RFC 2136: BIND, Knot, PowerDNS
 

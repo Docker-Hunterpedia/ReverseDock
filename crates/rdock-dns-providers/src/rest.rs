@@ -1,18 +1,21 @@
-//! A small JSON client for DNS provider APIs: the hyper-rustls client the Cloudflare adapter
-//! uses (platform verifier, no redirects followed), a bearer token resolved for every call,
+//! A small client for DNS provider APIs: the hyper-rustls client the Cloudflare adapter uses
+//! (platform verifier, no redirects followed), credentials applied afresh to every attempt,
 //! 30 seconds per attempt, and retries with backoff that honour `Retry-After` and the
 //! providers' `RateLimit-Reset` (ADR-0026).
 
+use std::fmt;
+use std::sync::Arc;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
+use async_trait::async_trait;
 use bytes::Bytes;
-use http::{HeaderMap, Method, Request, StatusCode, header};
+use http::{HeaderMap, HeaderValue, Method, Request, StatusCode, header};
 use http_body_util::{BodyExt, Full};
 use hyper_rustls::{HttpsConnector, HttpsConnectorBuilder};
 use hyper_util::client::legacy::Client;
 use hyper_util::client::legacy::connect::HttpConnector;
 use hyper_util::rt::TokioExecutor;
-use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use percent_encoding::{AsciiSet, CONTROLS, NON_ALPHANUMERIC, utf8_percent_encode};
 use rdock_acme::dns::DnsError;
 use serde_json::Value;
 use tracing::debug;
@@ -35,9 +38,32 @@ const SEGMENT: &AsciiSet = &CONTROLS
     .add(b'{')
     .add(b'}');
 
+/// Characters escaped in a query or form value: everything but RFC 3986's unreserved ones.
+const VALUE: &AsciiSet = &NON_ALPHANUMERIC
+    .remove(b'-')
+    .remove(b'.')
+    .remove(b'_')
+    .remove(b'~');
+
 /// `text` as one path segment.
 pub(crate) fn segment(text: &str) -> String {
     utf8_percent_encode(text, SEGMENT).to_string()
+}
+
+/// `pairs` as an `application/x-www-form-urlencoded` body or query string, with every byte but
+/// the unreserved ones escaped (which is also what AWS signs, so the query needs no rewriting).
+pub(crate) fn form(pairs: &[(&str, &str)]) -> String {
+    pairs
+        .iter()
+        .map(|(key, value)| {
+            format!(
+                "{}={}",
+                utf8_percent_encode(key, VALUE),
+                utf8_percent_encode(value, VALUE)
+            )
+        })
+        .collect::<Vec<_>>()
+        .join("&")
 }
 
 /// Why a call failed.
@@ -59,33 +85,146 @@ pub(crate) enum RestError {
         message: String,
     },
     /// The API asked to wait longer than a call may.
-    #[error("{api} is rate limiting this token; it allows the next request in {} s", wait.as_secs())]
+    #[error("{api} is rate limiting this credential; it allows the next request in {} s", wait.as_secs())]
     RateLimited { api: &'static str, wait: Duration },
     /// A successful answer was not JSON.
-    #[error("{api} {request} answered {status} without JSON")]
-    NotJson {
-        api: &'static str,
-        request: String,
-        status: StatusCode,
-    },
-    /// The token reference could not be resolved.
+    #[error("{api} {request} answered without JSON")]
+    NotJson { api: &'static str, request: String },
+    /// The credentials could not be read or obtained.
     #[error(transparent)]
-    Secret(#[from] DnsError),
+    Credentials(#[from] DnsError),
 }
 
 impl RestError {
+    /// The status of an error answer.
+    pub(crate) fn status(&self) -> Option<StatusCode> {
+        match self {
+            Self::Status { status, .. } => Some(*status),
+            _ => None,
+        }
+    }
+
     /// Whether the API answered `404 Not Found`.
     pub(crate) fn is_not_found(&self) -> bool {
-        matches!(self, Self::Status { status, .. } if *status == StatusCode::NOT_FOUND)
+        self.status() == Some(StatusCode::NOT_FOUND)
     }
 }
 
 impl From<RestError> for DnsError {
     fn from(error: RestError) -> Self {
         match error {
-            RestError::Secret(error) => error,
+            RestError::Credentials(error) => error,
             other => DnsError(other.to_string()),
         }
+    }
+}
+
+/// How every attempt proves who is calling.
+#[async_trait]
+pub(crate) trait Credentials: Send + Sync + fmt::Debug {
+    /// Adds the credentials to `request` just before it is sent. Called for every attempt, so
+    /// secrets are read and signatures made afresh each time.
+    async fn apply(&self, request: &mut Request<Bytes>) -> Result<(), DnsError>;
+}
+
+/// A token from a `${file:…}`/`${env:…}` reference, sent as `Authorization: <scheme> <token>`.
+#[derive(Debug)]
+pub(crate) struct StaticToken {
+    scheme: &'static str,
+    reference: String,
+    /// The setting holding the reference, named in errors.
+    field: &'static str,
+}
+
+impl StaticToken {
+    /// `Authorization: <scheme> <token>` with the token behind `reference`.
+    pub(crate) fn new(scheme: &'static str, reference: &str, field: &'static str) -> Self {
+        Self {
+            scheme,
+            reference: reference.to_owned(),
+            field,
+        }
+    }
+}
+
+#[async_trait]
+impl Credentials for StaticToken {
+    async fn apply(&self, request: &mut Request<Bytes>) -> Result<(), DnsError> {
+        let token = secret::resolve(&self.reference, self.field)?;
+        let value = header_value(&format!("{} {token}", self.scheme), self.field)?;
+        request.headers_mut().insert(header::AUTHORIZATION, value);
+        Ok(())
+    }
+}
+
+/// No credentials, for token endpoints that authenticate in the body.
+#[derive(Debug)]
+pub(crate) struct Anonymous;
+
+#[async_trait]
+impl Credentials for Anonymous {
+    async fn apply(&self, _request: &mut Request<Bytes>) -> Result<(), DnsError> {
+        Ok(())
+    }
+}
+
+/// `text` as a header value; `field` names the setting it came from, never its content.
+pub(crate) fn header_value(text: &str, field: &str) -> Result<HeaderValue, DnsError> {
+    HeaderValue::from_str(text)
+        .map_err(|_| DnsError(format!("{field} holds characters a header cannot carry")))
+}
+
+/// What a provider's error answer says.
+#[derive(Debug, Default)]
+pub(crate) struct ProviderError {
+    /// The provider's message.
+    pub(crate) message: Option<String>,
+    /// Whether the provider marks the error as transient although its status is not (Route 53
+    /// answers throttling with `400`).
+    pub(crate) transient: bool,
+}
+
+/// How a provider's error answers are read.
+#[derive(Debug, Clone, Copy)]
+pub(crate) enum ErrorFormat {
+    /// JSON; the function finds the provider's message.
+    Json(fn(&Value) -> Option<String>),
+    /// Any other format.
+    Raw(fn(&[u8]) -> ProviderError),
+}
+
+impl ErrorFormat {
+    fn read(self, body: &[u8]) -> ProviderError {
+        match self {
+            Self::Json(message) => ProviderError {
+                message: serde_json::from_slice::<Value>(body)
+                    .ok()
+                    .as_ref()
+                    .and_then(message),
+                transient: false,
+            },
+            Self::Raw(read) => read(body),
+        }
+    }
+}
+
+/// A request body and its media type.
+pub(crate) struct Body {
+    content_type: &'static str,
+    bytes: Bytes,
+}
+
+impl Body {
+    /// A body of type `content_type`.
+    pub(crate) fn new(content_type: &'static str, bytes: impl Into<Bytes>) -> Self {
+        Self {
+            content_type,
+            bytes: bytes.into(),
+        }
+    }
+
+    fn json(value: &Value) -> Self {
+        Self::new("application/json", value.to_string())
     }
 }
 
@@ -96,26 +235,40 @@ enum Failure {
     Retry(RestError, Option<Duration>),
 }
 
-/// A JSON API client for one provider and token.
+/// An API client for one provider and credential.
 #[derive(Debug)]
 pub(crate) struct RestClient {
     /// The provider's API name in messages, such as `DigitalOcean API`.
     api: &'static str,
     base: String,
-    /// The token reference, resolved for each attempt.
-    token: String,
-    /// The provider's error text from an error answer's JSON.
-    error_message: fn(&Value) -> Option<String>,
+    credentials: Arc<dyn Credentials>,
+    errors: ErrorFormat,
     client: Client<HttpsConnector<HttpConnector>, Full<Bytes>>,
 }
 
 impl RestClient {
-    /// A client calling `base` (no trailing slash needed) with the bearer token `token`.
+    /// A client calling `base` (no trailing slash needed) with the bearer token behind the
+    /// reference `token`.
     pub(crate) fn new(
         api: &'static str,
         base: &str,
         token: &str,
         error_message: fn(&Value) -> Option<String>,
+    ) -> Result<Self, DnsError> {
+        Self::with(
+            api,
+            base,
+            Arc::new(StaticToken::new("Bearer", token, "api_token")),
+            ErrorFormat::Json(error_message),
+        )
+    }
+
+    /// A client calling `base` with `credentials`, reading error answers as `errors`.
+    pub(crate) fn with(
+        api: &'static str,
+        base: &str,
+        credentials: Arc<dyn Credentials>,
+        errors: ErrorFormat,
     ) -> Result<Self, DnsError> {
         let connector = HttpsConnectorBuilder::new()
             .try_with_platform_verifier()
@@ -126,38 +279,89 @@ impl RestClient {
         Ok(Self {
             api,
             base: base.trim_end_matches('/').to_owned(),
-            token: token.to_owned(),
-            error_message,
+            credentials,
+            errors,
             client: Client::builder(TokioExecutor::new()).build(connector),
         })
     }
 
     /// `GET path`.
     pub(crate) async fn get(&self, path: &str) -> Result<Value, RestError> {
-        self.call(Method::GET, path, None).await
+        self.json(Method::GET, path, &[], None).await
     }
 
     /// `POST path` with a JSON body.
     pub(crate) async fn post(&self, path: &str, body: &Value) -> Result<Value, RestError> {
-        self.call(Method::POST, path, Some(body)).await
+        self.json(Method::POST, path, &[], Some(body)).await
+    }
+
+    /// `PATCH path` with a JSON body.
+    pub(crate) async fn patch(&self, path: &str, body: &Value) -> Result<Value, RestError> {
+        self.json(Method::PATCH, path, &[], Some(body)).await
     }
 
     /// `DELETE path`.
     pub(crate) async fn delete(&self, path: &str) -> Result<Value, RestError> {
-        self.call(Method::DELETE, path, None).await
+        self.json(Method::DELETE, path, &[], None).await
     }
 
-    /// Calls the API, retrying `429`, `409`, `423`, `5xx` and transport errors up to
-    /// [`ATTEMPTS`] times. Returns the answer's JSON (`Null` for an empty body).
-    async fn call(
+    /// `POST path` with a form body, answered with JSON (OAuth token endpoints).
+    pub(crate) async fn post_form(
+        &self,
+        path: &str,
+        pairs: &[(&str, &str)],
+    ) -> Result<Value, RestError> {
+        let body = Body::new("application/x-www-form-urlencoded", form(pairs));
+        let bytes = self
+            .send(
+                Method::POST,
+                path,
+                &[("accept", "application/json")],
+                Some(body),
+            )
+            .await?;
+        self.parse(&Method::POST, path, &bytes)
+    }
+
+    /// Calls `method path` with extra `headers` and an optional JSON body. Returns the answer's
+    /// JSON (`Null` for an empty body).
+    pub(crate) async fn json(
         &self,
         method: Method,
         path: &str,
+        headers: &[(&'static str, &str)],
         body: Option<&Value>,
     ) -> Result<Value, RestError> {
+        let mut all = vec![("accept", "application/json")];
+        all.extend_from_slice(headers);
+        let bytes = self
+            .send(method.clone(), path, &all, body.map(Body::json))
+            .await?;
+        self.parse(&method, path, &bytes)
+    }
+
+    fn parse(&self, method: &Method, path: &str, bytes: &[u8]) -> Result<Value, RestError> {
+        if bytes.is_empty() {
+            return Ok(Value::Null);
+        }
+        serde_json::from_slice(bytes).map_err(|_| RestError::NotJson {
+            api: self.api,
+            request: format!("{method} {path}"),
+        })
+    }
+
+    /// Calls the API, retrying `429`, `409`, `423`, `5xx`, transport errors and errors the
+    /// provider marks as transient up to [`ATTEMPTS`] times. Returns the answer's body.
+    pub(crate) async fn send(
+        &self,
+        method: Method,
+        path: &str,
+        headers: &[(&'static str, &str)],
+        body: Option<Body>,
+    ) -> Result<Bytes, RestError> {
         let mut retry = 0;
         loop {
-            let (error, asked) = match self.attempt(&method, path, body).await {
+            let (error, asked) = match self.attempt(&method, path, headers, body.as_ref()).await {
                 Ok(answer) => return Ok(answer),
                 Err(Failure::Final(error)) => return Err(error),
                 Err(Failure::Retry(error, asked)) => (error, asked),
@@ -182,27 +386,32 @@ impl RestClient {
         &self,
         method: &Method,
         path: &str,
-        body: Option<&Value>,
-    ) -> Result<Value, Failure> {
-        let token = secret::resolve(&self.token, "api_token")
-            .map_err(|e| Failure::Final(RestError::Secret(e)))?;
+        headers: &[(&'static str, &str)],
+        body: Option<&Body>,
+    ) -> Result<Bytes, Failure> {
         let request_line = format!("{method} {path}");
         let transport = |message: String| RestError::Transport {
             api: self.api,
             request: request_line.clone(),
             message,
         };
-        let request = Request::builder()
+        let mut builder = Request::builder()
             .method(method.clone())
-            .uri(format!("{}{path}", self.base))
-            .header(header::AUTHORIZATION, format!("Bearer {token}"))
-            .header(header::ACCEPT, "application/json")
-            .header(header::CONTENT_TYPE, "application/json")
-            .body(Full::new(Bytes::from(
-                body.map(Value::to_string).unwrap_or_default(),
-            )))
+            .uri(format!("{}{path}", self.base));
+        for (name, value) in headers {
+            builder = builder.header(*name, *value);
+        }
+        if let Some(body) = body {
+            builder = builder.header(header::CONTENT_TYPE, body.content_type);
+        }
+        let mut request = builder
+            .body(body.map(|b| b.bytes.clone()).unwrap_or_default())
             .map_err(|e| Failure::Final(transport(e.to_string())))?;
-        let response = tokio::time::timeout(TIMEOUT, self.client.request(request))
+        self.credentials
+            .apply(&mut request)
+            .await
+            .map_err(|e| Failure::Final(RestError::Credentials(e)))?;
+        let response = tokio::time::timeout(TIMEOUT, self.client.request(request.map(Full::new)))
             .await
             .map_err(|_| Failure::Retry(transport("no answer within 30 s".into()), None))?
             .map_err(|e| Failure::Retry(transport(e.to_string()), None))?;
@@ -213,32 +422,19 @@ impl RestClient {
             .map_err(|_| Failure::Retry(transport("no answer within 30 s".into()), None))?
             .map_err(|e| Failure::Retry(transport(e.to_string()), None))?
             .to_bytes();
-        let json = if bytes.is_empty() {
-            Ok(Value::Null)
-        } else {
-            serde_json::from_slice::<Value>(&bytes)
-        };
         if status.is_success() {
-            return json.map_err(|_| {
-                Failure::Final(RestError::NotJson {
-                    api: self.api,
-                    request: request_line.clone(),
-                    status,
-                })
-            });
+            return Ok(bytes);
         }
-        let message = json
-            .ok()
-            .as_ref()
-            .and_then(self.error_message)
-            .unwrap_or_else(|| status.canonical_reason().unwrap_or("error").to_owned());
+        let said = self.errors.read(&bytes);
         let error = RestError::Status {
             api: self.api,
             request: request_line,
             status,
-            message,
+            message: said
+                .message
+                .unwrap_or_else(|| status.canonical_reason().unwrap_or("error").to_owned()),
         };
-        Err(if is_transient(status) {
+        Err(if said.transient || is_transient(status) {
             Failure::Retry(error, server_wait(status, &headers, SystemTime::now()))
         } else {
             Failure::Final(error)
