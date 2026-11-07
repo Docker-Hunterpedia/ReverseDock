@@ -1473,6 +1473,107 @@
         ],
         "type": "object"
       },
+      "rdock.AzureDnsProvider": {
+        "additionalProperties": false,
+        "description": "Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and\n`managed_identity` is set.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "api_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.HttpUrl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For tests only: another base URL for sign-in, managed identity and Resource Manager,\n`http://` only on a loopback address."
+          },
+          "client_certificate": {
+            "default": null,
+            "description": "The service principal's certificate and its RSA private key, PEM, in one file. Write it\nas a `${file:…}` reference.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_id": {
+            "default": null,
+            "description": "Application (client) ID of the service principal, or of a user-assigned managed identity.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "client_secret": {
+            "default": null,
+            "description": "Client secret of the service principal. Write it as a `${file:…}` or `${env:…}`\nreference.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "environment": {
+            "$ref": "#/components/schemas/rdock.AzureEnvironment",
+            "default": "public",
+            "description": "The Azure cloud: its sign-in and Resource Manager endpoints."
+          },
+          "managed_identity": {
+            "default": false,
+            "description": "Authenticate as the managed identity of the Azure VM or service ReverseDock runs on,\nthrough the instance metadata service.",
+            "type": "boolean"
+          },
+          "resource_group": {
+            "description": "Resource group of the DNS zone.",
+            "type": "string"
+          },
+          "subscription_id": {
+            "description": "Subscription ID of the DNS zone.",
+            "type": "string"
+          },
+          "tenant_id": {
+            "default": null,
+            "description": "Directory (tenant) ID of the service principal; needed with a client secret or certificate.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zone": {
+            "description": "The DNS zone's name, such as `example.com`.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "subscription_id",
+          "resource_group",
+          "zone"
+        ],
+        "type": "object"
+      },
+      "rdock.AzureEnvironment": {
+        "description": "An Azure cloud.",
+        "oneOf": [
+          {
+            "const": "public",
+            "description": "Global Azure: `login.microsoftonline.com`, `management.azure.com`.",
+            "type": "string"
+          },
+          {
+            "const": "usgovernment",
+            "description": "Azure Government: `login.microsoftonline.us`, `management.usgovcloudapi.net`.",
+            "type": "string"
+          },
+          {
+            "const": "china",
+            "description": "Azure operated by 21Vianet: `login.partner.microsoftonline.cn`,\n`management.chinacloudapi.cn`.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.Backend": {
         "additionalProperties": false,
         "description": "One backend server.",
@@ -1950,6 +2051,43 @@
         },
         "type": "object"
       },
+      "rdock.DesecProvider": {
+        "additionalProperties": false,
+        "description": "deSEC (`type: desec`).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "api_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.HttpUrl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For tests only: another API base URL, `http://` only on a loopback address."
+          },
+          "token": {
+            "description": "API token; a token policy can limit it to writing the `_acme-challenge` TXT RRsets of one\ndomain. Write it as a `${file:…}` or `${env:…}` reference.",
+            "type": "string"
+          },
+          "zone": {
+            "default": null,
+            "description": "The domain holding the records, such as `example.com`. Asked from deSEC when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "token"
+        ],
+        "type": "object"
+      },
       "rdock.DigitalOceanProvider": {
         "additionalProperties": false,
         "description": "DigitalOcean DNS (`type: digitalocean`).",
@@ -2126,6 +2264,78 @@
               "type"
             ],
             "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.DesecProvider",
+            "additionalProperties": false,
+            "description": "deSEC, with a token allowed to write the domain's `_acme-challenge` TXT RRsets.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "desec",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.Route53Provider",
+            "additionalProperties": false,
+            "description": "Amazon Route 53, signed with an access key allowed to change the hosted zone's TXT\nrecords.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "route53",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.GoogleCloudDnsProvider",
+            "additionalProperties": false,
+            "description": "Google Cloud DNS, with a service account key allowed to change the managed zone.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "google_cloud_dns",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.AzureDnsProvider",
+            "additionalProperties": false,
+            "description": "Azure DNS, with a service principal (client secret or certificate) or a managed identity\nallowed to change the zone's TXT record sets.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "type": {
+                "const": "azure_dns",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -2289,6 +2499,51 @@
         },
         "required": [
           "paths"
+        ],
+        "type": "object"
+      },
+      "rdock.GoogleCloudDnsProvider": {
+        "additionalProperties": false,
+        "description": "Google Cloud DNS (`type: google_cloud_dns`).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "api_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.HttpUrl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For tests only: another base URL for the token and DNS APIs, `http://` only on a loopback\naddress."
+          },
+          "credentials_file": {
+            "description": "Path of the service account key file (JSON). Read for every call, so a rotated key is used\nwithout a reload.",
+            "type": "string"
+          },
+          "project": {
+            "default": null,
+            "description": "The project of the managed zones. Taken from the key file when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "zone": {
+            "default": null,
+            "description": "The managed zone's name or ID, such as `example-com`; it may name a private zone. Public\nzones are found by DNS name when omitted; private zones are skipped.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "credentials_file"
         ],
         "type": "object"
       },
@@ -4469,6 +4724,64 @@
         },
         "required": [
           "match"
+        ],
+        "type": "object"
+      },
+      "rdock.Route53Provider": {
+        "additionalProperties": false,
+        "description": "Amazon Route 53 (`type: route53`), in the standard AWS partition.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "access_key_id": {
+            "description": "Access key ID of the key pair. Read for every call like the secret, so both can rotate\ntogether; a `${file:…}` or `${env:…}` reference or the ID itself.",
+            "type": "string"
+          },
+          "api_url": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.HttpUrl"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "For tests only: another API base URL, `http://` only on a loopback address."
+          },
+          "hosted_zone_id": {
+            "default": null,
+            "description": "The hosted zone ID, such as `Z0123456789ABCDEFGHIJ`; it may name a private zone. Public\nzones are found by name when omitted; private zones are skipped.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "region": {
+            "default": null,
+            "description": "The AWS region of the deployment. Route 53 is global and signed as `us-east-1` in the\nstandard partition; the China and GovCloud partitions are not supported.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "secret_access_key": {
+            "description": "Secret access key. Write it as a `${file:…}` or `${env:…}` reference.",
+            "type": "string"
+          },
+          "session_token": {
+            "default": null,
+            "description": "Session token of temporary (STS) credentials. Write it as a `${file:…}` or `${env:…}`\nreference.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "required": [
+          "access_key_id",
+          "secret_access_key"
         ],
         "type": "object"
       },

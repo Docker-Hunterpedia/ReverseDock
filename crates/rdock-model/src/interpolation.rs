@@ -23,6 +23,11 @@ const SECRETS: &[&[&str]] = &[
     &["acme", "eab", "hmac_key"],
     &["acme", "dns_providers", "*", "token"],
     &["acme", "dns_providers", "*", "tsig_secret"],
+    &["acme", "dns_providers", "*", "access_key_id"],
+    &["acme", "dns_providers", "*", "secret_access_key"],
+    &["acme", "dns_providers", "*", "session_token"],
+    &["acme", "dns_providers", "*", "client_secret"],
+    &["acme", "dns_providers", "*", "client_certificate"],
     &["observability", "alerts", "webhook", "token"],
     &["observability", "alerts", "channels", "*", "url"],
     &["observability", "alerts", "channels", "*", "secret"],
@@ -70,6 +75,17 @@ mod tests {
             field_kind(&["acme", "dns_providers", "ns", "tsig_secret"]),
             FieldKind::Secret
         );
+        for field in [
+            "secret_access_key",
+            "session_token",
+            "client_secret",
+            "client_certificate",
+        ] {
+            assert_eq!(
+                field_kind(&["acme", "dns_providers", "cloud", field]),
+                FieldKind::Secret
+            );
+        }
         assert_eq!(
             field_kind(&["certificates", "main", "key_password"]),
             FieldKind::Secret

@@ -47,8 +47,8 @@ impl DigitalOceanDns {
                     .get(&format!("/v2/domains/{}", segment(&name)))
                     .await
                 {
-                    Ok(_) => Ok(true),
-                    Err(e) if e.is_not_found() => Ok(false),
+                    Ok(_) => Ok(Some(name)),
+                    Err(e) if e.is_not_found() => Ok(None),
                     Err(e) => Err(e.into()),
                 }
             })

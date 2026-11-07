@@ -1,6 +1,6 @@
 [package]
 name = "rdock-dns-providers"
-description = "DNS-01 adapters for ReverseDock: DigitalOcean, Hetzner and RFC 2136"
+description = "DNS-01 adapters for ReverseDock: Route 53, Google Cloud DNS, Azure DNS, DigitalOcean, Hetzner, deSEC and RFC 2136"
 version.workspace = true
 edition.workspace = true
 rust-version.workspace = true
@@ -27,8 +27,10 @@ rdock-acme.workspace = true
 rdock-config.workspace = true
 rdock-model.workspace = true
 ring.workspace = true
+rustls-pki-types.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
+time.workspace = true
 tokio.workspace = true
 tracing.workspace = true
 

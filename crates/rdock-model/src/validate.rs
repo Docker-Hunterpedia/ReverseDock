@@ -7,7 +7,8 @@ use rdock_rules::{Context, Expr, check_host};
 use regex::RegexBuilder;
 
 use crate::acme::{
-    AcmeProfile, Challenge, DnsProvider, KnownCa, Rfc2136Provider, TsigAlgorithm, Webhook,
+    AcmeProfile, AzureDnsProvider, Challenge, DnsProvider, KnownCa, Rfc2136Provider,
+    Route53Provider, TsigAlgorithm, Webhook,
 };
 use crate::config::{Config, Listener, ListenerProtocol};
 use crate::diagnostics::{Diagnostic, path_index, path_key};
@@ -1394,37 +1395,65 @@ impl Validator<'_> {
                 }
             }
             DnsProvider::Webhook(webhook) => self.check_webhook(path, webhook, "dns_webhook_token"),
-            DnsProvider::DigitalOcean(provider) => self.check_api_provider(
-                path,
-                &provider.api_token,
-                provider.zone.as_deref(),
-                provider.api_url.as_ref(),
-                "do_token",
-            ),
-            DnsProvider::Hetzner(provider) => self.check_api_provider(
-                path,
-                &provider.api_token,
-                provider.zone.as_deref(),
-                provider.api_url.as_ref(),
-                "hetzner_token",
-            ),
+            DnsProvider::DigitalOcean(provider) => {
+                self.check_secret_reference(
+                    &format!("{path}.api_token"),
+                    &provider.api_token,
+                    "do_token",
+                );
+                self.check_optional_name(&format!("{path}.zone"), provider.zone.as_deref());
+                self.check_test_url(path, provider.api_url.as_ref());
+            }
+            DnsProvider::Hetzner(provider) => {
+                self.check_secret_reference(
+                    &format!("{path}.api_token"),
+                    &provider.api_token,
+                    "hetzner_token",
+                );
+                self.check_optional_name(&format!("{path}.zone"), provider.zone.as_deref());
+                self.check_test_url(path, provider.api_url.as_ref());
+            }
             DnsProvider::Rfc2136(provider) => self.check_rfc2136(path, provider),
+            DnsProvider::Desec(provider) => {
+                self.check_secret_reference(
+                    &format!("{path}.token"),
+                    &provider.token,
+                    "desec_token",
+                );
+                self.check_optional_name(&format!("{path}.zone"), provider.zone.as_deref());
+                self.check_test_url(path, provider.api_url.as_ref());
+            }
+            DnsProvider::Route53(provider) => self.check_route53(path, provider),
+            DnsProvider::GoogleCloudDns(provider) => {
+                self.check_not_empty(
+                    &format!("{path}.credentials_file"),
+                    &provider.credentials_file.to_string_lossy(),
+                );
+                self.check_optional_name(&format!("{path}.project"), provider.project.as_deref());
+                self.check_optional_name(&format!("{path}.zone"), provider.zone.as_deref());
+                self.check_test_url(path, provider.api_url.as_ref());
+            }
+            DnsProvider::AzureDns(provider) => self.check_azure_dns(path, provider),
         }
     }
 
-    /// A DNS provider reached over an HTTP API with a token.
-    fn check_api_provider(
-        &mut self,
-        path: &str,
-        token: &str,
-        zone: Option<&str>,
-        api_url: Option<&HttpUrl>,
-        file_name: &str,
-    ) {
-        self.check_secret_reference(&format!("{path}.api_token"), token, file_name);
-        if zone.is_some_and(str::is_empty) {
-            self.error(format!("{path}.zone"), "zone is empty");
+    /// An optional name that, when set, must not be empty.
+    fn check_optional_name(&mut self, path: &str, name: Option<&str>) {
+        if let Some(name) = name {
+            self.check_not_empty(path, name);
         }
+    }
+
+    /// A required name: not empty.
+    fn check_not_empty(&mut self, path: &str, name: &str) {
+        if name.is_empty() {
+            let field = path.rsplit('.').next().unwrap_or(path);
+            self.error(path, format!("{field} is empty"));
+        }
+    }
+
+    /// `api_url`, which only tests set: encrypted, or on a loopback address.
+    fn check_test_url(&mut self, path: &str, api_url: Option<&HttpUrl>) {
         if let Some(url) = api_url.filter(|url| !url.is_https_or_loopback()) {
             self.push(
                 Diagnostic::error(
@@ -1434,6 +1463,95 @@ impl Validator<'_> {
                 .with_hint("api_url is for tests: use https://, or http:// on a loopback address"),
             );
         }
+    }
+
+    fn check_route53(&mut self, path: &str, provider: &Route53Provider) {
+        self.check_not_empty(&format!("{path}.access_key_id"), &provider.access_key_id);
+        self.check_secret_reference(
+            &format!("{path}.secret_access_key"),
+            &provider.secret_access_key,
+            "aws_secret_access_key",
+        );
+        if let Some(token) = &provider.session_token {
+            self.check_secret_reference(
+                &format!("{path}.session_token"),
+                token,
+                "aws_session_token",
+            );
+        }
+        self.check_optional_name(
+            &format!("{path}.hosted_zone_id"),
+            provider.hosted_zone_id.as_deref(),
+        );
+        if let Some(region) = provider.region.as_deref() {
+            if region.starts_with("cn-") || region.starts_with("us-gov-") {
+                self.push(
+                    Diagnostic::error(
+                        format!("{path}.region"),
+                        format!("`{region}` is outside the standard AWS partition, which is the only one supported"),
+                    )
+                    .with_hint("use `type: exec` or `type: webhook` with a tool for that partition"),
+                );
+            } else {
+                self.check_not_empty(&format!("{path}.region"), region);
+            }
+        }
+        self.check_test_url(path, provider.api_url.as_ref());
+    }
+
+    fn check_azure_dns(&mut self, path: &str, provider: &AzureDnsProvider) {
+        let methods = [
+            provider.client_secret.is_some(),
+            provider.client_certificate.is_some(),
+            provider.managed_identity,
+        ];
+        if methods.iter().filter(|set| **set).count() != 1 {
+            self.push(
+                Diagnostic::error(
+                    path,
+                    "set exactly one of `client_secret`, `client_certificate` and `managed_identity`",
+                )
+                .with_hint("a certificate or a managed identity keeps a long-lived secret out of the server"),
+            );
+        }
+        if let Some(secret) = &provider.client_secret {
+            self.check_secret_reference(
+                &format!("{path}.client_secret"),
+                secret,
+                "azure_client_secret",
+            );
+        }
+        if let Some(certificate) = &provider.client_certificate {
+            self.check_secret_reference(
+                &format!("{path}.client_certificate"),
+                certificate,
+                "azure_client_certificate.pem",
+            );
+        }
+        if provider.managed_identity {
+            // A user-assigned identity is chosen by its client ID; the tenant is the VM's.
+            self.check_optional_name(&format!("{path}.client_id"), provider.client_id.as_deref());
+        } else {
+            for (field, value) in [
+                ("tenant_id", &provider.tenant_id),
+                ("client_id", &provider.client_id),
+            ] {
+                match value.as_deref() {
+                    Some(value) => self.check_not_empty(&format!("{path}.{field}"), value),
+                    None => self.error(
+                        format!("{path}.{field}"),
+                        format!("{field} is required with a client secret or certificate"),
+                    ),
+                }
+            }
+        }
+        self.check_not_empty(
+            &format!("{path}.subscription_id"),
+            &provider.subscription_id,
+        );
+        self.check_not_empty(&format!("{path}.resource_group"), &provider.resource_group);
+        self.check_not_empty(&format!("{path}.zone"), &provider.zone);
+        self.check_test_url(path, provider.api_url.as_ref());
     }
 
     fn check_rfc2136(&mut self, path: &str, provider: &Rfc2136Provider) {
@@ -1451,9 +1569,7 @@ impl Validator<'_> {
                 ),
             );
         }
-        if provider.zone.as_deref().is_some_and(str::is_empty) {
-            self.error(format!("{path}.zone"), "zone is empty");
-        }
+        self.check_optional_name(&format!("{path}.zone"), provider.zone.as_deref());
         let has_key = provider.tsig_key_name.is_some() || provider.tsig_secret.is_some();
         if provider.insecure_unsigned {
             if has_key {

@@ -287,6 +287,72 @@ fn api_dns_providers_need_secret_references_and_safe_urls() {
 }
 
 #[test]
+fn cloud_dns_providers_need_secret_references_and_one_azure_method() {
+    let config = with(
+        app(),
+        json!({
+            "acme": { "dns_providers": {
+                "desec": { "type": "desec", "token": "plain-token", "zone": "" },
+                "r53": { "type": "route53", "access_key_id": "AKIDEXAMPLE", "secret_access_key": "wJalrXUtnFEMI", "session_token": "${env:AWS_SESSION_TOKEN}", "region": "cn-north-1" },
+                "gcp": { "type": "google_cloud_dns", "credentials_file": "", "project": "", "api_url": "http://dns.example.com/" },
+                "az_none": { "type": "azure_dns", "subscription_id": "s", "resource_group": "rg", "zone": "example.com" },
+                "az_two": { "type": "azure_dns", "tenant_id": "t", "client_id": "c", "client_secret": "${file:/run/secrets/az}", "managed_identity": true, "subscription_id": "s", "resource_group": "rg", "zone": "example.com" },
+                "az_literal": { "type": "azure_dns", "client_secret": "s3cret", "subscription_id": "s", "resource_group": "", "zone": "example.com" },
+                "good_desec": { "type": "desec", "token": "${env:DESEC_TOKEN}" },
+                "good_r53": { "type": "route53", "access_key_id": "${env:AWS_ACCESS_KEY_ID}", "secret_access_key": "${env:AWS_SECRET_ACCESS_KEY}", "hosted_zone_id": "Z123", "region": "eu-west-1" },
+                "good_gcp": { "type": "google_cloud_dns", "credentials_file": "/run/secrets/gcp.json", "zone": "example-com" },
+                "good_az_cert": { "type": "azure_dns", "tenant_id": "t", "client_id": "c", "client_certificate": "${file:/run/secrets/az.pem}", "subscription_id": "s", "resource_group": "rg", "zone": "example.com", "environment": "usgovernment" },
+                "good_az_mi": { "type": "azure_dns", "managed_identity": true, "subscription_id": "s", "resource_group": "rg", "zone": "example.com" }
+            } }
+        }),
+    );
+    let found = errors(config);
+    for (path, message) in [
+        (
+            "acme.dns_providers.desec.token",
+            "a secret is written in the configuration file",
+        ),
+        ("acme.dns_providers.desec.zone", "zone is empty"),
+        (
+            "acme.dns_providers.r53.secret_access_key",
+            "a secret is written",
+        ),
+        (
+            "acme.dns_providers.r53.region",
+            "outside the standard AWS partition",
+        ),
+        (
+            "acme.dns_providers.gcp.credentials_file",
+            "credentials_file is empty",
+        ),
+        ("acme.dns_providers.gcp.project", "project is empty"),
+        ("acme.dns_providers.gcp.api_url", "not encrypted"),
+        ("acme.dns_providers.az_none", "set exactly one of"),
+        ("acme.dns_providers.az_none.tenant_id", "required"),
+        ("acme.dns_providers.az_two", "set exactly one of"),
+        (
+            "acme.dns_providers.az_literal.client_secret",
+            "a secret is written",
+        ),
+        ("acme.dns_providers.az_literal.client_id", "required"),
+        (
+            "acme.dns_providers.az_literal.resource_group",
+            "resource_group is empty",
+        ),
+    ] {
+        assert!(has(&found, path, message), "{path}: {message} in {found:?}");
+    }
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("acme.dns_providers.good")
+                || p == "acme.dns_providers.r53.session_token"
+                || p == "acme.dns_providers.r53.access_key_id"),
+        "{found:?}"
+    );
+}
+
+#[test]
 fn rfc2136_refuses_md5_and_unsigned_updates_without_consent() {
     let provider = |extra: Value| {
         let mut base = json!({

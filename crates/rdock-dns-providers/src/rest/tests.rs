@@ -153,3 +153,94 @@ fn segments_are_escaped() {
     assert_eq!(segment("_acme-challenge.app"), "_acme-challenge.app");
     assert_eq!(segment("a/b c"), "a%2Fb%20c");
 }
+
+fn transient_code(body: &[u8]) -> ProviderError {
+    let text = String::from_utf8_lossy(body);
+    ProviderError {
+        transient: text.contains("Throttling"),
+        message: Some(text.into_owned()),
+    }
+}
+
+#[tokio::test]
+async fn providers_can_mark_client_errors_as_transient() {
+    let api = FakeApi::start().await;
+    let client = RestClient::with(
+        "Raw API",
+        api.url(),
+        Arc::new(StaticToken::new("Token", "t0ken", "token")),
+        ErrorFormat::Raw(transient_code),
+    )
+    .unwrap();
+    api.route("POST", "/x", |_, _| Reply::status(200).body("<ok/>"));
+    api.fail("POST", "/x", 1, Reply::status(400).body("Throttling"));
+    api.route("GET", "/bad", |_, _| Reply::status(400).body("Invalid"));
+    let body = Body::new("application/xml", "<x/>");
+    let answer = client
+        .send(Method::POST, "/x", &[], Some(body))
+        .await
+        .unwrap();
+    assert_eq!(answer, Bytes::from_static(b"<ok/>"));
+    let requests = api.requests();
+    assert_eq!(requests.len(), 2, "the transient 400 was retried");
+    assert_eq!(requests[1].header("authorization"), Some("Token t0ken"));
+    assert_eq!(requests[1].header("content-type"), Some("application/xml"));
+    let error = client
+        .send(Method::GET, "/bad", &[], None)
+        .await
+        .unwrap_err();
+    assert_eq!(error.status(), Some(StatusCode::BAD_REQUEST));
+    assert_eq!(api.requests().len(), 3, "other 400s are final");
+}
+
+#[tokio::test]
+async fn forms_and_extra_headers_are_sent() {
+    let (api, client) = client().await;
+    api.route("POST", "/token", |request, _| {
+        Reply::json(
+            200,
+            json!({ "body": String::from_utf8_lossy(&request.body) }),
+        )
+    });
+    api.route("PUT", "/x", |request, _| {
+        Reply::json(200, json!({ "if-match": request.header("if-match") }))
+    });
+    let answer = client
+        .post_form("/token", &[("scope", "https://x/.default"), ("a b", "c+d")])
+        .await
+        .unwrap();
+    assert_eq!(
+        answer["body"],
+        "scope=https%3A%2F%2Fx%2F.default&a%20b=c%2Bd"
+    );
+    let answer = client
+        .json(
+            Method::PUT,
+            "/x",
+            &[("if-match", "etag-1")],
+            Some(&json!({})),
+        )
+        .await
+        .unwrap();
+    assert_eq!(answer["if-match"], "etag-1");
+    assert_eq!(
+        api.requests()[0].header("content-type"),
+        Some("application/x-www-form-urlencoded")
+    );
+}
+
+#[tokio::test]
+async fn unreadable_credentials_fail_before_sending() {
+    let api = FakeApi::start().await;
+    let client = RestClient::new(
+        "Test API",
+        api.url(),
+        "${file:/nonexistent/rdock-test-token}",
+        message,
+    )
+    .unwrap();
+    let error = client.get("/x").await.unwrap_err();
+    assert!(matches!(error, RestError::Credentials(_)), "{error}");
+    assert!(error.to_string().starts_with("api_token:"), "{error}");
+    assert!(api.requests().is_empty());
+}

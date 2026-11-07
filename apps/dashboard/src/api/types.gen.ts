@@ -709,6 +709,63 @@ export type RdockAuditForward = {
 };
 
 /**
+ * Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and
+ * `managed_identity` is set.
+ */
+export type RdockAzureDnsProvider = {
+    /**
+     * For tests only: another base URL for sign-in, managed identity and Resource Manager,
+     * `http://` only on a loopback address.
+     */
+    api_url?: RdockHttpUrl | null;
+    /**
+     * The service principal's certificate and its RSA private key, PEM, in one file. Write it
+     * as a `${file:…}` reference.
+     */
+    client_certificate?: string | null;
+    /**
+     * Application (client) ID of the service principal, or of a user-assigned managed identity.
+     */
+    client_id?: string | null;
+    /**
+     * Client secret of the service principal. Write it as a `${file:…}` or `${env:…}`
+     * reference.
+     */
+    client_secret?: string | null;
+    /**
+     * The Azure cloud: its sign-in and Resource Manager endpoints.
+     */
+    environment?: RdockAzureEnvironment;
+    /**
+     * Authenticate as the managed identity of the Azure VM or service ReverseDock runs on,
+     * through the instance metadata service.
+     */
+    managed_identity?: boolean;
+    /**
+     * Resource group of the DNS zone.
+     */
+    resource_group: string;
+    /**
+     * Subscription ID of the DNS zone.
+     */
+    subscription_id: string;
+    /**
+     * Directory (tenant) ID of the service principal; needed with a client secret or certificate.
+     */
+    tenant_id?: string | null;
+    /**
+     * The DNS zone's name, such as `example.com`.
+     */
+    zone: string;
+    [key: string]: unknown | RdockHttpUrl | null | string | null | string | null | string | null | RdockAzureEnvironment | boolean | string | string | null | undefined;
+};
+
+/**
+ * An Azure cloud.
+ */
+export type RdockAzureEnvironment = 'public' | 'usgovernment' | 'china';
+
+/**
  * One backend server.
  */
 export type RdockBackend = {
@@ -940,6 +997,26 @@ export type RdockDefaults = {
 };
 
 /**
+ * deSEC (`type: desec`).
+ */
+export type RdockDesecProvider = {
+    /**
+     * For tests only: another API base URL, `http://` only on a loopback address.
+     */
+    api_url?: RdockHttpUrl | null;
+    /**
+     * API token; a token policy can limit it to writing the `_acme-challenge` TXT RRsets of one
+     * domain. Write it as a `${file:…}` or `${env:…}` reference.
+     */
+    token: string;
+    /**
+     * The domain holding the records, such as `example.com`. Asked from deSEC when omitted.
+     */
+    zone?: string | null;
+    [key: string]: unknown | RdockHttpUrl | null | string | string | null | undefined;
+};
+
+/**
  * DigitalOcean DNS (`type: digitalocean`).
  */
 export type RdockDigitalOceanProvider = {
@@ -989,7 +1066,7 @@ export type RdockDnsProvider = {
     timeout?: RdockDuration;
     type: 'exec';
     [key: string]: unknown | Array<string> | string | RdockDuration | 'exec' | undefined;
-} | RdockWebhook | RdockDigitalOceanProvider | RdockHetznerProvider | RdockRfc2136Provider;
+} | RdockWebhook | RdockDigitalOceanProvider | RdockHetznerProvider | RdockRfc2136Provider | RdockDesecProvider | RdockRoute53Provider | RdockGoogleCloudDnsProvider | RdockAzureDnsProvider;
 
 /**
  * The transport for DNS messages.
@@ -1090,6 +1167,32 @@ export type RdockFileProvider = {
      */
     watch?: boolean;
     [key: string]: unknown | Array<string> | boolean | undefined;
+};
+
+/**
+ * Google Cloud DNS (`type: google_cloud_dns`).
+ */
+export type RdockGoogleCloudDnsProvider = {
+    /**
+     * For tests only: another base URL for the token and DNS APIs, `http://` only on a loopback
+     * address.
+     */
+    api_url?: RdockHttpUrl | null;
+    /**
+     * Path of the service account key file (JSON). Read for every call, so a rotated key is used
+     * without a reload.
+     */
+    credentials_file: string;
+    /**
+     * The project of the managed zones. Taken from the key file when omitted.
+     */
+    project?: string | null;
+    /**
+     * The managed zone's name or ID, such as `example-com`; it may name a private zone. Public
+     * zones are found by DNS name when omitted; private zones are skipped.
+     */
+    zone?: string | null;
+    [key: string]: unknown | RdockHttpUrl | null | string | string | null | string | null | undefined;
 };
 
 /**
@@ -2069,6 +2172,41 @@ export type RdockRoute = {
      */
     tls?: RdockRouteTls | null;
     [key: string]: unknown | boolean | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
+};
+
+/**
+ * Amazon Route 53 (`type: route53`), in the standard AWS partition.
+ */
+export type RdockRoute53Provider = {
+    /**
+     * Access key ID of the key pair. Read for every call like the secret, so both can rotate
+     * together; a `${file:…}` or `${env:…}` reference or the ID itself.
+     */
+    access_key_id: string;
+    /**
+     * For tests only: another API base URL, `http://` only on a loopback address.
+     */
+    api_url?: RdockHttpUrl | null;
+    /**
+     * The hosted zone ID, such as `Z0123456789ABCDEFGHIJ`; it may name a private zone. Public
+     * zones are found by name when omitted; private zones are skipped.
+     */
+    hosted_zone_id?: string | null;
+    /**
+     * The AWS region of the deployment. Route 53 is global and signed as `us-east-1` in the
+     * standard partition; the China and GovCloud partitions are not supported.
+     */
+    region?: string | null;
+    /**
+     * Secret access key. Write it as a `${file:…}` or `${env:…}` reference.
+     */
+    secret_access_key: string;
+    /**
+     * Session token of temporary (STS) credentials. Write it as a `${file:…}` or `${env:…}`
+     * reference.
+     */
+    session_token?: string | null;
+    [key: string]: unknown | string | RdockHttpUrl | null | string | null | string | null | string | null | undefined;
 };
 
 /**
