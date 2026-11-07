@@ -131,3 +131,4 @@ The first runs found that the admin side's own threads do not protect the proxy 
 | main, 2026-10-30 (upstream pool, #86) | same | [results/2026-10-30-upstream-pool/report.md](results/2026-10-30-upstream-pool/report.md) |
 | main at 36f64a9, 2026-11-02 (small CPUs, #93): all scenarios, all proxies, before and after, large bodies | Hetzner dedicated server, 8 vCPUs, 32 GiB, Ubuntu 26.04 | [results/2026-11-02-small-cpu/report.md](results/2026-11-02-small-cpu/report.md) |
 | main at 36f64a9, 2026-11-02 to 11-03: 24-hour soak (v0.5 release candidate) | same | [results/2026-11-02-small-cpu/soak/report.md](results/2026-11-02-small-cpu/soak/report.md) |
+| main at c71a538, 2026-11-07 (v0.6): six scenarios against NGINX and HAProxy, CPU ladder, 2-hour soak, 3-node Swarm | same | [results/2026-11-07-v06/report.md](results/2026-11-07-v06/report.md) |

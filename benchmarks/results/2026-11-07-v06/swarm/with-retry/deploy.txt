@@ -1,0 +1,5 @@
+Since --detach=false was not specified, tasks will be created in the background.
+In a future release, --detach=false will become the default.
+Creating config shop_rdock_yaml
+Creating service shop_web
+Creating service shop_rdock

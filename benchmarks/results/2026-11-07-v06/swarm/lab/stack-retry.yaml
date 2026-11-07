@@ -1,0 +1,31 @@
+services:
+  rdock:
+    image: rdock:v06
+    user: "0:0"
+    ports:
+      - { target: 80, published: 80, mode: host }
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    configs:
+      - { source: rdock_yaml, target: /etc/rdock/rdock.yaml }
+    networks: [proxy]
+    deploy:
+      mode: global
+  web:
+    image: traefik/whoami:v1.11
+    networks: [proxy]
+    deploy:
+      replicas: 6
+      labels:
+        traefik.enable: "true"
+        traefik.http.routers.shop.rule: Host(`shop.test`)
+        traefik.http.routers.shop.middlewares: retry
+        traefik.http.middlewares.retry.retry.attempts: "2"
+        traefik.http.services.shop.loadbalancer.server.port: "80"
+      update_config: { order: start-first, parallelism: 1, delay: 3s }
+configs:
+  rdock_yaml:
+    file: ./rdock.yaml
+networks:
+  proxy:
+    external: true

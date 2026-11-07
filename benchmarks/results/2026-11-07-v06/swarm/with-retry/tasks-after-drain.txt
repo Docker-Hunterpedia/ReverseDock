@@ -1,0 +1,14 @@
+shop_web.1 sw2 Running Running 4 minutes ago
+shop_web.1 sw1 Shutdown Shutdown 4 minutes ago
+shop_web.2 sw1 Running Running about a minute ago
+shop_web.2 sw3 Shutdown Shutdown about a minute ago
+shop_web.2 sw2 Shutdown Shutdown 4 minutes ago
+shop_web.3 sw1 Running Running 2 minutes ago
+shop_web.3 sw3 Shutdown Shutdown 4 minutes ago
+shop_web.4 sw2 Running Running about a minute ago
+shop_web.4 sw3 Shutdown Shutdown about a minute ago
+shop_web.4 sw1 Shutdown Shutdown 4 minutes ago
+shop_web.5 sw2 Running Running 2 minutes ago
+shop_web.5 sw2 Shutdown Shutdown 4 minutes ago
+shop_web.6 sw1 Running Running 2 minutes ago
+shop_web.6 sw3 Shutdown Shutdown 4 minutes ago
