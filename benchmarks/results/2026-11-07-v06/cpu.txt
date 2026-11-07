@@ -1,0 +1,6 @@
+proxy rate usage_usec nr_periods nr_throttled throttled_usec
+rdock 2500 6344136 303 0 0
+rdock 5000 11832743 303 0 0
+rdock 7500 18249121 303 0 0
+rdock 10000 23868801 304 0 0
+rdock 12500 29604086 304 0 0

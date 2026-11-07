@@ -1,0 +1,10 @@
+listeners:
+  web: { address: ":80" }
+defaults:
+  listeners: [web]
+  tls: off
+acme: false
+admin: { enabled: false }
+providers:
+  swarm:
+    network: proxy

@@ -1,0 +1,4 @@
+ID                            HOSTNAME   STATUS    AVAILABILITY   MANAGER STATUS   ENGINE VERSION
+lu8v9ibi1rrpwas017jpdq3lz *   sw1        Ready     Active         Leader           29.1.3
+jgj7w36q1y02dztpetbec53fq     sw2        Ready     Active         Reachable        29.1.3
+gaoq51kvwv82ip0jsyefdo5md     sw3        Ready     Active         Reachable        29.1.3
