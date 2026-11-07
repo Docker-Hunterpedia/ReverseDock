@@ -320,6 +320,15 @@ impl Validator<'_> {
                     .with_hint("list the load balancers allowed to send PROXY protocol headers"),
                 );
             }
+            if listener.starttls.is_some() && protocol != ListenerProtocol::Tcp {
+                self.error(
+                    format!("{path}.starttls"),
+                    format!(
+                        "only `tcp` listeners answer a request to start TLS; this one is `{}`",
+                        protocol_name(protocol)
+                    ),
+                );
+            }
             let udp = protocol == ListenerProtocol::Udp;
             for (other_name, other) in &entries[i + 1..] {
                 let other_udp = other.effective_protocol() == ListenerProtocol::Udp;
@@ -345,8 +354,13 @@ impl Validator<'_> {
                 "routes without `listeners` need at least one default listener",
             );
         }
-        for (i, name) in defaults.listeners.iter().enumerate() {
-            self.check_http_listener(&path_index("defaults.listeners", i), name);
+        // The built-in default (`websecure`) only matters to routes that rely on it: a
+        // configuration of TCP routes alone need not have an HTTP listener.
+        let built_in = defaults.listeners == crate::config::Defaults::default().listeners;
+        if uses_defaults || !built_in {
+            for (i, name) in defaults.listeners.iter().enumerate() {
+                self.check_http_listener(&path_index("defaults.listeners", i), name);
+            }
         }
     }
 
@@ -1236,64 +1250,6 @@ impl Validator<'_> {
                     self.error(
                         path_index(&format!("{path}.{field}"), i),
                         format!("`{value}` is not a valid token"),
-                    );
-                }
-            }
-        }
-    }
-
-    fn check_tcp(&mut self) {
-        for (name, route) in &self.config.tcp_routes {
-            let path = path_key("tcp_routes", name);
-            self.check_name("tcp_routes", name);
-            match rdock_rules::parse(&route.matcher) {
-                Ok(expr) => {
-                    for err in expr.validate(Context::Tcp) {
-                        self.error(format!("{path}.match"), err.to_string());
-                    }
-                }
-                Err(err) => self.push(
-                    Diagnostic::error(
-                        format!("{path}.match"),
-                        format!("invalid rule: {}", err.kind),
-                    )
-                    .with_hint(err.render(&route.matcher)),
-                ),
-            }
-            match &route.listeners {
-                None => self.push(
-                    Diagnostic::error(format!("{path}.listeners"), "TCP routes need `listeners`")
-                        .with_hint("name a `tcp` listener, or an `https` listener for SNI routing"),
-                ),
-                Some(listeners) => {
-                    for (i, listener) in listeners.iter().enumerate() {
-                        let p = path_index(&format!("{path}.listeners"), i);
-                        match self.listeners.get(listener).map(Listener::effective_protocol) {
-                            None => self.error(p, format!("listener `{listener}` does not exist")),
-                            Some(ListenerProtocol::Tcp | ListenerProtocol::Https) => {}
-                            Some(other) => self.error(p, format!("listener `{listener}` is `{}`; TCP routes need a tcp or https listener", protocol_name(other))),
-                        }
-                    }
-                }
-            }
-            self.check_reference(
-                &format!("{path}.service"),
-                "TCP service",
-                &route.service,
-                &self.config.tcp_services,
-            );
-        }
-        for (name, service) in &self.config.tcp_services {
-            let path = path_key("tcp_services", name);
-            self.check_name("tcp_services", name);
-            if service.backends.is_empty() {
-                self.error(format!("{path}.backends"), "the service has no backends");
-            }
-            for (i, backend) in service.backends.iter().enumerate() {
-                if backend.weight == 0 {
-                    self.error(
-                        format!("{}.weight", path_index(&format!("{path}.backends"), i)),
-                        "weight must be at least 1",
                     );
                 }
             }
@@ -2203,5 +2159,6 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 }
 
 mod static_files;
+mod tcp;
 #[cfg(test)]
 mod tests;

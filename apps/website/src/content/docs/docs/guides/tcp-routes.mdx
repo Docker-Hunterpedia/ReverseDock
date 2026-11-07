@@ -1,0 +1,269 @@
+---
+title: Route TCP and TLS
+description: Send databases, MQTT and other TCP services through ReverseDock, by TLS server name with passthrough, with TLS terminated at ReverseDock, or as plain bytes.
+sidebar:
+  order: 9
+---
+
+import Status from '../../../../components/Status.astro';
+
+<Status since="v0.6" /> TCP routes relay connections that are not HTTP: databases, message brokers, mail, SSH. A `tcp` listener reads the start of each connection, picks a route by the TLS server name (SNI), the offered ALPN protocols or the client's address, and relays the bytes to a backend of a TCP service. TLS is either passed through untouched, so the backend keeps its own certificate, or terminated with ReverseDock's certificates, so the backend gets plaintext.
+
+## What you need
+
+- A port for the `tcp` listener. A TCP route can also share an `https` listener's port with HTTP routes when it matches server names.
+- For passthrough: clients that send TLS first, with the server name in the ClientHello (most do; see [which protocols work](#which-protocols-work)).
+- For termination: a certificate for the name, in `certificates` or [issued automatically](/docs/guides/automatic-https/).
+
+## Pass TLS through by server name
+
+Two PostgreSQL servers behind one port, chosen by the name the client connects to. ReverseDock never decrypts anything: each client sees its server's own certificate.
+
+```yaml title="rdock.yaml"
+listeners:
+  postgres: { address: ":5432", protocol: tcp }
+tcp_routes:
+  orders:
+    match: "HostSNI(`orders-db.example.com`)"
+    listeners: [postgres]
+    service: orders
+    tls: { passthrough: true }
+  billing:
+    match: "HostSNI(`billing-db.example.com`)"
+    listeners: [postgres]
+    service: billing
+    tls: { passthrough: true }
+tcp_services:
+  orders: { backends: [{ address: "10.0.0.21:5432" }] }
+  billing: { backends: [{ address: "10.0.0.22:5432" }] }
+```
+
+A connection whose server name no route matches is closed and counted in `rdock_tcp_rejected_total{reason="no_route"}`.
+
+## Terminate TLS at ReverseDock
+
+The listener gets `tls` (the same versions, ciphers and client certificates as an `https` listener) and the route gets `tls: {}`. The client sees ReverseDock's certificate; the backend receives plaintext.
+
+```yaml title="rdock.yaml"
+listeners:
+  mqtts: { address: ":8883", protocol: tcp, tls: { policy: modern } }
+certificates:
+  mqtt:
+    cert_file: /etc/rdock/certs/mqtt.example.com.pem
+    key_file: /etc/rdock/certs/mqtt.example.com.key
+tcp_routes:
+  broker:
+    match: "HostSNI(`mqtt.example.com`)"
+    listeners: [mqtts]
+    service: broker
+    tls: {}
+tcp_services:
+  broker: { backends: [{ address: "10.0.0.30:1883" }] }
+```
+
+The listener's `client_auth` applies to terminating routes; passthrough routes on the same listener leave client certificates to the backend. Without a configured certificate, a terminating route gets one from the [automatic certificates](/docs/guides/automatic-https/) for each name in its `HostSNI` matchers, like an HTTP route. ReverseDock agrees on the ALPN protocol the client asks for, since the backend speaks whatever the client wants.
+
+## Relay any bytes
+
+A route without `tls` relays the connection as it arrives. ``HostSNI(`*`)`` is the only rule that matches a connection that does not start with TLS, so a plain protocol gets a listener of its own:
+
+```yaml title="rdock.yaml"
+listeners:
+  mysql: { address: ":3306", protocol: tcp }
+tcp_routes:
+  mysql: { match: "HostSNI(`*`)", listeners: [mysql], service: mysql }
+tcp_services:
+  mysql:
+    backends:
+      - address: "10.0.0.40:3306"
+      - address: "10.0.0.41:3306"
+```
+
+When no route on a listener reads the ClientHello, ReverseDock reads nothing before it connects to the backend, so protocols where the server speaks first (MySQL, SMTP, FTP) work. Backends are chosen per connection by smooth weighted round-robin; `weight` and `backup` on a backend work as for HTTP services.
+
+## The three modes
+
+| Route | Matches | Does |
+|---|---|---|
+| no `tls` | any connection; without TLS only with ``HostSNI(`*`)`` | relays the bytes unchanged |
+| `tls: { passthrough: true }` | TLS connections | relays the encrypted bytes unchanged |
+| `tls: {}` | TLS connections | terminates TLS with the listener's settings, relays plaintext |
+
+## Rules and order
+
+TCP rules use the [rule grammar](/docs/reference/rules/#tcp-matchers) of HTTP routes with TCP matchers:
+
+- ``HostSNI(`db.example.com`)`` matches the server name exactly (case-insensitive), ``HostSNI(`*.example.com`)`` one label below `example.com`, ``HostSNI(`*`)`` every connection, with or without TLS or a server name.
+- ``HostSNIRegexp(`^db-[0-9]+\.example\.com$`)`` matches the server name with a regular expression.
+- ``ALPN(`postgresql`)`` matches when the client offers that protocol.
+- ``ClientIP(`10.0.0.0/8`)`` matches the client address (after the [PROXY protocol](#proxy-protocol)).
+- `&&`, `||`, `!` and parentheses combine them.
+
+Routes are tried by `priority` (highest first; `0` means the length of the rule), then by the length of the rule, then by name. A server name that is not a valid host name (an IP address, non-ASCII, a trailing dot) only matches ``HostSNI(`*`)``. A connection that starts like TLS but is not a valid ClientHello, or does not fit in 16 KiB, is closed and counted as `bad_client_hello`.
+
+### Share an `https` listener
+
+A TCP route can name an `https` listener: ClientHellos that it matches are relayed, everything else goes to the HTTP routes. ``HostSNI(`*`)`` cannot share a listener with HTTP routes; `rdock validate` says so.
+
+```yaml title="rdock.yaml (excerpt)"
+tcp_routes:
+  vault:
+    match: "HostSNI(`vault.example.com`)"
+    listeners: [websecure]
+    service: vault
+    tls: { passthrough: true }
+```
+
+### ACME challenges
+
+On a listener with `tls`, ReverseDock answers TLS-ALPN-01 validation handshakes (a ClientHello that offers only `acme-tls/1`) itself; they never reach a route. ``ALPN(`acme-tls/1`)`` is refused in rules. On a `tcp` listener without `tls`, such a handshake is routed like any other, so a passthrough backend can answer its own validation.
+
+### Encrypted Client Hello
+
+With ECH ([RFC 9849](https://www.rfc-editor.org/rfc/rfc9849.html), checked 2026-11-06), the server name in the outer ClientHello is the public name of the client-facing server, not the real one. A passthrough route therefore matches the public name, and one ECH-fronted backend needs one route; ReverseDock does not decrypt ECH.
+
+## Which protocols work
+
+Passthrough by name and termination need the client to send a TLS ClientHello first ("implicit TLS"). Protocols that negotiate TLS inside their own protocol send no ClientHello first; relay them with ``HostSNI(`*`)`` and no `tls` on a listener of their own.
+
+| Works (implicit TLS) | Does not (TLS negotiated in the protocol) |
+|---|---|
+| MQTT over TLS, port 8883 ([MQTT 3.1.1 §4.2](https://docs.oasis-open.org/mqtt/mqtt/v3.1.1/os/mqtt-v3.1.1-os.html)) | MySQL: the server speaks first, then the client asks for TLS ([MySQL internals](https://dev.mysql.com/doc/dev/mysql-server/latest/page_protocol_connection_phase.html)) |
+| SMTP submission on 465: "a TLS handshake begins immediately" ([RFC 8314 §3.3](https://www.rfc-editor.org/rfc/rfc8314.html#section-3.3)) | SMTP on 25 and 587, IMAP on 143 and POP3 on 110 with STARTTLS |
+| IMAPS (993), LDAPS (636), HTTPS | PostgreSQL with the default negotiation, unless the listener has `starttls: postgres` |
+| PostgreSQL 17 clients with `sslnegotiation=direct` | |
+
+Sources checked 2026-11-06. `rdock validate` warns about a route that reads the ClientHello for a service on port 3306, 25, 587, 143 or 110.
+
+## PostgreSQL
+
+PostgreSQL clients ask for TLS with an 8-byte `SSLRequest` and wait for the answer `S` before their ClientHello ([protocol flow](https://www.postgresql.org/docs/17/protocol-flow.html), checked 2026-11-06). Two ways through ReverseDock:
+
+- **`sslnegotiation=direct`** (libpq 17 and later, with `sslmode=require` or stricter): the client starts TLS at once and offers ALPN `postgresql`, so passthrough and termination work on any `tcp` listener ([libpq](https://www.postgresql.org/docs/17/libpq-connect.html), checked 2026-11-06). libpq sends the host name as SNI by default (`sslsni=1`).
+- **`starttls: postgres`** on the listener, for clients with the default negotiation: ReverseDock answers the `SSLRequest` with `S` (and a `GSSENCRequest` with `N`), then reads the ClientHello. With passthrough, it sends its own `SSLRequest` to the server first and relays once the server answers `S`, so servers older than 17 work too. With termination, the server gets a plaintext connection.
+
+```yaml title="rdock.yaml"
+listeners:
+  postgres: { address: ":5432", protocol: tcp, starttls: postgres }
+tcp_routes:
+  orders:
+    match: "HostSNI(`orders-db.example.com`)"
+    listeners: [postgres]
+    service: orders
+    tls: { passthrough: true }
+tcp_services:
+  orders: { backends: [{ address: "10.0.0.21:5432" }] }
+```
+
+```sh
+psql "host=orders-db.example.com sslmode=verify-full sslrootcert=system"   # starttls: postgres
+psql "host=orders-db.example.com sslmode=require sslnegotiation=direct"     # any tcp listener
+```
+
+With `starttls: postgres`, a client must speak first, so do not put server-speaks-first protocols on that listener.
+
+## PROXY protocol
+
+`proxy_protocol` on a `tcp` listener reads the header of a load balancer in front, as on [HTTP listeners](/docs/guides/behind-a-proxy/#proxy-protocol): its address is then the client for `ClientIP`, middlewares and the header sent on.
+
+`proxy_protocol: v1` or `v2` on a TCP service sends a header to each backend as the first bytes of the connection, naming the client and the listener's address. Version 2 also carries the ALPN protocol (the negotiated one after termination, otherwise the client's first choice) and, after termination, the server name (`AUTHORITY`) and the TLS version (`SSL`). Turn it on only for backends that expect it, such as HAProxy (`bind … accept-proxy`) or NGINX (`listen … proxy_protocol`): to any other backend the header is garbage at the start of the connection.
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  postgres:
+    address: ":5432"
+    protocol: tcp
+    proxy_protocol: { trusted: [10.0.100.0/24] }
+tcp_services:
+  pool:
+    backends: [{ address: "10.0.0.50:6432" }]
+    proxy_protocol: v2
+```
+
+## Middlewares
+
+TCP routes accept three middlewares, checked against the client address before ReverseDock connects to a backend:
+
+- [`ip_allow` and `ip_deny`](/docs/guides/ip-filtering/): a refused connection is closed (`reason="denied"`).
+- `in_flight`: open connections per client IP; with `queue`, extra connections wait up to `queue_timeout` for a slot, otherwise they are closed (`reason="in_flight"`). `key` must stay the client IP.
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  office: { type: ip_allow, cidrs: [10.0.0.0/8] }
+  two-each: { type: in_flight, amount: 2 }
+tcp_routes:
+  orders:
+    match: "HostSNI(`orders-db.example.com`)"
+    listeners: [postgres]
+    service: orders
+    tls: { passthrough: true }
+    middlewares: [office, two-each]
+```
+
+Other middlewares act on HTTP requests and are refused on TCP routes.
+
+## Timeouts
+
+| Setting | Default | What it bounds |
+|---|---|---|
+| `listeners.<l>.timeouts.request_header` | `10s` | Everything before the relay: PROXY header, `SSLRequest`, ClientHello and TLS handshake |
+| `tcp_services.<s>.timeouts.connect` | `5s` | Connecting to a backend, sending the PROXY header and the `SSLRequest` |
+| `tcp_services.<s>.timeouts.idle` | `10m` | A connection with no data in either direction is closed, like NGINX `proxy_timeout` |
+| `tcp_services.<s>.timeouts.termination_delay` | `100ms` | Once one side has finished sending, the time the other side gets before both are closed, like Traefik's `terminationDelay` |
+
+A client that closes its sending side still receives the backend's answer, within `termination_delay`. Raise it for protocols where the client sends its whole request, half-closes and then waits for a slow answer.
+
+## Reloads
+
+A reload keeps the listener's socket when its address is unchanged and swaps its settings; open connections keep relaying with the route and service they started with, and new connections follow the new configuration. A listener that is removed or moves stops accepting and waits up to `lifecycle.drain_timeout` (default `8s`) for its connections, then closes the rest and logs how many it closed. Database clients usually reconnect; raise `drain_timeout` if they should finish their sessions.
+
+## Metrics
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `rdock_tcp_connections` | `listener`, `route` | Open relays |
+| `rdock_tcp_bytes_total` | `route`, `direction` | Bytes relayed: `in` from the client, `out` to it |
+| `rdock_tcp_rejected_total` | `listener`, `reason` | Connections closed without a relay: `no_route`, `bad_client_hello`, `denied`, `in_flight`, `no_backend`, `connect_failed` |
+| `rdock_tls_handshake_errors_total` | `listener` | Failed handshakes of terminating routes |
+
+`rdock_connections_open` and `rdock_connections_total` count TCP listeners too. See the [metrics reference](/docs/reference/metrics/#tcp-routes).
+
+## Docker labels
+
+TCP routes come from container labels too, in Traefik's form or ReverseDock's full form. A TCP route needs its listeners: a router without `entrypoints` is ignored with a warning.
+
+| Traefik label | ReverseDock |
+|---|---|
+| `traefik.tcp.routers.<r>.rule`, `.entrypoints`, `.service`, `.priority`, `.middlewares` | `tcp_routes.<r>.match`, `listeners`, `service`, `priority`, `middlewares` |
+| `traefik.tcp.routers.<r>.tls=true` | `tls: {}` (terminate with the listener's certificates) |
+| `traefik.tcp.routers.<r>.tls.passthrough=true` | `tls: { passthrough: true }` |
+| `traefik.tcp.services.<s>.loadbalancer.server.port` | the container's address and this port |
+| `traefik.tcp.middlewares.<m>.ipallowlist.sourcerange` | `ip_allow` |
+| `traefik.tcp.middlewares.<m>.inflightconn.amount` | `in_flight` |
+| `tls.certresolver`, `tls.options`, `tls.domains`, `serverstransport`, `server.tls` | reported: the listener's TLS settings and certificates are used, backends get the bytes as relayed |
+
+```yaml title="compose.yaml (excerpt)"
+services:
+  orders-db:
+    image: postgres:17
+    labels:
+      rdock.enable: "true"
+      rdock.tcp_routes.orders.match: "HostSNI(`orders-db.example.com`)"
+      rdock.tcp_routes.orders.listeners: postgres
+      rdock.tcp_routes.orders.tls.passthrough: "true"
+      rdock.tcp_services.orders.port: "5432"
+```
+
+The full form also sets `rdock.tcp_services.<s>.proxy_protocol` and `rdock.tcp_services.<s>.timeouts.*`. See [Docker labels](/docs/reference/docker-labels/#tcp-routes).
+
+## Not supported yet
+
+- UDP (`protocol: udp`) <Status planned="v0.8" />.
+- TLS from ReverseDock to TCP backends, weighted TCP services that split between services, and active health checks of TCP services.
+- TCP connections are not written to the access log; follow them with the metrics above.
+
+## Related
+
+- [`tcp_routes`](/docs/reference/configuration/tcp-routes/) and [`tcp_services`](/docs/reference/configuration/tcp-services/) reference
+- [`listeners`](/docs/reference/configuration/listeners/) reference
+- [Run behind another proxy](/docs/guides/behind-a-proxy/)

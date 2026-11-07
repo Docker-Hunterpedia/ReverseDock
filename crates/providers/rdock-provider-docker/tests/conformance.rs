@@ -2,8 +2,8 @@
 //! `tests/conformance/traefik-labels/` lists containers as the Engine API reports them and the
 //! routing table and diagnostics the Docker provider must produce. No Docker daemon needed.
 //!
-//! `expect.routes`, `expect.services` and `expect.middlewares` name exactly the objects
-//! produced; each object's fields are compared as a subset of the full object (unset fields
+//! `expect.routes`, `expect.services`, `expect.middlewares`, `expect.tcp_routes` and
+//! `expect.tcp_services` name exactly the objects produced; each object's fields are compared as a subset of the full object (unset fields
 //! are not checked; lists are compared whole). `expect.diagnostics` lists one text per
 //! diagnostic, in order, each contained in that diagnostic's `path: message`.
 
@@ -56,6 +56,10 @@ struct Expect {
     services: BTreeMap<String, Value>,
     #[serde(default)]
     middlewares: BTreeMap<String, Value>,
+    #[serde(default)]
+    tcp_routes: BTreeMap<String, Value>,
+    #[serde(default)]
+    tcp_services: BTreeMap<String, Value>,
     #[serde(default)]
     diagnostics: Vec<String>,
 }
@@ -144,6 +148,18 @@ fn run(path: &Path) -> Vec<String> {
         "middlewares",
         &fixture.expect.middlewares,
         &out.fragment.middlewares,
+        &mut problems,
+    );
+    compare(
+        "tcp_routes",
+        &fixture.expect.tcp_routes,
+        &out.fragment.tcp_routes,
+        &mut problems,
+    );
+    compare(
+        "tcp_services",
+        &fixture.expect.tcp_services,
+        &out.fragment.tcp_services,
         &mut problems,
     );
     let found: Vec<String> = out

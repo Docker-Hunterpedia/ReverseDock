@@ -109,7 +109,7 @@ tcp:
         m.yaml
     );
     assert_eq!(m.notes.len(), 1, "{:?}", m.notes);
-    assert!(m.notes[0].contains("planned for v0.6"));
+    assert!(m.notes[0].contains("TCP routers of a dynamic configuration are not migrated"));
 }
 
 #[test]
@@ -151,6 +151,33 @@ services:
     );
     assert!(
         m.notes.iter().any(|n| n.contains("`providers.swarm`")),
+        "{:?}",
+        m.notes
+    );
+}
+
+#[test]
+fn compose_tcp_labels_become_tcp_routes() {
+    let compose = "
+services:
+  db:
+    image: postgres:17
+    expose: [5432]
+    labels:
+      traefik.enable: 'true'
+      traefik.tcp.routers.db.rule: HostSNI(`db.example.com`)
+      traefik.tcp.routers.db.entrypoints: postgres
+      traefik.tcp.routers.db.tls.passthrough: 'true'
+";
+    let m = traefik(compose, false).unwrap();
+    assert!(m.yaml.contains("tcp_routes:"), "{}", m.yaml);
+    assert!(m.yaml.contains("passthrough: true"), "{}", m.yaml);
+    assert!(m.yaml.contains("address: db:5432"), "{}", m.yaml);
+    // The listener belongs in rdock.yaml; the note says so.
+    assert!(
+        m.notes
+            .iter()
+            .any(|n| n.contains("listener `postgres` does not exist")),
         "{:?}",
         m.notes
     );

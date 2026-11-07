@@ -3,8 +3,9 @@
 //! Shorthand: `rdock.host`, `rdock.path`, `rdock.port`, `rdock.tls` and `rdock.middlewares` make
 //! one route and one service named after the container; `rdock.static.root` ends the route with
 //! a `static` middleware instead of the service. Full form:
-//! `rdock.routes.<name>.<field>`, `rdock.services.<name>.<field>` and
-//! `rdock.middlewares.<name>.<field>`, where `<field>` is a dotted path of the YAML model.
+//! `rdock.routes.<name>.<field>`, `rdock.services.<name>.<field>`,
+//! `rdock.middlewares.<name>.<field>`, `rdock.tcp_routes.<name>.<field>` and
+//! `rdock.tcp_services.<name>.<field>`, where `<field>` is a dotted path of the YAML model.
 
 use serde_json::Value;
 
@@ -53,6 +54,8 @@ pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: 
         "routes" => route(draft, name, field, value),
         "services" => service(draft, name, field, value),
         "middlewares" => middleware(draft, name, field, value),
+        "tcp_routes" => tcp_route(draft, name, field, value),
+        "tcp_services" => tcp_service(draft, name, field, value),
         _ => Err("unknown label".to_owned()),
     };
     if let Err(message) = result {
@@ -87,6 +90,39 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
             "`{field}` cannot be set from labels; the container is the backend"
         )),
         _ => service.tree.set(field, scalar(value)),
+    }
+}
+
+fn tcp_route(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
+    let value = match field {
+        "match" | "service" => Value::String(value.to_owned()),
+        "middlewares" | "listeners" => list(value),
+        "priority" | "tls.passthrough" => scalar(value),
+        // `tls=true` terminates TLS; `tls.passthrough=true` relays it.
+        "tls" => match value {
+            "true" => Value::Object(serde_json::Map::new()),
+            "false" => return Ok(()),
+            other => return Err(format!("`{other}` is not `true` or `false`")),
+        },
+        _ => return Err(format!("TCP routes have no `{field}` setting")),
+    };
+    draft
+        .tcp_routes
+        .entry(name.to_owned())
+        .or_default()
+        .set(field, value)
+}
+
+fn tcp_service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
+    let service = draft.tcp_services.entry(name.to_owned()).or_default();
+    match field {
+        "port" => {
+            service.port = Some(port(value)?);
+            Ok(())
+        }
+        "proxy_protocol" => service.tree.set(field, Value::String(value.to_owned())),
+        _ if field.starts_with("timeouts.") => service.tree.set(field, scalar(value)),
+        _ => Err(format!("TCP services have no `{field}` setting")),
     }
 }
 

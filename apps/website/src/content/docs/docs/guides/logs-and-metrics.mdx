@@ -125,6 +125,9 @@ rdock_config_reloads_total{result="applied"} 1
 | `rdock_connections_open` | gauge | `listener` |
 | `rdock_connections_total` | counter | `listener` |
 | `rdock_tls_handshake_errors_total` | counter | `listener` |
+| `rdock_tcp_connections` <Status since="v0.6" /> | gauge | `listener`, `route` |
+| `rdock_tcp_bytes_total` <Status since="v0.6" /> | counter | `route`, `direction` |
+| `rdock_tcp_rejected_total` <Status since="v0.6" /> | counter | `listener`, `reason` |
 | `rdock_config_generation` | gauge | |
 | `rdock_config_reloads_total` | counter | `result` |
 | `rdock_cert_expiry_timestamp_seconds` | gauge | `name` |

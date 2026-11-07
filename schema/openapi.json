@@ -3076,6 +3076,18 @@
             "default": null,
             "description": "Accept the PROXY protocol (v1 or v2) from these sources only."
           },
+          "starttls": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.StartTls"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "default": null,
+            "description": "`tcp` listeners: answer a protocol's request to start TLS before reading the TLS\nClientHello. Off by default."
+          },
           "timeouts": {
             "$ref": "#/components/schemas/rdock.ListenerTimeouts",
             "default": {
@@ -5113,6 +5125,16 @@
         ],
         "type": "object"
       },
+      "rdock.StartTls": {
+        "description": "Protocols whose own request to start TLS a `tcp` listener answers.",
+        "oneOf": [
+          {
+            "const": "postgres",
+            "description": "PostgreSQL: answer the 8-byte `SSLRequest` with `S` (and a `GSSENCRequest` with `N`),\nso clients with the default `sslnegotiation=postgres` reach TCP routes that read SNI.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.StaticCacheControl": {
         "additionalProperties": {
           "type": "string"
@@ -5411,6 +5433,14 @@
             "description": "Rule with TCP matchers: ``HostSNI(`db.example.com`)``, ``HostSNI(`*`)``, `ClientIP`, `ALPN`.",
             "type": "string"
           },
+          "middlewares": {
+            "default": [],
+            "description": "Middlewares checked before connecting to the service: `ip_allow`, `ip_deny` and\n`in_flight` (counted per client IP).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
           "priority": {
             "default": 0,
             "description": "Higher priorities are evaluated first. `0` uses the rule length.",
@@ -5431,7 +5461,7 @@
               }
             ],
             "default": null,
-            "description": "TLS handling."
+            "description": "TLS handling. Without it the bytes are relayed as they arrive; with it the route\nmatches TLS connections only and terminates TLS unless `passthrough` is set."
           }
         },
         "required": [
@@ -5480,11 +5510,45 @@
             ],
             "default": null,
             "description": "Send a PROXY protocol header to backends."
+          },
+          "timeouts": {
+            "$ref": "#/components/schemas/rdock.TcpTimeouts",
+            "default": {
+              "connect": "5s",
+              "idle": "10m",
+              "termination_delay": "100ms"
+            },
+            "description": "Connection timeouts."
           }
         },
         "required": [
           "backends"
         ],
+        "type": "object"
+      },
+      "rdock.TcpTimeouts": {
+        "additionalProperties": false,
+        "description": "Timeouts of a TCP service.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "connect": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "5s",
+            "description": "Establishing a connection to a backend."
+          },
+          "idle": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "10m",
+            "description": "A connection with no data in either direction for this long is closed (NGINX\n`proxy_timeout`)."
+          },
+          "termination_delay": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "100ms",
+            "description": "Once one side has finished sending, the other side gets this long to finish too\nbefore both are closed (Traefik `terminationDelay`)."
+          }
+        },
         "type": "object"
       },
       "rdock.Timeouts": {

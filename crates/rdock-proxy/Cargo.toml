@@ -27,6 +27,7 @@ pingora.workspace = true
 proxy-header.workspace = true
 rdock-balancer.workspace = true
 rdock-config.workspace = true
+rdock-limits.workspace = true
 rdock-middleware.workspace = true
 rdock-model.workspace = true
 rdock-observability.workspace = true

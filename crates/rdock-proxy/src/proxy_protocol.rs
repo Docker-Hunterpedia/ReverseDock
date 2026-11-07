@@ -14,6 +14,9 @@
 //!
 //! A header is read under the listener's `timeouts.request_header` and within 16 KiB; the bytes
 //! after it are put back into the stream.
+//!
+//! Outbound, [`encode`] writes the header a TCP service with `proxy_protocol` sends to its
+//! backends: v1, or v2 with the ALPN TLV and, after TLS termination, the SSL and AUTHORITY TLVs.
 
 use std::net::{IpAddr, SocketAddr};
 
@@ -22,8 +25,9 @@ use pingora::protocols::Digest;
 use pingora::protocols::GetProxyDigest;
 use pingora::protocols::l4::stream::Stream as L4Stream;
 use pingora::protocols::raw_connect::ProxyDigest;
-use proxy_header::{ParseConfig, Protocol, ProxyHeader};
+use proxy_header::{ParseConfig, Protocol, ProxiedAddress, ProxyHeader, SslInfo, Tlv};
 use rdock_model::config::ProxyProtocolIn;
+use rdock_model::service::ProxyProtocolVersion;
 use rdock_observability::Metrics;
 use tokio::io::{AsyncRead, AsyncReadExt};
 use tokio::time::Instant;
@@ -307,6 +311,85 @@ pub(crate) fn set_peer(digest: &pingora::protocols::SocketDigest, source: Socket
         .set(Some(pingora::protocols::l4::socket::SocketAddr::Inet(
             source,
         )));
+}
+
+/// What a v2 header tells the backend about the client's TLS (ignored by v1).
+#[derive(Debug, Clone, Copy, Default)]
+pub struct Outbound<'a> {
+    /// The application protocol: negotiated after termination, else the client's first choice.
+    pub alpn: Option<&'a [u8]>,
+    /// Set when rdock terminated the client's TLS.
+    pub terminated: Option<Terminated<'a>>,
+}
+
+/// The TLS session rdock terminated.
+#[derive(Debug, Clone, Copy)]
+pub struct Terminated<'a> {
+    /// The server name the client asked for (the AUTHORITY TLV).
+    pub sni: Option<&'a str>,
+    /// The TLS version, e.g. `TLSv1.3` (the SSL version sub-TLV).
+    pub version: Option<&'a str>,
+    /// Whether the client presented a certificate (verified by the listener).
+    pub client_cert: bool,
+}
+
+/// The PROXY protocol header announcing a connection from `source` to `destination`.
+///
+/// # Errors
+///
+/// Only when proxy-header cannot encode the addresses, which never happens once both are in
+/// one family, as this function makes them.
+pub fn encode(
+    version: ProxyProtocolVersion,
+    source: SocketAddr,
+    destination: SocketAddr,
+    outbound: Outbound<'_>,
+) -> Result<Vec<u8>, proxy_header::Error> {
+    let (source, destination) = same_family(source, destination);
+    let address = Some(ProxiedAddress::stream(source, destination));
+    let mut buf = Vec::with_capacity(64);
+    match version {
+        ProxyProtocolVersion::V1 => ProxyHeader::with_tlvs(address, []).encode_v1(&mut buf)?,
+        ProxyProtocolVersion::V2 => {
+            ProxyHeader::with_tlvs(address, tlvs(outbound)).encode_v2(&mut buf)?;
+        }
+    }
+    Ok(buf)
+}
+
+fn tlvs(outbound: Outbound<'_>) -> Vec<Tlv<'_>> {
+    let mut tlvs = Vec::new();
+    if let Some(alpn) = outbound.alpn {
+        tlvs.push(Tlv::Alpn(alpn.into()));
+    }
+    if let Some(tls) = outbound.terminated {
+        if let Some(sni) = tls.sni {
+            tlvs.push(Tlv::Authority(sni.into()));
+        }
+        // Verify result 0: the listener refuses certificates that fail verification.
+        let mut ssl = SslInfo::new(true, tls.client_cert, tls.client_cert, 0);
+        if let Some(version) = tls.version {
+            ssl.append_tlv(Tlv::SslVersion(version.into()));
+        }
+        tlvs.push(Tlv::Ssl(ssl));
+    }
+    tlvs
+}
+
+/// Both addresses in one family, as a header requires: IPv4-mapped IPv6 becomes IPv4, and if
+/// the families still differ the IPv4 one becomes IPv4-mapped IPv6.
+fn same_family(source: SocketAddr, destination: SocketAddr) -> (SocketAddr, SocketAddr) {
+    let canonical = |a: SocketAddr| SocketAddr::new(crate::forwarded::canonical(a.ip()), a.port());
+    let (source, destination) = (canonical(source), canonical(destination));
+    let v6 = |a: SocketAddr| match a.ip() {
+        IpAddr::V4(v4) => SocketAddr::new(IpAddr::V6(v4.to_ipv6_mapped()), a.port()),
+        IpAddr::V6(_) => a,
+    };
+    if source.is_ipv4() == destination.is_ipv4() {
+        (source, destination)
+    } else {
+        (v6(source), v6(destination))
+    }
 }
 
 #[cfg(test)]
@@ -640,5 +723,46 @@ mod tests {
             ..Digest::default()
         };
         assert_eq!(proxy_peer(&digest), Some(peer), "logged as IPv4");
+    }
+
+    #[test]
+    fn encodes_outbound_headers_that_parse_back() {
+        let v1 = encode(ProxyProtocolVersion::V1, src(), dst(), Outbound::default()).unwrap();
+        assert_eq!(v1, b"PROXY TCP4 192.168.0.1 192.168.0.11 56324 443\r\n");
+        let outbound = Outbound {
+            alpn: Some(b"postgresql"),
+            terminated: Some(Terminated {
+                sni: Some("db.example.com"),
+                version: Some("TLSv1.3"),
+                client_cert: false,
+            }),
+        };
+        let v2 = encode(ProxyProtocolVersion::V2, src(), dst(), outbound).unwrap();
+        let config = ParseConfig {
+            include_tlvs: true,
+            ..PARSE
+        };
+        let (header, len) = ProxyHeader::parse(&v2, config).unwrap();
+        assert_eq!(len, v2.len());
+        let address = header.proxied_address().unwrap();
+        assert_eq!((address.source, address.destination), (src(), dst()));
+        assert_eq!(header.alpn(), Some(b"postgresql".as_slice()));
+        assert_eq!(header.authority(), Some("db.example.com"));
+        let ssl = header.ssl().unwrap();
+        assert!(ssl.client_ssl());
+        assert_eq!(ssl.version(), Some("TLSv1.3"));
+    }
+
+    #[test]
+    fn mixed_families_are_written_as_one() {
+        let mapped: SocketAddr = "[::ffff:192.168.0.1]:56324".parse().unwrap();
+        let v1 = encode(ProxyProtocolVersion::V1, mapped, dst(), Outbound::default()).unwrap();
+        assert!(v1.starts_with(b"PROXY TCP4 192.168.0.1 "), "{v1:?}");
+        let v6: SocketAddr = "[2001:db8::1]:443".parse().unwrap();
+        let v1 = encode(ProxyProtocolVersion::V1, src(), v6, Outbound::default()).unwrap();
+        assert_eq!(
+            v1,
+            b"PROXY TCP6 ::ffff:192.168.0.1 2001:db8::1 56324 443\r\n"
+        );
     }
 }

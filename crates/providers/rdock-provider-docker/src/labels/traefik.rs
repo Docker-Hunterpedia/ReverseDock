@@ -22,8 +22,10 @@ pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: 
         split(rest).and_then(|(name, field)| service(draft, name, field, value))
     } else if let Some(rest) = key.strip_prefix("traefik.http.middlewares.") {
         split(rest).and_then(|(name, field)| middleware(draft, name, field, value))
-    } else if key.starts_with("traefik.tcp.") || key.starts_with("traefik.udp.") {
-        Err("TCP and UDP routing are not supported in this version (planned for v0.6)".to_owned())
+    } else if let Some(rest) = key.strip_prefix("traefik.tcp.") {
+        super::traefik_tcp::label(scope, draft, rest, value)
+    } else if key.starts_with("traefik.udp.") {
+        Err("UDP routing is not supported in this version (planned for v0.8)".to_owned())
     } else {
         Err(unsupported())
     };
@@ -62,11 +64,11 @@ fn platform_label(scope: &mut Scope<'_>, key: &str) -> bool {
     }
 }
 
-fn unsupported() -> String {
+pub(super) fn unsupported() -> String {
     "not in the supported Traefik label subset; the label is ignored".to_owned()
 }
 
-fn split(rest: &str) -> Result<(&str, &str), String> {
+pub(super) fn split(rest: &str) -> Result<(&str, &str), String> {
     rest.split_once('.')
         .filter(|(name, field)| !name.is_empty() && !field.is_empty())
         .ok_or_else(|| "the label needs an object name and a setting".to_owned())
@@ -85,24 +87,7 @@ fn router(
         "priority" => route.set("priority", scalar(value)),
         "service" => route.set("service", Value::String(value.to_owned())),
         "middlewares" => route.set("middlewares", list(value)),
-        "entrypoints" => {
-            let listeners: Vec<Value> = value
-                .split(',')
-                .map(str::trim)
-                .filter(|e| !e.is_empty())
-                .map(|e| {
-                    Value::String(
-                        scope
-                            .settings
-                            .entrypoints
-                            .get(e)
-                            .cloned()
-                            .unwrap_or_else(|| e.to_owned()),
-                    )
-                })
-                .collect();
-            route.set("listeners", Value::Array(listeners))
-        }
+        "entrypoints" => route.set("listeners", listeners(scope, value)),
         "tls" => match value {
             "true" => auto_tls(route),
             "false" => route.set("tls", tls("off")),
@@ -115,6 +100,27 @@ fn router(
             None => Err(unsupported()),
         },
     }
+}
+
+/// Listeners for a comma-separated list of entry points, through `entrypoints` of the
+/// provider settings.
+pub(super) fn listeners(scope: &Scope<'_>, value: &str) -> Value {
+    let listeners: Vec<Value> = value
+        .split(',')
+        .map(str::trim)
+        .filter(|e| !e.is_empty())
+        .map(|e| {
+            Value::String(
+                scope
+                    .settings
+                    .entrypoints
+                    .get(e)
+                    .cloned()
+                    .unwrap_or_else(|| e.to_owned()),
+            )
+        })
+        .collect();
+    Value::Array(listeners)
 }
 
 /// Automatic certificates, unless the route already has TLS settings (which default to
@@ -451,7 +457,7 @@ fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result
 }
 
 /// Sets the middleware type once; a second, different type is an error.
-fn set_type(tree: &mut super::Tree, kind: &str) -> Result<(), String> {
+pub(super) fn set_type(tree: &mut super::Tree, kind: &str) -> Result<(), String> {
     if tree.has("type") {
         return Ok(());
     }

@@ -55,6 +55,7 @@ pub(crate) fn parse(candidate: Value) -> Result<Fragment, String> {
         routes: document.routes,
         services: document.services,
         middlewares: document.middlewares,
+        ..Fragment::default()
     })
 }
 

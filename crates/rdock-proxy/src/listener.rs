@@ -20,7 +20,7 @@ use pingora::protocols::{GetSocketDigest, SocketDigest, Stream};
 use pingora::proxy::HttpProxy;
 use pingora::server::configuration::ServerConf;
 use rdock_middleware::ClientIdentity;
-use rdock_model::config::{ListenerTimeouts, ProxyProtocolIn};
+use rdock_model::config::{ListenerProtocol, ListenerTimeouts, ProxyProtocolIn, StartTls};
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::SniResolver;
@@ -182,6 +182,10 @@ pub struct Settings {
     pub timeouts: ListenerTimeouts,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
+    /// `http`, `https` or `tcp`: what a new connection is served as.
+    pub protocol: ListenerProtocol,
+    /// `tcp` listeners: the protocol whose request to start TLS is answered.
+    pub starttls: Option<StartTls>,
 }
 
 /// A running listener.
@@ -279,9 +283,36 @@ async fn accept_loop(
     })
     .await;
     if drained.is_err() {
-        tracing::info!(listener = %name, open = connections.len(), "drain time over, closing connections");
+        let open = connections.len();
+        if settings.load().protocol == ListenerProtocol::Tcp {
+            tracing::warn!(listener = %name, aborted = open, "drain time over, closing {open} TCP connections");
+        } else {
+            tracing::info!(listener = %name, open, "drain time over, closing connections");
+        }
         connections.abort_all();
     }
+}
+
+/// The TCP routes a connection on `name` may go to: always for a `tcp` listener (possibly none),
+/// and for an `https` listener only when it has some, since it then hands matching
+/// TLS connections to them by their `ClientHello`. `None` means the connection is served as HTTP without a TCP step.
+fn tcp_routes_of(
+    shared: &Shared,
+    name: &str,
+    settings: &Settings,
+) -> Option<Arc<[Arc<crate::tcp::TcpRouteRuntime>]>> {
+    let tcp = settings.protocol == ListenerProtocol::Tcp;
+    if !tcp && settings.tls.is_none() {
+        return None;
+    }
+    let routes = shared
+        .runtime
+        .load()
+        .listeners
+        .get(name)?
+        .tcp_routes
+        .clone();
+    (tcp || !routes.is_empty()).then_some(routes)
 }
 
 /// Guard that keeps the open-connections gauge right however the task ends.
@@ -305,6 +336,9 @@ async fn serve(
     shared.metrics.connections.with_label_values(&[&name]).inc();
     let _open = Open(&shared.metrics, &name);
     let _ = tcp.set_nodelay(true);
+    // Only connections that may become TCP relays look up routes and pay for `getsockname`.
+    let tcp_side = tcp_routes_of(&shared, &name, &settings)
+        .map(|routes| (routes, tcp.local_addr().unwrap_or(peer)));
     #[cfg(unix)]
     let fd = std::os::unix::io::AsRawFd::as_raw_fd(&tcp);
     let mut l4: L4Stream = tcp.into();
@@ -330,6 +364,27 @@ async fn serve(
             crate::proxy_protocol::set_peer(&digest, source);
         }
         l4.set_socket_digest(digest);
+    }
+    if let Some((tcp_routes, local)) = tcp_side {
+        let accepted = crate::tcp::Accepted {
+            listener: name.clone(),
+            client: source.unwrap_or(peer),
+            local,
+        };
+        let context = crate::tcp::ListenerContext {
+            routes: &tcp_routes,
+            tls: settings.tls.as_deref(),
+            starttls: settings.starttls,
+            deadline,
+        };
+        if settings.protocol == ListenerProtocol::Tcp {
+            crate::tcp::serve(accepted, l4, context, &shared.metrics).await;
+            return;
+        }
+        match crate::tcp::divert(accepted, l4, context, &shared.metrics).await {
+            Some(stream) => l4 = stream,
+            None => return,
+        }
     }
     let stream: ConnStream = if let Some(acceptor) = &settings.tls {
         let handshake = tokio::time::timeout_at(deadline, acceptor.tls_handshake(l4)).await;

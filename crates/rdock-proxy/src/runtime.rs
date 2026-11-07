@@ -8,7 +8,9 @@ use std::sync::Arc;
 use arc_swap::{ArcSwap, ArcSwapOption};
 use rdock_balancer::{BackendState, Balancer, Pool, StickyKeys};
 use rdock_middleware::Middleware;
-use rdock_model::config::{ListenerTimeouts, ProxyProtocolIn, TlsPolicy};
+use rdock_model::config::{
+    ListenerProtocol, ListenerTimeouts, ProxyProtocolIn, StartTls, TlsPolicy,
+};
 use rdock_model::route::RouteTimeouts;
 use rdock_model::service::{Scheme, Timeouts};
 use rdock_model::settings::Limits;
@@ -23,7 +25,7 @@ use crate::router::{HostSet, Rule};
 pub struct Runtime {
     /// Generation number, increased by every applied configuration.
     pub generation: u64,
-    /// HTTP listeners by name.
+    /// Listeners by name.
     pub listeners: BTreeMap<String, ListenerRuntime>,
     /// Client IP policy.
     pub client_ip: ClientIpPolicy,
@@ -76,7 +78,11 @@ pub struct ListenerRuntime {
     pub name: Arc<str>,
     /// Bind address.
     pub address: ListenAddress,
-    /// TLS settings, for HTTPS listeners.
+    /// `http`, `https` or `tcp`.
+    pub protocol: ListenerProtocol,
+    /// `tcp` listeners: the protocol whose request to start TLS is answered.
+    pub starttls: Option<StartTls>,
+    /// TLS settings, for HTTPS listeners and `tcp` listeners that terminate TLS.
     pub tls: Option<ListenerTls>,
     /// Client-side timeouts.
     pub timeouts: ListenerTimeouts,
@@ -84,6 +90,9 @@ pub struct ListenerRuntime {
     pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.
     pub routes: Vec<Arc<RouteRuntime>>,
+    /// TCP routes in evaluation order. A connection keeps these, not the whole runtime, for
+    /// as long as it is relayed.
+    pub tcp_routes: Arc<[Arc<crate::tcp::TcpRouteRuntime>]>,
     /// Path answered `200 OK` before routing, for load-balancer monitors.
     pub ping: Option<String>,
     /// Plain-HTTP listeners: redirect these hosts to HTTPS when no route of the listener

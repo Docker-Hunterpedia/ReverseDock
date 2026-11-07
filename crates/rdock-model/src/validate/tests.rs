@@ -603,6 +603,104 @@ fn checks_tcp_routes() {
 }
 
 #[test]
+fn a_tcp_only_config_needs_no_http_listener() {
+    let config = json!({
+        "listeners": { "db": { "address": ":5432", "protocol": "tcp" } },
+        "tcp_routes": { "db": { "match": "HostSNI(`*`)", "listeners": ["db"], "service": "db" } },
+        "tcp_services": { "db": { "backends": [{ "address": "10.0.0.20:5432" }] } }
+    });
+    assert_eq!(validate(config), Vec::new());
+}
+
+#[test]
+fn checks_tcp_tls_middlewares_and_listener_kinds() {
+    let config = json!({
+        "listeners": {
+            "db": { "address": ":5432", "protocol": "tcp", "starttls": "postgres" },
+            "tls": { "address": ":6000", "protocol": "tcp", "tls": {} },
+            "websecure": { "address": ":443", "tls": {}, "starttls": "postgres" }
+        },
+        "tcp_routes": {
+            "terminate": { "match": "HostSNI(`db.example.com`)", "listeners": ["db", "tls"], "service": "db", "tls": {} },
+            "mixed": { "match": "HostSNI(`*`)", "listeners": ["websecure"], "service": "db", "tls": { "passthrough": true } },
+            "sni": { "match": "HostSNI(`db.example.com`)", "listeners": ["websecure"], "service": "db", "tls": { "passthrough": true } },
+            "limits": { "match": "HostSNI(`*`)", "listeners": ["db"], "service": "db", "middlewares": ["allow", "conns", "per-route", "headers", "missing"] },
+            "mysql": { "match": "HostSNI(`my.example.com`)", "listeners": ["tls"], "service": "mysql", "tls": { "passthrough": true } }
+        },
+        "tcp_services": {
+            "db": { "backends": [{ "address": "10.0.0.20:5432" }], "timeouts": { "idle": "0s", "termination_delay": "0s" } },
+            "mysql": { "backends": [{ "address": "10.0.0.30:3306" }] }
+        },
+        "middlewares": {
+            "allow": { "type": "ip_allow", "cidrs": ["10.0.0.0/8"] },
+            "conns": { "type": "in_flight", "amount": 10 },
+            "per-route": { "type": "in_flight", "amount": 10, "key": "route" },
+            "headers": { "type": "headers", "request": { "set": { "x": "y" } } }
+        }
+    });
+    let found = errors(config.clone());
+    assert!(has(
+        &found,
+        "listeners.websecure.starttls",
+        "only `tcp` listeners"
+    ));
+    assert!(!found.iter().any(|(p, _)| p == "listeners.db.starttls"));
+    assert!(has(
+        &found,
+        "tcp_routes.terminate.listeners[0]",
+        "needs `tls` on listener `db`"
+    ));
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p == "tcp_routes.terminate.listeners[1]")
+    );
+    assert!(has(
+        &found,
+        "tcp_routes.mixed.listeners[0]",
+        "cannot share the https listener"
+    ));
+    assert!(!found.iter().any(|(p, _)| p.starts_with("tcp_routes.sni")));
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p == "tcp_routes.limits.middlewares[0]")
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p == "tcp_routes.limits.middlewares[1]")
+    );
+    assert!(has(
+        &found,
+        "tcp_routes.limits.middlewares[2]",
+        "per client IP"
+    ));
+    assert!(has(
+        &found,
+        "tcp_routes.limits.middlewares[3]",
+        "does not apply to TCP routes"
+    ));
+    assert!(has(
+        &found,
+        "tcp_routes.limits.middlewares[4]",
+        "does not exist"
+    ));
+    assert!(has(
+        &found,
+        "tcp_services.db.timeouts.idle",
+        "greater than zero"
+    ));
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p == "tcp_services.db.timeouts.termination_delay")
+    );
+    let warned = warnings(config);
+    assert!(has(&warned, "tcp_routes.mysql.match", "MySQL (port 3306)"));
+}
+
+#[test]
 fn flags_risky_security_and_admin_settings() {
     let config = with(
         app(),

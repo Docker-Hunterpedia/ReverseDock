@@ -37,18 +37,9 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
-        if matches!(
-            listener.effective_protocol(),
-            ListenerProtocol::Tcp | ListenerProtocol::Udp
-        ) {
-            gate.unsupported(format!("{path}.protocol"), "TCP and UDP listeners", "v0.6");
+        if listener.effective_protocol() == ListenerProtocol::Udp {
+            gate.unsupported(format!("{path}.protocol"), "UDP listeners", "v0.8");
         }
-    }
-    if !config.tcp_routes.is_empty() {
-        gate.unsupported("tcp_routes", "TCP routes", "v0.6");
-    }
-    if !config.tcp_services.is_empty() {
-        gate.unsupported("tcp_services", "TCP services", "v0.6");
     }
     for (name, middleware) in &config.middlewares {
         if let Middleware::Static(st) = middleware
@@ -81,12 +72,12 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "tcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  kubernetes: {}\n";
+        let yaml = "listeners:\n  dns: { address: \":53\", protocol: udp }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  kubernetes: {}\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 2, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
-        assert!(validate.iter().any(|d| d.path == "tcp_services"
-            && d.message == "TCP services: not supported in this version (planned for v0.6)"));
+        assert!(validate.iter().any(|d| d.path == "listeners.dns.protocol"
+            && d.message == "UDP listeners: not supported in this version (planned for v0.8)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
         assert!(run.iter().any(|d| d.path == "providers.kubernetes"));
@@ -117,5 +108,7 @@ mod tests {
         );
         assert!(proxy_protocol.contains("trusted"));
         assert_eq!(diagnostics(&proxy_protocol, Mode::Run), Vec::new());
+        let tcp = "listeners:\n  db: { address: \":5432\", protocol: tcp }\ntcp_routes:\n  db: { match: \"HostSNI(`*`)\", listeners: [db], service: db }\ntcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\n";
+        assert_eq!(diagnostics(tcp, Mode::Run), Vec::new());
     }
 }

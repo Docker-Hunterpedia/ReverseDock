@@ -121,10 +121,20 @@ doubled (``"PathRegexp(`^/v[0-9]+\\.json$`)"``), or write the rule in single quo
 
 ## TCP matchers
 
-`HostSNI`, `HostSNIRegexp` and `ALPN` exist for TCP routes, which are <Status planned="v0.6" />.
-The parser and `rdock validate` check them in `tcp_routes`, and refuse them in HTTP routes. A
-TCP rule may also use `ClientIP`. `ALPN` refuses `acme-tls/1`, which is reserved for ACME
-challenges.
+<Status since="v0.6" /> `HostSNI`, `HostSNIRegexp` and `ALPN` match the TLS ClientHello of a
+connection to a [TCP route](/docs/guides/tcp-routes/); they are refused in HTTP routes. A TCP rule
+may also use `ClientIP`.
+
+| Matcher | Matches |
+|---|---|
+| ``HostSNI(`db.example.com`)`` | the server name, case-insensitive; ``HostSNI(`*.example.com`)`` one label below |
+| ``HostSNI(`*`)`` | every connection, with or without TLS or a server name; the only matcher for connections that do not start with TLS |
+| ``HostSNIRegexp(`^db-[0-9]+\.example\.com$`)`` | the server name, by regular expression |
+| ``ALPN(`postgresql`)`` | a protocol the client offers; `acme-tls/1` is refused, it is reserved for ACME challenges |
+
+A server name that is not a valid host name (an IP address, non-ASCII, a trailing dot) only
+matches ``HostSNI(`*`)``. TCP routes are tried by priority (`0` is the rule length), then rule
+length, then name.
 
 ## Structured match
 

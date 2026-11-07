@@ -16,7 +16,7 @@ use rdock_model::config::{Config, Listener, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::route::{MatchSpec, Route, RouteTls, TlsMode};
 use rdock_model::service::{
-    Health, HealthMethod, LbPolicy, SameSite, Service, Sticky, WhenAllDown,
+    Backend, Health, HealthMethod, LbPolicy, SameSite, Service, Sticky, WhenAllDown,
 };
 use rdock_model::values::{BackendAddress, TrustedProxy};
 use rdock_observability::AccessLog;
@@ -82,7 +82,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         requests: BTreeSet::new(),
         local: BTreeSet::new(),
     };
-    let listeners = compile_listeners(
+    let mut listeners = compile_listeners(
         config,
         &services,
         &middlewares,
@@ -90,6 +90,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &env.live.routes,
         &mut out,
     );
+    crate::tcp::compile_tcp(config, env, &mut listeners, &mut auto_tls, &mut out);
     let cert_requests = auto_tls.requests.into_iter().collect();
     let local_cert_names = auto_tls.local.into_iter().collect();
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
@@ -172,7 +173,7 @@ fn client_ip_policy(config: &Config, cloudflare: &CloudflareRanges) -> ClientIpP
 
 /// The key a reference names: `name@file` is the file's `name`; other providers' objects are
 /// merged under their `name@provider` key (ADR-0018).
-fn key(reference: &str) -> &str {
+pub(crate) fn key(reference: &str) -> &str {
     reference.strip_suffix("@file").unwrap_or(reference)
 }
 
@@ -296,39 +297,7 @@ fn compile_service(
     split: Vec<(Arc<ServiceRuntime>, u32)>,
     env: &CompileEnv<'_>,
 ) -> Result<ServiceRuntime, String> {
-    let dns = env.dns;
-    let backends = service
-        .backends
-        .iter()
-        .map(|b| BackendRuntime {
-            endpoint: match &b.address {
-                BackendAddress::Tcp { host, port } => {
-                    let literal = host
-                        .trim_start_matches('[')
-                        .trim_end_matches(']')
-                        .parse::<IpAddr>()
-                        .ok();
-                    Endpoint::Tcp {
-                        host: host.clone(),
-                        port: *port,
-                        addrs: match literal {
-                            Some(ip) => {
-                                Arc::new(ArcSwap::from_pointee(vec![SocketAddr::new(ip, *port)]))
-                            }
-                            None => dns.cell(host, *port),
-                        },
-                    }
-                }
-                BackendAddress::Unix(path) => Endpoint::Unix(path.clone()),
-                BackendAddress::Srv(name) => Endpoint::Srv {
-                    name: name.clone(),
-                    targets: dns.srv_cell(name),
-                },
-            },
-            weight: b.weight,
-            backup: b.backup,
-        })
-        .collect();
+    let backends = compile_backends(&service.backends, env.dns);
     let tls = service.tls.as_ref();
     let ca = match tls.and_then(|t| t.ca_file.as_deref()) {
         Some(file) => Some(load_ca(file)?),
@@ -377,6 +346,41 @@ fn compile_service(
         },
         pass_host_header: service.pass_host_header,
     })
+}
+
+/// Backends as configured, with name resolution cells for DNS names.
+pub(crate) fn compile_backends(backends: &[Backend], dns: &Dns) -> Vec<BackendRuntime> {
+    backends
+        .iter()
+        .map(|b| BackendRuntime {
+            endpoint: match &b.address {
+                BackendAddress::Tcp { host, port } => {
+                    let literal = host
+                        .trim_start_matches('[')
+                        .trim_end_matches(']')
+                        .parse::<IpAddr>()
+                        .ok();
+                    Endpoint::Tcp {
+                        host: host.clone(),
+                        port: *port,
+                        addrs: match literal {
+                            Some(ip) => {
+                                Arc::new(ArcSwap::from_pointee(vec![SocketAddr::new(ip, *port)]))
+                            }
+                            None => dns.cell(host, *port),
+                        },
+                    }
+                }
+                BackendAddress::Unix(path) => Endpoint::Unix(path.clone()),
+                BackendAddress::Srv(name) => Endpoint::Srv {
+                    name: name.clone(),
+                    targets: dns.srv_cell(name),
+                },
+            },
+            weight: b.weight,
+            backup: b.backup,
+        })
+        .collect()
 }
 
 fn balancer(policy: LbPolicy) -> Balancer {
@@ -694,12 +698,7 @@ fn compile_listeners(
     let effective = config.effective_listeners();
     let mut listeners: BTreeMap<String, ListenerRuntime> = effective
         .iter()
-        .filter(|(_, l)| {
-            matches!(
-                l.effective_protocol(),
-                ListenerProtocol::Http | ListenerProtocol::Https
-            )
-        })
+        .filter(|(_, l)| l.effective_protocol() != ListenerProtocol::Udp)
         .filter_map(|(name, l)| match new_listener(name, l) {
             Ok(listener) => Some((name.clone(), listener)),
             Err(message) => {
@@ -741,7 +740,7 @@ fn compile_listeners(
     }
     let https_port = listeners
         .values()
-        .find(|l| l.tls.is_some())
+        .find(|l| l.protocol == ListenerProtocol::Https)
         .map(|l| l.address.port());
     for listener in listeners.values_mut() {
         listener.routes.sort_by(|a, b| {
@@ -750,7 +749,7 @@ fn compile_listeners(
                 .then_with(|| a.name.cmp(&b.name))
         });
         report_shadowed(&listener.name, &listener.routes, out);
-        if listener.tls.is_none()
+        if listener.protocol == ListenerProtocol::Http
             && config.defaults.redirect_http_to_https
             && let Some(port) = https_port
         {
@@ -774,11 +773,14 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
     Ok(ListenerRuntime {
         name: Arc::from(name),
         address: listener.address,
+        protocol: listener.effective_protocol(),
+        starttls: listener.starttls,
         tls,
         timeouts: listener.timeouts,
         proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),
+        tcp_routes: Arc::new([]),
         https_redirect: None,
     })
 }
@@ -897,9 +899,18 @@ fn compile_route(
     }))
 }
 
+/// Host names a certificate can be issued for: every host but `*`, normalised.
+fn named_hosts(hosts: Vec<&str>) -> Vec<String> {
+    hosts
+        .into_iter()
+        .filter(|h| *h != "*")
+        .map(crate::router::normalize_host)
+        .collect()
+}
+
 /// Collects the certificates that routes with `tls: auto` need and no configured certificate
 /// covers: public names go to ACME, private names to the local CA (ADR-0020).
-struct AutoTls<'a> {
+pub(crate) struct AutoTls<'a> {
     certs: &'a CertIndex,
     /// Whether automatic certificates are on.
     acme: bool,
@@ -924,13 +935,36 @@ impl AutoTls<'_> {
         };
         let hosts: Vec<String> = match options.filter(|o| !o.domains.is_empty()) {
             Some(o) => o.domains.iter().map(|d| d.to_ascii_lowercase()).collect(),
-            None => expr
-                .positive_hosts()
-                .into_iter()
-                .filter(|h| *h != "*")
-                .map(crate::router::normalize_host)
-                .collect(),
+            None => named_hosts(expr.positive_hosts()),
         };
+        self.names(path, hosts, options, config, out);
+    }
+
+    /// Certificates for the `HostSNI` names of a TCP route that terminates TLS.
+    pub(crate) fn sni_route(
+        &mut self,
+        path: &str,
+        expr: &Expr,
+        config: &Config,
+        out: &mut Vec<Diagnostic>,
+    ) {
+        self.names(
+            path,
+            named_hosts(expr.positive_sni_hosts()),
+            None,
+            config,
+            out,
+        );
+    }
+
+    fn names(
+        &mut self,
+        path: &str,
+        hosts: Vec<String>,
+        options: Option<&rdock_model::route::RouteTlsOptions>,
+        config: &Config,
+        out: &mut Vec<Diagnostic>,
+    ) {
         let uncovered: Vec<String> = hosts
             .iter()
             .filter(|h| !self.certs.covers(h))

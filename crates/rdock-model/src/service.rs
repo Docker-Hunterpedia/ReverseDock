@@ -423,6 +423,33 @@ pub struct TcpService {
     /// Send a PROXY protocol header to backends.
     #[serde(default)]
     pub proxy_protocol: Option<ProxyProtocolVersion>,
+    /// Connection timeouts.
+    #[serde(default)]
+    pub timeouts: TcpTimeouts,
+}
+
+/// Timeouts of a TCP service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TcpTimeouts {
+    /// Establishing a connection to a backend.
+    pub connect: Duration,
+    /// A connection with no data in either direction for this long is closed (NGINX
+    /// `proxy_timeout`).
+    pub idle: Duration,
+    /// Once one side has finished sending, the other side gets this long to finish too
+    /// before both are closed (Traefik `terminationDelay`).
+    pub termination_delay: Duration,
+}
+
+impl Default for TcpTimeouts {
+    fn default() -> Self {
+        Self {
+            connect: Duration::from_secs(5),
+            idle: Duration::from_secs(600),
+            termination_delay: Duration::from_millis(100),
+        }
+    }
 }
 
 /// PROXY protocol versions.

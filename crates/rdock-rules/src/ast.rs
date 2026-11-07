@@ -276,23 +276,72 @@ impl Expr {
         }
     }
 
+    /// Whether a ``HostSNI(`*`)`` matcher appears without negation: the only way a TCP rule
+    /// can match a connection that does not start with TLS.
+    #[must_use]
+    pub fn has_any_sni(&self) -> bool {
+        self.any_positive(
+            &|m| matches!(m, Matcher::HostSni(host) if host == "*"),
+            false,
+        )
+    }
+
+    /// Whether the rule looks at the TLS ClientHello: `HostSNI` with a name, `HostSNIRegexp`
+    /// or `ALPN`.
+    #[must_use]
+    pub fn reads_client_hello(&self) -> bool {
+        self.matchers().into_iter().any(|m| match m {
+            Matcher::HostSni(host) => host != "*",
+            Matcher::HostSniRegexp(_) | Matcher::Alpn(_) => true,
+            _ => false,
+        })
+    }
+
+    fn any_positive(&self, test: &dyn Fn(&Matcher) -> bool, negated: bool) -> bool {
+        match self {
+            Self::Matcher(m) => !negated && test(m),
+            Self::Not(inner) => inner.any_positive(test, !negated),
+            Self::And(items) | Self::Or(items) => {
+                items.iter().any(|item| item.any_positive(test, negated))
+            }
+        }
+    }
+
     /// Host values of `Host` matchers that are not negated. These are the names eligible for
     /// automatic certificates.
     #[must_use]
     pub fn positive_hosts(&self) -> Vec<&str> {
         let mut out = Vec::new();
-        self.collect_hosts(false, &mut out);
+        self.collect_hosts(&|m| matches!(m, Matcher::Host(_)), false, &mut out);
         out
     }
 
-    fn collect_hosts<'a>(&'a self, negated: bool, out: &mut Vec<&'a str>) {
+    /// Host values of `HostSNI` matchers that are not negated: the names a TCP route that
+    /// terminates TLS needs certificates for.
+    #[must_use]
+    pub fn positive_sni_hosts(&self) -> Vec<&str> {
+        let mut out = Vec::new();
+        self.collect_hosts(&|m| matches!(m, Matcher::HostSni(_)), false, &mut out);
+        out
+    }
+
+    fn collect_hosts<'a>(
+        &'a self,
+        wanted: &dyn Fn(&Matcher) -> bool,
+        negated: bool,
+        out: &mut Vec<&'a str>,
+    ) {
         match self {
-            Self::Matcher(Matcher::Host(host)) if !negated => out.push(host),
+            Self::Matcher(m @ (Matcher::Host(host) | Matcher::HostSni(host)))
+                if !negated && wanted(m) =>
+            {
+                out.push(host);
+            }
             Self::Matcher(_) => {}
-            Self::Not(inner) => inner.collect_hosts(!negated, out),
+            Self::Not(inner) => inner.collect_hosts(wanted, !negated, out),
             Self::And(items) | Self::Or(items) => {
                 for item in items {
-                    item.collect_hosts(negated, out);
+                    item.collect_hosts(wanted, negated, out);
                 }
             }
         }
@@ -362,4 +411,29 @@ fn write_joined(f: &mut fmt::Formatter<'_>, items: &[Expr], separator: &str) -> 
         }
     }
     Ok(())
+}
+
+#[cfg(test)]
+#[allow(clippy::unwrap_used)]
+mod tests {
+    use crate::parse;
+
+    #[test]
+    fn finds_positive_sni_matchers() {
+        let expr =
+            parse("HostSNI(`db.example.com`) || (HostSNI(`*`) && !HostSNI(`x.example.com`))")
+                .unwrap();
+        assert_eq!(expr.positive_sni_hosts(), ["db.example.com", "*"]);
+        assert!(expr.has_any_sni());
+        assert!(expr.reads_client_hello());
+        assert!(!parse("!HostSNI(`*`)").unwrap().has_any_sni());
+        let plain = parse("HostSNI(`*`) && ClientIP(`10.0.0.0/8`)").unwrap();
+        assert!(plain.has_any_sni());
+        assert!(!plain.reads_client_hello());
+        assert!(parse("ALPN(`postgresql`)").unwrap().reads_client_hello());
+        assert_eq!(
+            parse("Host(`a.com`)").unwrap().positive_sni_hosts(),
+            Vec::<&str>::new()
+        );
+    }
 }

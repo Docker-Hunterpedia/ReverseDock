@@ -11,8 +11,6 @@ import Status from '../../../../../components/Status.astro';
 
 TCP backend pools.
 
-<Status planned="v0.6" />
-
 ## `tcp_services.<name>.backends`
 
 **Type:** list of object · **Required**
@@ -45,3 +43,27 @@ Send a PROXY protocol header to backends.
 
 - `v1`: Text format.
 - `v2`: Binary format.
+
+## `tcp_services.<name>.timeouts`
+
+**Type:** object · **Default:** `{"connect":"5s","idle":"10m","termination_delay":"100ms"}`
+
+Connection timeouts.
+
+### `tcp_services.<name>.timeouts.connect`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+Establishing a connection to a backend.
+
+### `tcp_services.<name>.timeouts.idle`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10m`
+
+A connection with no data in either direction for this long is closed (NGINX `proxy_timeout`).
+
+### `tcp_services.<name>.timeouts.termination_delay`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `100ms`
+
+Once one side has finished sending, the other side gets this long to finish too before both are closed (Traefik `terminationDelay`).

@@ -154,6 +154,10 @@ pub struct Listener {
     /// Accept the PROXY protocol (v1 or v2) from these sources only.
     #[serde(default)]
     pub proxy_protocol: Option<ProxyProtocolIn>,
+    /// `tcp` listeners: answer a protocol's request to start TLS before reading the TLS
+    /// ClientHello. Off by default.
+    #[serde(default)]
+    pub starttls: Option<StartTls>,
     /// Client-side timeouts.
     #[serde(default)]
     pub timeouts: ListenerTimeouts,
@@ -172,6 +176,7 @@ impl Listener {
             protocol: None,
             tls: None,
             proxy_protocol: None,
+            starttls: None,
             timeouts: ListenerTimeouts::default(),
             ping: None,
         }
@@ -200,6 +205,15 @@ pub enum ListenerProtocol {
     Tcp,
     /// UDP datagrams.
     Udp,
+}
+
+/// Protocols whose own request to start TLS a `tcp` listener answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum StartTls {
+    /// PostgreSQL: answer the 8-byte `SSLRequest` with `S` (and a `GSSENCRequest` with `N`),
+    /// so clients with the default `sslnegotiation=postgres` reach TCP routes that read SNI.
+    Postgres,
 }
 
 /// Timeouts for the client side of a listener.

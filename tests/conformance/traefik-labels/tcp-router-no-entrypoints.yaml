@@ -1,0 +1,13 @@
+description: "A TCP router without entrypoints is ignored with a warning: TCP routes must name their listeners."
+containers:
+  - name: "db"
+    labels:
+      traefik.enable: "true"
+      traefik.tcp.routers.db.rule: "HostSNI(`*`)"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 5432
+expect:
+  diagnostics:
+    - "docker.db: TCP route `db` names no listener; the route is ignored"

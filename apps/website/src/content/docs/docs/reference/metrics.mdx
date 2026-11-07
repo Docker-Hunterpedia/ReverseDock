@@ -100,6 +100,28 @@ certificate's first domain name.
 **Counter.** ACME certificate orders. Labels: `ca` (the CA's host name) and `result`
 (`issued` or `failed`).
 
+## TCP routes
+
+<Status since="v0.6" /> Metrics of [TCP routes](/docs/guides/tcp-routes/).
+
+### `rdock_tcp_connections`
+
+**Gauge.** Open relays of TCP routes. Labels: `listener` and `route`.
+
+### `rdock_tcp_bytes_total`
+
+**Counter.** Bytes relayed by TCP routes. Labels: `route` and `direction`: `in` (from the client
+to the backend) and `out` (from the backend to the client). Counted as the bytes move, so long
+connections show up before they end.
+
+### `rdock_tcp_rejected_total`
+
+**Counter.** Connections a listener with TCP routes closed without relaying them. Labels:
+`listener` and `reason`: `no_route`, `bad_client_hello` (bytes that start like TLS but are not a
+valid ClientHello of at most 16 KiB), `denied` (`ip_allow`, `ip_deny`), `in_flight`, `no_backend`
+and `connect_failed`. Failed handshakes of terminating routes count in
+`rdock_tls_handshake_errors_total`.
+
 ## Backends <Status since="v0.4" />
 
 ### `rdock_backend_requests_total`

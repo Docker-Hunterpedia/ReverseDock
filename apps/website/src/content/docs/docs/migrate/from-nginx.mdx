@@ -45,7 +45,7 @@ The NGINX facts below come from the official module documentation at nginx.org (
 | `access_log` | `observability.access_log` |
 | `nginx -t` | `rdock validate` |
 | `nginx -s reload` | automatic on file change, or `rdock reload`, or `SIGHUP` |
-| `stream` module | `tcp_routes` <Status planned="v0.6" /> |
+| `stream` module, `ssl_preread` | `tcp_routes` with `HostSNI` ([Route TCP and TLS](/docs/guides/tcp-routes/)) <Status since="v0.6" /> |
 
 ## Five common setups
 

@@ -136,7 +136,11 @@ fn acme_plan(config: &Config, runtime: &Runtime) -> rdock_acme::Plan {
             Vec::new()
         },
         acme: acme.map(std::borrow::Cow::into_owned).unwrap_or_default(),
-        http01: runtime.listeners.values().any(|l| l.tls.is_none()),
+        http01: runtime
+            .listeners
+            .values()
+            .any(|l| l.protocol == rdock_model::config::ListenerProtocol::Http),
+        // `https` listeners and `tcp` listeners with `tls` both answer validation handshakes.
         tls_alpn01: runtime.listeners.values().any(|l| l.tls.is_some()),
     }
 }
@@ -803,6 +807,8 @@ impl Engine {
                         "routes": s.fragment.routes.len(),
                         "services": s.fragment.services.len(),
                         "middlewares": s.fragment.middlewares.len(),
+                        "tcp_routes": s.fragment.tcp_routes.len(),
+                        "tcp_services": s.fragment.tcp_services.len(),
                         "diagnostics": s.diagnostics,
                     }),
                 )
@@ -1000,7 +1006,12 @@ impl rdock_admin::Control for Engine {
         }
         let runtime = self.plane.runtime();
         let listener = if body.listener.is_empty() {
-            runtime.listeners.keys().next().cloned().unwrap_or_default()
+            runtime
+                .listeners
+                .iter()
+                .find(|(_, l)| l.protocol != rdock_model::config::ListenerProtocol::Tcp)
+                .map(|(name, _)| name.clone())
+                .unwrap_or_default()
         } else {
             body.listener
         };

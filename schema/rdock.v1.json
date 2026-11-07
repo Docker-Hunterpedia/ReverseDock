@@ -2496,6 +2496,18 @@
           ],
           "default": null
         },
+        "starttls": {
+          "description": "`tcp` listeners: answer a protocol's request to start TLS before reading the TLS\nClientHello. Off by default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/StartTls"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
         "timeouts": {
           "description": "Client-side timeouts.",
           "$ref": "#/$defs/ListenerTimeouts",
@@ -4536,6 +4548,16 @@
         "weight"
       ]
     },
+    "StartTls": {
+      "description": "Protocols whose own request to start TLS a `tcp` listener answers.",
+      "oneOf": [
+        {
+          "description": "PostgreSQL: answer the 8-byte `SSLRequest` with `S` (and a `GSSENCRequest` with `N`),\nso clients with the default `sslnegotiation=postgres` reach TCP routes that read SNI.",
+          "type": "string",
+          "const": "postgres"
+        }
+      ]
+    },
     "StaticCacheControl": {
       "description": "`Cache-Control` of static files: a default and overrides by path prefix.",
       "type": "object",
@@ -4831,6 +4853,14 @@
           "description": "Rule with TCP matchers: ``HostSNI(`db.example.com`)``, ``HostSNI(`*`)``, `ClientIP`, `ALPN`.",
           "type": "string"
         },
+        "middlewares": {
+          "description": "Middlewares checked before connecting to the service: `ip_allow`, `ip_deny` and\n`in_flight` (counted per client IP).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
         "priority": {
           "description": "Higher priorities are evaluated first. `0` uses the rule length.",
           "type": "integer",
@@ -4842,7 +4872,7 @@
           "type": "string"
         },
         "tls": {
-          "description": "TLS handling.",
+          "description": "TLS handling. Without it the bytes are relayed as they arrive; with it the route\nmatches TLS connections only and terminates TLS unless `passthrough` is set.",
           "anyOf": [
             {
               "$ref": "#/$defs/TcpRouteTls"
@@ -4900,6 +4930,15 @@
             }
           ],
           "default": null
+        },
+        "timeouts": {
+          "description": "Connection timeouts.",
+          "$ref": "#/$defs/TcpTimeouts",
+          "default": {
+            "connect": "5s",
+            "idle": "10m",
+            "termination_delay": "100ms"
+          }
         }
       },
       "additionalProperties": false,
@@ -4909,6 +4948,31 @@
       "required": [
         "backends"
       ]
+    },
+    "TcpTimeouts": {
+      "description": "Timeouts of a TCP service.",
+      "type": "object",
+      "properties": {
+        "connect": {
+          "description": "Establishing a connection to a backend.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        },
+        "idle": {
+          "description": "A connection with no data in either direction for this long is closed (NGINX\n`proxy_timeout`).",
+          "$ref": "#/$defs/Duration",
+          "default": "10m"
+        },
+        "termination_delay": {
+          "description": "Once one side has finished sending, the other side gets this long to finish too\nbefore both are closed (Traefik `terminationDelay`).",
+          "$ref": "#/$defs/Duration",
+          "default": "100ms"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "Timeouts": {
       "description": "Upstream timeouts.",

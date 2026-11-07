@@ -15,6 +15,7 @@ pub mod proxy_protocol;
 pub mod router;
 pub mod runtime;
 mod server;
+pub mod tcp;
 mod trace;
 pub mod upstream;
 
