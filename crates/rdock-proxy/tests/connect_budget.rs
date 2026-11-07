@@ -55,6 +55,15 @@ fn tried(ids: &[&str]) -> Vec<String> {
 }
 
 #[test]
+fn the_default_retries_use_the_attempt_budget() {
+    let service = service("");
+    assert_eq!(
+        connect_budget(FULL, &service, 0, &tried(&["10.0.0.1:80"])),
+        ATTEMPT
+    );
+}
+
+#[test]
 fn an_attempt_that_can_be_retried_elsewhere_waits_connect_attempt() {
     let service = service(RETRY_ON_CONNECT);
     assert_eq!(
@@ -85,7 +94,11 @@ fn the_last_attempt_waits_the_full_connect_timeout() {
 
 #[test]
 fn without_retries_on_connect_the_full_timeout_applies() {
-    for extra in ["", "    retries: { attempts: 2, on: [\"503\"] }"] {
+    // No `retries` now means the connect defaults (ADR-0028); `attempts: 0` turns them off.
+    for extra in [
+        "    retries: { attempts: 0 }",
+        "    retries: { attempts: 2, on: [\"503\"] }",
+    ] {
         let service = service(extra);
         assert_eq!(
             connect_budget(FULL, &service, 0, &tried(&["10.0.0.1:80"])),
