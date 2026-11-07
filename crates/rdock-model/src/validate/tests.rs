@@ -1110,3 +1110,34 @@ fn docker_static_roots_are_absolute() {
         )]
     );
 }
+
+#[test]
+fn runtime_threads_must_be_between_1_and_1024() {
+    for threads in [0, 1025] {
+        let found = errors(with(
+            app(),
+            json!({ "runtime": { "model": "per_core", "threads": threads } }),
+        ));
+        assert!(
+            has(&found, "runtime.threads", "between 1 and 1024"),
+            "{threads}: {found:?}"
+        );
+    }
+    let config = with(
+        app(),
+        json!({ "runtime": { "model": "per_core", "threads": 1024 } }),
+    );
+    assert_eq!(validate(config), Vec::new());
+}
+
+#[test]
+fn runtime_threads_without_per_core_is_a_warning() {
+    let found = warnings(with(app(), json!({ "runtime": { "threads": 4 } })));
+    assert!(has(&found, "runtime.threads", "only the `per_core` model"));
+}
+
+#[test]
+fn runtime_model_rejects_unknown_names() {
+    let config = with(app(), json!({ "runtime": { "model": "per-core" } }));
+    assert!(serde_json::from_value::<Config>(config).is_err());
+}

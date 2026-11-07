@@ -29,6 +29,7 @@ use tokio::sync::watch;
 use tokio::task::JoinSet;
 
 use crate::conn::ConnStream;
+use crate::executor::Executor;
 use crate::proxy::{RdockProxy, Shared};
 use crate::runtime::ListenerTls;
 
@@ -130,34 +131,44 @@ pub fn acceptor(tls: &ListenerTls, resolver: Arc<SniResolver>) -> Result<Accepto
 
 /// Binds a listening socket. `:port` binds all interfaces, IPv6 and IPv4 when available.
 pub fn bind(address: &ListenAddress) -> io::Result<std::net::TcpListener> {
-    let listener = match address.ip() {
-        Some(ip) => std::net::TcpListener::bind(SocketAddr::new(ip, address.port()))?,
-        None => std::net::TcpListener::bind(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            address.port(),
-        ))
-        .or_else(|_| {
-            std::net::TcpListener::bind(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                address.port(),
-            ))
-        })?,
-    };
+    let listener = bind_any(address, std::net::TcpListener::bind)?;
     listener.set_nonblocking(true)?;
     Ok(listener)
 }
 
-/// The HTTP engine of one listener.
-pub fn http_engine(
+/// Opens a socket on `address` with `open`. `:port` tries every IPv6 interface (which also
+/// accepts IPv4 where the system allows), then every IPv4 interface.
+pub(crate) fn bind_any<T>(
+    address: &ListenAddress,
+    open: impl Fn(SocketAddr) -> io::Result<T>,
+) -> io::Result<T> {
+    match address.ip() {
+        Some(ip) => open(SocketAddr::new(ip, address.port())),
+        None => open(SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            address.port(),
+        ))
+        .or_else(|_| {
+            open(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                address.port(),
+            ))
+        }),
+    }
+}
+
+/// The HTTP engine of one listener, or of one thread of a listener (`per_core`), keeping up to
+/// `idle_upstreams` idle backend connections for reuse.
+fn http_engine(
     name: Arc<str>,
     shared: Arc<Shared>,
     timeouts: &ListenerTimeouts,
+    idle_upstreams: usize,
 ) -> Arc<HttpProxy<RdockProxy>> {
-    let idle = shared.runtime.load().limits.upstream_idle_connections;
     let conf = Arc::new(ServerConf {
         // Pingora keeps 128 idle upstream connections by default; under load every request
         // beyond them opened and closed its own backend connection (#86).
-        upstream_keepalive_pool_size: usize::try_from(idle).unwrap_or(usize::MAX).max(1),
+        upstream_keepalive_pool_size: idle_upstreams,
         // Attempts per request: one retry for a pooled connection that closed under us.
         // Retries are limited per request by `services.<s>.retries` (at most 10) and the
         // stale pooled-connection retry; this is only Pingora's outer bound.
@@ -195,42 +206,64 @@ pub struct Running {
     /// Changeable settings.
     pub settings: Arc<ArcSwap<Settings>>,
     stop: watch::Sender<Option<Duration>>,
-    task: tokio::task::JoinHandle<()>,
+    tasks: Vec<tokio::task::JoinHandle<()>>,
 }
 
 impl Running {
-    /// Starts accepting on `socket`.
-    pub fn start(
-        name: Arc<str>,
+    /// Starts accepting on `sockets` (from [`Executor::bind`]), each on its own thread with
+    /// its own HTTP engine; `security.limits.upstream_idle_connections` is split between them.
+    pub(crate) fn start(
+        name: &Arc<str>,
         address: ListenAddress,
-        socket: tokio::net::TcpListener,
+        sockets: Vec<tokio::net::TcpListener>,
         settings: Settings,
-        shared: Arc<Shared>,
+        shared: &Arc<Shared>,
+        executor: &Executor,
     ) -> Self {
-        let engine = http_engine(name.clone(), shared.clone(), &settings.timeouts);
+        let idle_upstreams = idle_upstreams_per_engine(
+            shared.runtime.load().limits.upstream_idle_connections,
+            sockets.len(),
+        );
+        let timeouts = settings.timeouts;
         let settings = Arc::new(ArcSwap::from_pointee(settings));
         let (stop, stop_rx) = watch::channel(None);
-        let task = tokio::spawn(accept_loop(
-            name,
-            socket,
-            settings.clone(),
-            engine,
-            stop_rx,
-            shared,
-        ));
+        let tasks = sockets
+            .into_iter()
+            .enumerate()
+            .map(|(index, socket)| {
+                let engine = http_engine(name.clone(), shared.clone(), &timeouts, idle_upstreams);
+                let accepting = accept_loop(
+                    name.clone(),
+                    socket,
+                    settings.clone(),
+                    engine,
+                    stop_rx.clone(),
+                    shared.clone(),
+                );
+                executor.spawn(index, accepting)
+            })
+            .collect();
         Self {
             address,
             settings,
             stop,
-            task,
+            tasks,
         }
     }
 
     /// Stops accepting and waits up to `drain` for open connections to finish.
     pub async fn stop(self, drain: Duration) {
         let _ = self.stop.send(Some(drain));
-        let _ = self.task.await;
+        for task in self.tasks {
+            let _ = task.await;
+        }
     }
+}
+
+/// Each engine's share of the idle upstream connections a listener keeps (at least one).
+fn idle_upstreams_per_engine(per_listener: u32, engines: usize) -> usize {
+    let per_listener = usize::try_from(per_listener).unwrap_or(usize::MAX);
+    (per_listener / engines.max(1)).max(1)
 }
 
 async fn accept_loop(
@@ -443,5 +476,18 @@ async fn read_preface(stream: &mut L4Stream) -> Option<Vec<u8>> {
         if seen.len() >= H2_PREFACE.len() || seen[..check] != H2_PREFACE[..check] {
             return Some(seen);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::idle_upstreams_per_engine;
+
+    #[test]
+    fn idle_upstreams_are_split_between_engines() {
+        assert_eq!(idle_upstreams_per_engine(4096, 1), 4096);
+        assert_eq!(idle_upstreams_per_engine(4096, 3), 1365);
+        assert_eq!(idle_upstreams_per_engine(2, 8), 1);
+        assert_eq!(idle_upstreams_per_engine(0, 1), 1);
     }
 }

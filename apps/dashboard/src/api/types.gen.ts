@@ -930,6 +930,10 @@ export type RdockConfig = {
         [key: string]: RdockRoute;
     };
     /**
+     * How the data plane uses threads.
+     */
+    runtime?: RdockRuntimeSettings;
+    /**
      * Client IP trust and request limits.
      */
     security?: RdockSecurity;
@@ -963,7 +967,7 @@ export type RdockConfig = {
         [key: string]: RdockMiddleware;
     } | RdockObservability | RdockProviders | {
         [key: string]: RdockRoute;
-    } | RdockSecurity | {
+    } | RdockRuntimeSettings | RdockSecurity | {
         [key: string]: RdockService;
     } | {
         [key: string]: RdockTcpRoute;
@@ -2254,6 +2258,30 @@ export type RdockRouteTlsOptions = {
      */
     domains?: Array<string>;
     [key: string]: unknown | boolean | string | null | string | null | Array<string> | undefined;
+};
+
+/**
+ * The data plane's threading model.
+ */
+export type RdockRuntimeModel = 'steal' | 'per_core';
+
+/**
+ * How the data plane uses threads (ADR-0026, #176). Read at start; a reload that changes it
+ * needs a restart.
+ */
+export type RdockRuntimeSettings = {
+    /**
+     * `steal`: one multi-threaded runtime whose workers take work from each other. `per_core`
+     * (experimental): one single-threaded runtime per thread, each accepting on its own
+     * socket, so a connection is accepted, served and proxied on one thread.
+     */
+    model?: RdockRuntimeModel;
+    /**
+     * Threads of the `per_core` model (1–1024). Default: the CPUs the process may use,
+     * counting its CPU affinity and its cgroup CPU quota (`docker run --cpus`), rounded down.
+     */
+    threads?: number | null;
+    [key: string]: unknown | RdockRuntimeModel | number | null | undefined;
 };
 
 /**

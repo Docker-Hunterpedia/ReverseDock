@@ -1,4 +1,4 @@
-//! Security, admin, observability and lifecycle settings.
+//! Security, admin, observability, lifecycle and runtime settings.
 
 use std::path::PathBuf;
 
@@ -597,5 +597,67 @@ impl Default for Lifecycle {
         Self {
             drain_timeout: Duration::from_secs(8),
         }
+    }
+}
+
+/// How the data plane uses threads (ADR-0026, #176). Read at start; a reload that changes it
+/// needs a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RuntimeSettings {
+    /// `steal`: one multi-threaded runtime whose workers take work from each other. `per_core`
+    /// (experimental): one single-threaded runtime per thread, each accepting on its own
+    /// socket, so a connection is accepted, served and proxied on one thread.
+    pub model: RuntimeModel,
+    /// Threads of the `per_core` model (1–1024). Default: the CPUs the process may use,
+    /// counting its CPU affinity and its cgroup CPU quota (`docker run --cpus`), rounded down.
+    pub threads: Option<u16>,
+}
+
+/// Most `per_core` threads accepted; more would only add sockets, runtimes and upstream pools.
+pub const MAX_RUNTIME_THREADS: u16 = 1024;
+
+impl RuntimeSettings {
+    /// The threads the `per_core` model starts: `threads`, or the parallelism the standard
+    /// library reports (CPU affinity and cgroup v1/v2 quota on Linux, at least 1).
+    #[must_use]
+    pub fn effective_threads(&self) -> usize {
+        self.threads.map_or_else(
+            || std::thread::available_parallelism().map_or(1, std::num::NonZero::get),
+            usize::from,
+        )
+    }
+}
+
+/// The data plane's threading model.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RuntimeModel {
+    /// A work-stealing runtime with one worker per CPU.
+    #[default]
+    Steal,
+    /// One single-threaded runtime per thread, no work stealing.
+    PerCore,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RuntimeModel, RuntimeSettings};
+
+    #[test]
+    fn per_core_threads_default_to_the_available_parallelism() {
+        let settings = RuntimeSettings::default();
+        assert_eq!(settings.model, RuntimeModel::Steal);
+        let available = std::thread::available_parallelism().unwrap().get();
+        assert_eq!(settings.effective_threads(), available);
+    }
+
+    #[test]
+    fn per_core_threads_can_be_set() {
+        let settings = RuntimeSettings {
+            model: RuntimeModel::PerCore,
+            threads: Some(3),
+        };
+        assert_eq!(settings.effective_threads(), 3);
     }
 }

@@ -16,6 +16,7 @@ use tokio::sync::Mutex;
 
 use crate::compile::{CompileEnv, Compiled, compile};
 use crate::dns::DNS_TICK;
+use crate::executor::Executor;
 use crate::forwarded::CloudflareRanges;
 use crate::gate::Mode;
 use crate::listener::{self, Running, Settings};
@@ -26,6 +27,9 @@ use crate::upstream::Dns;
 /// Why a configuration could not be applied. Nothing changed when this is returned.
 #[derive(Debug, thiserror::Error)]
 pub enum ApplyError {
+    /// The threads of `runtime.model: per_core` could not be started.
+    #[error("cannot start the data plane's threads: {0}")]
+    Threads(#[source] std::io::Error),
     /// A listener address could not be bound.
     #[error("cannot listen on {address} (listener `{name}`): {source}")]
     Bind {
@@ -62,12 +66,14 @@ pub struct ListenerStatus {
 
 struct State {
     running: BTreeMap<String, (Running, Option<ListenerTls>)>,
+    /// Started by the first apply, from its `runtime` settings.
+    executor: Option<Arc<Executor>>,
 }
 
 /// Sockets and acceptors made ready before a configuration is published.
 #[derive(Default)]
 struct Prepared {
-    sockets: BTreeMap<String, tokio::net::TcpListener>,
+    sockets: BTreeMap<String, Vec<tokio::net::TcpListener>>,
     acceptors: BTreeMap<String, Arc<pingora::listeners::tls::Acceptor>>,
 }
 
@@ -127,6 +133,7 @@ impl DataPlane {
             live: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
+                executor: None,
             }),
             generation: AtomicU64::new(0),
         }
@@ -198,10 +205,11 @@ impl DataPlane {
     /// changes. Removed listeners stop accepting and drain for `drain`.
     pub async fn apply(&self, runtime: Runtime, drain: Duration) -> Result<(), ApplyError> {
         let mut state = self.state.lock().await;
-        let prepared = self.prepare(&state, &runtime)?;
+        let executor = executor_for(&mut state, &runtime)?;
+        let prepared = self.prepare(&state, &runtime, &executor)?;
         self.dns.resolve_new().await;
         let wanted = self.publish(runtime);
-        let stopping = self.reconcile(&mut state, wanted, prepared);
+        let stopping = self.reconcile(&mut state, wanted, prepared, &executor);
         drop(state);
         for old in stopping {
             tokio::spawn(old.stop(drain));
@@ -210,7 +218,12 @@ impl DataPlane {
     }
 
     /// Binds new sockets and builds new TLS acceptors, without changing anything.
-    fn prepare(&self, state: &State, runtime: &Runtime) -> Result<Prepared, ApplyError> {
+    fn prepare(
+        &self,
+        state: &State,
+        runtime: &Runtime,
+        executor: &Executor,
+    ) -> Result<Prepared, ApplyError> {
         let mut prepared = Prepared::default();
         for (name, listener) in &runtime.listeners {
             let running = state.running.get(name);
@@ -233,9 +246,8 @@ impl DataPlane {
                     address: listener.address,
                     source,
                 };
-                let socket = listener::bind(&listener.address).map_err(bind_error)?;
-                let socket = tokio::net::TcpListener::from_std(socket).map_err(bind_error)?;
-                prepared.sockets.insert(name.clone(), socket);
+                let sockets = executor.bind(&listener.address).map_err(bind_error)?;
+                prepared.sockets.insert(name.clone(), sockets);
             }
         }
         Ok(prepared)
@@ -282,6 +294,7 @@ impl DataPlane {
         state: &mut State,
         wanted: Vec<Wanted>,
         mut prepared: Prepared,
+        executor: &Executor,
     ) -> Vec<Running> {
         let names: std::collections::BTreeSet<&String> = wanted.iter().map(|w| &w.name).collect();
         let removed: Vec<String> = state
@@ -313,13 +326,14 @@ impl DataPlane {
                 protocol: w.protocol,
                 starttls: w.starttls,
             };
-            if let Some(socket) = prepared.sockets.remove(&w.name) {
+            if let Some(sockets) = prepared.sockets.remove(&w.name) {
                 let running = Running::start(
-                    Arc::from(w.name.as_str()),
+                    &Arc::from(w.name.as_str()),
                     w.address,
-                    socket,
+                    sockets,
                     settings,
-                    self.shared.clone(),
+                    &self.shared,
+                    executor,
                 );
                 tracing::info!(listener = %w.name, address = %w.address, tls = w.tls.is_some(), "listening");
                 if let Some((old, _)) = state.running.insert(w.name, (running, w.tls)) {
@@ -379,6 +393,20 @@ impl DataPlane {
             })
             .collect()
     }
+}
+
+/// The executor listeners run on: the one started by the first apply, or a new one from this
+/// configuration's `runtime` settings. A later change takes effect at the next start.
+fn executor_for(state: &mut State, runtime: &Runtime) -> Result<Arc<Executor>, ApplyError> {
+    if let Some(executor) = &state.executor {
+        if executor.settings() != runtime.threading {
+            tracing::warn!("`runtime` changed; restart rdock to apply the new runtime settings");
+        }
+        return Ok(executor.clone());
+    }
+    let executor = Arc::new(Executor::start(runtime.threading).map_err(ApplyError::Threads)?);
+    state.executor = Some(executor.clone());
+    Ok(executor)
 }
 
 /// 32 random bytes.

@@ -12,7 +12,7 @@ use crate::middleware::Middleware;
 use crate::providers::Providers;
 use crate::route::{Route, RouteTls, TcpRoute, TlsMode};
 use crate::service::{Service, TcpService};
-use crate::settings::{Admin, Lifecycle, Observability, Security};
+use crate::settings::{Admin, Lifecycle, Observability, RuntimeSettings, Security};
 use crate::values::{Duration, IpNetwork, ListenAddress};
 
 /// A complete ReverseDock configuration, as written in `rdock.yaml`.
@@ -57,6 +57,8 @@ pub struct Config {
     pub observability: Observability,
     /// Start-up and shutdown behaviour.
     pub lifecycle: Lifecycle,
+    /// How the data plane uses threads.
+    pub runtime: RuntimeSettings,
 }
 
 impl Config {

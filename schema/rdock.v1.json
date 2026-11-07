@@ -155,6 +155,14 @@
       },
       "default": {}
     },
+    "runtime": {
+      "description": "How the data plane uses threads.",
+      "$ref": "#/$defs/RuntimeSettings",
+      "default": {
+        "model": "steal",
+        "threads": null
+      }
+    },
     "security": {
       "description": "Client IP trust and request limits.",
       "$ref": "#/$defs/Security",
@@ -4299,6 +4307,47 @@
           "items": {
             "type": "string"
           }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "RuntimeModel": {
+      "description": "The data plane's threading model.",
+      "oneOf": [
+        {
+          "description": "A work-stealing runtime with one worker per CPU.",
+          "type": "string",
+          "const": "steal"
+        },
+        {
+          "description": "One single-threaded runtime per thread, no work stealing.",
+          "type": "string",
+          "const": "per_core"
+        }
+      ]
+    },
+    "RuntimeSettings": {
+      "description": "How the data plane uses threads (ADR-0026, #176). Read at start; a reload that changes it\nneeds a restart.",
+      "type": "object",
+      "properties": {
+        "model": {
+          "description": "`steal`: one multi-threaded runtime whose workers take work from each other. `per_core`\n(experimental): one single-threaded runtime per thread, each accepting on its own\nsocket, so a connection is accepted, served and proxied on one thread.",
+          "$ref": "#/$defs/RuntimeModel",
+          "default": "steal"
+        },
+        "threads": {
+          "description": "Threads of the `per_core` model (1–1024). Default: the CPUs the process may use,\ncounting its CPU affinity and its cgroup CPU quota (`docker run --cpus`), rounded down.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 0
         }
       },
       "additionalProperties": false,

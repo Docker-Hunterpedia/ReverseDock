@@ -5,6 +5,7 @@ pub mod compile;
 mod conn;
 mod dns;
 mod errorpage;
+mod executor;
 pub mod explain;
 pub mod forwarded;
 pub mod gate;

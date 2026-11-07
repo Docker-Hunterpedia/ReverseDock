@@ -35,6 +35,18 @@ Owning the listeners is what makes these behaviours possible:
 
 Each listener has its own upstream connection pool. Zero-downtime upgrades of the binary itself are a later track, not part of v0.1.
 
+## Threading model
+
+By default the data plane runs on one multi-threaded Tokio runtime with a worker per CPU, and workers take work from each other (`runtime.model: steal`).
+
+`runtime.model: per_core` <Status since="v0.6" /> is an experiment ([#176](https://github.com/Docker-Hunterpedia/ReverseDock/issues/176)) that becomes the default only if it measures faster. It starts one single-threaded runtime per thread, and every listener gets a socket, an accept loop and an HTTP engine on each thread, so a connection is accepted, served and proxied on one thread without waking another:
+
+- `runtime.threads` sets the number of threads. By default it is the number of CPUs the process may use, as Rust's [`std::thread::available_parallelism`](https://doc.rust-lang.org/std/thread/fn.available_parallelism.html) reports it (checked 2026-11-07): on Linux that counts the CPU affinity and a cgroup CPU quota such as `docker run --cpus 2`, rounded down, at least 1.
+- On Linux every thread has its own socket with `SO_REUSEPORT`, and the kernel spreads new connections across them by a hash of the connection's addresses and ports ([socket(7)](https://man7.org/linux/man-pages/man7/socket.7.html), checked 2026-11-07). An address that anything else already listens on, another rdock included, still fails the reload. On other systems the threads accept from copies of one shared socket, because macOS does not balance connections across `SO_REUSEPORT` sockets.
+- Each thread keeps its own idle backend connections: `security.limits.upstream_idle_connections` is split evenly between the threads, at least 1 each.
+- Reloads behave as with `steal`: unchanged addresses keep all their sockets, and removed listeners drain within `lifecycle.drain_timeout`. Changing `runtime` itself takes effect at the next start.
+- One long-lived connection, such as a WebSocket, stays on the thread that accepted it, so a few busy connections can load one CPU while others idle.
+
 ## Crates
 
 The workspace has one binary and a set of library crates. Crates for later milestones exist as placeholders so the layout stays stable.

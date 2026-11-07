@@ -402,6 +402,7 @@ labels:
 ## 16. Performance design
 
 - One Tokio multi-thread runtime (a worker per core) with our own accept loops, one per listener (ADR-0012); TCP_NODELAY on accepted sockets.
+- Experimental `runtime.model: per_core` ([ADR-0026](decisions/0026-swarm-l4-static.md), [#176](https://github.com/Docker-Hunterpedia/ReverseDock/issues/176)): N current-thread runtimes on their own OS threads (N = `runtime.threads`, default `std::thread::available_parallelism`), and per listener one socket, accept loop and `HttpProxy` on each thread, each with `upstream_idle_connections / N` idle upstream connections. Linux gives every thread its own `SO_REUSEPORT` socket (after a plain bind probe, so an address in use still fails); other systems accept from per-thread copies of one socket. Providers, health checks, ACME and the admin API stay on their runtimes; metrics stay shared atomics. Adopted as the default only if #176's gate passes.
 - Hot path allocations: route match without allocation (borrowed `&str` on trie), header mutations in place, `Bytes` body passthrough, middlewares declare body needs.
 - Lock-free config reads (`ArcSwap`), sharded rate-limit maps, atomics for counters, DDSketch for latency.
 - TLS: session resumption with rotating ticket keys, ECDSA certs by default (smaller handshakes), the ring provider ([ADR-0013](decisions/0013-tls-crypto-provider-ring.md)).

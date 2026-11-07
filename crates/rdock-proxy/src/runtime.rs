@@ -13,7 +13,7 @@ use rdock_model::config::{
 };
 use rdock_model::route::RouteTimeouts;
 use rdock_model::service::{Scheme, Timeouts};
-use rdock_model::settings::Limits;
+use rdock_model::settings::{Limits, RuntimeSettings};
 use rdock_model::values::ListenAddress;
 use rdock_observability::AccessLog;
 
@@ -31,6 +31,8 @@ pub struct Runtime {
     pub client_ip: ClientIpPolicy,
     /// Request size limits.
     pub limits: Limits,
+    /// Threading model; the data plane uses the one of its first configuration.
+    pub threading: RuntimeSettings,
     /// Access log writer.
     pub access_log: Arc<AccessLog>,
     /// Certificates, served through the shared resolver.
@@ -56,6 +58,7 @@ impl Runtime {
             listeners: BTreeMap::new(),
             client_ip: ClientIpPolicy::default(),
             limits: Limits::default(),
+            threading: RuntimeSettings::default(),
             access_log: Arc::new(AccessLog::new(&rdock_model::settings::AccessLog {
                 format: rdock_model::settings::LogFormat::Off,
                 redact: Vec::new(),

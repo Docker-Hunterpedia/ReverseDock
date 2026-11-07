@@ -65,6 +65,7 @@ impl Config {
         v.check_acme();
         v.check_security();
         v.check_admin();
+        v.check_runtime();
         v.check_observability();
         v.check_providers();
         v.out
@@ -1885,6 +1886,25 @@ impl Validator<'_> {
                     format!("`{host}` is not a host name or IP address"),
                 );
             }
+        }
+    }
+
+    fn check_runtime(&mut self) {
+        use crate::settings::{MAX_RUNTIME_THREADS, RuntimeModel};
+        let runtime = &self.config.runtime;
+        let Some(threads) = runtime.threads else {
+            return;
+        };
+        if !(1..=MAX_RUNTIME_THREADS).contains(&threads) {
+            self.error(
+                "runtime.threads",
+                format!("must be between 1 and {MAX_RUNTIME_THREADS}"),
+            );
+        } else if runtime.model == RuntimeModel::Steal {
+            self.warning(
+                "runtime.threads",
+                "only the `per_core` model uses it; `steal` starts one worker per CPU",
+            );
         }
     }
 

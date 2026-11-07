@@ -98,6 +98,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         listeners,
         client_ip: client_ip_policy(config, env.cloudflare),
         limits: config.security.limits,
+        threading: config.runtime,
         access_log: access_log(config, env.previous),
         certificates: index,
         cert_requests,

@@ -1959,6 +1959,14 @@
             "description": "HTTP routes: which requests go to which service, through which middlewares.",
             "type": "object"
           },
+          "runtime": {
+            "$ref": "#/components/schemas/rdock.RuntimeSettings",
+            "default": {
+              "model": "steal",
+              "threads": null
+            },
+            "description": "How the data plane uses threads."
+          },
           "security": {
             "$ref": "#/components/schemas/rdock.Security",
             "default": {
@@ -4879,6 +4887,47 @@
               "type": "string"
             },
             "type": "array"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.RuntimeModel": {
+        "description": "The data plane's threading model.",
+        "oneOf": [
+          {
+            "const": "steal",
+            "description": "A work-stealing runtime with one worker per CPU.",
+            "type": "string"
+          },
+          {
+            "const": "per_core",
+            "description": "One single-threaded runtime per thread, no work stealing.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.RuntimeSettings": {
+        "additionalProperties": false,
+        "description": "How the data plane uses threads (ADR-0026, #176). Read at start; a reload that changes it\nneeds a restart.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "model": {
+            "$ref": "#/components/schemas/rdock.RuntimeModel",
+            "default": "steal",
+            "description": "`steal`: one multi-threaded runtime whose workers take work from each other. `per_core`\n(experimental): one single-threaded runtime per thread, each accepting on its own\nsocket, so a connection is accepted, served and proxied on one thread."
+          },
+          "threads": {
+            "default": null,
+            "description": "Threads of the `per_core` model (1–1024). Default: the CPUs the process may use,\ncounting its CPU affinity and its cgroup CPU quota (`docker run --cpus`), rounded down.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           }
         },
         "type": "object"

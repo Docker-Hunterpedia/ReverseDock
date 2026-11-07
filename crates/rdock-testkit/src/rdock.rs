@@ -59,13 +59,20 @@ impl Rdock {
     }
 
     /// Replaces the configuration file (the admin section is added again). A configuration
-    /// with its own `admin` section writes `{admin}` where the listener address goes.
+    /// with its own `admin` section writes `{admin}` where the listener address goes. With
+    /// `RDOCK_TEST_RUNTIME=per_core` in the environment a `runtime` section selecting that
+    /// model is added to configurations without one, so every suite can run under both
+    /// threading models.
     pub fn write_config(&self, config: &str) {
-        let full = if config.contains("{admin}") {
+        let mut full = if config.contains("{admin}") {
             config.replace("{admin}", &self.admin.to_string())
         } else {
             format!("{config}\nadmin: {{ listener: \"{}\" }}\n", self.admin)
         };
+        if per_core_from_env() && !full.lines().any(|line| line.starts_with("runtime:")) {
+            // More than one thread, so every listener has several sockets.
+            full.push_str("\nruntime: { model: per_core, threads: 3 }\n");
+        }
         let tmp = self.dir.path().join(".rdock.yaml.tmp");
         std::fs::write(&tmp, full).unwrap();
         std::fs::rename(tmp, self.config_path()).unwrap();
@@ -248,6 +255,20 @@ impl Rdock {
         }
         self.spawn();
         self.wait_ready(Duration::from_secs(15))
+    }
+}
+
+/// Whether `RDOCK_TEST_RUNTIME=per_core` asks for the `per_core` model; unset keeps the default.
+fn per_core_from_env() -> bool {
+    match std::env::var("RDOCK_TEST_RUNTIME") {
+        Ok(model) => {
+            assert!(
+                model == "per_core",
+                "RDOCK_TEST_RUNTIME must be `per_core`, not `{model}`"
+            );
+            true
+        }
+        Err(_) => false,
     }
 }
 
