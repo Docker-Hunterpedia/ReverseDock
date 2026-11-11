@@ -10,7 +10,7 @@ import Status from '../../../../components/Status.astro';
 ReverseDock is a Gateway API controller <Status planned="v0.7" />. It reads the Gateway API objects in your cluster, turns them into its own routes, services and listeners, serves the traffic itself, and writes the result back to the objects' `status`. The controller and the proxy are the same process; there is nothing else to deploy ([install](/docs/install/kubernetes/)).
 
 :::caution[Status]
-The controller is implemented and tested against fixtures and a bare API server. It is **not in a release yet**; the upstream conformance run in CI is pending, so this page makes no conformance claim, and the list of [supported features](#what-is-supported) is what the controller *claims*, not what the upstream suite has confirmed.
+The controller is **not in a release yet**. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`: all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`); no report has been submitted upstream yet. "Every claimed extended feature" means the features in the [supported list](#what-is-supported); it does not mean every extended feature of the Gateway API is supported.
 :::
 
 It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The controller name is `reversedock.dev/gateway-controller` and the chart creates a GatewayClass named `reversedock` for it. The Gateway API's own documentation is at [gateway-api.sigs.k8s.io](https://gateway-api.sigs.k8s.io/); this page describes only what ReverseDock does with it.
@@ -360,7 +360,7 @@ If ReverseDock gets a burst of changes, translations are coalesced: at most one 
 - `providers.kubernetes.namespaces` (chart `watchNamespaces`) limits which namespaces are watched.
 - No request timeout, retry policy or UDP yet ([above](#what-is-supported)).
 - The data plane never waits for the Kubernetes API at request time; the last snapshot serves while the API is away.
-- Not yet proven: the upstream conformance suite and the Helm install on k3s run in CI as informational jobs that have not passed.
+- Proven in CI (2026-11-11, commit `19e88cc`): the upstream conformance suite on kind, and the Helm install on k3s with the example Gateway. Not exercised in a cluster job: Ingress, cert-manager, RKE2 and the namespaced mode. No conformance report has been submitted upstream, and nothing is released.
 
 ## Related
 

@@ -8,8 +8,8 @@
 # install -> go test -> check-report.py. Safe to run again: an existing cluster is reused and the
 # chart is upgraded in place. README.md explains the settings and the output files.
 #
-# This script has not run in the repository's development sandbox (no nested Kubernetes there);
-# the `gateway-conformance` job of .github/workflows/kubernetes.yml is where it is proven.
+# This script does not run in the repository's development sandbox (no nested Kubernetes there);
+# the `gateway-conformance` job of .github/workflows/kubernetes.yml runs it (it passed on 2026-11-11).
 #
 # Settings (environment):
 #   RDOCK_IMAGE          image to test, with an explicit tag               (default rdock:ci)
@@ -17,8 +17,8 @@
 #   RDOCK_VERSION        implementation.version in the report: a tag or commit
 #                                                                          (default git describe)
 #   RDOCK_ALLOW_PARTIAL  1: failures, missing profiles and too many skips are warnings;
-#                        the exit status then only reflects setup errors and stale skips
-#                                                                          (default 0)
+#                        the exit status then only reflects setup errors and stale skips.
+#                        For local runs only, CI never sets it              (default 0)
 #   RDOCK_HELM_ARGS      extra arguments for `helm upgrade --install`, split on spaces
 #   CLUSTER_NAME         kind cluster name                                 (default rdock-conformance)
 #   KEEP_CLUSTER         1: do not delete the cluster at the end           (default 0)

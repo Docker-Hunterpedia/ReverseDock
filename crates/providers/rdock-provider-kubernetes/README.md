@@ -5,7 +5,7 @@ translation in the same process as the data plane. Every replica watches, transl
 serves; only the leader writes status and the per-Gateway Services (the controller writes no
 Kubernetes Events yet).
 
-**Status:** v0.7, implemented: the Gateway API translator, the Ingress translator and the cluster runtime are in place. The upstream conformance run in CI is pending and no conformance claim is made; the Helm install on k3s is likewise unproven. Design: [ADR-0029](../../../docs/decisions/0029-kubernetes-gateway-api.md); user documentation: the website pages "Kubernetes" (install), "Kubernetes Gateway API" and "Kubernetes Ingress".
+**Status:** v0.7, implemented: the Gateway API translator, the Ingress translator and the cluster runtime are in place. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`: all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`), and the Helm install is tested on k3s in CI; it is not released and no report has been submitted upstream. Design: [ADR-0029](../../../docs/decisions/0029-kubernetes-gateway-api.md); user documentation: the website pages "Kubernetes" (install), "Kubernetes Gateway API" and "Kubernetes Ingress".
 
 Modules (each has one owner, so they can change independently):
 

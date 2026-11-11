@@ -2,7 +2,16 @@
 
 Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard channel), against ReverseDock on a kind cluster, and judges the report. The design is in [ADR-0029](../../../docs/decisions/0029-kubernetes-gateway-api.md) ("Packaging and CI"); the suite's facts are in [the v0.7 research](../../../docs/research/v0.7-kubernetes.md) §2.2 and §5.
 
-> **Status: no report has been produced yet; no conformance claim is made.** The harness compiles and its offline checks pass. The cluster steps are proven only by the `gateway-conformance` job of [`.github/workflows/kubernetes.yml`](../../../.github/workflows/kubernetes.yml), which is informational until the core tests of `GATEWAY-HTTP`, `GATEWAY-GRPC` and `GATEWAY-TLS` pass there.
+> **Status: passes in CI; not released; no report submitted upstream.** On 2026-11-11, on commit `19e88cc` ([run](https://github.com/Docker-Hunterpedia/ReverseDock/actions/runs/43046671411)), the `gateway-conformance` job of [`.github/workflows/kubernetes.yml`](../../../.github/workflows/kubernetes.yml) ran the suite v1.7.0 (Standard channel CRDs) on kind (kind v0.33.0, node image v1.37.0, addresses from cloud-provider-kind) against the chart-installed controller, with the features inferred from `GatewayClass.status.supportedFeatures`, and reported, with no test skipped and none failed:
+>
+> | Profile | Core | Extended |
+> |---|---|---|
+> | `GATEWAY-HTTP` | success, 40 passed | success, 31 passed |
+> | `GATEWAY-GRPC` | success, 17 passed | success, 7 passed |
+> | `GATEWAY-TLS` | success, 21 passed | success, 8 passed |
+> | `GATEWAY-TCP` | success, 20 passed | success, 7 passed |
+>
+> "Extended success" means every test for the extended features this implementation claims ([`features.rs`](../../../crates/providers/rdock-provider-kubernetes/src/features.rs)) passed; it does not mean every extended feature of the Gateway API is supported. The same core results were obtained on two earlier commits the same day, before ListenerSet support was added. The job now fails the workflow (no `--allow-partial`); adding it to the repository ruleset's required checks is a maintainer action. No report has been submitted to the upstream Gateway API repository, because reports require a released version (see "Reports"), and the software is not released.
 
 ## Files
 
@@ -50,7 +59,7 @@ Features are never listed in `options.yaml`: the suite reads `GatewayClass.statu
 | A core with no test at all (nothing proven) | error |
 | `partial` with more than five skipped tests | error |
 
-`--allow-partial` (`RDOCK_ALLOW_PARTIAL=1`, set by the informational CI job) turns the last four rows into warnings in the summary; `go test` failing is then tolerated too. It never hides a missing report, a stale skip or a skip without a reason.
+`--allow-partial` (`RDOCK_ALLOW_PARTIAL=1`) is for local runs only: CI never passes it, so there a failure in any of the last four rows fails the job. It turns those rows into warnings in the summary and tolerates `go test` failing. It never hides a missing report, a stale skip or a skip without a reason.
 
 ## Reports
 

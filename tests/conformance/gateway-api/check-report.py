@@ -13,7 +13,7 @@ Errors (always fail):
   * a stale skip: a skipTests entry that is not in any profile's skippedTests of the report
     (the test passes, does not apply, or the name is misspelled). Remove it.
 
-Run results (fail, but only warn with --allow-partial, which is for the informational CI jobs):
+Run results (fail, but only warn with --allow-partial, which is for local runs only; CI does not use it):
   * a profile of options.yaml is missing from the report;
   * a profile's core or extended result is `failure`;
   * a profile's core ran no test at all (nothing is proven);
@@ -298,7 +298,7 @@ def main(argv=None):
     parser.add_argument(
         "--allow-partial",
         action="store_true",
-        help="report failures, missing profiles and too many skips as warnings (informational CI jobs)",
+        help="report failures, missing profiles and too many skips as warnings (local runs only; CI does not pass it)",
     )
     parser.add_argument("--summary", default=os.environ.get("GITHUB_STEP_SUMMARY"), help="Markdown output file")
     args = parser.parse_args(argv)

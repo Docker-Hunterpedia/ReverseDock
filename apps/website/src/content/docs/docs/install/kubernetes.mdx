@@ -10,7 +10,7 @@ import Status from '../../../../components/Status.astro';
 ReverseDock runs in a cluster as one Deployment that is the controller and the proxy at once <Status planned="v0.7" />. Every replica watches the API server and serves traffic; one replica at a time, chosen with a Lease, writes status and Services. The design is in [ADR-0029](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0029-kubernetes-gateway-api.md).
 
 :::caution[Status]
-The controller is implemented in the development tree for v0.7 and is **not in a release yet**. The upstream Gateway API conformance run in CI is pending, and the Helm install on k3s has not been proven by CI yet. The chart's published image tag, `0.6.0-alpha.1`, predates the controller: until a release contains it, [build the image](#build-the-image) from a checkout.
+The controller is implemented in the development tree for v0.7 and is **not in a release yet**. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`: all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`), and the CI installs the chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it; no report has been submitted upstream yet. The CI does not cover Ingress, cert-manager, RKE2 or the namespaced mode. The chart's published image tag, `0.6.0-alpha.1`, predates the controller: until a release contains it, [build the image](#build-the-image) from a checkout.
 :::
 
 This page covers installing it. To use it, see [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/) and, for Ingress, [Kubernetes Ingress](/docs/guides/kubernetes-ingress/).

@@ -4,15 +4,18 @@
 #   chart                Helm lint and render, kubeconform, raw manifests in sync, kustomize build,
 #                        and the offline checks of the conformance harness. Cheap and
 #                        deterministic: becomes required once the chart has landed.
-#   gateway-conformance  The upstream Gateway API v1.7.0 conformance suite on kind. INFORMATIONAL.
-#   helm-k3s             Helm install, the example Gateway, upgrade and uninstall on k3s. INFORMATIONAL.
+#   gateway-conformance  The upstream Gateway API v1.7.0 conformance suite on kind. A failed core test,
+#                        a failed test of a claimed extended feature or a stale skip fails the job.
+#   helm-k3s             Helm install, the example Gateway, upgrade and uninstall on k3s. Fails the job
+#                        when a step fails.
 #   k8s-image            Builds the image once for the two cluster jobs (the Rust build takes ~10 min).
 #   k8s-changes          Decides which of the above a pull request needs (the path filters differ).
 #
 # The two cluster jobs cannot run in the repository's development sandbox (no nested Kubernetes),
-# so they are proven only here. They stay informational (`continue-on-error`) until the core
-# tests of GATEWAY-HTTP, GATEWAY-GRPC and GATEWAY-TLS pass in CI (ADR-0029); they then become
-# required and the report is submitted upstream. Until then no conformance claim is made.
+# so they are proven only here. Both passed on 2026-11-11 (commit 19e88cc), so they no longer use
+# `continue-on-error` and fail the workflow (ADR-0029). They are not in the repository ruleset's
+# required checks yet: adding them is a maintainer action. No conformance report has been submitted
+# upstream; that waits for a release (tests/conformance/gateway-api/README.md).
 name: kubernetes
 
 on:
@@ -192,10 +195,8 @@ jobs:
     if: needs.k8s-changes.outputs.conformance == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 60
-    # INFORMATIONAL: it becomes a required check, without continue-on-error, once the core tests
-    # of GATEWAY-HTTP, GATEWAY-GRPC and GATEWAY-TLS pass here (ADR-0029). RDOCK_ALLOW_PARTIAL
-    # below is the matching switch for check-report.py: failures are warnings in the summary.
-    continue-on-error: true
+    # Fails the workflow: check-report.py runs without --allow-partial, so a failed core test, a
+    # failed test of a claimed extended feature, a missing profile or a stale skip fails the job.
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -225,7 +226,6 @@ jobs:
       - name: Cluster, CRDs, chart, suite, report
         env:
           RDOCK_IMAGE_ARCHIVE: ${{ runner.temp }}/rdock-image/rdock-ci.tar.gz
-          RDOCK_ALLOW_PARTIAL: "1"
           KEEP_CLUSTER: "1"
         run: RDOCK_VERSION="${GITHUB_SHA::12}" "$HARNESS/run.sh"
       # report.yaml, summary.txt, go-test.log, supported-features.txt, cloud-provider-kind.log and,
@@ -244,8 +244,6 @@ jobs:
     if: needs.k8s-changes.outputs.k3s == 'true'
     runs-on: ubuntu-24.04
     timeout-minutes: 30
-    # INFORMATIONAL, like gateway-conformance, and for the same reason.
-    continue-on-error: true
     env:
       K3S_VERSION: v1.37.2+k3s1
       # SHA-256 of install.sh at the tag above (raw.githubusercontent.com/k3s-io/k3s), 2026-11-11.

@@ -7,9 +7,13 @@ resources (`HTTPRoute`, `GRPCRoute`, `TLSRoute`, `TCPRoute`) and, when switched 
 The chart works with Helm 3 and Helm 4 and needs Kubernetes 1.33 or later. It is a pre-release:
 the version follows the workspace version.
 
-**Conformance.** The Gateway API conformance suite runs in CI
-(`.github/workflows/kubernetes.yml`). No conformance claim is made yet, and the chart does not
-state one. `GatewayClass.status.supportedFeatures` lists only what has a passing test.
+**Conformance.** The controller installed by this chart passes the upstream Gateway API v1.7.0
+conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`:
+all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`; the
+`gateway-conformance` job of `.github/workflows/kubernetes.yml`). The `helm-k3s` job installs the
+chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it. Nothing
+is released yet (the chart's default image tag has no Kubernetes provider) and no report has been
+submitted upstream. `GatewayClass.status.supportedFeatures` lists only what has a passing test.
 
 ## How it runs
 

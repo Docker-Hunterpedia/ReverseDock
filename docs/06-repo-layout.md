@@ -15,7 +15,7 @@ reversedock/
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite
-│   │   ├── kubernetes.yml          # (v0.7) chart lint/render/kubeconform and manifests in sync; Gateway API conformance on kind and Helm on k3s (informational until they pass; ADR-0029)
+│   │   ├── kubernetes.yml          # (v0.7) chart lint/render/kubeconform and manifests in sync; Gateway API conformance on kind and Helm on k3s (both fail the workflow; passed 2026-11-11; not yet required checks; ADR-0029)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
 │   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary past the cap
 │   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only
@@ -137,8 +137,8 @@ reversedock/
 | Unit | `cargo nextest` | per crate | every PR |
 | Property / grammar | `proptest` | rules, labels, path normalisation | every PR |
 | Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; Pebble and toxiproxy later) | `crates/rdock/tests/e2e_*.rs` | every PR |
-| Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`, informational until the core tests pass) | `tests/conformance` | PRs touching providers; nightly |
-| Kubernetes | Translator and status tests on fixtures (`tests/gateway_conformance.rs` transcribes upstream conformance tests); runtime tests against a bare kube-apiserver when `RDOCK_TEST_KUBECONFIG` is set (not wired into CI); chart `helm lint --strict`, `helm template` + kubeconform, manifests in sync; Helm on k3s (informational) | `crates/providers/rdock-provider-kubernetes`, `deploy/`, `.github/workflows/kubernetes.yml` | PRs touching them; nightly |
+| Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`; passed 2026-11-11, fails the workflow, not yet a required check) | `tests/conformance` | PRs touching providers; nightly |
+| Kubernetes | Translator and status tests on fixtures (`tests/gateway_conformance.rs` transcribes upstream conformance tests); runtime tests against a bare kube-apiserver when `RDOCK_TEST_KUBECONFIG` is set (not wired into CI); chart `helm lint --strict`, `helm template` + kubeconform, manifests in sync; Helm on k3s (fails the workflow; passed 2026-11-11) | `crates/providers/rdock-provider-kubernetes`, `deploy/`, `.github/workflows/kubernetes.yml` | PRs touching them; nightly |
 | Fuzz | `cargo-fuzz` (differential HTTP/1 framing vs httparse, rules parser, config loader) | `tests/fuzz` | weekly + parser PRs |
 | Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly rdock-vs-NGINX regression check on a shared runner (`bench.yml`); published results from fixed hardware, committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |
