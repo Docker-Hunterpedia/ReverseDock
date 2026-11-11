@@ -308,7 +308,9 @@ jobs:
           kubectl apply -f examples/kubernetes/gateway.yaml -f examples/kubernetes/httproute.yaml
           kubectl rollout status deployment/echo --timeout=180s
           kubectl wait --for=condition=Programmed --timeout=180s "gateway/$GATEWAY"
-          kubectl wait --for=condition=Accepted --timeout=120s httproute/echo
+          # Route conditions live under status.parents[], which `--for=condition` does not read.
+          kubectl wait --timeout=120s httproute/echo \
+            --for=jsonpath='{.status.parents[0].conditions[?(@.type=="Accepted")].status}'=True
           addr=""
           for _ in $(seq 1 60); do
             addr=$(kubectl get "gateway/$GATEWAY" -o jsonpath='{.status.addresses[0].value}')

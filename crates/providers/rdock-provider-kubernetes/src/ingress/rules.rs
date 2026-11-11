@@ -17,8 +17,9 @@
 //! every rule.
 //!
 //! **Listeners and TLS.** Routes carry no `listeners`, so they attach as the file
-//! configuration says (`defaults.listeners`, or every plain listener for `tls: off`, see
-//! `Config::route_listeners`):
+//! configuration says (`defaults.listeners`, or every plain listener of the file
+//! configuration for `tls: off`, see `Config::route_listeners`; never a Gateway's internal
+//! listener):
 //!
 //! - a host covered by a valid `spec.tls` Secret gets its routes with
 //!   `tls: { auto: false, certificate }` (the file's HTTPS listeners, the Secret's certificate
@@ -51,7 +52,7 @@ use rdock_rules::{Expr, Matcher};
 use super::annotations::{self, Annotations};
 use crate::backends::{self, PortRef};
 use crate::gateway::hostnames::{covers, specificity};
-use crate::gateway::http::{prefix_expr, prefix_rewrite};
+use crate::gateway::http::prefix_expr;
 use crate::gateway::names::object_name;
 use crate::gateway::priority::{PathKind, Precedence};
 use crate::gateway::{object_id, object_path};
@@ -290,6 +291,7 @@ impl Ing<'_> {
                 permanent: false,
                 status: Some(redirect.status),
                 port: None,
+                always: false,
             }));
         } else if ssl {
             out.push(https_redirect());
@@ -307,6 +309,7 @@ impl Ing<'_> {
                     permanent: false,
                     status: Some(302),
                     port: None,
+                    always: false,
                 })),
             }
         }
@@ -327,6 +330,7 @@ fn https_redirect() -> Middleware {
         permanent: false,
         status: Some(308),
         port: None,
+        always: false,
     })
 }
 
@@ -554,6 +558,9 @@ fn backend(
             return Some(ensure_unavailable(b));
         }
     };
+    b.out
+        .diagnostics
+        .extend(backends::refused_diagnostic(&resolved));
     let scheme = ing
         .annotations
         .scheme
@@ -637,7 +644,7 @@ fn rules(b: &mut Builder<'_>, ing: &Ing<'_>, spec: &IngressSpec) {
             let Some(service) = path_service(b, ing, &path.backend, &field, challenge) else {
                 continue;
             };
-            let rewrite = rewrite(ing, &value, exact);
+            let rewrite = rewrite(ing);
             root |= !exact && value == "/";
             let plan = PathPlan {
                 index,
@@ -688,17 +695,16 @@ fn rules(b: &mut Builder<'_>, ing: &Ing<'_>, spec: &IngressSpec) {
     }
 }
 
-/// The `rewrite-target` middleware for a path: a prefix rewrite, or the whole path for
-/// `Exact`.
-fn rewrite(ing: &Ing<'_>, value: &str, exact: bool) -> Option<Box<Middleware>> {
+/// The `rewrite-target` middleware for a path: the whole path becomes the target, for every
+/// path type. ingress-nginx 0.22 and later rewrite the whole URI to the target and carry
+/// parts of the request path over only through capture groups (which are not supported and
+/// reported), so a literal target replaces the path (`/svc/abc` with target `/new` is
+/// `/new`); the query string is kept.
+fn rewrite(ing: &Ing<'_>) -> Option<Box<Middleware>> {
     let target = ing.annotations.rewrite_target.as_ref()?;
-    Some(Box::new(if exact {
-        Middleware::ReplacePath(ReplacePathConfig {
-            path: target.clone(),
-        })
-    } else {
-        Middleware::Rewrite(prefix_rewrite(value, target))
-    }))
+    Some(Box::new(Middleware::ReplacePath(ReplacePathConfig {
+        path: target.clone(),
+    })))
 }
 
 /// Emits the routes of one path; returns whether the host needs the plain redirect route.

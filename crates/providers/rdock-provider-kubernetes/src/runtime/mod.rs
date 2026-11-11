@@ -29,6 +29,7 @@ mod store;
 use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicUsize;
 use std::time::{Duration, Instant};
 
 use k8s_openapi::api::core::v1::Service;
@@ -149,6 +150,9 @@ pub struct Options {
     pub recovered_after: Duration,
     /// Receives every change of leadership, for tests and observers.
     pub leadership: Option<watch::Sender<bool>>,
+    /// Counts the writer's passes (one per translation or due retry while leading), for
+    /// tests: an idle writer does not count.
+    pub writer_passes: Option<Arc<AtomicUsize>>,
 }
 
 impl Default for Options {
@@ -159,6 +163,7 @@ impl Default for Options {
             degraded_after: DEGRADED_AFTER,
             recovered_after: RECOVERED_AFTER,
             leadership: None,
+            writer_passes: None,
         }
     }
 }
@@ -266,6 +271,7 @@ pub async fn run_with(
         work_rx,
         leader.clone(),
         extra_tx,
+        options.writer_passes.clone(),
     ));
 
     let mut tick = tokio::time::interval(Duration::from_secs(1));
@@ -327,7 +333,7 @@ pub async fn run_with(
         dirty = false;
         last = Some(Instant::now());
         let extra = extra_rx.borrow_and_update().clone();
-        pass.run(&extra, degraded.clone());
+        pass.run(&extra, degraded.clone()).await;
     }
 
     tasks.abort_all();
@@ -413,12 +419,27 @@ struct Pass<'a> {
 }
 
 impl Pass<'_> {
-    fn run(&mut self, extra: &[Diagnostic], degraded: Option<String>) {
+    async fn run(&mut self, extra: &[Diagnostic], degraded: Option<String>) {
         let (inventory, managed) = {
             let stores = self.shared.lock();
             (stores.inventory(), stores.managed_by_name())
         };
-        let translation = (self.translate)(&inventory, self.settings);
+        // The translation and the file writes are CPU and disk work: they run on the
+        // blocking pool, so the watches and the writer keep running meanwhile.
+        let translate = self.translate.clone();
+        let settings = self.settings.clone();
+        let translated = tokio::task::spawn_blocking(move || {
+            let translation = translate(&inventory, &settings);
+            (inventory, translation)
+        })
+        .await;
+        let (inventory, translation) = match translated {
+            Ok(done) => done,
+            Err(err) => {
+                tracing::error!(provider = PROVIDER, error = %err, "the translation failed; the previous snapshot stays in use");
+                return;
+            }
+        };
         if self.first {
             self.first = false;
             tracing::info!(
@@ -448,11 +469,17 @@ impl Pass<'_> {
             });
             files::wanted(&self.settings.data_dir, secrets, config_maps)
         };
-        match files::materialise(&self.settings.data_dir, &wanted) {
-            Ok(true) => self.revision += 1,
-            Ok(false) => {}
-            Err(err) => tracing::warn!(provider = PROVIDER, error = %err,
+        let any_files = !wanted.is_empty();
+        let data_dir = self.settings.data_dir.clone();
+        let written =
+            tokio::task::spawn_blocking(move || files::materialise(&data_dir, &wanted)).await;
+        match written {
+            Ok(Ok(true)) => self.revision += 1,
+            Ok(Ok(false)) => {}
+            Ok(Err(err)) => tracing::warn!(provider = PROVIDER, error = %err,
             "cannot write the Secret files; the previous ones stay in use"),
+            Err(err) => tracing::warn!(provider = PROVIDER, error = %err,
+            "writing the Secret files failed; the previous ones stay in use"),
         }
 
         // (b) The snapshot.
@@ -462,7 +489,7 @@ impl Pass<'_> {
             provider: PROVIDER.to_owned(),
             fragment: translation.fragment.clone(),
             diagnostics,
-            revision: (!wanted.is_empty()).then(|| self.revision.to_string()),
+            revision: any_files.then(|| self.revision.to_string()),
         };
         let reason = degraded;
         self.tx.send_if_modified(|state| {
@@ -491,12 +518,21 @@ async fn writer(
     mut work: watch::Receiver<Option<Arc<Work>>>,
     mut leader: watch::Receiver<bool>,
     extra: watch::Sender<Vec<Diagnostic>>,
+    passes: Option<Arc<AtomicUsize>>,
 ) {
     let mut errors = status::ErrorLog::default();
     let services: kube::Api<Service> =
         kube::Api::namespaced(client.clone(), settings.service_namespace());
+    let mut published_ingresses = std::collections::BTreeSet::new();
+    let watching = leader.clone();
+    let leading = move || *watching.borrow();
     loop {
-        let retry = errors.next_due();
+        // A retry is scheduled only while leading: a follower writes nothing.
+        let retry = if *leader.borrow() {
+            errors.next_due()
+        } else {
+            None
+        };
         tokio::select! {
             r = work.changed() => if r.is_err() { return },
             r = leader.changed() => if r.is_err() { return },
@@ -508,11 +544,17 @@ async fn writer(
             } => {}
         }
         if !*leader.borrow_and_update() {
+            errors.reset();
+            published_ingresses.clear();
             continue;
         }
         let Some(item) = work.borrow_and_update().clone() else {
             continue;
         };
+        if let Some(passes) = &passes {
+            passes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        errors.start_pass();
         if settings.provider.gateway.enabled {
             let outcome = services::reconcile(
                 &services,
@@ -520,6 +562,7 @@ async fn writer(
                 &item.managed,
                 &item.services,
                 &mut errors,
+                &leading,
             )
             .await;
             extra.send_if_modified(|current| {
@@ -531,15 +574,20 @@ async fn writer(
             });
         }
         if !*leader.borrow() {
+            errors.reset();
+            published_ingresses.clear();
             continue;
         }
         let mut writer = status::Writer {
             client: &client,
             controller: &settings.provider.controller_name,
             errors: &mut errors,
+            leading: &leading,
+            published_ingresses: &mut published_ingresses,
             writes: 0,
         };
         writer.write(&item.inventory, &item.status).await;
+        errors.finish_pass();
     }
 }
 

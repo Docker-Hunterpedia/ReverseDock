@@ -468,6 +468,48 @@ fn plain_routes_use_the_plain_listeners() {
 }
 
 #[test]
+fn plain_routes_never_attach_to_provider_listeners_implicitly() {
+    // A Gateway's internal listener (`name@kubernetes`) is reached only by naming it.
+    let config: Config = serde_json::from_value(with(
+        app(),
+        json!({
+            "listeners": {
+                "web": { "address": ":80" },
+                "websecure": { "address": ":443", "tls": {} },
+                "gw-a@kubernetes": { "address": ":20000" },
+                "gw-b@kubernetes": { "address": ":20001" }
+            },
+            "routes": {
+                "plain": { "match": "PathPrefix(`/`)", "service": "app", "tls": "off" },
+                "named": { "match": "PathPrefix(`/`)", "service": "app", "tls": "off", "listeners": ["gw-a@kubernetes"] }
+            }
+        }),
+    ))
+    .unwrap();
+    assert_eq!(config.route_listeners(&config.routes["plain"]), ["web"]);
+    assert_eq!(
+        config.route_listeners(&config.routes["named"]),
+        ["gw-a@kubernetes"]
+    );
+    // With only provider plain listeners, a plain route falls back to `defaults.listeners`.
+    let only_provider: Config = serde_json::from_value(with(
+        app(),
+        json!({
+            "listeners": {
+                "websecure": { "address": ":443", "tls": {} },
+                "gw-a@kubernetes": { "address": ":20000" }
+            },
+            "routes": { "plain": { "match": "PathPrefix(`/`)", "service": "app", "tls": "off" } }
+        }),
+    ))
+    .unwrap();
+    assert_eq!(
+        only_provider.route_listeners(&only_provider.routes["plain"]),
+        ["websecure"]
+    );
+}
+
+#[test]
 fn public_ip_addresses_need_shortlived_certificates() {
     let ip = with(
         app(),
@@ -1148,6 +1190,26 @@ fn kubernetes_defaults_are_valid() {
         "leader_election": { "enabled": false, "lease": "rdock" }
     });
     assert_eq!(validate(kubernetes(full)), Vec::new());
+}
+
+#[test]
+fn a_node_port_gateway_service_is_a_warning() {
+    // The Gateway address is the cluster IP, which is not reachable from outside the cluster.
+    let found = validate(kubernetes(json!({
+        "gateway": {
+            "service_type": "node_port",
+            "pod_selector": { "app.kubernetes.io/name": "reversedock" }
+        }
+    })));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(!found[0].is_error());
+    assert_eq!(found[0].path, "providers.kubernetes.gateway.service_type");
+    assert!(found[0].message.contains("cluster IP"), "{found:?}");
+    // Not while the Gateway API is off.
+    let off = validate(kubernetes(json!({
+        "gateway": { "enabled": false, "service_type": "node_port" }
+    })));
+    assert_eq!(off, Vec::new());
 }
 
 #[test]

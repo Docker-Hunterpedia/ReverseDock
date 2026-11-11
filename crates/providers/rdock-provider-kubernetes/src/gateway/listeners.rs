@@ -50,7 +50,8 @@ use crate::api::{
 use crate::inventory::{GatewayService, ObjectKey};
 use crate::translate::{
     DesiredGateway, DesiredListener, DesiredService, GATEWAY_NAME_LABEL, GATEWAY_NAMESPACE_LABEL,
-    MANAGED_BY, MANAGED_BY_LABEL, RouteKind, gateway_service_name, secret_paths,
+    MANAGED_BY, MANAGED_BY_LABEL, RouteKind, gateway_label_value, gateway_service_name,
+    secret_paths,
 };
 
 /// A failed check: a condition reason and a message.
@@ -353,11 +354,21 @@ fn evaluate_listener(
     let namespaces = match namespaces.and_then(|n| n.from.as_deref()) {
         None | Some(from_namespaces::SAME) => Namespaces::Same,
         Some(from_namespaces::ALL) => Namespaces::All,
-        Some(from_namespaces::SELECTOR) => Namespaces::Selector(
-            namespaces
-                .and_then(|n| n.selector.clone())
-                .unwrap_or_default(),
-        ),
+        // A missing selector selects nothing (Go's `LabelSelectorAsSelector(nil)`); an
+        // empty one (`selector: {}`) selects every namespace, as an empty
+        // `metav1.LabelSelector` does.
+        Some(from_namespaces::SELECTOR) => {
+            if let Some(selector) = namespaces.and_then(|n| n.selector.clone()) {
+                Namespaces::Selector(selector)
+            } else {
+                cx.warn(
+                    id,
+                    &format!("{field}.allowedRoutes.namespaces.selector"),
+                    "`from: Selector` needs a `selector`; without one no route may attach",
+                );
+                Namespaces::None
+            }
+        }
         Some(other) => {
             if other != from_namespaces::NONE {
                 cx.warn(
@@ -591,7 +602,7 @@ fn open_listeners(cx: &mut Context<'_>) {
             .collect();
         let infrastructure = gw.gateway.spec.infrastructure.clone().unwrap_or_default();
         let mut labels = infrastructure.labels.clone();
-        labels.insert(GATEWAY_NAME_LABEL.to_owned(), label_value(&key.1));
+        labels.insert(GATEWAY_NAME_LABEL.to_owned(), gateway_label_value(&key.1));
         labels.insert(GATEWAY_NAMESPACE_LABEL.to_owned(), key.0.clone());
         labels.insert(MANAGED_BY_LABEL.to_owned(), MANAGED_BY.to_owned());
         cx.out.services.push(DesiredService {
@@ -720,15 +731,6 @@ pub fn certificate_name(key: &ObjectKey) -> String {
         &[&key.0, &key.1],
         &format!("secret/{}/{}", key.0, key.1),
     )
-}
-
-/// A label value (at most 63 characters): the name itself, or its Service-name style hash.
-fn label_value(name: &str) -> String {
-    if name.len() <= 63 {
-        name.to_owned()
-    } else {
-        super::names::object_name("", &[name], name)
-    }
 }
 
 /// Writes the Gateway and listener status, once routes have attached.

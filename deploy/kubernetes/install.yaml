@@ -128,12 +128,6 @@ rules:
 - apiGroups: [discovery.k8s.io]
   resources: [endpointslices]
   verbs: [get, list, watch]
-- apiGroups: [""]
-  resources: [events]
-  verbs: [create, patch]
-- apiGroups: [events.k8s.io]
-  resources: [events]
-  verbs: [create, patch]
 
 ---
 # Source: reversedock/templates/rbac.yaml

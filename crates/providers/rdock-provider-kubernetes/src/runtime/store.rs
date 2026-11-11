@@ -611,6 +611,10 @@ mod tests {
                 "labels": {
                     MANAGED_BY_LABEL: MANAGED_BY, GATEWAY_NAME_LABEL: "web",
                     crate::translate::GATEWAY_NAMESPACE_LABEL: "apps"
+                },
+                "annotations": {
+                    crate::translate::GATEWAY_NAMESPACE_ANNOTATION: "apps",
+                    crate::translate::GATEWAY_NAME_ANNOTATION: "web"
                 }
             },
             "spec": { "type": "ClusterIP", "clusterIP": "10.96.0.9", "ports": [{ "port": 80, "targetPort": 20000 }] }

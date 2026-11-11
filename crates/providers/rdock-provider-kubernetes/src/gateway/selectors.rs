@@ -1,6 +1,7 @@
 //! Label selectors (`metav1.LabelSelector`): `matchLabels` and `matchExpressions` (`In`,
-//! `NotIn`, `Exists`, `DoesNotExist`), all of which must hold. An empty selector selects everything; an
-//! unknown operator selects nothing.
+//! `NotIn`, `Exists`, `DoesNotExist`), all of which must hold. An empty selector selects
+//! everything; an unknown operator selects nothing. A missing selector selects nothing: the
+//! callers decide that before they get here (`allowedRoutes` with `from: Selector`).
 
 use std::collections::BTreeMap;
 

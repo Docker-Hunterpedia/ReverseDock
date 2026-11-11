@@ -352,8 +352,15 @@ impl Elector {
                         return;
                     }
                 }
+                // client-go bounds the whole renewal by the renew deadline: the attempt (a
+                // read and a replace) is cut off when the deadline since the last successful
+                // renewal passes, and leadership ends right then, before any follower can
+                // take the Lease over (it waits a full lease duration).
+                let deadline = renew_deadline(renewed, &self.timings);
                 let outcome = tokio::select! {
-                    outcome = self.attempt() => outcome,
+                    outcome = tokio::time::timeout_at(deadline.into(), self.attempt()) => {
+                        outcome.unwrap_or_else(|_| Attempt::Failed("renewing the Lease timed out".to_owned()))
+                    }
                     () = super::store::stopped(&mut shutdown) => {
                         tx.send_replace(false);
                         self.release().await;
@@ -370,7 +377,7 @@ impl Elector {
                     }
                     Attempt::Conflict | Attempt::Failed(_) => {}
                 }
-                if renewed.elapsed() >= self.timings.renew_deadline {
+                if Instant::now() >= renew_deadline(renewed, &self.timings) {
                     tx.send_replace(false);
                     tracing::warn!(provider = crate::PROVIDER, lease = %self.name,
                         deadline = ?self.timings.renew_deadline,
@@ -380,6 +387,12 @@ impl Elector {
             }
         }
     }
+}
+
+/// The instant by which a leader that last renewed at `renewed` must renew again or stop
+/// leading.
+fn renew_deadline(renewed: Instant, timings: &LeaseTimings) -> Instant {
+    renewed + timings.renew_deadline
 }
 
 /// Now, to the microsecond (a Lease's `MicroTime`).
@@ -616,5 +629,124 @@ mod tests {
         assert_eq!(released.transitions, 7);
         assert_eq!(released.renew_time, Some(wall(30)));
         assert!(o.release(OTHER, wall(30)).is_none());
+    }
+
+    /// A fake API server for one Lease: the first read answers 404, the create succeeds, and
+    /// after that every read takes `slow_read` and every replace hangs (a slow API server).
+    async fn slow_lease_server(slow_read: Duration) -> std::net::SocketAddr {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let lease = std::sync::Arc::new(std::sync::Mutex::new(None::<serde_json::Value>));
+        tokio::spawn(async move {
+            loop {
+                let Ok((mut socket, _)) = listener.accept().await else {
+                    return;
+                };
+                let lease = lease.clone();
+                tokio::spawn(async move {
+                    loop {
+                        let mut buf = Vec::new();
+                        let mut chunk = [0_u8; 4096];
+                        let head_end = loop {
+                            let Ok(n) = socket.read(&mut chunk).await else {
+                                return;
+                            };
+                            if n == 0 {
+                                return;
+                            }
+                            buf.extend_from_slice(&chunk[..n]);
+                            if let Some(i) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                                break i + 4;
+                            }
+                        };
+                        let head = String::from_utf8_lossy(&buf[..head_end]).to_lowercase();
+                        let length: usize = head
+                            .lines()
+                            .find_map(|l| l.strip_prefix("content-length:"))
+                            .and_then(|v| v.trim().parse().ok())
+                            .unwrap_or(0);
+                        while buf.len() < head_end + length {
+                            let Ok(n) = socket.read(&mut chunk).await else {
+                                return;
+                            };
+                            if n == 0 {
+                                return;
+                            }
+                            buf.extend_from_slice(&chunk[..n]);
+                        }
+                        let body = buf[head_end..head_end + length].to_vec();
+                        let (status, reply) = if head.starts_with("get ") {
+                            let current = lease.lock().unwrap().clone();
+                            if let Some(current) = current {
+                                tokio::time::sleep(slow_read).await;
+                                ("200 OK", current)
+                            } else {
+                                (
+                                    "404 Not Found",
+                                    serde_json::json!({
+                                        "kind": "Status", "apiVersion": "v1", "status": "Failure",
+                                        "reason": "NotFound", "code": 404, "message": "not found"
+                                    }),
+                                )
+                            }
+                        } else if head.starts_with("post ") {
+                            let mut created: serde_json::Value =
+                                serde_json::from_slice(&body).unwrap();
+                            created["metadata"]["resourceVersion"] = "1".into();
+                            created["metadata"]["namespace"] = "ns".into();
+                            *lease.lock().unwrap() = Some(created.clone());
+                            ("201 Created", created)
+                        } else {
+                            // A replace that never answers.
+                            std::future::pending::<()>().await;
+                            return;
+                        };
+                        let text = reply.to_string();
+                        let response = format!(
+                            "HTTP/1.1 {status}\r\ncontent-type: application/json\r\ncontent-length: {}\r\n\r\n{text}",
+                            text.len()
+                        );
+                        if socket.write_all(response.as_bytes()).await.is_err() {
+                            return;
+                        }
+                    }
+                });
+            }
+        });
+        addr
+    }
+
+    #[tokio::test]
+    async fn a_slow_api_server_ends_leadership_at_the_renew_deadline() {
+        let addr = slow_lease_server(Duration::from_millis(900)).await;
+        let url: http::Uri = format!("http://{addr}").parse().unwrap();
+        let config = kube::Config::new(url);
+        let client = kube::Client::try_from(config).unwrap();
+        let timings = LeaseTimings {
+            lease_duration: Duration::from_secs(3),
+            renew_deadline: Duration::from_secs(1),
+            retry_period: Duration::from_millis(200),
+        };
+        let elector = Elector::new(Api::namespaced(client, "ns"), "lease", ME, timings);
+        let (_stop, shutdown) = watch::channel(false);
+        let (mut leading, _task) = elector.spawn(shutdown);
+        tokio::time::timeout(Duration::from_secs(5), leading.wait_for(|l| *l))
+            .await
+            .expect("becomes the leader")
+            .unwrap();
+        let since = Instant::now();
+        tokio::time::timeout(Duration::from_secs(10), leading.wait_for(|l| !*l))
+            .await
+            .expect("stops leading")
+            .unwrap();
+        // The last successful renewal was the create, just before `since`. A read (0.9 s)
+        // plus a replace bounded only by its own timeout (1 s) and the retry period would
+        // keep leading for 2.1 s; the renew deadline is 1 s.
+        let led = since.elapsed();
+        assert!(
+            led <= timings.renew_deadline + Duration::from_millis(250),
+            "kept leading for {led:?} after the last renewal"
+        );
     }
 }

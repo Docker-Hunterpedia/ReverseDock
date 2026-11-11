@@ -2284,6 +2284,17 @@ impl Validator<'_> {
                 .with_hint("set the labels of the rdock pods, e.g. `app.kubernetes.io/name: reversedock` (the Helm chart sets them), or `gateway.enabled: false`"),
             );
         }
+        if gateway.enabled
+            && gateway.service_type == crate::providers::KubernetesServiceType::NodePort
+        {
+            self.push(
+                Diagnostic::warning(
+                    format!("{PATH}.gateway.service_type"),
+                    "with `node_port` each Gateway's `status.addresses` is its Service's cluster IP, which is reachable only inside the cluster; clients outside reach the Gateway on every node's address at the Service's node port, which the Gateway status cannot express",
+                )
+                .with_hint("look the node ports up with `kubectl get service` in the Services' namespace, or use `load_balancer` for an external Gateway address"),
+            );
+        }
         for key in gateway.pod_selector.keys() {
             if key.is_empty() || key.contains(char::is_whitespace) {
                 self.error(

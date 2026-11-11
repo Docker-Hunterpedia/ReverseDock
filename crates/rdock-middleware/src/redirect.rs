@@ -26,6 +26,8 @@ enum Target {
 #[derive(Debug)]
 struct Parts {
     scheme: Option<RedirectScheme>,
+    /// Redirect even when the request already uses `scheme`.
+    always: bool,
     hostname: Option<String>,
     port: Option<u16>,
     path: Option<PathChange>,
@@ -67,6 +69,7 @@ impl Redirect {
         let target = match (built, &config.regex, &config.replacement) {
             (true, None, None) => Target::Built(Parts {
                 scheme: config.scheme,
+                always: config.always,
                 hostname: config.hostname.clone(),
                 port: config.port,
                 path,
@@ -106,8 +109,10 @@ impl Redirect {
                     Some(RedirectScheme::Https) => "https",
                     None => current,
                 };
-                // A scheme redirect alone leaves requests that already use the scheme alone.
+                // A scheme redirect alone leaves requests that already use the scheme alone,
+                // unless it is `always` sent (the Gateway API's `RequestRedirect`).
                 if parts.scheme.is_some()
+                    && !parts.always
                     && scheme == current
                     && parts.hostname.is_none()
                     && parts.path.is_none()
@@ -279,6 +284,7 @@ mod tests {
             permanent: false,
             status: None,
             port: None,
+            always: false,
         }
     }
 
@@ -288,6 +294,47 @@ mod tests {
         c.tls = tls;
         c.authority = "app.example.com:8080".to_owned();
         block_on(mw.request(&mut req, &mut c))
+    }
+
+    #[test]
+    fn an_always_redirect_is_sent_on_the_same_scheme() {
+        // The Gateway API's `RequestRedirect` on an HTTPS listener: `scheme: https` (with or
+        // without a port) is a redirect, not a no-op.
+        let gateway = |port| {
+            Redirect::new(&RedirectConfig {
+                scheme: Some(RedirectScheme::Https),
+                port,
+                status: Some(302),
+                always: true,
+                ..config()
+            })
+            .unwrap()
+        };
+        let Flow::Reply(reply) = run(&gateway(Some(8443)), "GET", "/a?b=1", true) else {
+            panic!("expected a redirect")
+        };
+        assert_eq!(reply.status, 302);
+        assert_eq!(
+            reply_header(&reply, "location"),
+            Some("https://app.example.com:8443/a?b=1")
+        );
+        let Flow::Reply(reply) = run(&gateway(None), "GET", "/", true) else {
+            panic!("expected a redirect")
+        };
+        assert_eq!(
+            reply_header(&reply, "location"),
+            Some("https://app.example.com/")
+        );
+        // The legacy scheme form (file configuration, Ingress `ssl-redirect`) still leaves a
+        // request on that scheme alone, with a port or a status.
+        let legacy = Redirect::new(&RedirectConfig {
+            scheme: Some(RedirectScheme::Https),
+            port: Some(8443),
+            status: Some(308),
+            ..config()
+        })
+        .unwrap();
+        assert_eq!(run(&legacy, "GET", "/", true), Flow::Next);
     }
 
     #[test]

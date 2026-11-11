@@ -287,11 +287,13 @@ async fn per_gateway_services_follow_the_desired_set() {
             .map(|p| (p.port, format!("{:?}", p.target_port.as_ref().unwrap())))
             .collect()
     };
-    eventually("Service apps-web", Duration::from_secs(10), || async {
-        services.get_opt("apps-web").await.unwrap().is_some()
+    let web_name = gateway_service_name("apps", "web");
+    let api_name = gateway_service_name("apps", "api");
+    eventually("Service for apps/web", Duration::from_secs(10), || async {
+        services.get_opt(&web_name).await.unwrap().is_some()
     })
     .await;
-    let web = services.get("apps-web").await.unwrap();
+    let web = services.get(&web_name).await.unwrap();
     assert_eq!(
         target_ports(&web),
         BTreeMap::from([
@@ -305,6 +307,11 @@ async fn per_gateway_services_follow_the_desired_set() {
     assert_eq!(labels["reversedock.dev/gateway-namespace"], "apps");
     assert_eq!(labels["team"], "a");
     assert_eq!(web.annotations()["example.com/note"], "web");
+    assert_eq!(
+        web.annotations()["reversedock.dev/gateway-namespace"],
+        "apps"
+    );
+    assert_eq!(web.annotations()["reversedock.dev/gateway-name"], "web");
     let spec = web.spec.as_ref().unwrap();
     assert_eq!(spec.type_.as_deref(), Some("ClusterIP"));
     assert_eq!(spec.selector.as_ref().unwrap()["app"], "rdock-test");
@@ -326,23 +333,23 @@ async fn per_gateway_services_follow_the_desired_set() {
         },
     )
     .await;
-    let rv = services.get("apps-web").await.unwrap().resource_version();
+    let rv = services.get(&web_name).await.unwrap().resource_version();
 
     // A second Gateway gets other ports; the first is not rewritten.
     *desired.lock().unwrap() = vec![service("web", vec![80, 443]), service("api", vec![80])];
     poke(&client, &ns).await;
-    eventually("Service apps-api", Duration::from_secs(10), || async {
-        services.get_opt("apps-api").await.unwrap().is_some()
+    eventually("Service for apps/api", Duration::from_secs(10), || async {
+        services.get_opt(&api_name).await.unwrap().is_some()
     })
     .await;
-    let api_svc = services.get("apps-api").await.unwrap();
+    let api_svc = services.get(&api_name).await.unwrap();
     assert_eq!(
         target_ports(&api_svc),
         BTreeMap::from([(80, "Int(20002)".to_owned())])
     );
     tokio::time::sleep(Duration::from_secs(1)).await;
     assert_eq!(
-        services.get("apps-web").await.unwrap().resource_version(),
+        services.get(&web_name).await.unwrap().resource_version(),
         rv,
         "unchanged Service rewritten"
     );
@@ -351,13 +358,237 @@ async fn per_gateway_services_follow_the_desired_set() {
     *desired.lock().unwrap() = vec![service("api", vec![80])];
     poke(&client, &ns).await;
     eventually(
-        "Service apps-web deleted",
+        "Service for apps/web deleted",
         Duration::from_secs(10),
-        || async { services.get_opt("apps-web").await.unwrap().is_none() },
+        || async { services.get_opt(&web_name).await.unwrap().is_none() },
     )
     .await;
-    assert!(services.get_opt("apps-api").await.unwrap().is_some());
+    assert!(services.get_opt(&api_name).await.unwrap().is_some());
     running.stop().await;
+}
+
+// (2b) The real translator end to end with a Gateway name of 253 characters (the longest a
+// Kubernetes name may be): its Service is created with valid labels, read back and keyed to
+// the Gateway by the annotations, and the Gateway is programmed with the Service's address.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gateway_with_a_253_character_name_is_programmed() {
+    let Some((kubeconfig, client)) = cluster("long_name").await else {
+        return;
+    };
+    let ns = namespace(&client, "long").await;
+    let class = unique("longclass");
+    // A controller name of its own: the real translator writes every class of its
+    // controller, and other tests' classes must stay untouched.
+    let controller = format!("reversedock.dev/{}", unique("ctl"));
+    let gc: GatewayClass = serde_json::from_value(json!({
+        "metadata": { "name": class }, "spec": { "controllerName": controller }
+    }))
+    .unwrap();
+    let classes: Api<GatewayClass> = Api::all(client.clone());
+    classes.create(&PostParams::default(), &gc).await.unwrap();
+    let name = "g".repeat(253);
+    let gw: Gateway = serde_json::from_value(json!({
+        "metadata": { "name": name, "namespace": ns },
+        "spec": { "gatewayClassName": class, "listeners": [{ "name": "http", "port": 80, "protocol": "HTTP" }] }
+    }))
+    .unwrap();
+    let gateways: Api<Gateway> = Api::namespaced(client.clone(), &ns);
+    gateways.create(&PostParams::default(), &gw).await.unwrap();
+
+    let mut provider = provider(&kubeconfig, &ns);
+    provider.controller_name.clone_from(&controller);
+    let data = tempfile::tempdir().unwrap();
+    let running = start(provider, context(&ns, data.path()), Options::default());
+
+    let services: Api<Service> = Api::namespaced(client.clone(), &ns);
+    let service_name = gateway_service_name(&ns, &name);
+    assert!(service_name.len() <= 63);
+    eventually("the Service", Duration::from_secs(20), || async {
+        services.get_opt(&service_name).await.unwrap().is_some()
+    })
+    .await;
+    let svc = services.get(&service_name).await.unwrap();
+    assert!(svc.labels().values().all(|v| v.len() <= 63));
+    assert_eq!(svc.annotations()["reversedock.dev/gateway-name"], name);
+    let cluster_ip = svc.spec.as_ref().unwrap().cluster_ip.clone().unwrap();
+    eventually(
+        "the Gateway programmed",
+        Duration::from_secs(20),
+        || async {
+            gateways.get(&name).await.unwrap().status.is_some_and(|s| {
+                condition_of(&s.conditions, "Programmed").is_some_and(|c| c.status == "True")
+                    && s.addresses.iter().any(|a| a.value == cluster_ip)
+            })
+        },
+    )
+    .await;
+    // Nothing is retried: the Service is stable.
+    let rv = svc.resource_version();
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    assert_eq!(
+        services
+            .get(&service_name)
+            .await
+            .unwrap()
+            .resource_version(),
+        rv
+    );
+    running.stop().await;
+    let _ = classes.delete(&class, &DeleteParams::default()).await;
+}
+
+// (3c) Our stale status is removed and nobody else's: a route whose Gateway is deleted loses
+// our `parents[]` entry (a foreign entry stays), and an Ingress we stop claiming loses the
+// load-balancer address we published.
+#[tokio::test(flavor = "multi_thread")]
+async fn our_stale_status_entries_are_removed() {
+    let Some((kubeconfig, client)) = cluster("stale_status").await else {
+        return;
+    };
+    let ns = namespace(&client, "stale").await;
+    let class = unique("staleclass");
+    let controller = format!("reversedock.dev/{}", unique("ctl"));
+    let gc: GatewayClass = serde_json::from_value(json!({
+        "metadata": { "name": class }, "spec": { "controllerName": controller }
+    }))
+    .unwrap();
+    let classes: Api<GatewayClass> = Api::all(client.clone());
+    classes.create(&PostParams::default(), &gc).await.unwrap();
+    let ingress_class = unique("ingclass");
+    let ic: k8s_openapi::api::networking::v1::IngressClass = serde_json::from_value(json!({
+        "metadata": { "name": ingress_class },
+        "spec": { "controller": rdock_provider_kubernetes::translate::INGRESS_CONTROLLER }
+    }))
+    .unwrap();
+    let ingress_classes: Api<k8s_openapi::api::networking::v1::IngressClass> =
+        Api::all(client.clone());
+    ingress_classes
+        .create(&PostParams::default(), &ic)
+        .await
+        .unwrap();
+    let gw: Gateway = serde_json::from_value(json!({
+        "metadata": { "name": "web", "namespace": ns },
+        "spec": { "gatewayClassName": class, "listeners": [{ "name": "http", "port": 80, "protocol": "HTTP" }] }
+    }))
+    .unwrap();
+    let gateways: Api<Gateway> = Api::namespaced(client.clone(), &ns);
+    gateways.create(&PostParams::default(), &gw).await.unwrap();
+    let route: HTTPRoute = serde_json::from_value(json!({
+        "metadata": { "name": "route", "namespace": ns },
+        "spec": { "parentRefs": [{ "name": "web" }], "rules": [{ "matches": [{ "path": { "type": "PathPrefix", "value": "/" } }] }] }
+    }))
+    .unwrap();
+    let routes: Api<HTTPRoute> = Api::namespaced(client.clone(), &ns);
+    routes.create(&PostParams::default(), &route).await.unwrap();
+    let ingress: Ingress = serde_json::from_value(json!({
+        "metadata": { "name": "ing", "namespace": ns },
+        "spec": { "ingressClassName": ingress_class,
+            "defaultBackend": { "service": { "name": "x", "port": { "number": 80 } } } }
+    }))
+    .unwrap();
+    let ingresses: Api<Ingress> = Api::namespaced(client.clone(), &ns);
+    ingresses
+        .create(&PostParams::default(), &ingress)
+        .await
+        .unwrap();
+
+    let mut provider = provider(&kubeconfig, &ns);
+    provider.controller_name.clone_from(&controller);
+    provider.ingress.enabled = true;
+    provider.ingress.publish_address = Some("192.0.2.55".to_owned());
+    let data = tempfile::tempdir().unwrap();
+    let running = start(provider, context(&ns, data.path()), Options::default());
+
+    eventually("our parent entry", Duration::from_secs(20), || async {
+        routes.get("route").await.unwrap().status.is_some_and(|s| {
+            s.parents
+                .iter()
+                .any(|p| p.controller_name == controller && p.parent_ref.name == "web")
+        })
+    })
+    .await;
+    eventually("the Ingress address", Duration::from_secs(20), || async {
+        ingresses
+            .get("ing")
+            .await
+            .unwrap()
+            .status
+            .and_then(|s| s.load_balancer)
+            .and_then(|l| l.ingress)
+            .is_some_and(|i| i.iter().any(|a| a.ip.as_deref() == Some("192.0.2.55")))
+    })
+    .await;
+    // Another controller's entry beside ours.
+    let current = routes.get("route").await.unwrap();
+    let mut parents = current.status.clone().unwrap().parents;
+    parents.push(
+        serde_json::from_value(json!({
+            "parentRef": { "group": "gateway.networking.k8s.io", "kind": "Gateway", "name": "other", "namespace": ns },
+            "controllerName": STALE_CONTROLLER,
+            "conditions": [{ "type": "Accepted", "status": "True", "reason": "Accepted",
+                "observedGeneration": current.metadata.generation, "lastTransitionTime": "2023-11-14T22:13:20Z", "message": "" }],
+        }))
+        .unwrap(),
+    );
+    routes
+        .patch_status(
+            "route",
+            &PatchParams::default(),
+            &Patch::Merge(json!({
+                "metadata": { "resourceVersion": current.resource_version() },
+                "status": { "parents": parents },
+            })),
+        )
+        .await
+        .unwrap();
+
+    // The Gateway goes away: our entry goes with it, the foreign one stays.
+    gateways
+        .delete("web", &DeleteParams::default())
+        .await
+        .unwrap();
+    eventually(
+        "our parent entry removed",
+        Duration::from_secs(20),
+        || async {
+            let parents = routes.get("route").await.unwrap().status.unwrap().parents;
+            !parents.iter().any(|p| p.controller_name == controller)
+        },
+    )
+    .await;
+    let parents = routes.get("route").await.unwrap().status.unwrap().parents;
+    assert_eq!(parents.len(), 1, "{parents:?}");
+    assert_eq!(parents[0].controller_name, STALE_CONTROLLER);
+
+    // The Ingress moves to a class that is not ours: the address we published is cleared.
+    ingresses
+        .patch(
+            "ing",
+            &PatchParams::default(),
+            &Patch::Merge(json!({ "spec": { "ingressClassName": "someone-else" } })),
+        )
+        .await
+        .unwrap();
+    eventually(
+        "the Ingress address cleared",
+        Duration::from_secs(20),
+        || async {
+            ingresses
+                .get("ing")
+                .await
+                .unwrap()
+                .status
+                .and_then(|s| s.load_balancer)
+                .and_then(|l| l.ingress)
+                .is_none_or(|i| i.is_empty())
+        },
+    )
+    .await;
+    running.stop().await;
+    let _ = classes.delete(&class, &DeleteParams::default()).await;
+    let _ = ingress_classes
+        .delete(&ingress_class, &DeleteParams::default())
+        .await;
 }
 
 fn status_translation(class: String, ns: String, counter: Arc<AtomicUsize>) -> Options {
@@ -794,6 +1025,184 @@ async fn status_is_written_merged_and_left_alone_when_unchanged() {
     for name in [&class, &other_class] {
         let _ = classes.delete(name, &DeleteParams::default()).await;
     }
+}
+
+// (3b) A write conflict (409) on an object whose live status already holds what we want
+// leaves the writer idle: the conflict entry is cleared on the next pass instead of staying
+// due forever (a busy loop through reconcile and write).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_conflict_does_not_keep_the_writer_busy() {
+    let Some((kubeconfig, client)) = cluster("conflict_idle").await else {
+        return;
+    };
+    let ns = namespace(&client, "idle").await;
+    let class = unique("class");
+    let gc: GatewayClass = serde_json::from_value(json!({
+        "metadata": { "name": class }, "spec": { "controllerName": CONTROLLER }
+    }))
+    .unwrap();
+    let classes: Api<GatewayClass> = Api::all(client.clone());
+    classes.create(&PostParams::default(), &gc).await.unwrap();
+
+    let injected = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let translations = Arc::new(AtomicUsize::new(0));
+    let translate = {
+        let class = class.clone();
+        let injected = injected.clone();
+        let kubeconfig = kubeconfig.clone();
+        let translations = translations.clone();
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            translations.fetch_add(1, Ordering::SeqCst);
+            let mut t = Translation::default();
+            let Some(gc) = inventory.gateway_classes.get(&class) else {
+                return t;
+            };
+            let desired = DesiredGatewayClass {
+                conditions: vec![cond("Accepted", true, "Accepted", gc.metadata.generation)],
+                supported_features: vec![SupportedFeature {
+                    name: "Gateway".to_owned(),
+                }],
+            };
+            let accepted = gc
+                .status
+                .as_ref()
+                .is_some_and(|s| s.conditions.iter().any(|c| c.status == "True"));
+            if !accepted && !injected.swap(true, Ordering::SeqCst) {
+                // Someone writes exactly the status we want after this inventory was read:
+                // the writer's patch carries a stale resourceVersion and gets a 409, and the
+                // next pass finds nothing to write.
+                let merged = rdock_provider_kubernetes::runtime::status::merge_gateway_class(
+                    gc.status.as_ref(),
+                    &desired,
+                    &rdock_provider_kubernetes::runtime::status::now(),
+                );
+                let (kubeconfig, class) = (kubeconfig.clone(), class.clone());
+                std::thread::spawn(move || {
+                    let rt = tokio::runtime::Builder::new_current_thread()
+                        .enable_all()
+                        .build()
+                        .unwrap();
+                    rt.block_on(async {
+                        let client = client_for(&kubeconfig).await;
+                        Api::<GatewayClass>::all(client)
+                            .patch_status(
+                                &class,
+                                &PatchParams::default(),
+                                &Patch::Merge(json!({ "status": {
+                                    "conditions": merged.conditions,
+                                    "supportedFeatures": merged.supported_features,
+                                } })),
+                            )
+                            .await
+                            .unwrap();
+                    });
+                })
+                .join()
+                .unwrap();
+            }
+            t.status.gateway_classes.insert(class.clone(), desired);
+            t
+        })
+    };
+    let passes = Arc::new(AtomicUsize::new(0));
+    let data = tempfile::tempdir().unwrap();
+    let running = start(
+        provider(&kubeconfig, &ns),
+        context(&ns, data.path()),
+        Options {
+            translate,
+            writer_passes: Some(passes.clone()),
+            ..Options::default()
+        },
+    );
+    eventually("the injected write", Duration::from_secs(20), || async {
+        injected.load(Ordering::SeqCst)
+    })
+    .await;
+    eventually("class accepted", Duration::from_secs(10), || async {
+        let gc = classes.get(&class).await.unwrap();
+        gc.status
+            .is_some_and(|s| s.conditions.iter().any(|c| c.status == "True"))
+    })
+    .await;
+    // The conflict's retry is due one second later; give it time, then count passes. Other
+    // tests running in parallel change cluster-scoped objects (namespaces, classes), so new
+    // translations still come; the writer may run once per translation and no more.
+    tokio::time::sleep(Duration::from_secs(3)).await;
+    let (before, translated) = (
+        passes.load(Ordering::SeqCst),
+        translations.load(Ordering::SeqCst),
+    );
+    tokio::time::sleep(Duration::from_secs(2)).await;
+    let during = passes.load(Ordering::SeqCst) - before;
+    let translated = translations.load(Ordering::SeqCst) - translated;
+    assert!(
+        during <= translated + 1,
+        "the writer ran {during} passes in 2 s for {translated} translations"
+    );
+    running.stop().await;
+    let _ = classes.delete(&class, &DeleteParams::default()).await;
+}
+
+// (3d) The translation (and the file writes) run off the async runtime: on a single-threaded
+// runtime, a slow translation does not stall other tasks.
+#[tokio::test(flavor = "current_thread")]
+async fn a_slow_translation_does_not_block_the_runtime() {
+    let Some((kubeconfig, client)) = cluster("blocking").await else {
+        return;
+    };
+    let ns = namespace(&client, "block").await;
+    let translations = Arc::new(AtomicUsize::new(0));
+    let translate = {
+        let translations = translations.clone();
+        Arc::new(move |_: &Inventory, _: &Settings| {
+            std::thread::sleep(Duration::from_millis(400));
+            translations.fetch_add(1, Ordering::SeqCst);
+            Translation::default()
+        })
+    };
+    let data = tempfile::tempdir().unwrap();
+    let running = start(
+        provider(&kubeconfig, &ns),
+        context(&ns, data.path()),
+        Options {
+            translate,
+            ..Options::default()
+        },
+    );
+    // A task that should run every 10 ms; record the longest gap while translations run.
+    let longest = Arc::new(Mutex::new(Duration::ZERO));
+    let ticker = {
+        let longest = longest.clone();
+        tokio::spawn(async move {
+            let mut last = Instant::now();
+            loop {
+                tokio::time::sleep(Duration::from_millis(10)).await;
+                let gap = last.elapsed();
+                last = Instant::now();
+                let mut l = longest.lock().unwrap();
+                *l = (*l).max(gap);
+            }
+        })
+    };
+    eventually("a first translation", Duration::from_secs(20), || async {
+        translations.load(Ordering::SeqCst) >= 1
+    })
+    .await;
+    *longest.lock().unwrap() = Duration::ZERO;
+    let before = translations.load(Ordering::SeqCst);
+    poke(&client, &ns).await;
+    eventually("another translation", Duration::from_secs(10), || async {
+        translations.load(Ordering::SeqCst) > before
+    })
+    .await;
+    ticker.abort();
+    let longest = *longest.lock().unwrap();
+    assert!(
+        longest < Duration::from_millis(300),
+        "other tasks stalled for {longest:?} during a translation"
+    );
+    running.stop().await;
 }
 
 fn timings() -> LeaseTimings {

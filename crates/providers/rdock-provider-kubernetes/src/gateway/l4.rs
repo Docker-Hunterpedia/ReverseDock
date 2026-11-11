@@ -343,6 +343,9 @@ fn backend(
         BackendError::ExternalNameNotAllowed { .. } => (reasons::INVALID_KIND, e.to_string()),
         _ => (reasons::BACKEND_NOT_FOUND, e.to_string()),
     })?;
+    if let Some(diagnostic) = backends::refused_diagnostic(&resolved) {
+        cx.note(diagnostic);
+    }
     let weight = u32::try_from(reference.weight.unwrap_or(1)).unwrap_or(0);
     let mut backends = resolved.targets.backends();
     if weight == 0 {

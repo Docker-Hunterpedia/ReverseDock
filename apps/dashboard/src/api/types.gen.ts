@@ -1682,6 +1682,12 @@ export type RdockMiddleware = {
     [key: string]: unknown | RdockHsts | null | RdockHeaderRules | 'headers' | undefined;
 } | {
     /**
+     * Redirect even a request that already uses `scheme` (a redirect that sets `hostname`,
+     * `path` or `prefix` is always sent). The Gateway API's `RequestRedirect` filter sets it:
+     * there a redirect is sent whatever the request's scheme. Default `false`.
+     */
+    always?: boolean;
+    /**
      * Replace the host name.
      */
     hostname?: string | null;
@@ -1714,8 +1720,9 @@ export type RdockMiddleware = {
      */
     replacement?: string | null;
     /**
-     * Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`), a request
-     * that already uses it is not redirected.
+     * Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`; `port`,
+     * `status` and `permanent` may be set), a request that already uses it is not
+     * redirected, unless `always` is set.
      */
     scheme?: RdockRedirectScheme | null;
     /**
@@ -1724,7 +1731,7 @@ export type RdockMiddleware = {
      */
     status?: number | null;
     type: 'redirect';
-    [key: string]: unknown | string | null | string | null | boolean | number | null | RdockRedirectPrefix | null | string | null | string | null | RdockRedirectScheme | null | number | null | 'redirect' | undefined;
+    [key: string]: unknown | boolean | string | null | string | null | number | null | RdockRedirectPrefix | null | string | null | string | null | RdockRedirectScheme | null | number | null | 'redirect' | undefined;
 } | {
     /**
      * Regular expression matched against the path.

@@ -139,7 +139,7 @@ Type of the Service created for each Gateway; its addresses become the Gateway's
 
 - `load_balancer`: `LoadBalancer`: an external address from the cluster's load-balancer integration.
 - `cluster_ip`: `ClusterIP`: reachable inside the cluster only; the cluster IP is the Gateway address.
-- `node_port`: `NodePort`: a port on every node.
+- `node_port`: `NodePort`: a port on every node. The Gateway address is still the Service's cluster IP, reachable only inside the cluster (`status.addresses` cannot hold a node port); clients outside use a node's address and the node port. `rdock validate` warns.
 
 ### `providers.kubernetes.ingress`
 

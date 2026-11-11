@@ -4235,6 +4235,7 @@ dependencies = [
  "http",
  "k8s-openapi",
  "kube",
+ "pingora",
  "rcgen",
  "rdock-balancer",
  "rdock-config",

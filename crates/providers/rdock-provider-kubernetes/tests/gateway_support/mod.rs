@@ -34,6 +34,7 @@ use std::sync::Arc;
 use base64::Engine as _;
 use k8s_openapi::api::core::v1::Service;
 use k8s_openapi::api::discovery::v1::{Endpoint, EndpointConditions, EndpointPort, EndpointSlice};
+use k8s_openapi::api::networking::v1::{Ingress, IngressClass};
 use rdock_config::merge::{Snapshot, assemble};
 use rdock_model::middleware::Middleware;
 use rdock_model::providers::KubernetesProvider;
@@ -251,6 +252,13 @@ impl Cluster {
             "BackendTLSPolicy" => {
                 inv.backend_tls_policies
                     .insert(key, typed::<BackendTLSPolicy>(&doc));
+            }
+            "Ingress" => {
+                inv.ingresses.insert(key, typed::<Ingress>(&doc));
+            }
+            "IngressClass" => {
+                inv.ingress_classes
+                    .insert(name, typed::<IngressClass>(&doc));
             }
             "Service" => {
                 inv.services.insert(key, typed::<Service>(&doc));
@@ -707,7 +715,7 @@ impl Router {
             std::fs::write(&path, ca.pem()).unwrap();
         }
         let base = rdock_config::load_str(
-            "acme: false\nlisteners:\n  web: { address: \"127.0.0.1:1\" }\n",
+            "acme: false\nlisteners:\n  web: { address: \"127.0.0.1:1\" }\n  websecure: { address: \"127.0.0.1:2\", tls: {} }\n",
             rdock_config::Format::Yaml,
         )
         .unwrap();
@@ -821,6 +829,100 @@ impl Router {
             middlewares,
             split,
         }
+    }
+
+    /// Runs the request phase of the compiled middleware chain of the route `request` matches
+    /// on Gateway `gw`, listener port `port`, as the proxy would, and returns the first reply
+    /// (status and `Location`), or `None` when every middleware lets the request through.
+    /// Without a `Host`, the request carries the Gateway's address the way an HTTP client
+    /// writes it (no port for the scheme's default port).
+    pub fn execute(
+        &self,
+        gw: (&str, &str),
+        port: u16,
+        request: &Request<'_>,
+    ) -> Option<(u16, Option<String>)> {
+        let name = self.listener(gw, port);
+        let listener = self.runtime.listeners.get(&name).unwrap();
+        let tls = listener.protocol == rdock_model::config::ListenerProtocol::Https;
+        let route_name = self.explained_route(gw, port, request)?;
+        let route = listener
+            .routes
+            .iter()
+            .find(|r| *r.name == *route_name)
+            .unwrap_or_else(|| panic!("route {route_name} not on {name}"));
+        let authority = if !request.host.is_empty() {
+            request.host.to_owned()
+        } else if port == if tls { 443 } else { 80 } {
+            "192.0.2.1".to_owned()
+        } else {
+            format!("192.0.2.1:{port}")
+        };
+        let method = if request.method.is_empty() {
+            "GET"
+        } else {
+            request.method
+        };
+        let mut req =
+            pingora::http::RequestHeader::build(method, request.path.as_bytes(), None).unwrap();
+        req.insert_header("host", authority.as_str()).unwrap();
+        for (header, value) in request.headers {
+            req.append_header((*header).to_owned(), *value).unwrap();
+        }
+        let mut cx = rdock_middleware::Context::new(
+            IpAddr::from([127, 0, 0, 1]),
+            tls,
+            route.name.clone(),
+            Arc::from("test"),
+            authority,
+        );
+        let runtime = tokio::runtime::Builder::new_current_thread()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            for middleware in route.middlewares.iter() {
+                if let rdock_middleware::Flow::Reply(reply) =
+                    rdock_middleware::Middleware::request(&**middleware, &mut req, &mut cx).await
+                {
+                    let location = reply
+                        .headers
+                        .iter()
+                        .find(|(k, _)| k == http::header::LOCATION)
+                        .map(|(_, v)| v.to_str().unwrap().to_owned());
+                    return Some((reply.status, location));
+                }
+            }
+            None
+        })
+    }
+
+    /// The name of the route `request` matches (`name@kubernetes`), if any.
+    fn explained_route(
+        &self,
+        gw: (&str, &str),
+        port: u16,
+        request: &Request<'_>,
+    ) -> Option<String> {
+        let mut headers = http::HeaderMap::new();
+        for (name, value) in request.headers {
+            headers.append(
+                http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                http::HeaderValue::from_str(value).unwrap(),
+            );
+        }
+        let explained = rdock_proxy::explain::explain(
+            &self.runtime,
+            &self.listener(gw, port),
+            &rdock_proxy::explain::Request {
+                host: request.host.to_owned(),
+                path: request.path.to_owned(),
+                method: request.method.to_owned(),
+                headers,
+                client_ip: None,
+            },
+        )
+        .unwrap_or_else(|e| panic!("{e}"));
+        explained["outcome"]["route"].as_str().map(str::to_owned)
     }
 
     fn service_outcome(&self, name: &str) -> (Outcome, Vec<(Outcome, u32)>) {

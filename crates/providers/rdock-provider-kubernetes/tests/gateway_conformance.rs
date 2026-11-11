@@ -117,7 +117,15 @@ fn base_gateways_are_accepted_and_programmed() {
     assert_eq!(service.labels["reversedock.dev/gateway-namespace"], INFRA);
     assert_eq!(
         service.name,
-        format!("{INFRA}-same-namespace-with-https-listener")
+        rdock_provider_kubernetes::translate::gateway_service_name(
+            INFRA,
+            "same-namespace-with-https-listener"
+        )
+    );
+    assert!(
+        service
+            .name
+            .starts_with(&format!("{INFRA}-same-namespace-with-https-"))
     );
     // The HTTPS listener's Secret is written as files and named as a certificate.
     assert!(t.secrets.contains(&(
@@ -972,6 +980,12 @@ fn httproute_redirect_host_and_status() {
         assert_eq!(redirect.hostname.as_deref(), Some("example.org"));
         // No scheme and no port: the listener's port.
         assert_eq!(redirect.port, Some(80));
+        // Executed: what the client receives.
+        assert_eq!(
+            r.execute(SAME, 80, &get(path)),
+            Some((status, Some(format!("http://example.org{path}")))),
+            "{path}"
+        );
     }
 }
 

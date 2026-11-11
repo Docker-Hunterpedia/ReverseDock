@@ -48,8 +48,9 @@ kubectl get gatewayclass reversedock
 kubectl apply -f examples/kubernetes/gateway.yaml
 ```
 
-The HTTPS listener names the Secret `example-com-tls`. Until it exists the listener stays up
-without a certificate and reports `ResolvedRefs=False`; it is picked up when the Secret appears.
+The HTTPS listener names the Secret `example-com-tls`. Until it exists that listener is not
+served and reports `ResolvedRefs=False` and `Programmed=False`; it is programmed when the Secret
+appears.
 To get one from cert-manager, apply [cert-manager.yaml](cert-manager.yaml) (cert-manager must be
 installed first; it is not part of this project). To use your own, create a `kubernetes.io/tls`
 Secret named `example-com-tls` from your certificate and key.

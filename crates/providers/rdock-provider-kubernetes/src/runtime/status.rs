@@ -16,9 +16,12 @@
 //! The write is a JSON merge patch on `/status` carrying the full merged lists (a merge patch
 //! replaces arrays) and `metadata.resourceVersion`, so a concurrent writer causes a 409 and a
 //! retry on the next pass instead of a lost update. Objects that are not in
-//! [`DesiredStatus`] are never written.
+//! [`DesiredStatus`] are written only to remove our own stale entries (`Writer::remove_stale`):
+//! our `parents[]` / `ancestors[]` entries, and the load-balancer status of an Ingress this
+//! writer published and no longer claims; Gateways of a class that is no longer ours are left
+//! alone.
 
-use std::collections::HashMap;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::time::{Duration, Instant};
 
 use k8s_openapi::api::networking::v1::{Ingress, IngressLoadBalancerIngress};
@@ -35,10 +38,11 @@ use crate::api::{
     ListenerSetStatus, ListenerStatus, ParentReference, PolicyAncestorStatus, RouteGroupKind,
     RouteParentStatus, kinds,
 };
-use crate::inventory::Inventory;
+use crate::inventory::{Inventory, ObjectKey};
 use crate::translate::{
     DesiredCondition, DesiredGateway, DesiredGatewayClass, DesiredListener, DesiredListenerSet,
     DesiredPolicyAncestor, DesiredRouteParent, DesiredStatus, LoadBalancerAddress, RouteKind,
+    RouteRef,
 };
 
 /// Condition types of the Gateway API for a GatewayClass: ours to set and to remove.
@@ -430,15 +434,17 @@ pub fn ingress_addresses(
 #[derive(Debug, Default)]
 pub struct ErrorLog {
     entries: HashMap<String, (String, u32, Instant)>,
+    /// Keys looked at in the current pass.
+    visited: HashSet<String>,
 }
 
 const RETRY_MIN: Duration = Duration::from_secs(1);
 const RETRY_MAX: Duration = Duration::from_secs(30);
 
 impl ErrorLog {
-    /// Whether `key` may be written now.
-    #[must_use]
-    pub fn due(&self, key: &str) -> bool {
+    /// Whether `key` may be written now; marks it as looked at in this pass.
+    pub fn due(&mut self, key: &str) -> bool {
+        self.visited.insert(key.to_owned());
         self.entries
             .get(key)
             .is_none_or(|(_, _, next)| *next <= Instant::now())
@@ -478,6 +484,31 @@ impl ErrorLog {
         {
             tracing::info!(provider = crate::PROVIDER, object = %key, "writing to the cluster works again");
         }
+    }
+
+    /// Starts a pass: every key the pass looks at is marked ([`ErrorLog::due`]); the entries
+    /// of the others are dropped by [`ErrorLog::finish_pass`].
+    pub fn start_pass(&mut self) {
+        self.visited.clear();
+    }
+
+    /// Ends a pass: forgets the entries of objects the pass did not look at (no longer
+    /// desired, deleted, or nothing to write), so no retry stays due for an object that will
+    /// never be written; a retry left due would wake the writer at once, forever.
+    pub fn finish_pass(&mut self) {
+        let visited = std::mem::take(&mut self.visited);
+        self.entries.retain(|key, _| visited.contains(key));
+    }
+
+    /// The live object already holds what we want: nothing to write, nothing to retry.
+    pub fn settled(&mut self, key: &str) {
+        self.entries.remove(key);
+    }
+
+    /// Forgets every pending retry (this replica stopped leading: it writes nothing).
+    pub fn reset(&mut self) {
+        self.entries.clear();
+        self.visited.clear();
     }
 
     /// When the earliest retry is due.
@@ -532,6 +563,12 @@ pub struct Writer<'a> {
     pub(crate) client: &'a Client,
     pub(crate) controller: &'a str,
     pub(crate) errors: &'a mut ErrorLog,
+    /// Whether this replica leads right now: checked before every write, so a replica that
+    /// lost its Lease during a pass writes nothing more.
+    pub(crate) leading: &'a (dyn Fn() -> bool + Send + Sync),
+    /// The Ingresses whose load-balancer status this writer published (kept across passes):
+    /// the only ones whose status it clears once they are no longer claimed.
+    pub(crate) published_ingresses: &'a mut BTreeSet<ObjectKey>,
     /// Number of writes sent in this pass (tests and logs).
     pub(crate) writes: usize,
 }
@@ -541,7 +578,7 @@ impl Writer<'_> {
     where
         K: Resource + Clone + DeserializeOwned + std::fmt::Debug,
     {
-        if !self.errors.due(&key) {
+        if !self.errors.due(&key) || !(self.leading)() {
             return;
         }
         self.writes += 1;
@@ -563,11 +600,112 @@ impl Writer<'_> {
     }
 
     /// Writes every object of `desired` whose merged status differs from the live one in
-    /// `live`.
+    /// `live`, then removes our stale entries from watched objects that are no longer in
+    /// `desired` (`Writer::remove_stale`).
     pub async fn write(&mut self, live: &Inventory, desired: &DesiredStatus) {
         let now = now();
         self.write_gateways(live, desired, &now).await;
         self.write_attached(live, desired, &now).await;
+        self.remove_stale(live, desired, &now).await;
+    }
+
+    /// Our status on objects that are no longer ours to report on:
+    ///
+    /// - routes and BackendTLSPolicies not in `desired` (their Gateway was deleted, its class
+    ///   moved to another controller, the parentRef changed) lose the `parents[]` and
+    ///   `ancestors[]` entries whose `controllerName` is ours; every other entry stays;
+    /// - an Ingress we no longer claim loses its `status.loadBalancer`, but only when this
+    ///   writer published it: an Ingress status carries no controller name, so we cannot tell
+    ///   ours from another controller's, and an Ingress another controller now owns is never
+    ///   touched. A new leader does not know what its predecessor published, so in that case
+    ///   the old address stays until the new owner writes its own.
+    ///
+    /// Gateways and GatewayClasses whose class is no longer ours keep their conditions: the
+    /// object belongs to another controller now, which owns those condition types.
+    async fn remove_stale(&mut self, live: &Inventory, desired: &DesiredStatus, now: &Time) {
+        let controller = self.controller.to_owned();
+        macro_rules! stale_routes {
+            ($map:ident, $kind:expr) => {
+                for ((ns, name), object) in &live.$map {
+                    let route = RouteRef {
+                        kind: $kind,
+                        namespace: ns.clone(),
+                        name: name.clone(),
+                    };
+                    if desired.routes.contains_key(&route) {
+                        continue;
+                    }
+                    let live_parents = object.status.as_ref().map(|s| s.parents.as_slice()).unwrap_or_default();
+                    if !live_parents.iter().any(|p| p.controller_name == controller) {
+                        continue;
+                    }
+                    let merged = merge_route_parents(live_parents, &[], ns, &controller, now);
+                    let label = format!("{} {ns}/{name}", route.kind.as_str());
+                    let api = Api::namespaced(self.client.clone(), ns);
+                    self.send(api, label, object, json!({ "parents": to_value(&merged) })).await;
+                }
+            };
+        }
+        stale_routes!(http_routes, RouteKind::Http);
+        stale_routes!(grpc_routes, RouteKind::Grpc);
+        stale_routes!(tls_routes, RouteKind::Tls);
+        stale_routes!(tcp_routes, RouteKind::Tcp);
+        stale_routes!(udp_routes, RouteKind::Udp);
+        for ((ns, name), object) in &live.backend_tls_policies {
+            if desired
+                .backend_tls_policies
+                .contains_key(&(ns.clone(), name.clone()))
+            {
+                continue;
+            }
+            let live_ancestors = object
+                .status
+                .as_ref()
+                .map(|s| s.ancestors.as_slice())
+                .unwrap_or_default();
+            if !live_ancestors
+                .iter()
+                .any(|a| a.controller_name == controller)
+            {
+                continue;
+            }
+            let merged = merge_policy_ancestors(live_ancestors, &[], ns, &controller, now);
+            let api = Api::namespaced(self.client.clone(), ns);
+            self.send(
+                api,
+                format!("BackendTLSPolicy {ns}/{name}"),
+                object,
+                json!({ "ancestors": to_value(&merged) }),
+            )
+            .await;
+        }
+        let published: Vec<ObjectKey> = self
+            .published_ingresses
+            .iter()
+            .filter(|key| !desired.ingresses.contains_key(*key))
+            .cloned()
+            .collect();
+        for key in published {
+            let Some(object) = live.ingresses.get(&key) else {
+                // Deleted, or out of the watched namespaces.
+                self.published_ingresses.remove(&key);
+                continue;
+            };
+            let has_address = object
+                .status
+                .as_ref()
+                .and_then(|s| s.load_balancer.as_ref())
+                .and_then(|l| l.ingress.as_ref())
+                .is_some_and(|i| !i.is_empty());
+            if !has_address {
+                self.published_ingresses.remove(&key);
+                continue;
+            }
+            let api: Api<Ingress> = Api::namespaced(self.client.clone(), &key.0);
+            let status = json!({ "loadBalancer": { "ingress": Value::Null } });
+            self.send(api, format!("Ingress {}/{}", key.0, key.1), object, status)
+                .await;
+        }
     }
 
     /// GatewayClasses, Gateways and ListenerSets.
@@ -576,6 +714,7 @@ impl Writer<'_> {
             let Some(object) = live.gateway_classes.get(name) else {
                 continue;
             };
+            let key = format!("GatewayClass {name}");
             let merged = merge_gateway_class(object.status.as_ref(), want, now);
             if object
                 .status
@@ -583,6 +722,7 @@ impl Writer<'_> {
                 .unwrap_or(&GatewayClassStatus::default())
                 == &merged
             {
+                self.errors.settled(&key);
                 continue;
             }
             let status = json!({
@@ -590,15 +730,16 @@ impl Writer<'_> {
                 "supportedFeatures": list_or_null(&merged.supported_features),
             });
             let api = Api::all(self.client.clone());
-            self.send(api, format!("GatewayClass {name}"), object, status)
-                .await;
+            self.send(api, key, object, status).await;
         }
         for ((ns, name), want) in &desired.gateways {
             let Some(object) = live.gateways.get(&(ns.clone(), name.clone())) else {
                 continue;
             };
+            let key = format!("Gateway {ns}/{name}");
             let merged = merge_gateway(object.status.as_ref(), want, now);
             if object.status.as_ref().unwrap_or(&GatewayStatus::default()) == &merged {
+                self.errors.settled(&key);
                 continue;
             }
             let status = json!({
@@ -608,13 +749,13 @@ impl Writer<'_> {
                 "attachedListenerSets": merged.attached_listener_sets,
             });
             let api = Api::namespaced(self.client.clone(), ns);
-            self.send(api, format!("Gateway {ns}/{name}"), object, status)
-                .await;
+            self.send(api, key, object, status).await;
         }
         for ((ns, name), want) in &desired.listener_sets {
             let Some(object) = live.listener_sets.get(&(ns.clone(), name.clone())) else {
                 continue;
             };
+            let key = format!("ListenerSet {ns}/{name}");
             let merged = merge_listener_set(object.status.as_ref(), want, now);
             if object
                 .status
@@ -622,6 +763,7 @@ impl Writer<'_> {
                 .unwrap_or(&ListenerSetStatus::default())
                 == &merged
             {
+                self.errors.settled(&key);
                 continue;
             }
             let status = json!({
@@ -629,8 +771,7 @@ impl Writer<'_> {
                 "listeners": list_or_null(&merged.listeners),
             });
             let api = Api::namespaced(self.client.clone(), ns);
-            self.send(api, format!("ListenerSet {ns}/{name}"), object, status)
-                .await;
+            self.send(api, key, object, status).await;
         }
     }
 
@@ -646,6 +787,7 @@ impl Writer<'_> {
                     let live_parents = object.status.as_ref().map(|s| s.parents.as_slice()).unwrap_or_default();
                     let merged = merge_route_parents(live_parents, want, &route.namespace, &controller, now);
                     if live_parents == merged.as_slice() {
+                        self.errors.settled(&label);
                         continue;
                     }
                     let api = Api::namespaced(self.client.clone(), &route.namespace);
@@ -669,18 +811,15 @@ impl Writer<'_> {
                 .as_ref()
                 .map(|s| s.ancestors.as_slice())
                 .unwrap_or_default();
+            let key = format!("BackendTLSPolicy {ns}/{name}");
             let merged = merge_policy_ancestors(live_ancestors, want, ns, &controller, now);
             if live_ancestors == merged.as_slice() {
+                self.errors.settled(&key);
                 continue;
             }
             let api = Api::namespaced(self.client.clone(), ns);
-            self.send(
-                api,
-                format!("BackendTLSPolicy {ns}/{name}"),
-                object,
-                json!({ "ancestors": to_value(&merged) }),
-            )
-            .await;
+            self.send(api, key, object, json!({ "ancestors": to_value(&merged) }))
+                .await;
         }
         for ((ns, name), want) in &desired.ingresses {
             let Some(object) = live.ingresses.get(&(ns.clone(), name.clone())) else {
@@ -692,7 +831,10 @@ impl Writer<'_> {
                 .and_then(|s| s.load_balancer.as_ref())
                 .and_then(|l| l.ingress.clone())
                 .unwrap_or_default();
+            self.published_ingresses.insert((ns.clone(), name.clone()));
+            let key = format!("Ingress {ns}/{name}");
             let Some(addresses) = ingress_addresses(&live_ingress, want) else {
+                self.errors.settled(&key);
                 continue;
             };
             let ingress: Vec<Value> = addresses
@@ -710,8 +852,7 @@ impl Writer<'_> {
                 .collect();
             let api: Api<Ingress> = Api::namespaced(self.client.clone(), ns);
             let status = json!({ "loadBalancer": { "ingress": if ingress.is_empty() { Value::Null } else { Value::Array(ingress) } } });
-            self.send(api, format!("Ingress {ns}/{name}"), object, status)
-                .await;
+            self.send(api, key, object, status).await;
         }
     }
 }
@@ -1028,6 +1169,64 @@ mod tests {
         assert!(log.next_due().is_some());
         log.clear("x");
         assert!(log.due("x"));
+        assert!(log.next_due().is_none());
+    }
+
+    /// Nothing may stay due in the past once a pass is over: the writer would wake at once,
+    /// forever (a busy loop).
+    fn idle(log: &ErrorLog) -> bool {
+        log.next_due().is_none_or(|at| at > Instant::now())
+    }
+
+    #[test]
+    fn a_conflict_followed_by_nothing_to_write_leaves_nothing_due() {
+        let mut log = ErrorLog::default();
+        log.start_pass();
+        assert!(log.due("Gateway a/b"));
+        log.conflict("Gateway a/b");
+        log.finish_pass();
+        // The retry time passes; the next pass finds the live status already merged.
+        log.entries.get_mut("Gateway a/b").unwrap().2 = Instant::now();
+        log.start_pass();
+        log.settled("Gateway a/b");
+        log.finish_pass();
+        assert!(idle(&log));
+        assert!(log.next_due().is_none());
+    }
+
+    #[test]
+    fn entries_not_visited_in_a_pass_are_forgotten() {
+        let mut log = ErrorLog::default();
+        log.start_pass();
+        assert!(log.due("Service gone (delete)"));
+        log.failed("Service gone (delete)", "boom");
+        assert!(log.due("Route a/b"));
+        log.failed("Route a/b", "boom");
+        log.finish_pass();
+        for entry in log.entries.values_mut() {
+            entry.2 = Instant::now();
+        }
+        // Next pass: the Service is gone and the route is still desired (and retried).
+        log.start_pass();
+        assert!(log.due("Route a/b"));
+        log.failed("Route a/b", "boom");
+        log.finish_pass();
+        assert!(!log.entries.contains_key("Service gone (delete)"));
+        assert!(log.entries.contains_key("Route a/b"));
+        assert!(idle(&log));
+        // A visited entry that is not due yet is kept as it is.
+        log.start_pass();
+        assert!(!log.due("Route a/b"));
+        log.finish_pass();
+        assert!(log.entries.contains_key("Route a/b"));
+    }
+
+    #[test]
+    fn losing_leadership_forgets_every_retry() {
+        let mut log = ErrorLog::default();
+        log.failed("x", "boom");
+        log.conflict("y");
+        log.reset();
         assert!(log.next_due().is_none());
     }
 }

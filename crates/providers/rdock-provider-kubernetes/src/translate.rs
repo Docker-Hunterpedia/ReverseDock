@@ -22,6 +22,12 @@ pub const INGRESS_CONTROLLER: &str = "reversedock.dev/ingress-controller";
 pub const GATEWAY_NAME_LABEL: &str = "gateway.networking.k8s.io/gateway-name";
 /// Label on a per-Gateway Service: the Gateway's namespace.
 pub const GATEWAY_NAMESPACE_LABEL: &str = "reversedock.dev/gateway-namespace";
+/// Annotation on a per-Gateway Service: the exact namespace of its Gateway. With
+/// [`GATEWAY_NAME_ANNOTATION`] it ties the Service to its Gateway (a label value cannot hold
+/// a Gateway name over 63 characters, so the labels only select).
+pub const GATEWAY_NAMESPACE_ANNOTATION: &str = "reversedock.dev/gateway-namespace";
+/// Annotation on a per-Gateway Service: the exact name of its Gateway.
+pub const GATEWAY_NAME_ANNOTATION: &str = "reversedock.dev/gateway-name";
 /// Label on everything the controller creates, to find (and delete) it again.
 pub const MANAGED_BY_LABEL: &str = "app.kubernetes.io/managed-by";
 /// Value of [`MANAGED_BY_LABEL`].
@@ -78,21 +84,47 @@ pub fn config_map_path(data_dir: &Path, namespace: &str, name: &str) -> PathBuf 
         .join("ca.crt")
 }
 
-/// The name of the Service provisioned for Gateway `namespace/name`:
-/// `<namespace>-<name>`, or when that is longer than 63 characters its first 54 characters,
-/// `-` and 8 hexadecimal digits of a hash of the whole (ADR-0029).
+/// The name of the Service provisioned for Gateway `namespace/name` (ADR-0029):
+/// `<namespace>-<name>` made a DNS-1035 label (`.` becomes `-`, a leading digit gets a `g`
+/// in front) and cut to 52 characters, then `-` and 10 hexadecimal digits of a hash of the
+/// exact `namespace/name`. The hash is always there, so Gateways `a/b-c` and `a-b/c` (the
+/// same readable part) never share a Service; at most 63 characters.
 #[must_use]
 pub fn gateway_service_name(namespace: &str, name: &str) -> String {
-    let full = format!("{namespace}-{name}");
-    if full.len() <= 63 {
-        return full;
+    let hash = format!(
+        "{:010x}",
+        crate::gateway::names::fnv64(&format!("{namespace}/{name}")) >> 24
+    );
+    let mut readable: String = format!("{namespace}-{name}")
+        .chars()
+        .map(|c| {
+            if c.is_ascii_alphanumeric() {
+                c.to_ascii_lowercase()
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    if !readable.starts_with(|c: char| c.is_ascii_lowercase()) {
+        readable.insert(0, 'g');
     }
-    // FNV-1a, 32 bits: stable across versions and platforms, which `DefaultHasher` is not.
-    let hash = full.bytes().fold(0x811c_9dc5_u32, |h, b| {
-        (h ^ u32::from(b)).wrapping_mul(0x0100_0193)
-    });
-    let head = full.get(..54).unwrap_or(&full).trim_end_matches(['-', '.']);
-    format!("{head}-{hash:08x}")
+    let mut head: String = readable.chars().take(63 - 1 - hash.len()).collect();
+    while head.ends_with('-') {
+        head.pop();
+    }
+    format!("{head}-{hash}")
+}
+
+/// The value of [`GATEWAY_NAME_LABEL`] for a Gateway named `name`: the name itself, or (over
+/// the 63 characters a label value may hold) a readable part and a hash of the whole. Only
+/// for selecting; the exact Gateway is in [`GATEWAY_NAME_ANNOTATION`].
+#[must_use]
+pub fn gateway_label_value(name: &str) -> String {
+    if name.len() <= 63 {
+        name.to_owned()
+    } else {
+        crate::gateway::names::object_name("", &[name], name)
+    }
 }
 
 /// Everything one translation produces.
@@ -208,6 +240,11 @@ pub fn translate(inventory: &Inventory, settings: &Settings) -> Translation {
     if settings.provider.ingress.enabled {
         translation.merge(crate::ingress::translate(inventory, settings));
     }
+    // A diagnostic about a shared object (a Service referenced by many routes) once.
+    let mut seen = BTreeSet::new();
+    translation
+        .diagnostics
+        .retain(|d| seen.insert((d.path.clone(), d.message.clone())));
     translation
 }
 
@@ -392,10 +429,11 @@ pub struct DesiredService {
     pub gateway: ObjectKey,
     /// The listener ports the Gateway wants, sorted and unique.
     pub ports: Vec<u16>,
-    /// Labels: [`GATEWAY_NAME_LABEL`], [`GATEWAY_NAMESPACE_LABEL`], [`MANAGED_BY_LABEL`] and
-    /// the Gateway's `spec.infrastructure.labels`.
+    /// Labels: [`GATEWAY_NAME_LABEL`] ([`gateway_label_value`]), [`GATEWAY_NAMESPACE_LABEL`],
+    /// [`MANAGED_BY_LABEL`] and the Gateway's `spec.infrastructure.labels`.
     pub labels: BTreeMap<String, String>,
-    /// The Gateway's `spec.infrastructure.annotations`.
+    /// The Gateway's `spec.infrastructure.annotations`; the runtime adds
+    /// [`GATEWAY_NAMESPACE_ANNOTATION`] and [`GATEWAY_NAME_ANNOTATION`].
     pub annotations: BTreeMap<String, String>,
 }
 
@@ -403,11 +441,24 @@ pub struct DesiredService {
 mod tests {
     use super::*;
 
+    /// A Service name must be a DNS-1035 label: at most 63 characters of `a-z`, `0-9` and
+    /// `-`, starting with a letter and ending with a letter or digit.
+    fn dns1035(name: &str) -> bool {
+        name.len() <= 63
+            && name.starts_with(|c: char| c.is_ascii_lowercase())
+            && name.ends_with(|c: char| c.is_ascii_lowercase() || c.is_ascii_digit())
+            && name
+                .chars()
+                .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+    }
+
     #[test]
     fn service_names_fit_63_characters_and_are_stable() {
-        assert_eq!(gateway_service_name("infra", "web"), "infra-web");
+        let short = gateway_service_name("infra", "web");
+        assert!(short.starts_with("infra-web-"), "{short}");
+        assert!(dns1035(&short), "{short}");
         let long = gateway_service_name("gateway-conformance-infra", &"g".repeat(60));
-        assert_eq!(long.len(), 63);
+        assert!(long.len() <= 63);
         assert!(long.starts_with("gateway-conformance-infra-ggg"));
         assert_eq!(
             long,
@@ -417,6 +468,42 @@ mod tests {
             long,
             gateway_service_name("gateway-conformance-infra", &"g".repeat(61))
         );
+    }
+
+    #[test]
+    fn service_names_never_collide_across_namespaces() {
+        // `a/b-c` and `a-b/c` read the same once joined with `-`.
+        assert_ne!(
+            gateway_service_name("a", "b-c"),
+            gateway_service_name("a-b", "c")
+        );
+        assert_ne!(
+            gateway_service_name("team", "x"),
+            gateway_service_name("team-x", "")
+        );
+    }
+
+    #[test]
+    fn service_names_are_valid_dns_labels() {
+        for (ns, name) in [
+            ("apps", "web.example.com"),
+            ("1team", "web"),
+            ("apps", &"a".repeat(253)),
+            ("apps", &format!("{}-{}", "a".repeat(49), "b".repeat(10))),
+            (&"n".repeat(63), &"g".repeat(253)),
+            ("apps", &format!("{}.x", "a".repeat(52))),
+        ] {
+            let svc = gateway_service_name(ns, name);
+            assert!(dns1035(&svc), "{ns}/{name} -> {svc}");
+        }
+    }
+
+    #[test]
+    fn gateway_label_values_fit_63_characters() {
+        assert_eq!(gateway_label_value("web"), "web");
+        let long = gateway_label_value(&"g".repeat(253));
+        assert!(long.len() <= 63, "{long}");
+        assert_ne!(long, gateway_label_value(&"g".repeat(252)));
     }
 
     #[test]

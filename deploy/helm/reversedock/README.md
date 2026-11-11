@@ -14,8 +14,9 @@ state one. `GatewayClass.status.supportedFeatures` lists only what has a passing
 ## How it runs
 
 - One Deployment (two replicas) is controller and proxy together. Every replica watches the
-  API server, translates and serves; one replica at a time, chosen with a Lease, writes status,
-  Events and Services. Serving and readiness never depend on leadership.
+  API server, translates and serves; one replica at a time, chosen with a Lease, writes status
+  and Services (no Kubernetes Events are written in v0.7). Serving and readiness never depend
+  on leadership.
 - For each Gateway the controller creates a Service of its own in the release namespace. The
   Service selects the rdock pods; the Gateway's `status.addresses` is that Service's address.
 - The chart never grants access to pods or nodes and never lets rdock write Secrets.
@@ -24,6 +25,18 @@ state one. `GatewayClass.status.supportedFeatures` lists only what has a passing
   the key files written from TLS Secrets.
 
 ## Install
+
+> **Build the image first.** The chart's default image tag is its `appVersion`, `0.6.0-alpha.1`:
+> a released image that **does not contain the Kubernetes provider**. Until a release contains
+> it, build the image from this checkout, make it available to the cluster, and pass it with
+> `image.repository` and `image.tag`:
+>
+> ```sh
+> docker build --tag rdock:dev .          # or: just docker rdock:dev
+> kind load docker-image rdock:dev        # local kind cluster; or push to a registry the nodes pull from
+> helm install reversedock deploy/helm/reversedock -n reversedock-system --create-namespace \
+>   --set image.repository=rdock --set image.tag=dev
+> ```
 
 1. Install the Gateway API CRDs, version 1.7.0, Standard channel. **The chart does not contain
    them**: they belong to the cluster, not to one release, and Helm never upgrades or deletes
@@ -45,7 +58,8 @@ state one. `GatewayClass.status.supportedFeatures` lists only what has a passing
    ```
 
    The chart is pushed to that registry by the release workflow; until a release has published
-   it, install from a checkout: `helm install reversedock deploy/helm/reversedock -n reversedock-system --create-namespace`.
+   it, install from a checkout with the image you built (see the note above):
+   `helm install reversedock deploy/helm/reversedock -n reversedock-system --create-namespace --set image.repository=rdock --set image.tag=dev`.
 
 3. Check it:
 
@@ -72,7 +86,7 @@ unknown keys and wrong types on `helm install`, `upgrade` and `lint`.
 | `image.pullPolicy` | `IfNotPresent` | Image pull policy. |
 | `imagePullSecrets` | `[]` | Secrets for pulling the image from a private registry, as a list of `{name: ...}`. |
 | `kind` | `Deployment` | `Deployment` (default) or `DaemonSet`. A DaemonSet runs one pod per node and can map host ports (see `daemonSet`); it ignores `replicaCount`, `autoscaling` and `topologySpread`. |
-| `replicaCount` | `2` | Number of replicas of a Deployment. Ignored when `autoscaling.enabled` is true. Every replica serves traffic; only one at a time writes status, Events and Services. |
+| `replicaCount` | `2` | Number of replicas of a Deployment. Ignored when `autoscaling.enabled` is true. Every replica serves traffic; only one at a time writes status and Services. |
 | `drainTimeoutSeconds` | `10` | Seconds open requests may finish after SIGTERM (`lifecycle.drain_timeout` in rdock.yaml). `terminationGracePeriodSeconds` is this value plus 15. |
 | `logLevel` | `info` | Application log filter (`RDOCK_LOG`), for example `info` or `info,rdock_proxy=debug`. |
 | `logFormat` | `json` | Application log format (`RDOCK_LOG_FORMAT`): `auto`, `json` or `text`. |
@@ -103,10 +117,10 @@ unknown keys and wrong types on `helm install`, `upgrade` and `lint`.
 | `ingress.service.httpsPort` | `443` | Port the Service listens on for HTTPS. |
 | `ingressClass.create` | `false` | Create an IngressClass named `ingress.class` with controller `reversedock.dev/ingress-controller`. Off by default. |
 | `ingressClass.default` | `false` | Mark the IngressClass as the cluster default (`ingressclass.kubernetes.io/is-default-class`). Only one class should be the default. |
-| `leaderElection.enabled` | `true` | Elect one replica as the writer of status, Events and Services (`providers.kubernetes.leader_election.enabled`). Serving never depends on leadership. With one replica or `false`, the instance is always the writer. |
+| `leaderElection.enabled` | `true` | Elect one replica as the writer of status and Services (`providers.kubernetes.leader_election.enabled`). Serving never depends on leadership. With one replica or `false`, the instance is always the writer. |
 | `leaderElection.lease` | `reversedock-leader` | Name of the Lease in the release namespace. |
 | `allowAcme` | `false` | Allow automatic ACME together with the Kubernetes provider (`allow_acme`). Refused otherwise. Replicas share no ACME storage until v0.9, so use `replicaCount: 1` and a persistent `data.existingClaim`. cert-manager is the supported way to get certificates. |
-| `config` | (map) | Extra rdock.yaml, merged over what the chart renders: maps merge, lists and scalars replace. Use it for listeners, middlewares, observability or limits. |
+| `config.extra` | `{}` | Extra rdock.yaml, merged over what the chart renders: maps merge, lists and scalars replace. Use it for listeners, middlewares, observability or limits. |
 | `admin.port` | `2080` | Port of the admin API. |
 | `admin.network.enabled` | `false` | Listen on the pod address instead of loopback, to serve /metrics and /healthz to Prometheus and kubelet over TLS. Needs `tlsSecretName`. Off by default: rdock refuses a network admin listener without TLS, and probes then run `rdock healthcheck` in the container, which talks to the local admin socket. |
 | `admin.network.tlsSecretName` | `""` | Name of a `kubernetes.io/tls` Secret in the release namespace with the admin certificate. The chart does not create one. |
@@ -237,8 +251,10 @@ controller creates (use `gateway.serviceType: node_port` or `cluster_ip` there).
 
 cert-manager is the supported way to get certificates in a cluster. It fills the `kubernetes.io/tls`
 Secrets that Gateways and Ingresses name; rdock reads them, writes the key files into its
-memory-backed data directory and reloads when a Secret changes. A missing Secret leaves the
-listener up without that certificate and sets `ResolvedRefs=False`. See
+memory-backed data directory and reloads when a Secret changes. Until a Gateway listener's
+Secret exists and holds a valid pair, that listener reports `ResolvedRefs=False` and
+`Programmed=False` and is not served (other listeners are unaffected); it is programmed as soon as
+the Secret appears. See
 [examples/kubernetes/cert-manager.yaml](../../../examples/kubernetes/cert-manager.yaml).
 
 **Automatic ACME is not configured by the chart.** rdock refuses `acme` together with the
@@ -272,7 +288,6 @@ Cluster-wide mode (the default):
 | `apiextensions.k8s.io` | `customresourcedefinitions` | get, list, watch |
 | `networking.k8s.io` | `ingresses`, `ingressclasses` (only with `ingress.enabled`) | get, list, watch |
 | `networking.k8s.io` | `ingresses/status` (only with `ingress.enabled`) | update, patch |
-| core, `events.k8s.io` | `events` | create, patch |
 
 In the release namespace: `coordination.k8s.io` `leases` with `create` (it cannot be limited by
 `resourceNames`) and `get`, `update` on the one Lease; core `services` with get, list, watch,

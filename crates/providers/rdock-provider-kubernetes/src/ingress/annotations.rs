@@ -13,7 +13,7 @@
 //! | annotation | becomes |
 //! |---|---|
 //! | `ssl-redirect`, `force-ssl-redirect` | `redirect` to `https` (see the translator) |
-//! | `rewrite-target` (no capture groups) | `rewrite` (prefix) or `replace_path` (exact) |
+//! | `rewrite-target` (no capture groups) | `replace_path`: the whole path becomes the target |
 //! | `backend-protocol` | the service's `scheme` |
 //! | `proxy-body-size` | the route's `max_body` |
 //! | `whitelist-source-range` | `ip_allow` |

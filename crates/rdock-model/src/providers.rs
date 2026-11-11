@@ -222,7 +222,9 @@ pub enum KubernetesServiceType {
     LoadBalancer,
     /// `ClusterIP`: reachable inside the cluster only; the cluster IP is the Gateway address.
     ClusterIp,
-    /// `NodePort`: a port on every node.
+    /// `NodePort`: a port on every node. The Gateway address is still the Service's cluster
+    /// IP, reachable only inside the cluster (`status.addresses` cannot hold a node port);
+    /// clients outside use a node's address and the node port. `rdock validate` warns.
     NodePort,
 }
 

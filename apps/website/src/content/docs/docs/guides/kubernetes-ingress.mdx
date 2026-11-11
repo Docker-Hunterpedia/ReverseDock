@@ -116,7 +116,7 @@ With `ingress.nginx_annotations` on (the default), the `nginx.ingress.kubernetes
 | Annotation | What ReverseDock does |
 |---|---|
 | `ssl-redirect`, `force-ssl-redirect` | `ssl-redirect` is on for hosts with a usable `spec.tls` entry; `"false"` turns it off. `force-ssl-redirect: "true"` redirects hosts without TLS too. Both redirect with 308; challenge paths are excepted. |
-| `rewrite-target` | A literal path only. For a prefix path the matched prefix is replaced by the target (`/api` to `/` turns `/api/x` into `/x`); for an `Exact` path the whole path is replaced. A target with `$1` is not applied, with a diagnostic. |
+| `rewrite-target` | A literal path only. As in ingress-nginx 0.22 and later, the whole request path is replaced by the target, whatever the path type (`/api` with target `/` turns `/api/x` into `/`); the query string is kept. Parts of the path are carried over only by capture groups, which are not supported: a target with `$1` is not applied, with a diagnostic. |
 | `backend-protocol` | `HTTP`, `HTTPS` and `GRPCS` (TLS to the pods) and `GRPC` (HTTP/2 without TLS). Other values are reported. |
 | `proxy-body-size` | A request body limit for the routes: NGINX size syntax (`8m`, `100k`); `0` lifts the limit. |
 | `whitelist-source-range` | An allow list of addresses or ranges. With no usable entry, every request is refused with 403. |

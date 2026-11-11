@@ -24,7 +24,7 @@ Both kinds are available <Status since="v0.1" />.
 The `redirect` middleware has two forms: a URL built from the request, or `regex` with `replacement`.
 
 - **Built from the request** <Status planned="v0.7" />: set any of `scheme`, `hostname`, `port`, `path` or `prefix`. Whatever you set replaces that part of the request URL, and the rest is kept, including the query string. See [Redirect to a built URL](#redirect-to-a-built-url).
-- **`scheme` alone** (`https` or `http`) keeps the host, path and query and changes the scheme. Set `port` when the target port is not the scheme's default. If the request already uses the target scheme, the middleware does nothing.
+- **`scheme` alone** (`https` or `http`) keeps the host, path and query and changes the scheme. Set `port` when the target port is not the scheme's default. If the request already uses the target scheme, the middleware does nothing, unless `always: true` <Status planned="v0.7" /> is set (the Gateway API's `RequestRedirect` filter is translated with it).
 - `regex` is matched against the full request URL, `scheme://host[:port]/path?query`, where the
   scheme is `https` on a TLS connection and `http` otherwise, and the host is the `Host` header
   as the client sent it. `replacement` can use groups as `$1` or `${name}`. If the regex does
@@ -113,6 +113,7 @@ The regex sees the `Host` header exactly as the client sent it. A client that se
 | `port` | The port, left out of the URL when it is the scheme's default. Unset: the scheme's default port when `scheme` is set, otherwise the request's port. |
 | `path` | The whole path, starting with `/`. |
 | `prefix` | A leading path prefix: `{ from: /a, to: /b }` turns `/a/x` into `/b/x` and `/a` into `/b`. It matches whole path segments, so `/ab` is left alone; `to` may be empty to remove the prefix. Not combined with `path`. |
+| `always` | Redirect even a request that already uses `scheme`. Default `false`. |
 
 The query string is always kept. Unlike `scheme` alone, a redirect that also sets `hostname`, `path` or `prefix` is sent even when the request already uses the scheme.
 

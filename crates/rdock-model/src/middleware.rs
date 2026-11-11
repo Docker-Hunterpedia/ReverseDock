@@ -286,8 +286,9 @@ pub struct HeaderRules {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct RedirectConfig {
-    /// Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`), a request
-    /// that already uses it is not redirected.
+    /// Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`; `port`,
+    /// `status` and `permanent` may be set), a request that already uses it is not
+    /// redirected, unless `always` is set.
     #[serde(default)]
     pub scheme: Option<RedirectScheme>,
     /// Replace the host name.
@@ -319,6 +320,11 @@ pub struct RedirectConfig {
     /// scheme's default port when `scheme` is set, otherwise the request's port.
     #[serde(default)]
     pub port: Option<u16>,
+    /// Redirect even a request that already uses `scheme` (a redirect that sets `hostname`,
+    /// `path` or `prefix` is always sent). The Gateway API's `RequestRedirect` filter sets it:
+    /// there a redirect is sent whatever the request's scheme. Default `false`.
+    #[serde(default)]
+    pub always: bool,
 }
 
 /// A path prefix replaced by another (`redirect.prefix`).

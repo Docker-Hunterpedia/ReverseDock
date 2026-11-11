@@ -19,8 +19,8 @@ use serde_json::json;
 use crate::api::GatewayStatusAddress;
 use crate::inventory::{GatewayService, ObjectKey};
 use crate::translate::{
-    DesiredService, GATEWAY_NAME_LABEL, GATEWAY_NAMESPACE_LABEL, MANAGED_BY, MANAGED_BY_LABEL,
-    Settings,
+    DesiredService, GATEWAY_NAME_ANNOTATION, GATEWAY_NAME_LABEL, GATEWAY_NAMESPACE_ANNOTATION,
+    GATEWAY_NAMESPACE_LABEL, MANAGED_BY, MANAGED_BY_LABEL, Settings, gateway_label_value,
 };
 
 /// The field manager of everything this controller writes with server-side apply.
@@ -130,8 +130,10 @@ pub fn ports_of(service: &Service) -> BTreeMap<u16, u16> {
         .collect()
 }
 
-/// A managed Service as the translator sees it ([`GatewayService`]), keyed by its Gateway
-/// (labels [`GATEWAY_NAMESPACE_LABEL`] and [`GATEWAY_NAME_LABEL`]).
+/// A managed Service as the translator sees it ([`GatewayService`]), keyed by its Gateway:
+/// the exact namespace and name in the annotations [`GATEWAY_NAMESPACE_ANNOTATION`] and
+/// [`GATEWAY_NAME_ANNOTATION`] (labels cannot hold a Gateway name over 63 characters; they
+/// only select). A Service without them belongs to no Gateway and is deleted as stale.
 ///
 /// Addresses: the load-balancer ingress (IP addresses and host names) for `LoadBalancer`;
 /// the cluster IPs for `ClusterIP` and `NodePort` (a `NodePort` Service is also reachable on
@@ -139,10 +141,10 @@ pub fn ports_of(service: &Service) -> BTreeMap<u16, u16> {
 /// reading nodes is not in the RBAC).
 #[must_use]
 pub fn gateway_service(service: &Service) -> Option<(ObjectKey, GatewayService)> {
-    let labels = service.metadata.labels.as_ref()?;
+    let annotations = service.metadata.annotations.as_ref()?;
     let gateway = (
-        labels.get(GATEWAY_NAMESPACE_LABEL)?.clone(),
-        labels.get(GATEWAY_NAME_LABEL)?.clone(),
+        annotations.get(GATEWAY_NAMESPACE_ANNOTATION)?.clone(),
+        annotations.get(GATEWAY_NAME_ANNOTATION)?.clone(),
     );
     let spec = service.spec.as_ref();
     let kind = spec.and_then(|s| s.type_.as_deref()).unwrap_or("ClusterIP");
@@ -199,16 +201,35 @@ fn service_type(kind: KubernetesServiceType) -> &'static str {
     }
 }
 
-/// The labels of a managed Service: the desired ones, then ours (which win).
+/// The labels of a managed Service: the desired ones, then ours (which win). The Gateway
+/// name label holds [`gateway_label_value`] (hashed over 63 characters).
 fn labels_of(desired: &DesiredService) -> BTreeMap<String, String> {
     let mut labels = desired.labels.clone();
     labels.insert(MANAGED_BY_LABEL.to_owned(), MANAGED_BY.to_owned());
-    labels.insert(GATEWAY_NAME_LABEL.to_owned(), desired.gateway.1.clone());
+    labels.insert(
+        GATEWAY_NAME_LABEL.to_owned(),
+        gateway_label_value(&desired.gateway.1),
+    );
     labels.insert(
         GATEWAY_NAMESPACE_LABEL.to_owned(),
         desired.gateway.0.clone(),
     );
     labels
+}
+
+/// The annotations of a managed Service: the desired ones, then the exact Gateway (which
+/// wins), the key that ties the Service to its Gateway.
+fn annotations_of(desired: &DesiredService) -> BTreeMap<String, String> {
+    let mut annotations = desired.annotations.clone();
+    annotations.insert(
+        GATEWAY_NAMESPACE_ANNOTATION.to_owned(),
+        desired.gateway.0.clone(),
+    );
+    annotations.insert(
+        GATEWAY_NAME_ANNOTATION.to_owned(),
+        desired.gateway.1.clone(),
+    );
+    annotations
 }
 
 /// FNV-1a, 64 bits: stable across versions and platforms.
@@ -226,6 +247,7 @@ pub fn manifest(
     settings: &Settings,
 ) -> serde_json::Value {
     let labels = labels_of(desired);
+    let mut annotations = annotations_of(desired);
     let selector = &settings.provider.gateway.pod_selector;
     let kind = service_type(settings.provider.gateway.service_type);
     let port_list: Vec<serde_json::Value> = ports
@@ -237,11 +259,10 @@ pub fn manifest(
     // Everything above in a canonical form (BTreeMaps, sorted ports): its hash changes exactly
     // when what we apply changes.
     let canonical = json!({
-        "labels": labels, "annotations": desired.annotations, "selector": selector,
+        "labels": labels, "annotations": annotations, "selector": selector,
         "type": kind, "ports": port_list,
     });
     let hash = format!("{:016x}", fnv64(canonical.to_string().as_bytes()));
-    let mut annotations = desired.annotations.clone();
     annotations.insert(CONFIG_ANNOTATION.to_owned(), hash);
     json!({
         "apiVersion": "v1",
@@ -322,13 +343,15 @@ pub struct Outcome {
 }
 
 /// Brings the managed Services in `settings.service_namespace()` in line with `desired`.
-/// `live` holds the managed Services by name.
+/// `live` holds the managed Services by name. `leading` is asked before every apply and
+/// delete: a replica that lost its Lease during the pass writes nothing more.
 pub async fn reconcile(
     api: &Api<Service>,
     settings: &Settings,
     live: &BTreeMap<String, Service>,
     desired: &[DesiredService],
     errors: &mut super::status::ErrorLog,
+    leading: &(dyn Fn() -> bool + Send + Sync),
 ) -> Outcome {
     let mut outcome = Outcome::default();
     let range = settings.provider.gateway.ports().unwrap_or((20000, 29999));
@@ -366,12 +389,12 @@ pub async fn reconcile(
         }
         let manifest = manifest(service, &ports, settings);
         let current = live.get(&service.name);
+        let key = format!("Service {}", service.name);
         if !differs(current, &manifest) {
-            errors.clear(&format!("Service {}", service.name));
+            errors.settled(&key);
             continue;
         }
-        let key = format!("Service {}", service.name);
-        if !errors.due(&key) {
+        if !errors.due(&key) || !leading() {
             continue;
         }
         let patch = Patch::Apply(&manifest);
@@ -389,7 +412,7 @@ pub async fn reconcile(
         }
     }
     let keep: BTreeSet<&str> = wanted.iter().map(|(n, _)| n.as_str()).collect();
-    delete_stale(api, live, &keep, errors).await;
+    delete_stale(api, live, &keep, errors, leading).await;
     outcome
 }
 
@@ -399,13 +422,14 @@ async fn delete_stale(
     live: &BTreeMap<String, Service>,
     keep: &BTreeSet<&str>,
     errors: &mut super::status::ErrorLog,
+    leading: &(dyn Fn() -> bool + Send + Sync),
 ) {
     for (name, service) in live {
         if keep.contains(name.as_str()) {
             continue;
         }
         let key = format!("Service {name} (delete)");
-        if !errors.due(&key) {
+        if !errors.due(&key) || !leading() {
             continue;
         }
         let params = DeleteParams {
@@ -604,6 +628,22 @@ mod tests {
             Some(&live),
             &manifest(&desired(), &BTreeMap::from([(80, 20001)]), &settings())
         ));
+    }
+
+    #[test]
+    fn a_gateway_name_over_63_characters_keys_its_service_exactly() {
+        let name = "g".repeat(253);
+        let mut d = desired();
+        d.gateway.1.clone_from(&name);
+        d.name = crate::translate::gateway_service_name("apps", &name);
+        let m = manifest(&d, &BTreeMap::from([(80, 20000)]), &settings());
+        let label = m["metadata"]["labels"][GATEWAY_NAME_LABEL]
+            .as_str()
+            .unwrap();
+        assert!(label.len() <= 63, "label value too long: {}", label.len());
+        let live: Service = serde_json::from_value(m).unwrap();
+        let (gateway, _) = gateway_service(&live).unwrap();
+        assert_eq!(gateway, ("apps".to_owned(), name));
     }
 
     #[test]

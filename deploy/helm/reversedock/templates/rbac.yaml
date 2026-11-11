@@ -1,6 +1,7 @@
 {{- /*
-Least privilege (ADR-0029): read what is translated, write only `status`, Events, one Lease and
-the per-Gateway Services. Never pods or nodes, never write Secrets.
+Least privilege (ADR-0029): read what is translated, write only `status`, one Lease and the
+per-Gateway Services. Never pods or nodes, never write Secrets. No Events are written (v0.7), so
+none may be created.
 */ -}}
 {{- $sa := include "reversedock.serviceAccountName" . -}}
 {{- $fullname := include "reversedock.fullname" . -}}
@@ -21,12 +22,6 @@ the per-Gateway Services. Never pods or nodes, never write Secrets.
 - apiGroups: [discovery.k8s.io]
   resources: [endpointslices]
   verbs: [get, list, watch]
-- apiGroups: [""]
-  resources: [events]
-  verbs: [create, patch]
-- apiGroups: [events.k8s.io]
-  resources: [events]
-  verbs: [create, patch]
 {{- if .ingress }}
 - apiGroups: [networking.k8s.io]
   resources: [ingresses]

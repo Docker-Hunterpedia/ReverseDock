@@ -189,6 +189,23 @@ fn httproute_response_header_modification() {
     );
 }
 
+/// The status and `Location` the client receives for GET `path` on `gw:port` (the redirect
+/// middleware executed, with the Gateway address `192.0.2.1` as the request's host, or
+/// `example.org` on the HTTPS listener).
+fn executed(r: &Router, gw: (&str, &str), port: u16, path: &str) -> (u16, String) {
+    let host = if port == 443 { "example.org" } else { "" };
+    let req = Request {
+        host,
+        path,
+        method: "GET",
+        headers: &[],
+    };
+    let (status, location) = r
+        .execute(gw, port, &req)
+        .unwrap_or_else(|| panic!("no redirect sent for {gw:?} {path}"));
+    (status, location.unwrap_or_default())
+}
+
 fn redirect(
     r: &Router,
     gw: (&str, &str),
@@ -218,6 +235,11 @@ fn httproute_redirect_port() {
         assert_eq!(rd.status, Some(status), "{path}");
         assert_eq!(rd.hostname.as_deref(), host, "{path}");
         assert_eq!(rd.scheme, None);
+        let host = host.unwrap_or("192.0.2.1");
+        assert_eq!(
+            executed(&r, SAME, 80, path),
+            (status, format!("http://{host}:8083{path}"))
+        );
     }
 }
 
@@ -238,6 +260,11 @@ fn httproute_redirect_scheme() {
         assert_eq!(rd.port, None, "{path}");
         assert_eq!(rd.status, Some(status), "{path}");
         assert_eq!(rd.hostname.as_deref(), host, "{path}");
+        let host = host.unwrap_or("192.0.2.1");
+        assert_eq!(
+            executed(&r, SAME, 80, path),
+            (status, format!("https://{host}{path}"))
+        );
     }
 }
 
@@ -266,36 +293,141 @@ fn httproute_redirect_port_and_scheme() {
         (INFRA, "http-route-for-listener-on-port-443"),
         https,
     );
-    // (gateway, listener port, path, scheme, port in the configuration)
+    // (gateway, listener port, path, scheme, port in the configuration, the `Location` the
+    // upstream test expects: its scheme, host and port, the request's path)
     let cases = [
-        (SAME, 80, "/scheme-nil-and-port-nil", None, Some(80)),
-        (SAME, 80, "/scheme-nil-and-port-80", None, Some(80)),
-        (SAME, 80, "/scheme-nil-and-port-8080", None, Some(8080)),
-        (SAME, 80, "/scheme-https-and-port-nil", Some(S), None),
-        (SAME, 80, "/scheme-https-and-port-443", Some(S), Some(443)),
-        (SAME, 80, "/scheme-https-and-port-8443", Some(S), Some(8443)),
-        (gw8080, 8080, "/scheme-nil-and-port-nil", None, Some(8080)),
-        (gw8080, 8080, "/scheme-nil-and-port-80", None, Some(80)),
-        (gw8080, 8080, "/scheme-https-and-port-nil", Some(S), None),
-        (https, 443, "/scheme-nil-and-port-nil", None, Some(443)),
-        (https, 443, "/scheme-nil-and-port-443", None, Some(443)),
-        (https, 443, "/scheme-nil-and-port-8443", None, Some(8443)),
-        (https, 443, "/scheme-http-and-port-nil", Some(H), None),
-        (https, 443, "/scheme-http-and-port-80", Some(H), Some(80)),
+        (
+            SAME,
+            80,
+            "/scheme-nil-and-port-nil",
+            None,
+            Some(80),
+            "http://example.org",
+        ),
+        (
+            SAME,
+            80,
+            "/scheme-nil-and-port-80",
+            None,
+            Some(80),
+            "http://example.org",
+        ),
+        (
+            SAME,
+            80,
+            "/scheme-nil-and-port-8080",
+            None,
+            Some(8080),
+            "http://example.org:8080",
+        ),
+        (
+            SAME,
+            80,
+            "/scheme-https-and-port-nil",
+            Some(S),
+            None,
+            "https://example.org",
+        ),
+        (
+            SAME,
+            80,
+            "/scheme-https-and-port-443",
+            Some(S),
+            Some(443),
+            "https://example.org",
+        ),
+        (
+            SAME,
+            80,
+            "/scheme-https-and-port-8443",
+            Some(S),
+            Some(8443),
+            "https://example.org:8443",
+        ),
+        (
+            gw8080,
+            8080,
+            "/scheme-nil-and-port-nil",
+            None,
+            Some(8080),
+            "http://example.org:8080",
+        ),
+        (
+            gw8080,
+            8080,
+            "/scheme-nil-and-port-80",
+            None,
+            Some(80),
+            "http://example.org",
+        ),
+        (
+            gw8080,
+            8080,
+            "/scheme-https-and-port-nil",
+            Some(S),
+            None,
+            "https://example.org",
+        ),
+        (
+            https,
+            443,
+            "/scheme-nil-and-port-nil",
+            None,
+            Some(443),
+            "https://example.org",
+        ),
+        (
+            https,
+            443,
+            "/scheme-nil-and-port-443",
+            None,
+            Some(443),
+            "https://example.org",
+        ),
+        (
+            https,
+            443,
+            "/scheme-nil-and-port-8443",
+            None,
+            Some(8443),
+            "https://example.org:8443",
+        ),
+        (
+            https,
+            443,
+            "/scheme-http-and-port-nil",
+            Some(H),
+            None,
+            "http://example.org",
+        ),
+        (
+            https,
+            443,
+            "/scheme-http-and-port-80",
+            Some(H),
+            Some(80),
+            "http://example.org",
+        ),
         (
             https,
             443,
             "/scheme-http-and-port-8080",
             Some(H),
             Some(8080),
+            "http://example.org:8080",
         ),
     ];
-    for (gw, port, path, scheme, redirect_port) in cases {
+    for (gw, port, path, scheme, redirect_port, origin) in cases {
         let rd = redirect(&r, gw, port, path);
         assert_eq!(rd.scheme, scheme, "{gw:?} {path}");
         assert_eq!(rd.port, redirect_port, "{gw:?} {path}");
         assert_eq!(rd.hostname.as_deref(), Some("example.org"), "{gw:?} {path}");
         assert_eq!(rd.status, Some(302));
+        assert_eq!(
+            executed(&r, gw, port, path),
+            (302, format!("{origin}{path}")),
+            "{gw:?} {path}"
+        );
     }
 }
 
@@ -328,6 +460,45 @@ fn httproute_redirect_path() {
         (rd.status, rd.path.as_deref()),
         (Some(301), Some("/replacement-full"))
     );
+    // Executed, as the upstream test expects them.
+    for (path, status, location) in [
+        (
+            "/original-prefix/lemon",
+            302,
+            "http://192.0.2.1/replacement-prefix/lemon",
+        ),
+        (
+            "/full/path/original",
+            302,
+            "http://192.0.2.1/full-path-replacement",
+        ),
+        (
+            "/path-and-host",
+            302,
+            "http://example.org/replacement-prefix",
+        ),
+        (
+            "/path-and-status",
+            301,
+            "http://192.0.2.1/replacement-prefix",
+        ),
+        (
+            "/full-path-and-host",
+            302,
+            "http://example.org/replacement-full",
+        ),
+        (
+            "/full-path-and-status",
+            301,
+            "http://192.0.2.1/replacement-full",
+        ),
+    ] {
+        assert_eq!(
+            executed(&r, SAME, 80, path),
+            (status, location.to_owned()),
+            "{path}"
+        );
+    }
 }
 
 #[test]
@@ -348,6 +519,7 @@ fn httproute_303_307_308_redirects() {
         assert_accepted(&r.translation, Http, (INFRA, route), SAME);
         let rd = redirect(&r, SAME, 80, path);
         assert_eq!(rd.status, Some(status), "{route}");
+        assert_eq!(executed(&r, SAME, 80, path).0, status, "{route}");
     }
 }
 

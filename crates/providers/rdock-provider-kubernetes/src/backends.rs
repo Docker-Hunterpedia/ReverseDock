@@ -16,6 +16,10 @@
 //!   is available, which also covers ready endpoints ejected by health checks) while a
 //!   ready endpoint exists, and the primary pool when none does (the model refuses a pool of
 //!   backups only). Endpoints that are not serving are left out.
+//! - Loopback, link-local and unspecified endpoint addresses are never used
+//!   ([`refused_address`]): whoever may write a Service's EndpointSlices could otherwise
+//!   point rdock at its own admin listener or a metadata service. One warning per Service
+//!   names them ([`refused_diagnostic`]).
 //! - A Service without any usable endpoint resolves to an empty list; callers answer 503
 //!   for it ([`respond`]), as the Gateway API recommends.
 //! - Headless Services (`clusterIP: None`) have slices like any other. `ExternalName`
@@ -57,6 +61,9 @@ pub struct ServiceBackends {
     pub app_protocol: Option<String>,
     /// Where to send traffic.
     pub targets: Targets,
+    /// Endpoint addresses left out because they are loopback, link-local or unspecified
+    /// ([`refused_address`]), sorted and unique; [`refused_diagnostic`] reports them.
+    pub refused: Vec<String>,
 }
 
 /// The targets of a Service port.
@@ -172,7 +179,13 @@ pub fn resolve(
         },
         None => Targets::Endpoints(endpoints(inventory, namespace, name, &service_port)),
     };
+    let refused = if matches!(targets, Targets::Endpoints(_)) {
+        refused_addresses(inventory, namespace, name)
+    } else {
+        Vec::new()
+    };
     Ok(ServiceBackends {
+        refused,
         namespace: namespace.to_owned(),
         name: name.to_owned(),
         port: port_number,
@@ -255,7 +268,7 @@ pub fn endpoints(
                 None
             };
             let Some(ready) = usable else { continue };
-            for address in &endpoint.addresses {
+            for address in endpoint.addresses.iter().filter(|a| !refused_address(a)) {
                 let address = if ipv6 || address.contains(':') {
                     format!("[{}]:{port}", address.trim_matches(['[', ']']))
                 } else {
@@ -277,6 +290,60 @@ pub fn endpoints(
             })
         })
         .collect()
+}
+
+/// Whether an EndpointSlice address must never be dialled: loopback (`127.0.0.0/8`, `::1`),
+/// link-local (`169.254.0.0/16`, `fe80::/10`: cloud metadata services) and unspecified
+/// (`0.0.0.0`, `::`), also as IPv4-mapped IPv6. Anyone who may write EndpointSlices for a
+/// Service could otherwise point rdock at its own admin listener on loopback or at the node's
+/// metadata service. Host names and unparsable values are left to the address parser.
+#[must_use]
+pub fn refused_address(address: &str) -> bool {
+    let Ok(ip) = address.trim_matches(['[', ']']).parse::<std::net::IpAddr>() else {
+        return false;
+    };
+    let ip = match ip {
+        std::net::IpAddr::V6(v6) => v6
+            .to_ipv4_mapped()
+            .map_or(std::net::IpAddr::V6(v6), std::net::IpAddr::V4),
+        v4 @ std::net::IpAddr::V4(_) => v4,
+    };
+    match ip {
+        std::net::IpAddr::V4(v4) => v4.is_loopback() || v4.is_link_local() || v4.is_unspecified(),
+        std::net::IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
+}
+
+/// The refused addresses ([`refused_address`]) among the endpoints of Service
+/// `namespace/service`, sorted and unique.
+fn refused_addresses(inventory: &Inventory, namespace: &str, service: &str) -> Vec<String> {
+    let refused: std::collections::BTreeSet<String> = inventory
+        .endpoint_slices_of(namespace, service)
+        .flat_map(|slice| &slice.endpoints)
+        .flat_map(|endpoint| &endpoint.addresses)
+        .filter(|address| refused_address(address))
+        .cloned()
+        .collect();
+    refused.into_iter().collect()
+}
+
+/// One warning for a Service whose EndpointSlices hold refused addresses, or `None`.
+#[must_use]
+pub fn refused_diagnostic(resolved: &ServiceBackends) -> Option<rdock_model::Diagnostic> {
+    (!resolved.refused.is_empty()).then(|| {
+        rdock_model::Diagnostic::warning(
+            crate::gateway::object_path(
+                &crate::gateway::object_id("Service", &resolved.namespace, &resolved.name),
+                "",
+            ),
+            format!(
+                "endpoint addresses {} are loopback, link-local or unspecified and are never used",
+                resolved.refused.join(", ")
+            ),
+        )
+    })
 }
 
 /// The scheme for a Service port's `appProtocol` (GEP-1911): `kubernetes.io/h2c` → `h2c`;
@@ -504,6 +571,60 @@ mod tests {
         let admin = resolve(&inv, "ns", "svc", Some(PortRef::Name("admin")), false).unwrap();
         assert_eq!(admin.port, 9090);
         assert_eq!(addresses(&admin).len(), 2);
+    }
+
+    #[test]
+    fn loopback_link_local_and_unspecified_addresses_are_refused() {
+        let inv = inventory(
+            service(&[(None, 80)], None),
+            vec![
+                slice(
+                    "a",
+                    "IPv4",
+                    &[(None, 2080)],
+                    vec![
+                        endpoint("10.0.0.1", Some(true), true, false),
+                        endpoint("127.0.0.1", Some(true), true, false),
+                        endpoint("169.254.169.254", Some(true), true, false),
+                        endpoint("0.0.0.0", Some(true), true, false),
+                    ],
+                ),
+                slice(
+                    "b",
+                    "IPv6",
+                    &[(None, 2080)],
+                    vec![
+                        endpoint("::1", Some(true), true, false),
+                        endpoint("fe80::1", Some(true), true, false),
+                        endpoint("::", Some(true), true, false),
+                        endpoint("::ffff:127.0.0.1", Some(true), true, false),
+                        endpoint("fd00::1", Some(true), true, false),
+                    ],
+                ),
+            ],
+        );
+        let resolved = resolve(&inv, "ns", "svc", Some(PortRef::Number(80)), false).unwrap();
+        assert_eq!(
+            addresses(&resolved),
+            vec![
+                ("10.0.0.1:2080".to_owned(), false),
+                ("[fd00::1]:2080".to_owned(), false),
+            ]
+        );
+        assert_eq!(
+            resolved.refused,
+            vec![
+                "0.0.0.0",
+                "127.0.0.1",
+                "169.254.169.254",
+                "::",
+                "::1",
+                "::ffff:127.0.0.1",
+                "fe80::1"
+            ]
+        );
+        let diagnostic = refused_diagnostic(&resolved).unwrap();
+        assert!(diagnostic.message.contains("127.0.0.1"), "{diagnostic:?}");
     }
 
     #[test]

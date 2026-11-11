@@ -66,6 +66,8 @@ pub fn translate(inventory: &Inventory, settings: &Settings) -> Translation {
     listeners::finish(&mut cx);
     policies::finish(&mut cx);
     listener_sets(&mut cx);
+    let notes = cx.notes.take();
+    cx.out.diagnostics.extend(notes);
     cx.out
 }
 
@@ -83,6 +85,9 @@ pub struct Context<'a> {
     pub gateway_index: BTreeMap<ObjectKey, usize>,
     /// BackendTLSPolicies, evaluated.
     pub policies: BTreeMap<ObjectKey, policies::PolicyState>,
+    /// Warnings found where only a shared borrow of the context is at hand (backend
+    /// resolution); moved into `out` at the end ([`Context::note`]).
+    notes: std::cell::Cell<Vec<rdock_model::Diagnostic>>,
 }
 
 impl<'a> Context<'a> {
@@ -94,7 +99,16 @@ impl<'a> Context<'a> {
             gateways: Vec::new(),
             gateway_index: BTreeMap::new(),
             policies: BTreeMap::new(),
+            notes: std::cell::Cell::default(),
         }
+    }
+
+    /// Records `diagnostic` through a shared borrow; it joins `out.diagnostics` when the
+    /// translation ends.
+    pub fn note(&self, diagnostic: rdock_model::Diagnostic) {
+        let mut notes = self.notes.take();
+        notes.push(diagnostic);
+        self.notes.set(notes);
     }
 
     /// Adds a warning about `object` (`Kind/namespace/name`), at `field` below it.

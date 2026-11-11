@@ -25,7 +25,7 @@ imagePullSecrets: []
 # ports (see `daemonSet`); it ignores `replicaCount`, `autoscaling` and `topologySpread`.
 kind: Deployment
 # -- Number of replicas of a Deployment. Ignored when `autoscaling.enabled` is true.
-# Every replica serves traffic; only one at a time writes status, Events and Services.
+# Every replica serves traffic; only one at a time writes status and Services.
 replicaCount: 2
 
 # -- Seconds open requests may finish after SIGTERM (`lifecycle.drain_timeout` in rdock.yaml).
@@ -115,7 +115,7 @@ ingressClass:
   default: false
 
 leaderElection:
-  # -- Elect one replica as the writer of status, Events and Services
+  # -- Elect one replica as the writer of status and Services
   # (`providers.kubernetes.leader_election.enabled`). Serving never depends on leadership.
   # With one replica or `false`, the instance is always the writer.
   enabled: true
@@ -127,9 +127,9 @@ leaderElection:
 # persistent `data.existingClaim`. cert-manager is the supported way to get certificates.
 allowAcme: false
 
-# -- Extra rdock.yaml, merged over what the chart renders: maps merge, lists and scalars
-# replace. Use it for listeners, middlewares, observability or limits.
 config:
+  # -- Extra rdock.yaml, merged over what the chart renders: maps merge, lists and scalars
+  # replace. Use it for listeners, middlewares, observability or limits.
   extra: {}
 
 admin:

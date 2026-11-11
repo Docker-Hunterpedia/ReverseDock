@@ -1547,14 +1547,15 @@ fn rewrite_target_without_capture_groups() {
         &[("rewrite-target", "/new")],
         &[("Prefix", "/old", "web"), ("Exact", "/exact", "api")],
     );
+    // ingress-nginx ≥ 0.22 rewrites the whole URI to the target: only capture groups carry
+    // parts of the request path over (its rewrite example, checked 2026-11-11), so
+    // `/old/x` becomes `/new`, as for an `Exact` path.
     let routed = router.go("web", "app.example.com", "/old/x");
-    match routed.middlewares.as_slice() {
-        [Middleware::Rewrite(rewrite)] => {
-            assert_eq!(rewrite.regex, "^/old(/.*)?$");
-            assert_eq!(rewrite.replacement, "/new${1}");
-        }
-        other => panic!("{other:?}"),
-    }
+    assert!(
+        matches!(routed.middlewares.as_slice(), [Middleware::ReplacePath(p)] if p.path == "/new"),
+        "{:?}",
+        routed.middlewares
+    );
     let routed = router.go("web", "app.example.com", "/exact");
     assert!(
         matches!(routed.middlewares.as_slice(), [Middleware::ReplacePath(p)] if p.path == "/new"),
@@ -1720,7 +1721,7 @@ fn body_size_whitelist_and_cors() {
         .map(|m| match m {
             Middleware::IpAllow(_) => "ip_allow",
             Middleware::Cors(_) => "cors",
-            Middleware::Rewrite(_) => "rewrite",
+            Middleware::ReplacePath(_) => "rewrite",
             _ => "other",
         })
         .collect();

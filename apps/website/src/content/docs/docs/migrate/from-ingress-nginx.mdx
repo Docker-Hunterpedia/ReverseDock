@@ -21,7 +21,7 @@ There are two routes, and you can use both:
 | `ingressClassName`, IngressClass | The same, with the controller `reversedock.dev/ingress-controller`. |
 | `pathType` `Exact` and `Prefix`, host wildcards, `defaultBackend`, TLS Secrets | Implemented as the Ingress specification says. |
 | `ssl-redirect`, `force-ssl-redirect` | Honoured (308). |
-| `rewrite-target` | Honoured when it has no capture groups. |
+| `rewrite-target` | Honoured when it has no capture groups: the whole path becomes the target, as in ingress-nginx 0.22 and later. |
 | `backend-protocol` | `HTTP`, `HTTPS`, `GRPC`, `GRPCS`. |
 | `proxy-body-size`, `whitelist-source-range`, `enable-cors` and its `cors-*` settings | Honoured. |
 | `app-root`, `permanent-redirect`, `temporal-redirect` | Honoured. |

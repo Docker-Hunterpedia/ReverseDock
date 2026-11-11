@@ -131,13 +131,12 @@ The chart then renders a Role and RoleBinding in each listed namespace instead o
 
 ## What access it gets
 
-The chart's roles follow one rule: read what is translated; write only status, Events, one Lease and the Services of Gateways.
+The chart's roles follow one rule: read what is translated; write only status, one Lease and the Services of Gateways. No Kubernetes Events are written in this version, so the chart grants no access to them.
 
 | Where | What | Verbs |
 |---|---|---|
 | Cluster, or each watched namespace | Gateway API kinds (GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet, BackendTLSPolicy), Services, Secrets, ConfigMaps, EndpointSlices; Ingress with `ingress.enabled` | get, list, watch |
 | Same | `status` of the Gateway API kinds (not ReferenceGrant), and of Ingress with `ingress.enabled` | update, patch |
-| Same | Events | create, patch (granted for reporting; this version writes no Events, only status) |
 | Cluster | Namespaces, CustomResourceDefinitions; IngressClasses with `ingress.enabled` | get, list, watch |
 | Release namespace | Services (the ones made for Gateways) | get, list, watch, create, update, patch, delete |
 | Release namespace | The leader-election Lease | create; get and update on the one Lease |

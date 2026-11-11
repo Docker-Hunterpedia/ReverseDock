@@ -74,6 +74,9 @@ impl Config {
     /// The listeners `route` attaches to: its own `listeners`; otherwise, for a route served
     /// without TLS (`tls: off`), the plain-HTTP listeners; otherwise `defaults.listeners`
     /// (ADR-0021). A `tls: off` route on an HTTPS listener could never be served.
+    ///
+    /// Listeners contributed by a provider (`name@kubernetes`: a Gateway's internal port,
+    /// ADR-0029) are never attached implicitly: a route reaches one only by naming it.
     #[must_use]
     pub fn route_listeners(&self, route: &Route) -> Vec<String> {
         if let Some(listeners) = &route.listeners {
@@ -88,7 +91,9 @@ impl Config {
             let plain: Vec<String> = self
                 .effective_listeners()
                 .iter()
-                .filter(|(_, l)| l.effective_protocol() == ListenerProtocol::Http)
+                .filter(|(name, l)| {
+                    !name.contains('@') && l.effective_protocol() == ListenerProtocol::Http
+                })
                 .map(|(name, _)| name.clone())
                 .collect();
             if !plain.is_empty() {

@@ -3048,7 +3048,7 @@
           },
           {
             "const": "node_port",
-            "description": "`NodePort`: a port on every node.",
+            "description": "`NodePort`: a port on every node. The Gateway address is still the Service's cluster\nIP, reachable only inside the cluster (`status.addresses` cannot hold a node port);\nclients outside use a node's address and the node port. `rdock validate` warns.",
             "type": "string"
           }
         ]
@@ -3525,6 +3525,11 @@
               "^x-": {}
             },
             "properties": {
+              "always": {
+                "default": false,
+                "description": "Redirect even a request that already uses `scheme` (a redirect that sets `hostname`,\n`path` or `prefix` is always sent). The Gateway API's `RequestRedirect` filter sets it:\nthere a redirect is sent whatever the request's scheme. Default `false`.",
+                "type": "boolean"
+              },
               "hostname": {
                 "default": null,
                 "description": "Replace the host name.",
@@ -3595,7 +3600,7 @@
                   }
                 ],
                 "default": null,
-                "description": "Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`), a request\nthat already uses it is not redirected."
+                "description": "Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`; `port`,\n`status` and `permanent` may be set), a request that already uses it is not\nredirected, unless `always` is set."
               },
               "status": {
                 "default": null,

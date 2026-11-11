@@ -675,6 +675,9 @@ fn backend(
         BackendError::ExternalNameNotAllowed { .. } => (reasons::INVALID_KIND, e.to_string()),
         _ => (reasons::BACKEND_NOT_FOUND, e.to_string()),
     })?;
+    if let Some(diagnostic) = backends::refused_diagnostic(&resolved) {
+        cx.note(diagnostic);
+    }
     let scheme = backends::scheme(resolved.app_protocol.as_deref(), default_scheme);
     match super::policies::backend_tls(
         cx,
@@ -850,10 +853,14 @@ pub fn http_match(m: &HTTPRouteMatch) -> Result<MatchOut, String> {
         }
         conditions.push(Expr::Matcher(Matcher::Method(method.to_ascii_uppercase())));
     }
-    for h in &m.headers {
+    // Of entries with equivalent names only the first counts (header names compare without
+    // case, query parameter names exactly), for matching and for precedence.
+    let headers = first_of_each(&m.headers, |h| h.name.to_ascii_lowercase());
+    let query_params = first_of_each(&m.query_params, |q| q.name.clone());
+    for h in &headers {
         conditions.push(header_condition(h.kind.as_deref(), &h.name, &h.value)?);
     }
-    for q in &m.query_params {
+    for q in &query_params {
         if q.name.is_empty() {
             return Err("a query parameter match needs a name".to_owned());
         }
@@ -879,9 +886,15 @@ pub fn http_match(m: &HTTPRouteMatch) -> Result<MatchOut, String> {
         path_kind,
         path_len,
         method: m.method.is_some(),
-        headers: m.headers.len(),
-        query: m.query_params.len(),
+        headers: headers.len(),
+        query: query_params.len(),
     })
+}
+
+/// The entries of `items` whose `key` was not seen before, in order.
+fn first_of_each<T>(items: &[T], key: impl Fn(&T) -> String) -> Vec<&T> {
+    let mut seen = std::collections::BTreeSet::new();
+    items.iter().filter(|item| seen.insert(key(item))).collect()
 }
 
 /// Translates a GRPCRoute match.
@@ -940,7 +953,9 @@ pub fn grpc_match(m: &GRPCRouteMatch) -> Result<MatchOut, String> {
         }
     };
     let mut conditions = vec![path];
-    for h in &m.headers {
+    // Only the first of entries with equivalent (case-insensitive) names counts.
+    let headers = first_of_each(&m.headers, |h| h.name.to_ascii_lowercase());
+    for h in &headers {
         conditions.push(header_condition(h.kind.as_deref(), &h.name, &h.value)?);
     }
     Ok(MatchOut {
@@ -948,7 +963,7 @@ pub fn grpc_match(m: &GRPCRouteMatch) -> Result<MatchOut, String> {
         path_kind,
         path_len,
         method: false,
-        headers: m.headers.len(),
+        headers: headers.len(),
         query: 0,
     })
 }
@@ -1119,6 +1134,8 @@ fn plan_redirect(
         permanent: false,
         status: Some(status),
         port: f.port,
+        // The specification redirects whatever the request's scheme.
+        always: true,
     }))
 }
 
@@ -1474,6 +1491,53 @@ mod tests {
         };
         let text = rule(&http_match(&tricky).unwrap());
         assert_eq!(rdock_rules::parse(&text).unwrap().to_string(), text);
+    }
+
+    #[test]
+    fn only_the_first_of_equivalent_header_and_query_names_counts() {
+        let header = |name: &str, value: &str| HTTPHeaderMatch {
+            kind: None,
+            name: name.into(),
+            value: value.into(),
+        };
+        let query = |name: &str, value: &str| HTTPQueryParamMatch {
+            kind: None,
+            name: name.into(),
+            value: value.into(),
+        };
+        let m = http_match(&HTTPRouteMatch {
+            headers: vec![
+                header("Version", "one"),
+                header("version", "two"),
+                header("Other", "x"),
+            ],
+            query_params: vec![query("a", "1"), query("a", "2"), query("A", "3")],
+            ..path("PathPrefix", "/")
+        })
+        .unwrap();
+        assert_eq!(
+            rule(&m),
+            "PathPrefix(`/`) && Header(`Version`, `one`) && Header(`Other`, `x`) && Query(`a`, `1`) && Query(`A`, `3`)"
+        );
+        assert_eq!((m.headers, m.query), (2, 2));
+        let g = grpc_match(&GRPCRouteMatch {
+            method: None,
+            headers: vec![
+                crate::api::GRPCHeaderMatch {
+                    kind: None,
+                    name: "Version".into(),
+                    value: "one".into(),
+                },
+                crate::api::GRPCHeaderMatch {
+                    kind: None,
+                    name: "VERSION".into(),
+                    value: "two".into(),
+                },
+            ],
+        })
+        .unwrap();
+        assert_eq!(rule(&g), "PathPrefix(`/`) && Header(`Version`, `one`)");
+        assert_eq!(g.headers, 1);
     }
 
     #[test]
