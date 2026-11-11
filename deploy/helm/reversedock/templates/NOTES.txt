@@ -1,0 +1,44 @@
+ReverseDock {{ .Chart.AppVersion }} is installed in namespace {{ .Release.Namespace }} as release {{ .Release.Name }}.
+
+Check the pods:
+  kubectl -n {{ .Release.Namespace }} get pods -l app.kubernetes.io/instance={{ .Release.Name }}
+
+{{- if and .Values.gatewayClass.create .Values.gateway.enabled }}
+
+GatewayClass "{{ .Values.gatewayClass.name }}" was created. Create a Gateway with
+`gatewayClassName: {{ .Values.gatewayClass.name }}`; the controller makes one Service per Gateway and
+writes its address to the Gateway's status:
+  kubectl get gateway <name> -o jsonpath='{.status.addresses[*].value}'
+{{- else if .Values.gateway.enabled }}
+
+This chart did not create a GatewayClass. Create one with
+`controllerName: {{ .Values.gatewayClass.controllerName }}`.
+{{- end }}
+{{- if .Values.ingress.enabled }}
+
+Ingress is on. Claimed class: "{{ .Values.ingress.class }}"{{ if .Values.ingressClass.create }} (IngressClass created){{ end }}.
+{{- if .Values.ingress.service.enabled }}
+Ingress traffic enters through Service {{ include "reversedock.ingressServiceName" . }}.
+{{- end }}
+{{- end }}
+{{- if gt (len .Values.watchNamespaces) 0 }}
+
+Namespaced mode: watching {{ join ", " .Values.watchNamespaces }} only.
+{{- end }}
+{{- if not .Values.leaderElection.enabled }}
+{{- if gt (int .Values.replicaCount) 1 }}
+
+WARNING: leaderElection.enabled is false with more than one replica; every replica writes status.
+{{- end }}
+{{- end }}
+{{- if .Values.allowAcme }}
+
+WARNING: allowAcme is on. Automatic ACME needs one replica and a persistent data directory
+(data.existingClaim); replicas share no ACME storage. cert-manager is the supported way to get
+certificates in a cluster.
+{{- end }}
+
+The Gateway API CRDs are not part of this chart. If a Gateway or HTTPRoute is rejected as an
+unknown kind, install them first (see the chart README).
+
+Conformance with the Gateway API is run in CI; no conformance claim is made yet.

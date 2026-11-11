@@ -1,0 +1,58 @@
+{{- if .Values.admin.network.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "reversedock.adminServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+    app.kubernetes.io/service: admin
+  {{- with .Values.admin.network.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.admin.network.service.type }}
+  selector:
+    {{- include "reversedock.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: admin
+      port: {{ .Values.admin.port }}
+      targetPort: admin
+      protocol: TCP
+{{- end }}
+{{- if and .Values.ingress.enabled .Values.ingress.service.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "reversedock.ingressServiceName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+    app.kubernetes.io/service: ingress
+  {{- with .Values.ingress.service.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  type: {{ .Values.ingress.service.type }}
+  {{- with .Values.ingress.service.externalTrafficPolicy }}
+  externalTrafficPolicy: {{ . }}
+  {{- end }}
+  {{- with .Values.ingress.service.loadBalancerClass }}
+  loadBalancerClass: {{ . }}
+  {{- end }}
+  selector:
+    {{- include "reversedock.selectorLabels" . | nindent 4 }}
+  ports:
+    - name: http
+      port: {{ .Values.ingress.service.httpPort }}
+      targetPort: http
+      protocol: TCP
+    - name: https
+      port: {{ .Values.ingress.service.httpsPort }}
+      targetPort: https
+      protocol: TCP
+{{- end }}

@@ -1,0 +1,31 @@
+# The same echo backend through an Ingress. Install the chart with `ingress.enabled=true` and
+# `ingressClass.create=true` first (see README.md). The IngressClass is shown here so the file
+# is complete; skip it if the chart already created it.
+apiVersion: networking.k8s.io/v1
+kind: IngressClass
+metadata:
+  name: reversedock
+spec:
+  controller: reversedock.dev/ingress-controller
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo
+  namespace: default
+spec:
+  ingressClassName: reversedock
+  tls:
+    - hosts: [echo.example.com]
+      secretName: example-com-tls
+  rules:
+    - host: echo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo
+                port:
+                  name: http

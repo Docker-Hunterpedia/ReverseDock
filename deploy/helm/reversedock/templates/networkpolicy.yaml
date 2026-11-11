@@ -1,0 +1,40 @@
+{{- if .Values.networkPolicy.enabled }}
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "reversedock.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+spec:
+  podSelector:
+    matchLabels:
+      {{- include "reversedock.selectorLabels" . | nindent 6 }}
+  policyTypes: [Ingress]
+  ingress:
+    # Data plane: the file-owned Ingress listeners and the internal Gateway listener range.
+    - ports:
+        {{- if .Values.ingress.enabled }}
+        - protocol: TCP
+          port: {{ .Values.ingress.ports.http }}
+        - protocol: TCP
+          port: {{ .Values.ingress.ports.https }}
+        {{- end }}
+        {{- $range := splitList "-" .Values.gateway.portRange }}
+        - protocol: TCP
+          port: {{ index $range 0 }}
+          endPort: {{ index $range 1 }}
+      {{- with .Values.networkPolicy.allowFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- if .Values.admin.network.enabled }}
+    - ports:
+        - protocol: TCP
+          port: {{ .Values.admin.port }}
+      {{- with .Values.networkPolicy.adminFrom }}
+      from:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
+    {{- end }}
+{{- end }}

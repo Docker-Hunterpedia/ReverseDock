@@ -1,0 +1,198 @@
+{{- /*
+Least privilege (ADR-0029): read what is translated, write only `status`, Events, one Lease and
+the per-Gateway Services. Never pods or nodes, never write Secrets.
+*/ -}}
+{{- $sa := include "reversedock.serviceAccountName" . -}}
+{{- $fullname := include "reversedock.fullname" . -}}
+{{- $namespaced := gt (len .Values.watchNamespaces) 0 -}}
+{{- $gwKinds := list "gateways" "httproutes" "grpcroutes" "tlsroutes" "tcproutes" "udproutes" "referencegrants" "listenersets" "backendtlspolicies" -}}
+{{- $gwStatus := list "gateways/status" "httproutes/status" "grpcroutes/status" "tlsroutes/status" "tcproutes/status" "udproutes/status" "listenersets/status" "backendtlspolicies/status" -}}
+{{- /* Rules for kinds that live in a namespace; used in the ClusterRole and in each watched namespace. */ -}}
+{{- define "reversedock.namespacedRules" }}
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: {{ toJson .gwKinds }}
+  verbs: [get, list, watch]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: {{ toJson .gwStatus }}
+  verbs: [update, patch]
+- apiGroups: [""]
+  resources: [services, secrets, configmaps]
+  verbs: [get, list, watch]
+- apiGroups: [discovery.k8s.io]
+  resources: [endpointslices]
+  verbs: [get, list, watch]
+- apiGroups: [""]
+  resources: [events]
+  verbs: [create, patch]
+- apiGroups: [events.k8s.io]
+  resources: [events]
+  verbs: [create, patch]
+{{- if .ingress }}
+- apiGroups: [networking.k8s.io]
+  resources: [ingresses]
+  verbs: [get, list, watch]
+- apiGroups: [networking.k8s.io]
+  resources: [ingresses/status]
+  verbs: [update, patch]
+{{- end }}
+{{- end }}
+{{- $ctx := dict "gwKinds" $gwKinds "gwStatus" $gwStatus "ingress" .Values.ingress.enabled }}
+{{- if not $namespaced }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: [gatewayclasses]
+  verbs: [get, list, watch]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: [gatewayclasses/status]
+  verbs: [update, patch]
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [get, list, watch]
+# Read the gateway.networking.k8s.io/bundle-version annotation and detect missing kinds.
+- apiGroups: [apiextensions.k8s.io]
+  resources: [customresourcedefinitions]
+  verbs: [get, list, watch]
+{{- if .Values.ingress.enabled }}
+- apiGroups: [networking.k8s.io]
+  resources: [ingressclasses]
+  verbs: [get, list, watch]
+{{- end }}
+{{- include "reversedock.namespacedRules" $ctx | trim | nindent 0 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+{{- else }}
+---
+# Namespaced mode: cluster-scoped objects only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+rules:
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: [gatewayclasses]
+  verbs: [get, list, watch]
+- apiGroups: ["gateway.networking.k8s.io"]
+  resources: [gatewayclasses/status]
+  verbs: [update, patch]
+- apiGroups: [""]
+  resources: [namespaces]
+  verbs: [get, list, watch]
+- apiGroups: [apiextensions.k8s.io]
+  resources: [customresourcedefinitions]
+  verbs: [get, list, watch]
+{{- if .Values.ingress.enabled }}
+- apiGroups: [networking.k8s.io]
+  resources: [ingressclasses]
+  verbs: [get, list, watch]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ $fullname }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ $fullname }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+{{- range $ns := .Values.watchNamespaces }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ printf "%s-watch" $fullname | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "reversedock.labels" $ | nindent 4 }}
+rules:
+{{- include "reversedock.namespacedRules" $ctx | trim | nindent 0 }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ printf "%s-watch" $fullname | trunc 63 | trimSuffix "-" }}
+  namespace: {{ $ns }}
+  labels:
+    {{- include "reversedock.labels" $ | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ printf "%s-watch" $fullname | trunc 63 | trimSuffix "-" }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $sa }}
+  namespace: {{ $.Release.Namespace }}
+{{- end }}
+{{- end }}
+{{- if or .Values.leaderElection.enabled .Values.gateway.enabled }}
+---
+# Release namespace: the Lease and the per-Gateway Services.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "reversedock.controlRoleName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+rules:
+{{- if .Values.leaderElection.enabled }}
+# `create` cannot be limited by resourceNames (the name is not known to the API server when
+# the object does not exist yet), so it is a separate rule. Reads and updates are limited to
+# the one Lease.
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  verbs: [create]
+- apiGroups: [coordination.k8s.io]
+  resources: [leases]
+  resourceNames: [{{ .Values.leaderElection.lease | quote }}]
+  verbs: [get, update]
+{{- end }}
+{{- if .Values.gateway.enabled }}
+- apiGroups: [""]
+  resources: [services]
+  verbs: [get, list, watch, create, update, patch, delete]
+{{- end }}
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "reversedock.controlRoleName" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "reversedock.controlRoleName" . }}
+subjects:
+- kind: ServiceAccount
+  name: {{ $sa }}
+  namespace: {{ .Release.Namespace }}
+{{- end }}

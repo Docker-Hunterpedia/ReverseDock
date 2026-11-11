@@ -1,0 +1,41 @@
+{{- if and (eq .Values.kind "DaemonSet") .Values.daemonSet.hostPorts.enabled (not .Values.ingress.enabled) }}
+{{- fail "daemonSet.hostPorts.enabled needs ingress.enabled: host ports map the Ingress listeners" }}
+{{- end }}
+{{- if and .Values.metrics.serviceMonitor.enabled (not .Values.admin.network.enabled) }}
+{{- fail "metrics.serviceMonitor.enabled needs admin.network.enabled: /metrics is served by the admin listener" }}
+{{- end }}
+{{- if and .Values.allowAcme (gt (int .Values.replicaCount) 1) (eq .Values.kind "Deployment") (not .Values.autoscaling.enabled) }}
+{{- fail "allowAcme needs replicaCount: 1 (replicas share no ACME storage until v0.9)" }}
+{{- end }}
+apiVersion: apps/v1
+kind: {{ .Values.kind }}
+metadata:
+  name: {{ include "reversedock.fullname" . }}
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "reversedock.labels" . | nindent 4 }}
+  {{- with .Values.workloadAnnotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- if eq .Values.kind "Deployment" }}
+  {{- if not .Values.autoscaling.enabled }}
+  replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
+  {{- else }}
+  updateStrategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 1
+  {{- end }}
+  selector:
+    matchLabels:
+      {{- include "reversedock.selectorLabels" . | nindent 6 }}
+  template:
+    {{- include "reversedock.podTemplate" . | nindent 4 }}

@@ -1,0 +1,318 @@
+# Default values for the ReverseDock chart. Every value is documented here; README.md has the
+# same list as a table. The chart never installs the Gateway API CRDs (see README.md).
+
+# -- Overrides the chart name in resource names and labels. Changing it changes the pod
+# selector, so it cannot be changed on an existing release.
+nameOverride: ""
+# -- Overrides the full resource name (default: the release name).
+fullnameOverride: ""
+# -- Labels added to every object the chart creates (not to the pod selector).
+commonLabels: {}
+
+image:
+  # -- Image repository. Release images are published to this repository by the release workflow.
+  repository: ghcr.io/docker-hunterpedia/rdock
+  # -- Image tag. Empty means the chart's appVersion.
+  tag: ""
+  # -- Image digest (sha256:...). When set, the tag is kept for readability and the digest is used.
+  digest: ""
+  # -- Image pull policy.
+  pullPolicy: IfNotPresent
+# -- Secrets for pulling the image from a private registry, as a list of `{name: ...}`.
+imagePullSecrets: []
+
+# -- `Deployment` (default) or `DaemonSet`. A DaemonSet runs one pod per node and can map host
+# ports (see `daemonSet`); it ignores `replicaCount`, `autoscaling` and `topologySpread`.
+kind: Deployment
+# -- Number of replicas of a Deployment. Ignored when `autoscaling.enabled` is true.
+# Every replica serves traffic; only one at a time writes status, Events and Services.
+replicaCount: 2
+
+# -- Seconds open requests may finish after SIGTERM (`lifecycle.drain_timeout` in rdock.yaml).
+# `terminationGracePeriodSeconds` is this value plus 15.
+drainTimeoutSeconds: 10
+# -- Application log filter (`RDOCK_LOG`), for example `info` or `info,rdock_proxy=debug`.
+logLevel: info
+# -- Application log format (`RDOCK_LOG_FORMAT`): `auto`, `json` or `text`.
+logFormat: json
+
+# -- Namespaces to watch. Empty means every namespace and the chart renders one ClusterRole.
+# With `[a, b]` it renders a Role and RoleBinding in each namespace, a small ClusterRole for
+# GatewayClasses, IngressClasses, Namespaces and CRDs, and sets `providers.kubernetes.namespaces`.
+watchNamespaces: []
+# -- Path to a kubeconfig, only for running outside a cluster. Leave empty in a cluster: the
+# service account is used.
+kubeconfig: ""
+
+gatewayClass:
+  # -- Create the GatewayClass. It needs the Gateway API CRDs to exist before the install.
+  create: true
+  # -- Name of the GatewayClass that Gateways refer to.
+  name: reversedock
+  # -- Controller name the GatewayClass is bound to (`providers.kubernetes.controller_name`).
+  # Change it only when you run two controllers of this kind in one cluster.
+  controllerName: reversedock.dev/gateway-controller
+  # -- Description of the GatewayClass.
+  description: ReverseDock, a reverse proxy on Cloudflare Pingora.
+
+gateway:
+  # -- Serve Gateway API resources (`providers.kubernetes.gateway.enabled`).
+  enabled: true
+  # -- Type of the Service the controller creates for each Gateway: `load_balancer`,
+  # `cluster_ip` or `node_port` (`providers.kubernetes.gateway.service_type`).
+  serviceType: load_balancer
+  # -- Range of internal ports allocated to Gateway listeners, `from-to`
+  # (`providers.kubernetes.gateway.port_range`). It bounds the number of Gateway ports.
+  portRange: "20000-29999"
+  # -- Allow backendRefs to ExternalName Services (`allow_external_name`). Refused by default
+  # (CVE-2021-25740).
+  allowExternalName: false
+
+ingress:
+  # -- Translate networking.k8s.io/v1 Ingress resources (`providers.kubernetes.ingress.enabled`).
+  # Adds the Ingress RBAC rules and the file-owned `web` and `websecure` listeners.
+  enabled: false
+  # -- Class name claimed through the deprecated `kubernetes.io/ingress.class` annotation, and
+  # the name of the IngressClass when `ingressClass.create` is true.
+  class: reversedock
+  # -- Also claim Ingresses without a class (`claim_without_class`).
+  claimWithoutClass: false
+  # -- `namespace/name` of the Service whose address is written to `status.loadBalancer` of
+  # claimed Ingresses. Empty means the chart's own `ingress.service` when it is enabled.
+  publishService: ""
+  # -- Address written to `status.loadBalancer` instead (IP or host name).
+  publishAddress: ""
+  # -- Honour ingress-nginx annotations that map onto a middleware (`nginx_annotations`).
+  nginxAnnotations: true
+  # -- Container ports of the file-owned Ingress listeners `web` (plain HTTP) and `websecure`
+  # (HTTPS). Unprivileged ports need no capability.
+  ports:
+    http: 8080
+    https: 8443
+  # -- A Service that exposes the Ingress listeners (80 -> http, 443 -> https).
+  service:
+    # -- Create the Service.
+    enabled: false
+    # -- Service type.
+    type: LoadBalancer
+    # -- Annotations of the Service, for example cloud load balancer settings.
+    annotations: {}
+    # -- `Cluster` or `Local`. `Local` keeps client addresses on most clouds.
+    externalTrafficPolicy: ""
+    # -- `spec.loadBalancerClass`, when your cluster has more than one.
+    loadBalancerClass: ""
+    # -- Port the Service listens on for HTTP.
+    httpPort: 80
+    # -- Port the Service listens on for HTTPS.
+    httpsPort: 443
+
+ingressClass:
+  # -- Create an IngressClass named `ingress.class` with controller
+  # `reversedock.dev/ingress-controller`. Off by default.
+  create: false
+  # -- Mark the IngressClass as the cluster default
+  # (`ingressclass.kubernetes.io/is-default-class`). Only one class should be the default.
+  default: false
+
+leaderElection:
+  # -- Elect one replica as the writer of status, Events and Services
+  # (`providers.kubernetes.leader_election.enabled`). Serving never depends on leadership.
+  # With one replica or `false`, the instance is always the writer.
+  enabled: true
+  # -- Name of the Lease in the release namespace.
+  lease: reversedock-leader
+
+# -- Allow automatic ACME together with the Kubernetes provider (`allow_acme`). Refused
+# otherwise. Replicas share no ACME storage until v0.9, so use `replicaCount: 1` and a
+# persistent `data.existingClaim`. cert-manager is the supported way to get certificates.
+allowAcme: false
+
+# -- Extra rdock.yaml, merged over what the chart renders: maps merge, lists and scalars
+# replace. Use it for listeners, middlewares, observability or limits.
+config:
+  extra: {}
+
+admin:
+  # -- Port of the admin API.
+  port: 2080
+  network:
+    # -- Listen on the pod address instead of loopback, to serve /metrics and /healthz to
+    # Prometheus and kubelet over TLS. Needs `tlsSecretName`. Off by default: rdock refuses a
+    # network admin listener without TLS, and probes then run `rdock healthcheck` in the
+    # container, which talks to the local admin socket.
+    enabled: false
+    # -- Name of a `kubernetes.io/tls` Secret in the release namespace with the admin
+    # certificate. The chart does not create one.
+    tlsSecretName: ""
+    # -- Host names the admin API answers to, besides `localhost` and the admin Service names.
+    allowedHosts: []
+    # -- Create the admin Service (port name `admin`).
+    service:
+      # -- Service type.
+      type: ClusterIP
+      # -- Annotations of the admin Service.
+      annotations: {}
+
+# -- Data directory (`RDOCK_DATA_DIR`). It holds TLS key files written from Secrets, so by
+# default it is memory-backed and never reaches a node disk.
+data:
+  # -- Medium of the emptyDir. `Memory` keeps key material off disk; empty uses node storage.
+  medium: Memory
+  # -- Size limit of the emptyDir.
+  sizeLimit: 64Mi
+  # -- Use this PersistentVolumeClaim instead of an emptyDir (needed for ACME; one replica).
+  existingClaim: ""
+
+probes:
+  startup:
+    # -- Seconds between startup probes.
+    periodSeconds: 2
+    # -- Failures before the container is restarted (period x threshold = time to first sync).
+    failureThreshold: 60
+    # -- Probe timeout in seconds.
+    timeoutSeconds: 3
+  readiness:
+    # -- Seconds between readiness probes.
+    periodSeconds: 5
+    # -- Failures before the pod leaves the Service endpoints.
+    failureThreshold: 3
+    # -- Probe timeout in seconds.
+    timeoutSeconds: 3
+  liveness:
+    # -- Seconds between liveness probes.
+    periodSeconds: 20
+    # -- Failures before the container is restarted. Kept high: liveness only has to catch a
+    # stuck process.
+    failureThreshold: 6
+    # -- Probe timeout in seconds.
+    timeoutSeconds: 3
+
+# -- Resources of the container. No CPU limit by design: throttling a proxy adds tail latency.
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits: {}
+
+# -- Pod security context. Matches the Pod Security "restricted" profile.
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  fsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+# -- Container security context. Matches the Pod Security "restricted" profile.
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: [ALL]
+  seccompProfile:
+    type: RuntimeDefault
+
+serviceAccount:
+  # -- Create the ServiceAccount.
+  create: true
+  # -- Name of the ServiceAccount. Empty means the full name of the release.
+  name: ""
+  # -- Annotations of the ServiceAccount, for example for workload identity.
+  annotations: {}
+
+# -- Labels added to the pods.
+podLabels: {}
+# -- Annotations added to the pods.
+podAnnotations: {}
+# -- Annotations of the Deployment or DaemonSet.
+workloadAnnotations: {}
+# -- Name of a PriorityClass for the pods.
+priorityClassName: ""
+# -- Node selector of the pods.
+nodeSelector: {}
+# -- Tolerations of the pods.
+tolerations: []
+# -- Affinity of the pods.
+affinity: {}
+# -- Extra environment variables of the container, as Kubernetes `env` entries. Do not put
+# secrets in values; reference a Secret with `valueFrom`.
+extraEnv: []
+# -- Extra volumes of the pod.
+extraVolumes: []
+# -- Extra volume mounts of the container.
+extraVolumeMounts: []
+
+topologySpread:
+  # -- Spread pods over nodes (Deployment only).
+  enabled: true
+  # -- Maximum skew.
+  maxSkew: 1
+  # -- `ScheduleAnyway` keeps pods schedulable on small clusters; `DoNotSchedule` is strict.
+  whenUnsatisfiable: ScheduleAnyway
+  # -- Topology key.
+  topologyKey: kubernetes.io/hostname
+
+podDisruptionBudget:
+  # -- Create a PodDisruptionBudget.
+  enabled: true
+  # -- Pods that may be unavailable during voluntary disruptions. Keep at least two replicas
+  # when the budget is on.
+  maxUnavailable: 1
+
+autoscaling:
+  # -- Create a HorizontalPodAutoscaler (Deployment only).
+  enabled: false
+  # -- Minimum replicas.
+  minReplicas: 2
+  # -- Maximum replicas.
+  maxReplicas: 6
+  # -- Target average CPU utilisation in percent of the CPU request.
+  targetCPUUtilizationPercentage: 75
+
+daemonSet:
+  hostPorts:
+    # -- Map host ports to the Ingress listeners (needs `kind: DaemonSet` and
+    # `ingress.enabled: true`). Limit: a host port belongs to one pod per node, so only one
+    # listener per host port exists on a node; Gateway listeners are reached through their
+    # Services, not through host ports.
+    enabled: false
+    # -- Host port mapped to `ingress.ports.http`.
+    http: 80
+    # -- Host port mapped to `ingress.ports.https`.
+    https: 443
+  # -- How a container may bind ports below 1024, only needed when `ingress.ports` are below
+  # 1024: `none`, `sysctl` (the safe sysctl net.ipv4.ip_unprivileged_port_start=0 on the pod)
+  # or `capability` (adds NET_BIND_SERVICE, for runtimes that reject the sysctl).
+  privilegedPorts: none
+
+metrics:
+  serviceMonitor:
+    # -- Create a Prometheus Operator ServiceMonitor. Needs `admin.network.enabled`, the
+    # `monitoring.coreos.com/v1` CRD and a token Secret (rdock's /metrics needs a token with
+    # the `metrics` role).
+    enabled: false
+    # -- Labels of the ServiceMonitor, for example the `release` label your Prometheus selects.
+    labels: {}
+    # -- Scrape interval.
+    interval: 30s
+    # -- Scrape timeout.
+    scrapeTimeout: 10s
+    # -- Secret and key that hold the API token.
+    tokenSecret:
+      name: ""
+      key: token
+    # -- TLS settings of the scrape. The admin certificate is yours: set `ca` or, for a
+    # self-signed one, `insecureSkipVerify: true`.
+    tlsConfig:
+      insecureSkipVerify: false
+
+networkPolicy:
+  # -- Create a NetworkPolicy for the pods (ingress rules only; egress is not restricted).
+  enabled: false
+  # -- Peers allowed to reach the data-plane ports. Empty allows every source.
+  allowFrom: []
+  # -- Peers allowed to reach the admin port (only with `admin.network.enabled`). Empty allows
+  # every source in the cluster; use it to limit to your Prometheus namespace.
+  adminFrom: []

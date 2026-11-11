@@ -1,0 +1,36 @@
+# TLS passthrough: the Gateway does not decrypt; it routes by the SNI name and forwards bytes.
+# The backend Service `secure-app` terminates TLS itself. This Gateway has its own Service and
+# address, separate from example.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: passthrough
+  namespace: default
+spec:
+  gatewayClassName: reversedock
+  listeners:
+    - name: tls
+      protocol: TLS
+      port: 443
+      hostname: secure.example.com
+      tls:
+        mode: Passthrough
+      allowedRoutes:
+        kinds:
+          - kind: TLSRoute
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: TLSRoute
+metadata:
+  name: secure-app
+  namespace: default
+spec:
+  parentRefs:
+    - name: passthrough
+      sectionName: tls
+  hostnames:
+    - secure.example.com
+  rules:
+    - backendRefs:
+        - name: secure-app
+          port: 8443

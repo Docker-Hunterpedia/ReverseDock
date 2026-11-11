@@ -1,0 +1,13 @@
+# Namespaced mode: Roles in two namespaces instead of a ClusterRole for namespaced kinds.
+watchNamespaces:
+  - team-a
+  - team-b
+ingress:
+  enabled: true
+gatewayClass:
+  name: reversedock-team
+config:
+  extra:
+    observability:
+      access_log:
+        format: json
