@@ -20,6 +20,7 @@ pub mod proxy_protocol;
 pub mod rdock;
 pub mod tcp;
 pub mod toxiproxy;
+pub mod udp;
 
 /// A free TCP port on the loopback interface, taken by nobody else in this test run.
 ///

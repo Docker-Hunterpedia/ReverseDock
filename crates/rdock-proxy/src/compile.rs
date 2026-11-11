@@ -90,6 +90,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &mut out,
     );
     crate::tcp::compile_tcp(config, env, &mut listeners, &mut auto_tls, &mut out);
+    let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, &mut out);
     let cert_requests = auto_tls.requests.into_iter().collect();
     let local_cert_names = auto_tls.local.into_iter().collect();
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
@@ -110,6 +111,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
             .iter()
             .map(|(name, s)| (name.clone(), s.clone()))
             .collect(),
+        udp_pools,
         tracer,
     });
     Compiled {
@@ -740,7 +742,6 @@ fn compile_listeners(
     let effective = config.effective_listeners();
     let mut listeners: BTreeMap<String, ListenerRuntime> = effective
         .iter()
-        .filter(|(_, l)| l.effective_protocol() != ListenerProtocol::Udp)
         .filter_map(|(name, l)| match new_listener(name, l) {
             Ok(listener) => Some((name.clone(), listener)),
             Err(message) => {
@@ -835,6 +836,8 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         ping: listener.ping.clone(),
         routes: Vec::new(),
         tcp_routes: Arc::new([]),
+        udp_routes: Arc::new([]),
+        udp_sessions: listener.sessions.unwrap_or_default(),
         https_redirect: None,
     })
 }

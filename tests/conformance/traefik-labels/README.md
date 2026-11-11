@@ -19,6 +19,8 @@ expect:
   middlewares: {}
   tcp_routes:  {}                          # TCP routers and services, the same way
   tcp_services: {}
+  udp_routes:  {}                          # UDP routers and services, the same way
+  udp_services: {}
   diagnostics: []                          # one text per diagnostic, in order, contained in "path: message"
 ```
 
@@ -30,6 +32,7 @@ Known differences from Traefik, on purpose:
 - A TCP router without entrypoints is ignored with a warning: TCP routes name their listeners.
 - TCP middlewares (`ipallowlist`, `inflightconn`) share one namespace with HTTP middlewares.
 - `tls.certresolver`, `tls.options` and `tls.domains` on TCP routers, and TCP `serverstransport`, are warnings: a terminating TCP route uses its listener's TLS settings and certificates.
+- A UDP router without entrypoints is ignored with a warning, and a UDP service needs a port label (`traefik.udp.services.<name>.loadbalancer.server.port`): Docker lists exposed UDP ports apart from TCP ones. Traefik's UDP session timeout is an entry point setting; here it is the UDP service's `timeouts.idle` (60 s by default, Traefik's is 3 s).
 - No default router for containers without router labels (Traefik's `defaultRule`).
 - The `retry` middleware is a warning: retries are a service setting (`rdock.services.<name>.retries`).
 

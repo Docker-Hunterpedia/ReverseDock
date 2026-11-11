@@ -1110,6 +1110,54 @@ fn static_settings_are_checked() {
 }
 
 #[test]
+fn directory_listing_with_risky_options_warns() {
+    assert_eq!(
+        warnings(site(json!({ "listing": true }))),
+        Vec::new(),
+        "safe defaults list without a warning"
+    );
+    assert_eq!(
+        warnings(site(json!({ "listing": true, "symlinks": "within_root" }))),
+        Vec::new()
+    );
+    // The options alone are warned about elsewhere; the listing adds its own warning.
+    let found = warnings(site(json!({ "listing": true, "hidden": "allow" })));
+    assert!(
+        has(&found, "middlewares.files.listing", "starting with `.`"),
+        "{found:?}"
+    );
+    let found = warnings(site(json!({ "listing": true, "symlinks": "all" })));
+    assert!(
+        has(&found, "middlewares.files.listing", "lead out of `root`"),
+        "{found:?}"
+    );
+    let found = warnings(site(json!({
+        "listing": true, "hidden": "allow", "symlinks": "all"
+    })));
+    assert_eq!(
+        found
+            .iter()
+            .filter(|(p, _)| p == "middlewares.files.listing")
+            .count(),
+        2,
+        "{found:?}"
+    );
+    assert!(
+        errors(site(
+            json!({ "listing": true, "hidden": "allow", "symlinks": "all" })
+        ))
+        .is_empty(),
+        "warnings, not errors"
+    );
+    assert!(
+        !warnings(site(json!({ "hidden": "allow" })))
+            .iter()
+            .any(|(p, _)| p.ends_with(".listing")),
+        "no listing, no listing warning"
+    );
+}
+
+#[test]
 fn risky_static_options_are_warnings() {
     let found = warnings(site(json!({
         "symlinks": "all",

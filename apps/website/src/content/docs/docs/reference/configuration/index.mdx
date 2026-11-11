@@ -30,6 +30,8 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`services`](/docs/reference/configuration/services/): Backend pools that routes send traffic to.
 - [`tcp_routes`](/docs/reference/configuration/tcp-routes/): TCP routes (SNI routing, passthrough, plain TCP).
 - [`tcp_services`](/docs/reference/configuration/tcp-services/): TCP backend pools.
+- [`udp_routes`](/docs/reference/configuration/udp-routes/): UDP routes: which `udp` listener's datagrams go to which UDP service.
+- [`udp_services`](/docs/reference/configuration/udp-services/): UDP backend pools.
 - [`version`](/docs/reference/configuration/version/): Configuration format version. Only `1` exists; omit it to use the latest.
 
 ## Value types
@@ -97,6 +99,10 @@ Examples: `client_ip`, `header:X-Api-Key`
 ### RouteTls
 
 TLS of a route.
+
+### SessionLimit
+
+A number of sessions (at least 1), or `unlimited`.
 
 ### TrustedProxy
 

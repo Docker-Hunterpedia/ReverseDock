@@ -4,7 +4,6 @@
 
 use rdock_model::config::{Config, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
-use rdock_model::middleware::Middleware;
 
 /// Why compilation runs.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,18 +36,14 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
-        if listener.effective_protocol() == ListenerProtocol::Udp {
-            gate.unsupported(format!("{path}.protocol"), "UDP listeners", "v0.8");
-        }
-    }
-    for (name, middleware) in &config.middlewares {
-        if let Middleware::Static(st) = middleware
-            && st.listing
+        // The PROXY protocol specification defines no framing for datagrams (ADR-0030).
+        if listener.effective_protocol() == ListenerProtocol::Udp
+            && listener.proxy_protocol.is_some()
         {
             gate.unsupported(
-                format!("{}.listing", path_key("middlewares", name)),
-                "directory listing (F-WEB-02)",
-                "v0.8",
+                format!("{path}.proxy_protocol"),
+                "PROXY protocol on UDP listeners",
+                "a later version",
             );
         }
     }
@@ -69,28 +64,16 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "listeners:\n  dns: { address: \":53\", protocol: udp }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n";
+        let yaml = "listeners:\n  dns: { address: \":53\", protocol: udp, proxy_protocol: { trusted: [10.0.0.0/8] } }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n";
         let validate = diagnostics(yaml, Mode::Validate);
         assert_eq!(validate.len(), 1, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
-        assert!(validate.iter().any(|d| d.path == "listeners.dns.protocol"
-            && d.message == "UDP listeners: not supported in this version (planned for v0.8)"));
+        assert!(validate.iter().any(|d| d.path == "listeners.dns.proxy_protocol"
+            && d.message
+                == "PROXY protocol on UDP listeners: not supported in this version (planned for a later version)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert!(run.iter().any(|d| d.path == "listeners.dns.protocol"));
-    }
-
-    #[test]
-    fn directory_listing_is_planned() {
-        let yaml = "middlewares:\n  site: { type: static, root: /srv, listing: true }\n";
-        let run = diagnostics(yaml, Mode::Run);
-        assert_eq!(run.len(), 1, "{run:?}");
-        assert_eq!(run[0].path, "middlewares.site.listing");
-        assert_eq!(
-            run[0].message,
-            "directory listing (F-WEB-02): not supported in this version (planned for v0.8)"
-        );
-        assert!(run[0].is_error());
+        assert!(run.iter().any(|d| d.path == "listeners.dns.proxy_protocol"));
     }
 
     #[test]
@@ -110,5 +93,8 @@ mod tests {
         assert_eq!(diagnostics(&kubernetes, Mode::Run), Vec::new());
         let tcp = "listeners:\n  db: { address: \":5432\", protocol: tcp }\ntcp_routes:\n  db: { match: \"HostSNI(`*`)\", listeners: [db], service: db }\ntcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\n";
         assert_eq!(diagnostics(tcp, Mode::Run), Vec::new());
+        // UDP is implemented (v0.8, ADR-0030).
+        let udp = "listeners:\n  dns: { address: \":53\", protocol: udp }\nudp_routes:\n  dns: { listeners: [dns], service: dns }\nudp_services:\n  dns: { backends: [{ address: \"dns:53\" }] }\n";
+        assert_eq!(diagnostics(udp, Mode::Run), Vec::new());
     }
 }

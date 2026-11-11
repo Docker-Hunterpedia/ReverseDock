@@ -432,6 +432,7 @@ impl Cluster {
                 namespace: desired.namespace.clone(),
                 name: desired.name.clone(),
                 ports: BTreeMap::new(),
+                udp_ports: BTreeMap::new(),
                 addresses: vec![GatewayStatusAddress {
                     kind: Some("IPAddress".to_owned()),
                     value: format!("192.0.2.{}", self.inventory.gateway_services.len() + 1),
@@ -441,6 +442,15 @@ impl Cluster {
             for port in &desired.ports {
                 if !service.ports.contains_key(port) {
                     service.ports.insert(*port, self.next_port);
+                    self.next_port += 1;
+                }
+            }
+            service
+                .udp_ports
+                .retain(|port, _| desired.udp_ports.contains(port));
+            for port in &desired.udp_ports {
+                if !service.udp_ports.contains_key(port) {
+                    service.udp_ports.insert(*port, self.next_port);
                     self.next_port += 1;
                 }
             }
@@ -669,6 +679,7 @@ pub struct Router {
     pub translation: Translation,
     runtime: rdock_proxy::Runtime,
     gateway_ports: BTreeMap<(String, String), BTreeMap<u16, u16>>,
+    gateway_udp_ports: BTreeMap<(String, String), BTreeMap<u16, u16>>,
     pods: BTreeMap<String, (String, String)>,
 }
 
@@ -757,6 +768,12 @@ impl Router {
                 .gateway_services
                 .iter()
                 .map(|(k, s)| (k.clone(), s.ports.clone()))
+                .collect(),
+            gateway_udp_ports: cluster
+                .inventory
+                .gateway_services
+                .iter()
+                .map(|(k, s)| (k.clone(), s.udp_ports.clone()))
                 .collect(),
             pods: cluster.pods.clone(),
         }
@@ -991,6 +1008,52 @@ impl Router {
         let tcp_route = &fragment.tcp_routes[strip(&route.name)];
         let service = &fragment.tcp_services[&tcp_route.service];
         Some(self.deployments(&service.backends))
+    }
+}
+
+impl Router {
+    /// The internal port the Gateway's Service maps UDP port `port` of `gw` to.
+    pub fn udp_target(&self, gw: (&str, &str), port: u16) -> Option<u16> {
+        self.gateway_udp_ports
+            .get(&(gw.0.to_owned(), gw.1.to_owned()))?
+            .get(&port)
+            .copied()
+    }
+
+    /// The UDP route a datagram from `client` to `gw:port` reaches, and the Deployments behind
+    /// its backends (as many times as each has backend entries); `None` when it is dropped.
+    pub fn datagram(&self, gw: (&str, &str), port: u16) -> Option<BTreeSet<String>> {
+        let name = rdock_provider_kubernetes::gateway::listeners::internal_udp_listener_name(
+            &(gw.0.to_owned(), gw.1.to_owned()),
+            port,
+        );
+        let listener = self.runtime.listeners.get(&format!("{name}@kubernetes"))?;
+        assert_eq!(
+            listener.protocol,
+            rdock_model::config::ListenerProtocol::Udp
+        );
+        let route = rdock_proxy::udp::select(&listener.udp_routes, IpAddr::from([192, 0, 2, 9]))?;
+        let fragment = &self.translation.fragment;
+        let udp_route = &fragment.udp_routes[strip(&route.name)];
+        let service = &fragment.udp_services[&udp_route.service];
+        Some(self.deployments(&service.backends))
+    }
+
+    /// The UDP service a datagram to `gw:port` reaches, as compiled.
+    pub fn udp_service(
+        &self,
+        gw: (&str, &str),
+        port: u16,
+    ) -> Option<&rdock_model::service::UdpService> {
+        let name = rdock_provider_kubernetes::gateway::listeners::internal_udp_listener_name(
+            &(gw.0.to_owned(), gw.1.to_owned()),
+            port,
+        );
+        let listener = self.runtime.listeners.get(&format!("{name}@kubernetes"))?;
+        let route = rdock_proxy::udp::select(&listener.udp_routes, IpAddr::from([192, 0, 2, 9]))?;
+        let fragment = &self.translation.fragment;
+        let udp_route = &fragment.udp_routes[strip(&route.name)];
+        fragment.udp_services.get(&udp_route.service)
     }
 }
 

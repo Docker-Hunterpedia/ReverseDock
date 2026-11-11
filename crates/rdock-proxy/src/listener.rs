@@ -147,6 +147,49 @@ pub fn bind(address: &ListenAddress) -> io::Result<std::net::TcpListener> {
     Ok(listener)
 }
 
+/// Binds a UDP socket. `:port` binds all interfaces, IPv6 and IPv4 when available.
+pub fn bind_udp(address: &ListenAddress) -> io::Result<std::net::UdpSocket> {
+    let socket = match address.ip() {
+        Some(ip) => std::net::UdpSocket::bind(SocketAddr::new(ip, address.port()))?,
+        None => std::net::UdpSocket::bind(SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            address.port(),
+        ))
+        .or_else(|_| {
+            std::net::UdpSocket::bind(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                address.port(),
+            ))
+        })?,
+    };
+    socket.set_nonblocking(true)?;
+    Ok(socket)
+}
+
+/// A bound socket, before its listener starts.
+#[derive(Debug)]
+pub enum Socket {
+    /// `http`, `https` and `tcp` listeners.
+    Tcp(tokio::net::TcpListener),
+    /// `udp` listeners.
+    Udp(tokio::net::UdpSocket),
+}
+
+impl Socket {
+    /// Binds `address` for a listener of `protocol`.
+    ///
+    /// # Errors
+    ///
+    /// The address cannot be bound.
+    pub fn bind(address: &ListenAddress, protocol: ListenerProtocol) -> io::Result<Self> {
+        Ok(if protocol == ListenerProtocol::Udp {
+            Self::Udp(tokio::net::UdpSocket::from_std(bind_udp(address)?)?)
+        } else {
+            Self::Tcp(tokio::net::TcpListener::from_std(bind(address)?)?)
+        })
+    }
+}
+
 /// The HTTP engine of one listener.
 pub fn http_engine(
     name: Arc<str>,
@@ -182,7 +225,7 @@ pub struct Settings {
     pub timeouts: ListenerTimeouts,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
-    /// `http`, `https` or `tcp`: what a new connection is served as.
+    /// `http`, `https`, `tcp` or `udp`: what a new connection (or datagram) is served as.
     pub protocol: ListenerProtocol,
     /// `tcp` listeners: the protocol whose request to start TLS is answered.
     pub starttls: Option<StartTls>,
@@ -192,6 +235,8 @@ pub struct Settings {
 pub struct Running {
     /// Bind address.
     pub address: ListenAddress,
+    /// A UDP socket (a `udp` listener), not a TCP one.
+    pub udp: bool,
     /// Changeable settings.
     pub settings: Arc<ArcSwap<Settings>>,
     stop: watch::Sender<Option<Duration>>,
@@ -199,34 +244,42 @@ pub struct Running {
 }
 
 impl Running {
-    /// Starts accepting on `socket`.
+    /// Starts accepting on `socket` (or, for a UDP socket, receiving datagrams).
     pub fn start(
         name: Arc<str>,
         address: ListenAddress,
-        socket: tokio::net::TcpListener,
+        socket: Socket,
         settings: Settings,
         shared: Arc<Shared>,
     ) -> Self {
-        let engine = http_engine(name.clone(), shared.clone(), &settings.timeouts);
-        let settings = Arc::new(ArcSwap::from_pointee(settings));
         let (stop, stop_rx) = watch::channel(None);
-        let task = tokio::spawn(accept_loop(
-            name,
-            socket,
-            settings.clone(),
-            engine,
-            stop_rx,
-            shared,
-        ));
+        let udp = matches!(socket, Socket::Udp(_));
+        let settings = Arc::new(ArcSwap::from_pointee(settings));
+        let task = match socket {
+            Socket::Tcp(socket) => {
+                let engine = http_engine(name.clone(), shared.clone(), &settings.load().timeouts);
+                tokio::spawn(accept_loop(
+                    name,
+                    socket,
+                    settings.clone(),
+                    engine,
+                    stop_rx,
+                    shared,
+                ))
+            }
+            Socket::Udp(socket) => tokio::spawn(crate::udp::serve(name, socket, stop_rx, shared)),
+        };
         Self {
             address,
+            udp,
             settings,
             stop,
             task,
         }
     }
 
-    /// Stops accepting and waits up to `drain` for open connections to finish.
+    /// Stops accepting and waits up to `drain` for open connections (or UDP sessions) to
+    /// finish.
     pub async fn stop(self, drain: Duration) {
         let _ = self.stop.send(Some(drain));
         let _ = self.task.await;

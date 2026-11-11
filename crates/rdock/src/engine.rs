@@ -914,6 +914,8 @@ impl Engine {
                         "middlewares": s.fragment.middlewares.len(),
                         "tcp_routes": s.fragment.tcp_routes.len(),
                         "tcp_services": s.fragment.tcp_services.len(),
+                        "udp_routes": s.fragment.udp_routes.len(),
+                        "udp_services": s.fragment.udp_services.len(),
                         "listeners": s.fragment.listeners.len(),
                         "certificates": s.fragment.certificates.len(),
                         "diagnostics": s.diagnostics,

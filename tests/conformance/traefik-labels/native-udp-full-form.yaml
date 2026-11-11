@@ -1,0 +1,41 @@
+description: "Native UDP routes and services: listeners, a ClientIP rule, ip_allow, and the service's port, idle timeout and `responses`."
+containers:
+  - name: "resolver"
+    labels:
+      rdock.enable: "true"
+      rdock.udp_routes.dns.listeners: "dns"
+      rdock.udp_routes.dns.match: "ClientIP(`10.0.0.0/8`)"
+      rdock.udp_routes.dns.middlewares: "lan"
+      rdock.udp_routes.dns.priority: "10"
+      rdock.udp_services.dns.port: "53"
+      rdock.udp_services.dns.timeouts.idle: "20s"
+      rdock.udp_services.dns.responses: "1"
+      rdock.udp_services.dns.load_balancer.policy: "ip_hash"
+      rdock.udp_services.dns.proxy_protocol: "v2"
+      rdock.middlewares.lan.type: "ip_allow"
+      rdock.middlewares.lan.cidrs: "[10.0.0.0/8]"
+    networks:
+      web: "172.18.0.8"
+expect:
+  udp_routes:
+    dns:
+      match: "ClientIP(`10.0.0.0/8`)"
+      listeners: ["dns"]
+      service: "dns"
+      priority: 10
+      middlewares: ["lan"]
+  udp_services:
+    dns:
+      backends:
+        - address: "172.18.0.8:53"
+          weight: 1
+          backup: false
+      timeouts: { idle: "20s" }
+      responses: 1
+      load_balancer: { policy: "ip_hash" }
+  middlewares:
+    lan:
+      type: "ip_allow"
+      cidrs: ["10.0.0.0/8"]
+  diagnostics:
+    - "rdock.udp_services.dns.proxy_protocol\"]: UDP services have no `proxy_protocol` setting"

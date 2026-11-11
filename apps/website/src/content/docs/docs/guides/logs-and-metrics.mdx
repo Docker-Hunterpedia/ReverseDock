@@ -129,6 +129,11 @@ rdock_config_reloads_total{result="applied"} 1
 | `rdock_tcp_connections` <Status since="v0.6" /> | gauge | `listener`, `route` |
 | `rdock_tcp_bytes_total` <Status since="v0.6" /> | counter | `route`, `direction` |
 | `rdock_tcp_rejected_total` <Status since="v0.6" /> | counter | `listener`, `reason` |
+| `rdock_udp_sessions` <Status since="v0.8" /> | gauge | `listener`, `route` |
+| `rdock_udp_datagrams_total` <Status since="v0.8" /> | counter | `route`, `direction` |
+| `rdock_udp_bytes_total` <Status since="v0.8" /> | counter | `route`, `direction` |
+| `rdock_udp_dropped_total` <Status since="v0.8" /> | counter | `listener`, `reason` |
+| `rdock_udp_session_ends_total` <Status since="v0.8" /> | counter | `route`, `reason` |
 | `rdock_config_generation` | gauge | |
 | `rdock_config_reloads_total` | counter | `result` |
 | `rdock_cert_expiry_timestamp_seconds` | gauge | `name` |

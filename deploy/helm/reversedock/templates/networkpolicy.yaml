@@ -12,7 +12,8 @@ spec:
       {{- include "reversedock.selectorLabels" . | nindent 6 }}
   policyTypes: [Ingress]
   ingress:
-    # Data plane: the file-owned Ingress listeners and the internal Gateway listener range.
+    # Data plane: the file-owned Ingress listeners and the internal Gateway listener range
+    # (TCP, and UDP for Gateway `UDP` listeners).
     - ports:
         {{- if .Values.ingress.enabled }}
         - protocol: TCP
@@ -22,6 +23,9 @@ spec:
         {{- end }}
         {{- $range := splitList "-" .Values.gateway.portRange }}
         - protocol: TCP
+          port: {{ index $range 0 }}
+          endPort: {{ index $range 1 }}
+        - protocol: UDP
           port: {{ index $range 0 }}
           endPort: {{ index $range 1 }}
       {{- with .Values.networkPolicy.allowFrom }}

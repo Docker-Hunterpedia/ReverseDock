@@ -125,7 +125,18 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 | `traefik.tcp.middlewares.<name>.ipallowlist.sourcerange` | `ip_allow` |
 | `traefik.tcp.middlewares.<name>.inflightconn.amount` | `in_flight` (per client IP) |
 
-`traefik.udp.*` labels are reported as planned for v0.8.
+## UDP routes
+
+<Status since="v0.8" /> `traefik.udp.*` labels make [UDP routes](/docs/guides/udp-routes/) and UDP services. Traefik's UDP routers have no rule, priority or middlewares; a router without `entrypoints` is ignored with a warning, and a UDP service needs its port label because Docker lists exposed UDP ports apart from TCP ones.
+
+| Label | Becomes |
+|---|---|
+| `traefik.udp.routers.<name>.entrypoints` | `listeners`, through `providers.docker.entrypoints` |
+| `traefik.udp.routers.<name>.service` | `service` (the container's only UDP service when unset) |
+| `traefik.udp.services.<name>.loadbalancer.server.port` | the container port of the UDP service's backend (required) |
+| any other `traefik.udp.*` label | reported |
+
+The full form is `rdock.udp_routes.<name>.{match, listeners, service, priority, middlewares, enabled}` and `rdock.udp_services.<name>.{port, timeouts.idle, responses, requests, load_balancer.policy, health.*}`. Traefik's session timeout is an entry point setting (`udp.timeout`, 3 s by default) that labels cannot carry; the UDP service's `timeouts.idle` (60 s by default) takes its place.
 
 ## Differences from Traefik
 

@@ -1,7 +1,8 @@
 //! End-to-end: the `static` middleware (F-WEB-01) through the real binary, over a fixture tree
 //! made in a temporary directory. Ranges, conditionals, HEAD, precompressed sidecars, the SPA
 //! fallback, traversal payloads (OWASP WSTG-ATHZ-01 and `PortSwigger`), symlink policies, streaming
-//! over HTTP/1.1 and HTTP/2, concurrency, `compress`, `bandwidth` and `pass_through`.
+//! over HTTP/1.1 and HTTP/2, concurrency, `compress`, `bandwidth` and `pass_through`; and the
+//! directory listings of F-WEB-02 (HTML and JSON, awkward names, policies, precedence).
 
 #![allow(
     clippy::unwrap_used,
@@ -35,6 +36,22 @@ fn pattern(len: usize) -> Vec<u8> {
         .map(|i| u8::try_from((i * 31 + 7) % 251).unwrap())
         .collect()
 }
+
+/// File names a listing must escape in text and encode in links.
+const NASTY_NAMES: [&str; 12] = [
+    "<b>bold<b>.txt",
+    "<script>alert(1).txt",
+    "a b.txt",
+    "100%.txt",
+    "%2e%2e.txt",
+    "hash#tag.txt",
+    "q?x=1.txt",
+    "caf\u{e9}.txt",
+    "-dash.txt",
+    "javascript:alert(1).txt",
+    "a&amp;b.txt",
+    "quote\"s'.txt",
+];
 
 fn app_js() -> Vec<u8> {
     "export const greet = (name) => `hello ${name}`;\n"
@@ -72,6 +89,18 @@ fn fixture() -> Fixture {
     file(".env", SECRET.as_bytes());
     file(".git/config", SECRET.as_bytes());
     file("caf\u{e9}.txt", b"utf-8 name");
+    file("docs/readme.txt", b"readme");
+    file("docs/guide/intro.txt", b"intro");
+    file("docs/.private", b"private");
+    for i in 0..40 {
+        file(
+            &format!("many/a-reasonably-long-file-name-{i:02}.txt"),
+            b"x",
+        );
+    }
+    for name in NASTY_NAMES {
+        file(&format!("nasty/{name}"), name.as_bytes());
+    }
     let js = app_js();
     file("app.js", &js);
     let mut br = Vec::new();
@@ -113,6 +142,15 @@ routes:
   gz: {{ match: "Host(`compress.test`)", middlewares: [gz, plain] }}
   slow: {{ match: "Host(`slow.test`)", middlewares: [slow, plain] }}
   pass: {{ match: "Host(`pass.test`)", middlewares: [pass], service: app }}
+  list: {{ match: "Host(`list.test`)", middlewares: [list] }}
+  listspa: {{ match: "Host(`listspa.test`)", middlewares: [listspa] }}
+  listpass: {{ match: "Host(`listpass.test`)", middlewares: [listpass], service: app }}
+  listgz: {{ match: "Host(`listgz.test`)", middlewares: [gz, list] }}
+  bare: {{ match: "Host(`bare.test`)", middlewares: [bare] }}
+  barewithin: {{ match: "Host(`barewithin.test`)", middlewares: [barewithin] }}
+  bareall: {{ match: "Host(`bareall.test`)", middlewares: [bareall] }}
+  bareplain: {{ match: "Host(`bareplain.test`)", middlewares: [bareplain] }}
+  baredots: {{ match: "Host(`baredots.test`)", middlewares: [baredots] }}
 services:
   app: {{ backends: [{{ address: "{backend}" }}] }}
 middlewares:
@@ -128,6 +166,19 @@ middlewares:
   within: {{ type: static, root: "{root}", symlinks: within_root }}
   all: {{ type: static, root: "{root}", symlinks: all }}
   pass: {{ type: static, root: "{root}", pass_through: true }}
+  list:
+    type: static
+    root: "{root}"
+    listing: true
+    cache_control:
+      /many/: public, max-age=30
+  listspa: {{ type: static, root: "{root}", listing: true, fallback: /index.html }}
+  listpass: {{ type: static, root: "{root}", listing: true, pass_through: true }}
+  bare: {{ type: static, root: "{root}", listing: true, index: [absent.html] }}
+  barewithin: {{ type: static, root: "{root}", listing: true, index: [absent.html], symlinks: within_root }}
+  bareall: {{ type: static, root: "{root}", listing: true, index: [absent.html], symlinks: all, hidden: allow }}
+  bareplain: {{ type: static, root: "{root}", listing: true, index: [absent.html], directory_redirect: false }}
+  baredots: {{ type: static, root: "{root}", listing: true, index: [absent.html], hidden: allow }}
   gz: {{ type: compress, algorithms: [gzip] }}
   slow: {{ type: bandwidth, rate: 8MiB, burst: 256KiB }}
 "#
@@ -594,6 +645,450 @@ async fn directories_index_and_spa_fallback() {
     .await;
 }
 
+/// The names a JSON listing holds, sorted as sent.
+fn listed_names(reply: &Reply) -> Vec<String> {
+    reply.json()["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["name"].as_str().unwrap().to_owned())
+        .collect()
+}
+
+const JSON: [(&str, &str); 1] = [("accept", "application/json")];
+
+#[tokio::test]
+async fn directory_listings_in_html_and_json() {
+    let served = serve().await;
+    let page = served.get("list.test", "/dir-no-index/", &[]).await;
+    assert_eq!(page.status, 200);
+    assert_eq!(
+        page.header("content-type"),
+        Some("text/html; charset=utf-8")
+    );
+    assert_eq!(page.header("vary"), Some("Accept"));
+    assert_eq!(page.header("cache-control"), Some("no-cache"));
+    assert_eq!(page.header("x-content-type-options"), Some("nosniff"));
+    assert_eq!(page.header("referrer-policy"), Some("no-referrer"));
+    let csp = page.header("content-security-policy").unwrap();
+    assert!(csp.starts_with("default-src 'none'"), "{csp}");
+    assert_eq!(
+        (page.header("etag"), page.header("last-modified")),
+        (None, None)
+    );
+    assert!(
+        page.text().contains("href=\"./file.txt\""),
+        "{}",
+        page.text()
+    );
+    assert!(page.text().contains("<h1>Index of /dir-no-index/</h1>"));
+
+    let json = served.get("list.test", "/dir-no-index/", &JSON).await;
+    assert_eq!(json.status, 200);
+    assert_eq!(json.header("content-type"), Some("application/json"));
+    assert_eq!(json.header("vary"), Some("Accept"));
+    assert_eq!(json.header("content-security-policy"), Some(csp));
+    let body = json.json();
+    assert_eq!(body["path"], "/dir-no-index/");
+    assert_eq!(body["truncated"], false);
+    assert_eq!(body["entries"].as_array().unwrap().len(), 1);
+    assert_eq!(body["entries"][0]["name"], "file.txt");
+    assert_eq!(body["entries"][0]["type"], "file");
+    assert_eq!(body["entries"][0]["size"], 4);
+    let modified = body["entries"][0]["modified"].as_str().unwrap();
+    assert!(
+        modified.ends_with('Z') && modified.len() == 20,
+        "{modified}"
+    );
+
+    // The `Accept` weights decide.
+    let browser = served
+        .get(
+            "list.test",
+            "/dir-no-index/",
+            &[("accept", "text/html,application/xhtml+xml,*/*;q=0.8")],
+        )
+        .await;
+    assert!(
+        browser
+            .header("content-type")
+            .unwrap()
+            .starts_with("text/html")
+    );
+    let weighted = served
+        .get(
+            "list.test",
+            "/dir-no-index/",
+            &[("accept", "text/html;q=0.4, application/json;q=0.9")],
+        )
+        .await;
+    assert_eq!(weighted.header("content-type"), Some("application/json"));
+
+    // HEAD answers GET's headers without the body.
+    for headers in [&[][..], &JSON[..]] {
+        let get = served.get("list.test", "/dir-no-index/", headers).await;
+        let head = served
+            .send("HEAD", "list.test", "/dir-no-index/", headers)
+            .await;
+        assert_eq!(head.status, 200);
+        assert!(head.body.is_empty());
+        for name in [
+            "content-type",
+            "content-length",
+            "vary",
+            "cache-control",
+            "content-security-policy",
+        ] {
+            assert_eq!(head.header(name), get.header(name), "{name}");
+        }
+        assert_eq!(
+            head.header("content-length"),
+            Some(get.body.len().to_string().as_str())
+        );
+    }
+
+    // Conditionals and ranges do not apply to a generated page.
+    for headers in [
+        [("range", "bytes=0-5")],
+        [("if-none-match", "*")],
+        [("if-modified-since", "Fri, 01 Jan 2100 00:00:00 GMT")],
+        [("if-match", "\"nope\"")],
+    ] {
+        let reply = served.get("list.test", "/dir-no-index/", &headers).await;
+        assert_eq!(reply.status, 200, "{headers:?}");
+        assert_eq!(reply.body, page.body, "{headers:?}");
+        assert_eq!(reply.header("content-range"), None);
+    }
+    assert_eq!(
+        served
+            .send("POST", "list.test", "/dir-no-index/", &[])
+            .await
+            .status,
+        405
+    );
+
+    // A directory with an index, and the root with one, are not listed.
+    run_table(
+        &served,
+        vec![
+            case("list.test", "/dir/", 200).body("<h1>dir</h1>"),
+            case("list.test", "/", 200).body("<h1>home</h1>"),
+            case("list.test", "/dir-no-index", 308).expect("location", "/dir-no-index/"),
+            case("list.test", "/dir-no-index?x=1", 308).expect("location", "/dir-no-index/?x=1"),
+            case("list.test", "/docs", 308).expect("location", "/docs/"),
+            case("list.test", "/missing/", 404),
+            case("list.test", "/about.txt/", 404),
+            case("list.test", "/many/", 200)
+                .expect("cache-control", "public, max-age=30")
+                .expect("vary", "Accept"),
+        ],
+    )
+    .await;
+
+    // Nested directories: their own path and a parent link, hidden names left out.
+    let docs = served.get("list.test", "/docs/", &JSON).await;
+    assert_eq!(docs.json()["path"], "/docs/");
+    assert_eq!(listed_names(&docs), ["guide", "readme.txt"]);
+    assert_eq!(docs.json()["entries"][0]["type"], "dir");
+    assert!(docs.json()["entries"][0].get("size").is_none());
+    let docs_html = served.get("list.test", "/docs/", &[]).await.text();
+    assert!(docs_html.contains("href=\"../\""), "{docs_html}");
+    assert!(
+        docs_html.contains("href=\"./guide/\">guide/</a>"),
+        "{docs_html}"
+    );
+    assert!(!docs_html.contains(".private"));
+    let guide = served.get("list.test", "/docs/guide/", &JSON).await;
+    assert_eq!(guide.json()["path"], "/docs/guide/");
+    assert_eq!(listed_names(&guide), ["intro.txt"]);
+    assert_eq!(
+        served.get("list.test", "/docs/.private", &[]).await.status,
+        404
+    );
+    assert_eq!(
+        served
+            .get("list.test", "/docs/guide/intro.txt", &[])
+            .await
+            .body[..],
+        b"intro"[..]
+    );
+}
+
+#[tokio::test]
+async fn listed_names_are_escaped_and_every_link_works() {
+    let served = serve().await;
+    let page = served.get("list.test", "/nasty/", &[]).await.text();
+    for raw in [
+        "<b>bold",
+        "<script>",
+        "javascript:alert(1).txt\">",
+        "quote\"s'",
+        "a&amp;b",
+    ] {
+        assert!(!page.contains(raw), "{raw} unescaped in {page}");
+    }
+    assert!(page.contains("&lt;script&gt;alert(1).txt"));
+    assert!(page.contains("a&amp;amp;b.txt"));
+    assert!(page.contains("quote&quot;s&#39;.txt"));
+    // JSON keeps the names exactly.
+    let json = served.get("list.test", "/nasty/", &JSON).await;
+    let mut expected: Vec<String> = NASTY_NAMES.iter().map(|n| (*n).to_owned()).collect();
+    expected.sort();
+    assert_eq!(listed_names(&json), expected);
+    // Every link, followed relative to the directory, leads to its own file.
+    let hrefs: Vec<&str> = page
+        .split("href=\"")
+        .skip(2) // the parent link is first
+        .filter_map(|rest| rest.split('"').next())
+        .collect();
+    assert_eq!(hrefs.len(), NASTY_NAMES.len(), "{hrefs:?}");
+    let mut seen = Vec::new();
+    for href in hrefs {
+        assert!(href.starts_with("./"), "{href}");
+        let reply = served
+            .get("list.test", &format!("/nasty/{}", &href[2..]), &[])
+            .await;
+        assert_eq!(reply.status, 200, "{href}");
+        seen.push(reply.text());
+    }
+    seen.sort();
+    assert_eq!(seen, expected, "each link names its own file");
+}
+
+#[tokio::test]
+async fn listing_policies_for_hidden_files_and_symlinks() {
+    let served = serve().await;
+    let top = |names: Vec<String>| -> Vec<String> {
+        names
+            .into_iter()
+            .filter(|n| n.contains("link") || n.starts_with('.'))
+            .collect()
+    };
+    // The defaults: no dot-files, no links; the root lists when it has no index.
+    let bare = served.get("bare.test", "/", &JSON).await;
+    assert_eq!(bare.status, 200);
+    assert_eq!(bare.json()["path"], "/");
+    let names = listed_names(&bare);
+    for name in [
+        "about.txt",
+        "app.js",
+        "assets",
+        "big.bin",
+        "dir",
+        "docs",
+        "many",
+        "nasty",
+        "index.html",
+        "caf\u{e9}.txt",
+    ] {
+        assert!(names.contains(&name.to_owned()), "{name} in {names:?}");
+    }
+    assert_eq!(top(names.clone()), Vec::<String>::new());
+    assert!(
+        names.windows(2).all(|w| w[0] < w[1]),
+        "sorted by name: {names:?}"
+    );
+    let html = served.get("bare.test", "/", &[]).await.text();
+    assert!(
+        !html.contains("href=\"../\""),
+        "the root has no parent link"
+    );
+    assert!(html.contains("href=\"./dir/\">dir/</a>"));
+    assert_eq!(served.get("bare.test", "/.env", &[]).await.status, 404);
+    assert_eq!(served.get("bare.test", "/.git/", &[]).await.status, 404);
+    // within_root: a link that stays inside is listed, typed by its target; one out is not.
+    let within = served.get("barewithin.test", "/", &JSON).await;
+    let entries = within.json()["entries"].clone();
+    let link = entries
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|e| e["name"] == "inside-link.txt")
+        .unwrap();
+    assert_eq!(link["type"], "file");
+    assert_eq!(link["size"], 1000);
+    assert_eq!(link["symlink"], true);
+    assert!(!listed_names(&within).contains(&"outside-link.txt".to_owned()));
+    assert_eq!(
+        served
+            .get("barewithin.test", "/outside-link.txt", &[])
+            .await
+            .status,
+        404
+    );
+    // all: every link and, with hidden: allow, dot-files, which are then served too.
+    let all = served.get("bareall.test", "/", &JSON).await;
+    let names = listed_names(&all);
+    for name in ["inside-link.txt", "outside-link.txt", ".env", ".git"] {
+        assert!(names.contains(&name.to_owned()), "{name} in {names:?}");
+    }
+    assert_eq!(
+        served
+            .get("bareall.test", "/outside-link.txt", &[])
+            .await
+            .body[..],
+        SECRET.as_bytes()[..]
+    );
+    assert_eq!(
+        served.get("bareall.test", "/.git/", &JSON).await.json()["entries"][0]["name"],
+        "config"
+    );
+    // hidden: allow alone does not list links.
+    let dots = served.get("baredots.test", "/", &JSON).await;
+    let names = listed_names(&dots);
+    assert!(names.contains(&".env".to_owned()) && !names.iter().any(|n| n.contains("link")));
+    // Without the redirect, a directory lists at its own path and links name it first.
+    let plain = served.get("bareplain.test", "/docs", &[]).await;
+    assert_eq!(plain.status, 200);
+    assert!(plain.text().contains("href=\"docs/readme.txt\""));
+    assert_eq!(
+        served.get("bareplain.test", "/docs", &JSON).await.json()["path"],
+        "/docs/"
+    );
+}
+
+#[tokio::test]
+async fn listing_precedence_fallback_and_pass_through() {
+    let served = serve().await;
+    // `fallback` is for paths that do not exist; a directory that exists lists.
+    let spa_dir = served.get("listspa.test", "/dir-no-index/", &[]).await;
+    assert_eq!(spa_dir.status, 200);
+    assert!(spa_dir.text().contains("Index of /dir-no-index/"));
+    assert_eq!(
+        served
+            .get("listspa.test", "/dir-no-index", &[])
+            .await
+            .status,
+        308
+    );
+    let spa_page = served.get("listspa.test", "/users/42", &[]).await;
+    assert_eq!(spa_page.body[..], b"<h1>home</h1>"[..]);
+    assert_eq!(
+        served
+            .get("listspa.test", "/app.missing.js", &[])
+            .await
+            .status,
+        404
+    );
+    // `pass_through` with listing: directories list, the rest goes on.
+    assert!(
+        served
+            .get("listpass.test", "/dir-no-index/", &[])
+            .await
+            .text()
+            .contains("file.txt")
+    );
+    assert_eq!(
+        served.get("listpass.test", "/api/users", &[]).await.json()["target"],
+        "/api/users"
+    );
+    assert_eq!(
+        served.get("listpass.test", "/.env", &[]).await.json()["target"],
+        "/.env"
+    );
+    // With listing off nothing changes: 404 without `pass_through`, the service with it.
+    assert_eq!(
+        served.get("plain.test", "/dir-no-index/", &[]).await.status,
+        404
+    );
+    assert_eq!(
+        served.get("plain.test", "/dir-no-index", &[]).await.status,
+        404
+    );
+    assert_eq!(
+        served.get("site.test", "/dir-no-index", &[]).await.body[..],
+        b"<h1>home</h1>"[..],
+        "fallback as before"
+    );
+    let passed = served.get("pass.test", "/dir-no-index/", &[]).await;
+    assert_eq!(passed.json()["target"], "/dir-no-index/");
+}
+
+#[tokio::test]
+async fn listings_are_compressed_by_compress() {
+    let served = serve().await;
+    for (accept, kind) in [
+        ("text/html", "text/html"),
+        ("application/json", "application/json"),
+    ] {
+        let plain = served
+            .get("list.test", "/many/", &[("accept", accept)])
+            .await;
+        assert!(plain.body.len() > 1024, "large enough to compress");
+        let reply = served
+            .get(
+                "listgz.test",
+                "/many/",
+                &[("accept", accept), ("accept-encoding", "gzip")],
+            )
+            .await;
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.header("content-encoding"), Some("gzip"), "{kind}");
+        assert!(reply.header("content-type").unwrap().starts_with(kind));
+        let vary: Vec<String> = reply
+            .headers
+            .get_all("vary")
+            .iter()
+            .map(|v| v.to_str().unwrap().to_owned())
+            .collect();
+        let vary = vary.join(",");
+        assert!(
+            vary.contains("Accept") && vary.contains("Accept-Encoding"),
+            "{vary}"
+        );
+        let mut text = Vec::new();
+        flate2::read::GzDecoder::new(&reply.body[..])
+            .read_to_end(&mut text)
+            .unwrap();
+        assert_eq!(text, plain.body[..]);
+    }
+    let identity = served.get("listgz.test", "/many/", &[]).await;
+    assert_eq!(identity.header("content-encoding"), None);
+}
+
+#[tokio::test]
+async fn traversal_never_lists() {
+    let served = serve().await;
+    let payloads = [
+        "/..%2f",
+        "/docs/..%2f",
+        "/docs/..%2f..%2f..%2fetc/",
+        "/docs/%2e%2e%2f",
+        "/docs%2f..%2f..%2f",
+        "/..%5c",
+        "/docs/..%5c",
+        "/docs/%5c",
+        "/%00/",
+        "/docs/%00",
+        "/%C0%AE%C0%AE/",
+        "/docs/%FF/",
+        "/docs/%252e%252e/",
+        "/nope/",
+        "/about.txt/",
+        "/etc/",
+    ];
+    let mut leaks = Vec::new();
+    for host in ["list.test", "bare.test", "bareall.test", "listspa.test"] {
+        for payload in payloads {
+            for accept in ["text/html", "application/json"] {
+                let bytes = format!(
+                    "GET {payload} HTTP/1.1\r\nHost: {host}\r\nAccept: {accept}\r\nConnection: close\r\n\r\n"
+                );
+                let raw =
+                    client::raw(addr(served.port), bytes.as_bytes(), Duration::from_secs(2)).await;
+                let status = client::statuses(&raw).first().copied().unwrap_or(0);
+                let text = String::from_utf8_lossy(&raw);
+                let listed = text.contains("Index of") || text.contains("\"entries\"");
+                let refused = matches!(status, 400 | 404) || host == "listspa.test";
+                if listed || !refused || text.contains(SECRET) || text.contains("root:") {
+                    leaks.push(format!("{host}{payload} {accept}: {status}"));
+                }
+            }
+        }
+    }
+    assert!(leaks.is_empty(), "{leaks:#?}");
+}
+
 #[tokio::test]
 async fn traversal_payloads_never_leave_the_root() {
     let served = serve().await;
@@ -844,7 +1339,24 @@ fn validate_reports_roots_and_risky_options() {
     let (ok, text) = validate(&format!(
         "{{ type: static, root: \"{root}\", listing: true }}"
     ));
-    assert!(ok && text.contains("planned for v0.8"), "{text}");
+    assert!(
+        ok && !text.contains("planned for") && !text.contains("listing"),
+        "{text}"
+    );
+    let (ok, text) = validate(&format!(
+        "{{ type: static, root: \"{root}\", listing: true, hidden: allow }}"
+    ));
+    assert!(
+        ok && text.contains("directory listings show files and directories starting with `.`"),
+        "{text}"
+    );
+    let (ok, text) = validate(&format!(
+        "{{ type: static, root: \"{root}\", listing: true, symlinks: all }}"
+    ));
+    assert!(
+        ok && text.contains("directory listings show links that lead out of `root`"),
+        "{text}"
+    );
     let (ok, text) = validate(&format!(
         "{{ type: static, root: \"{root}\", pass_through: true }}"
     ));

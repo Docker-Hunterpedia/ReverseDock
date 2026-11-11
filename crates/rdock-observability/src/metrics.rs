@@ -42,6 +42,20 @@ pub struct Metrics {
     /// Connections a `tcp` listener closed without relaying them, by listener and reason
     /// (`no_route`, `bad_client_hello`, `denied`, `in_flight`, `no_backend`, `connect_failed`).
     pub tcp_rejected: IntCounterVec,
+    /// Open UDP sessions by listener and route.
+    pub udp_sessions: IntGaugeVec,
+    /// Datagrams relayed by UDP routes, by route and direction (`in` from the client, `out`
+    /// to it).
+    pub udp_datagrams: IntCounterVec,
+    /// Bytes relayed by UDP routes, by route and direction.
+    pub udp_bytes: IntCounterVec,
+    /// Datagrams a `udp` listener dropped, by listener and reason (`no_route`, `denied`,
+    /// `session_limit`, `client_limit`, `no_backend`, `socket_error`, `queue_full`,
+    /// `oversize`, `backend_unreachable`, `closing`).
+    pub udp_dropped: IntCounterVec,
+    /// UDP sessions that ended, by route and reason (`idle`, `responses`,
+    /// `backend_unreachable`, `error`, `closed`).
+    pub udp_session_ends: IntCounterVec,
     /// Generation of the configuration in use.
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
@@ -170,6 +184,36 @@ impl Metrics {
             "TCP connections closed without being relayed.",
             &["listener", "reason"],
         )?;
+        let udp_sessions = gauges(
+            &registry,
+            "rdock_udp_sessions",
+            "Open sessions of UDP routes.",
+            &["listener", "route"],
+        )?;
+        let udp_datagrams = counters(
+            &registry,
+            "rdock_udp_datagrams_total",
+            "Datagrams relayed by UDP routes (`in` from the client, `out` to the client).",
+            &["route", "direction"],
+        )?;
+        let udp_bytes = counters(
+            &registry,
+            "rdock_udp_bytes_total",
+            "Bytes relayed by UDP routes (`in` from the client, `out` to the client).",
+            &["route", "direction"],
+        )?;
+        let udp_dropped = counters(
+            &registry,
+            "rdock_udp_dropped_total",
+            "Datagrams a UDP listener dropped instead of relaying them.",
+            &["listener", "reason"],
+        )?;
+        let udp_session_ends = counters(
+            &registry,
+            "rdock_udp_session_ends_total",
+            "UDP sessions that ended, by why.",
+            &["route", "reason"],
+        )?;
         let config_generation = registered(
             &registry,
             IntGauge::new(
@@ -277,6 +321,11 @@ impl Metrics {
             tcp_connections,
             tcp_bytes,
             tcp_rejected,
+            udp_sessions,
+            udp_datagrams,
+            udp_bytes,
+            udp_dropped,
+            udp_session_ends,
             config_generation,
             config_reloads,
             cert_expiry,

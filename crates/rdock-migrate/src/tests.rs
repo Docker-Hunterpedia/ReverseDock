@@ -157,6 +157,47 @@ services:
 }
 
 #[test]
+fn compose_udp_labels_become_udp_routes() {
+    let compose = "
+services:
+  dns:
+    image: coredns/coredns:1.15.0
+    labels:
+      traefik.enable: 'true'
+      traefik.udp.routers.dns.entrypoints: dns
+      traefik.udp.services.dns.loadbalancer.server.port: '53'
+      traefik.udp.routers.dns.priority: '3'
+";
+    let m = traefik(compose, false).unwrap();
+    assert!(m.yaml.contains("udp_routes:"), "{}", m.yaml);
+    assert!(m.yaml.contains("udp_services:"), "{}", m.yaml);
+    assert!(m.yaml.contains("address: dns:53"), "{}", m.yaml);
+    assert!(
+        m.notes
+            .iter()
+            .any(|n| n.contains("listener `dns` does not exist")),
+        "{:?}",
+        m.notes
+    );
+    assert!(
+        m.notes
+            .iter()
+            .any(|n| n.contains("udp.routers.dns.priority") && n.contains("not in the supported")),
+        "{:?}",
+        m.notes
+    );
+    let dynamic = traefik("udp:\n  routers: {}\n", false).unwrap();
+    assert!(
+        dynamic
+            .notes
+            .iter()
+            .any(|n| n.contains("`udp`: UDP routers")),
+        "{:?}",
+        dynamic.notes
+    );
+}
+
+#[test]
 fn compose_tcp_labels_become_tcp_routes() {
     let compose = "
 services:

@@ -45,6 +45,8 @@ pub struct Runtime {
     pub cert_expiry: Vec<(String, i64)>,
     /// Every service, for health checks.
     pub services: BTreeMap<String, Arc<ServiceRuntime>>,
+    /// The backend pools of UDP services, by service name, for their TCP health checks.
+    pub udp_pools: BTreeMap<String, Arc<ServiceRuntime>>,
     /// OpenTelemetry tracer, when `observability.tracing` is set.
     pub tracer: Option<Arc<rdock_observability::Tracer>>,
 }
@@ -69,6 +71,7 @@ impl Runtime {
             local_cert_names: Vec::new(),
             cert_expiry: Vec::new(),
             services: BTreeMap::new(),
+            udp_pools: BTreeMap::new(),
             tracer: None,
         }
     }
@@ -81,7 +84,7 @@ pub struct ListenerRuntime {
     pub name: Arc<str>,
     /// Bind address.
     pub address: ListenAddress,
-    /// `http`, `https` or `tcp`.
+    /// `http`, `https`, `tcp` or `udp`.
     pub protocol: ListenerProtocol,
     /// `tcp` listeners: the protocol whose request to start TLS is answered.
     pub starttls: Option<StartTls>,
@@ -96,6 +99,10 @@ pub struct ListenerRuntime {
     /// TCP routes in evaluation order. A connection keeps these, not the whole runtime, for
     /// as long as it is relayed.
     pub tcp_routes: Arc<[Arc<crate::tcp::TcpRouteRuntime>]>,
+    /// UDP routes in evaluation order (`udp` listeners).
+    pub udp_routes: Arc<[Arc<crate::udp::UdpRouteRuntime>]>,
+    /// Session caps (`udp` listeners).
+    pub udp_sessions: rdock_model::config::UdpSessions,
     /// Path answered `200 OK` before routing, for load-balancer monitors.
     pub ping: Option<String>,
     /// Plain-HTTP listeners: redirect these hosts to HTTPS when no route of the listener

@@ -67,7 +67,7 @@ struct State {
 /// Sockets and acceptors made ready before a configuration is published.
 #[derive(Default)]
 struct Prepared {
-    sockets: BTreeMap<String, tokio::net::TcpListener>,
+    sockets: BTreeMap<String, listener::Socket>,
     acceptors: BTreeMap<String, Arc<pingora::listeners::tls::Acceptor>>,
 }
 
@@ -234,7 +234,9 @@ impl DataPlane {
         let mut prepared = Prepared::default();
         for (name, listener) in &runtime.listeners {
             let running = state.running.get(name);
-            let same_address = running.is_some_and(|(r, _)| r.address == listener.address);
+            let udp = listener.protocol == rdock_model::config::ListenerProtocol::Udp;
+            let same_address =
+                running.is_some_and(|(r, _)| r.address == listener.address && r.udp == udp);
             if let Some(tls) = &listener.tls
                 && !(same_address && running.is_some_and(|(_, p)| p.as_ref() == Some(tls)))
             {
@@ -252,8 +254,8 @@ impl DataPlane {
                     address: listener.address,
                     source,
                 };
-                let socket = listener::bind(&listener.address).map_err(bind_error)?;
-                let socket = tokio::net::TcpListener::from_std(socket).map_err(bind_error)?;
+                let socket = listener::Socket::bind(&listener.address, listener.protocol)
+                    .map_err(bind_error)?;
                 prepared.sockets.insert(name.clone(), socket);
             }
         }
@@ -393,10 +395,9 @@ impl DataPlane {
                 tls: policy
                     .as_ref()
                     .map(|t| format!("{:?}", t.policy).to_ascii_lowercase()),
-                routes: runtime
-                    .listeners
-                    .get(name)
-                    .map_or(0, |l| l.routes.len() + l.tcp_routes.len()),
+                routes: runtime.listeners.get(name).map_or(0, |l| {
+                    l.routes.len() + l.tcp_routes.len() + l.udp_routes.len()
+                }),
             })
             .collect()
     }

@@ -21,7 +21,6 @@ containers:
       traefik.tcp.middlewares.two.inflightconn.amount: "2"
       traefik.tcp.services.pg.loadbalancer.server.port: "5432"
       traefik.tcp.services.pg.loadbalancer.serverstransport: "pg-transport@file"
-      traefik.udp.routers.dns.entrypoints: "dns"
     networks:
       web: "172.18.0.3"
     ports:
@@ -57,4 +56,3 @@ expect:
     - "traefik.tcp.routers.mqtt.tls.certresolver\"]: `tls.certresolver` is not supported on TCP routers"
     - "traefik.tcp.routers.mqtt.tls.options\"]: `tls.options` is not supported on TCP routers"
     - "traefik.tcp.services.pg.loadbalancer.serverstransport\"]: servers transports are not supported on TCP services"
-    - "traefik.udp.routers.dns.entrypoints\"]: UDP routing is not supported in this version (planned for v0.8)"

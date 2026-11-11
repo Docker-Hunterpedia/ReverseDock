@@ -248,6 +248,7 @@ async fn per_gateway_services_follow_the_desired_set() {
         })
     };
     let service = |gateway: &str, ports: Vec<u16>| DesiredService {
+        udp_ports: Vec::new(),
         namespace: ns.clone(),
         name: gateway_service_name("apps", gateway),
         gateway: ("apps".to_owned(), gateway.to_owned()),
@@ -365,6 +366,164 @@ async fn per_gateway_services_follow_the_desired_set() {
     )
     .await;
     assert!(services.get_opt(&api_name).await.unwrap().is_some());
+    running.stop().await;
+}
+
+// (2c) TCP and UDP on one port (the DNS case): one mixed-protocol Service with two entries,
+// each on its own internal port, read back by protocol. A Service written by the previous
+// version (ports named `port-<n>`) is not rewritten.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gateway_with_tcp_and_udp_on_one_port_gets_both_service_ports() {
+    let Some((kubeconfig, client)) = cluster("mixed_protocols").await else {
+        return;
+    };
+    let ns = namespace(&client, "mixed").await;
+    let data = tempfile::tempdir().unwrap();
+    let seen: Seen = Arc::default();
+    let desired: Arc<Mutex<Vec<DesiredService>>> = Arc::default();
+    let translate = {
+        let (seen, desired) = (seen.clone(), desired.clone());
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            *seen.lock().unwrap() = Some(inventory.clone());
+            Translation {
+                services: desired.lock().unwrap().clone(),
+                ..Translation::default()
+            }
+        })
+    };
+    let services: Api<Service> = Api::namespaced(client.clone(), &ns);
+    // What v0.7 applied for Gateway apps/old: TCP 80 named `port-80`.
+    let old_name = gateway_service_name("apps", "old");
+    let old = DesiredService {
+        namespace: ns.clone(),
+        name: old_name.clone(),
+        gateway: ("apps".to_owned(), "old".to_owned()),
+        ports: vec![80],
+        ..DesiredService::default()
+    };
+    let mut provider = provider(&kubeconfig, &ns);
+    provider.leader_election.enabled = true;
+    let settings = Settings {
+        provider: provider.clone(),
+        controller_namespace: ns.clone(),
+        data_dir: data.path().to_owned(),
+    };
+    let legacy_ports = BTreeMap::from([(
+        rdock_provider_kubernetes::runtime::services::PortKey::tcp(80),
+        20000,
+    )]);
+    let legacy_names = legacy_ports
+        .keys()
+        .map(|k| (*k, "port-80".to_owned()))
+        .collect();
+    let manifest = rdock_provider_kubernetes::runtime::services::manifest(
+        &old,
+        &legacy_ports,
+        &legacy_names,
+        &settings,
+    );
+    services
+        .patch(
+            &old_name,
+            &PatchParams::apply(rdock_provider_kubernetes::runtime::services::FIELD_MANAGER)
+                .force(),
+            &Patch::Apply(&manifest),
+        )
+        .await
+        .unwrap();
+    let old_rv = services.get(&old_name).await.unwrap().resource_version();
+
+    let (leader_tx, mut leader_rx) = watch::channel(false);
+    let options = Options {
+        translate,
+        lease: LeaseTimings {
+            lease_duration: Duration::from_secs(2),
+            renew_deadline: Duration::from_millis(1500),
+            retry_period: Duration::from_millis(300),
+        },
+        leadership: Some(leader_tx),
+        ..Options::default()
+    };
+    let running = start(provider, context(&ns, data.path()), options);
+    tokio::time::timeout(Duration::from_secs(10), leader_rx.wait_for(|l| *l))
+        .await
+        .expect("the only replica leads")
+        .unwrap();
+    let dns_name = gateway_service_name("apps", "dns");
+    *desired.lock().unwrap() = vec![
+        old,
+        DesiredService {
+            namespace: ns.clone(),
+            name: dns_name.clone(),
+            gateway: ("apps".to_owned(), "dns".to_owned()),
+            ports: vec![53],
+            udp_ports: vec![53],
+            ..DesiredService::default()
+        },
+    ];
+    poke(&client, &ns).await;
+    eventually("Service for apps/dns", Duration::from_secs(10), || async {
+        services.get_opt(&dns_name).await.unwrap().is_some()
+    })
+    .await;
+    let dns = services.get(&dns_name).await.unwrap();
+    let ports: Vec<(String, String, i32, String)> = dns
+        .spec
+        .as_ref()
+        .unwrap()
+        .ports
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p.name.clone().unwrap_or_default(),
+                p.protocol.clone().unwrap_or_default(),
+                p.port,
+                format!("{:?}", p.target_port.as_ref().unwrap()),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        ports,
+        [
+            (
+                "tcp-53".to_owned(),
+                "TCP".to_owned(),
+                53,
+                "Int(20001)".to_owned()
+            ),
+            (
+                "udp-53".to_owned(),
+                "UDP".to_owned(),
+                53,
+                "Int(20002)".to_owned()
+            ),
+        ]
+    );
+    eventually(
+        "the Service in the inventory by protocol",
+        Duration::from_secs(10),
+        || async {
+            seen.lock().unwrap().as_ref().is_some_and(|i| {
+                i.gateway_services
+                    .get(&("apps".to_owned(), "dns".to_owned()))
+                    .is_some_and(|g| {
+                        g.ports == BTreeMap::from([(53, 20001)])
+                            && g.udp_ports == BTreeMap::from([(53, 20002)])
+                    })
+            })
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        services.get(&old_name).await.unwrap().resource_version(),
+        old_rv,
+        "the previous version's Service was rewritten"
+    );
     running.stop().await;
 }
 

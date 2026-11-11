@@ -1,0 +1,155 @@
+---
+title: Route UDP
+description: Relay DNS, syslog, WireGuard, game servers and other UDP services through ReverseDock, with per-client sessions, safe caps and health checks.
+sidebar:
+  order: 9
+---
+
+import Status from '../../../../components/Status.astro';
+
+<Status since="v0.8" /> UDP routes relay datagrams: DNS, syslog, NTP, RADIUS, WireGuard, QUIC to a backend that terminates it, game servers. A `udp` listener receives each datagram, finds the client's **session** or opens one, and relays the datagram to a backend of a UDP service; the backend's answers go back to that client and to no one else.
+
+## What you need
+
+- A port for the `udp` listener. It may share its number with a TCP-based listener (DNS uses TCP and UDP 53); two `udp` listeners cannot overlap.
+- Backends reachable as `host:port` over UDP.
+
+## A DNS resolver behind one port
+
+```yaml title="rdock.yaml"
+listeners:
+  dns: { address: "192.0.2.10:53", protocol: udp }
+  dns-tcp: { address: "192.0.2.10:53", protocol: tcp }
+udp_routes:
+  dns: { listeners: [dns], service: resolvers }
+udp_services:
+  resolvers:
+    backends:
+      - address: "10.0.0.53:53"
+      - address: "10.0.0.54:53"
+    responses: 1
+    timeouts: { idle: 10s }
+    health:
+      tcp_check: { port: 53 }
+tcp_routes:
+  dns: { match: "HostSNI(`*`)", listeners: [dns-tcp], service: resolvers-tcp }
+tcp_services:
+  resolvers-tcp:
+    backends:
+      - address: "10.0.0.53:53"
+      - address: "10.0.0.54:53"
+```
+
+`responses: 1` ends each session as soon as the answer is relayed, so a query holds a socket for milliseconds instead of the idle timeout. Large answers and zone transfers use TCP, which the `tcp` listener on the same port carries.
+
+## How it works
+
+- **A session is one client address and port** on one listener. It gets its own socket, connected to one backend that the service's balancer picks when the session starts, and keeps that backend for its whole life, so a protocol with state (WireGuard, QUIC, a game) always reaches the same server. The connected socket also means the kernel delivers only that backend's datagrams to the session.
+- **Replies** of the backend go back to the client from the listener's socket. ReverseDock never sends a datagram that is not a backend's reply on a live session: no error answers, no reply to an address that has not sent anything.
+- **A session ends** after `timeouts.idle` with no datagram in either direction, after `responses` replies when set, when its backend answers with ICMP "port unreachable" (the next datagram from the client opens a new session, on another backend if one is up), or when its listener is removed.
+- **Datagrams up to 64 KiB** are relayed whole. One that cannot be sent on (an IPv6 datagram over 65,507 bytes to an IPv4 backend) is dropped and counted as `oversize`, never cut.
+
+## Routes
+
+A UDP route sends a listener's datagrams to a UDP service. A datagram shows only where it comes from, so `match` takes ``ClientIP(`…`)`` matchers only (with `&&`, `||`, `!`); without `match` the route takes everything, and a listener has at most one route without `match`.
+
+```yaml title="rdock.yaml"
+listeners:
+  syslog: { address: ":514", protocol: udp }
+middlewares:
+  not-guests: { type: ip_deny, cidrs: [10.99.0.0/16] }
+udp_routes:
+  servers:
+    match: "ClientIP(`10.1.0.0/16`)"
+    listeners: [syslog]
+    service: siem
+    priority: 10
+  others:
+    listeners: [syslog]
+    service: archive
+    middlewares: [not-guests]
+udp_services:
+  siem: { backends: [{ address: "10.0.0.70:514" }] }
+  archive: { backends: [{ address: "10.0.0.71:514" }] }
+```
+
+Routes are tried by `priority` (highest first; `0` means the length of the rule), then the length of the rule, then the name, when a session starts. `ip_allow` and `ip_deny` are checked before a session is created; a refused datagram is dropped without an answer (`reason="denied"`). Other middlewares act on HTTP requests and are refused. `enabled: false` keeps a route defined but inactive.
+
+## Sessions and caps
+
+A UDP source address can be forged, so every listener caps its sessions even when you write nothing: each session holds a socket and a task, and without a cap anyone could make ReverseDock open sockets until it runs out of file descriptors.
+
+| Setting | Default | Why |
+|---|---|---|
+| `listeners.<l>.sessions.max` | `4096` | Envoy caps UDP sessions per cluster at 1,024 by default; a listener here may serve several clients' bursts, and 4,096 sockets stay far below the usual limit of open files in a container |
+| `listeners.<l>.sessions.max_per_client` | `64` | Per client IP address (any port): one source, or one forged address, gets at most 1/64 of the listener's sessions |
+
+Each takes a number or `unlimited`. A datagram that would open a session over a cap is dropped and counted (`session_limit`, `client_limit`), never answered; datagrams of open sessions still pass. A resolver that forwards many parallel queries from one address may need a higher `max_per_client`.
+
+Amplification is a property of the backend's protocol (DNS `ANY`, NTP `monlist`, memcached), not of the relay: expose such services only to the clients that need them, with `ip_allow` or a `ClientIP` rule.
+
+## Services
+
+| Setting | Default | What it does |
+|---|---|---|
+| `backends` | (required) | `host:port`, with `weight` (share of new sessions) and `backup`. Unix sockets are not supported |
+| `load_balancer.policy` | `round_robin` | Also `random`, `least_sessions` (fewest open sessions relative to the weight), `ip_hash` (every session of a client IP to the same backend while it is up) |
+| `timeouts.idle` | `60s` | A session with no datagram in either direction is closed. Envoy's default; Traefik uses 3 s, NGINX 10 minutes |
+| `responses` | none | End a session after this many replies (NGINX `proxy_responses`). `1` for DNS and other request-and-answer protocols |
+| `requests` | none | Detach a session from its client after this many datagrams (NGINX `proxy_requests`): the next one opens a new session, possibly on another backend, while the old one still relays its replies. `1` balances every datagram |
+| `health.passive` | on: 3 refusals in 30 s eject for 30 s, at most 50 % of the backends | ICMP "port unreachable" on a session's socket counts as a refusal. `enabled: false` only ends the session |
+| `health.tcp_check` | off | TCP connection probes (`port`, `interval` 10 s, `timeout` 2 s, `healthy` 2, `unhealthy` 3), for backends that also listen on TCP, like DNS servers on 53 |
+| `health.when_all_down` | `fail_open` | With no healthy backend, new sessions go to every backend (`fail_closed`: they are dropped as `no_backend`) |
+
+A session keeps its backend until it ends, also across reloads and when the backend later fails its health checks.
+
+## Reloads
+
+A reload keeps a `udp` listener's socket when its address is unchanged: open sessions keep their sockets and backends, and new sessions follow the new routes and services. A removed listener (or one that moves) opens no more sessions and closes the open ones after `lifecycle.drain_timeout` (default `8s`); sessions that end before that end normally.
+
+## Metrics and logs
+
+| Metric | Labels | Meaning |
+|---|---|---|
+| `rdock_udp_sessions` | `listener`, `route` | Open sessions |
+| `rdock_udp_datagrams_total` | `route`, `direction` | Datagrams relayed: `in` from the client, `out` to it |
+| `rdock_udp_bytes_total` | `route`, `direction` | Bytes relayed |
+| `rdock_udp_dropped_total` | `listener`, `reason` | Datagrams dropped: `no_route`, `denied`, `session_limit`, `client_limit`, `no_backend`, `socket_error`, `queue_full` (a session's queue of 64 datagrams, or the listener's socket, was full), `oversize`, `backend_unreachable`, `closing` |
+| `rdock_udp_session_ends_total` | `route`, `reason` | Ended sessions: `idle`, `responses`, `backend_unreachable`, `error`, `closed` |
+
+Datagrams are not written to the access log. Each session writes one `debug` log line when it ends, with the client, the backend, datagrams and bytes in each direction, its duration and why it ended, like the TCP relay.
+
+## Docker labels
+
+| Traefik label | ReverseDock |
+|---|---|
+| `traefik.udp.routers.<r>.entrypoints`, `.service` | `udp_routes.<r>.listeners`, `service` |
+| `traefik.udp.services.<s>.loadbalancer.server.port` | the container's address and this port (required: Docker lists exposed UDP ports apart from TCP ones) |
+| any other `traefik.udp.*` label | reported and ignored |
+
+```yaml title="compose.yaml (excerpt)"
+services:
+  coredns:
+    image: coredns/coredns:1.15.0
+    labels:
+      rdock.enable: "true"
+      rdock.udp_routes.dns.listeners: dns
+      rdock.udp_services.dns.port: "53"
+      rdock.udp_services.dns.responses: "1"
+```
+
+Traefik's UDP session timeout is an entry point setting (`udp.timeout`, 3 s by default) that labels cannot carry; set `rdock.udp_services.<s>.timeouts.idle` instead. See [Docker labels](/docs/reference/docker-labels/#udp-routes).
+
+## Not supported
+
+- PROXY protocol on `udp` listeners or towards UDP backends: the specification defines no framing for datagrams. `rdock validate` reports it.
+- One socket per worker (`SO_REUSEPORT`), GRO and GSO: one socket per listener serves everything.
+- **Replies leave from the listener's socket.** With a wildcard address (`:53`) on a host with several addresses, the kernel picks the source address of a reply by route, which may not be the address the client sent to, and the client drops the answer. Bind such listeners to an explicit address.
+- Keeping the client's address towards the backend (transparent proxying): the backend sees ReverseDock's address.
+- Active health checks that speak UDP: a generic UDP probe cannot tell a healthy server from one that drops datagrams.
+
+## Related
+
+- [`udp_routes`](/docs/reference/configuration/udp-routes/) and [`udp_services`](/docs/reference/configuration/udp-services/) reference
+- [`listeners`](/docs/reference/configuration/listeners/) reference
+- [Route TCP and TLS](/docs/guides/tcp-routes/)

@@ -6,12 +6,14 @@
 
 gatewayClassName: reversedock
 
-# Profiles to run and report. GATEWAY-UDP waits for UDP routes (v0.8, M-L4-04) and is not listed.
+# Profiles to run and report: all five Gateway profiles of the suite. GATEWAY-UDP has core
+# features only (Gateway, ReferenceGrant, UDPRoute; conformance/utils/suite/profiles.go).
 conformanceProfiles:
   - GATEWAY-HTTP
   - GATEWAY-GRPC
   - GATEWAY-TLS
   - GATEWAY-TCP
+  - GATEWAY-UDP
 
 # Operating mode written to the report. Anything but "default" must be described in the
 # report's README (conformance/reports/README.md), so ReverseDock only reports "default".

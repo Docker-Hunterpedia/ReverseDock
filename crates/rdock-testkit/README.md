@@ -9,3 +9,5 @@ Test harness for the end-to-end suites in `crates/rdock/tests/`: a backend that 
 `proxy_protocol`: PROXY protocol v1 and v2 headers for tests, and `haproxy`: HAProxy in Docker as an independent `send-proxy`/`send-proxy-v2` sender (v0.6).
 
 `tcp`: a plain TCP echo backend that can read a PROXY protocol header first, for TCP routes (v0.6). `postgres`: PostgreSQL 17 with TLS in Docker and `psql` from the same image.
+
+`udp`: a UDP echo backend that names itself and can answer more than once, a DNS-shaped backend, a port where nothing listens, and client helpers, for UDP routes (v0.8).

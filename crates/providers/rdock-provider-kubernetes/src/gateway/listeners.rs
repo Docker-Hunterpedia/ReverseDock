@@ -2,12 +2,12 @@
 //! per-Gateway Services (ADR-0029, "Shape").
 //!
 //! Listener validation, in this order:
-//! - **Protocol:** `HTTP`, `HTTPS`, `TLS` with `mode: Passthrough` and `TCP` are supported.
-//!   `UDP` and unknown protocols are `Accepted=False/UnsupportedProtocol`; `TLS` with
+//! - **Protocol:** `HTTP`, `HTTPS`, `TLS` with `mode: Passthrough`, `TCP` and `UDP` are
+//!   supported. Unknown protocols are `Accepted=False/UnsupportedProtocol`; `TLS` with
 //!   `mode: Terminate` is `Accepted=False/UnsupportedValue` (TLS termination for TLSRoutes
 //!   is not claimed, see the core test `TLSRouteListenerTerminateNotSupported`).
 //! - **Route kinds:** `HTTP`/`HTTPS` take HTTPRoute and GRPCRoute, `TLS` TLSRoute, `TCP`
-//!   TCPRoute. `allowedRoutes.kinds` narrows that; a kind the listener cannot take is left
+//!   TCPRoute, `UDP` UDPRoute. `allowedRoutes.kinds` narrows that; a kind the listener cannot take is left
 //!   out of `supportedKinds` and makes `ResolvedRefs=False/InvalidRouteKinds`.
 //! - **Certificates** (`HTTPS`): every `certificateRefs` entry must be a core `Secret`
 //!   (`InvalidCertificateRef`), allowed by a ReferenceGrant when in another namespace
@@ -15,7 +15,9 @@
 //!   missing Secret), exist, be of type `kubernetes.io/tls` and hold a valid certificate and
 //!   key (`InvalidCertificateRef`).
 //! - **Conflicts:** per port, `HTTP` cannot share with `HTTPS`/`TLS`, and `TCP` shares with
-//!   nothing (`ProtocolConflict`); listeners of one protocol family on one port need distinct
+//!   nothing over TCP (`ProtocolConflict`); `UDP` is another transport, so a `UDP` listener
+//!   may share its port number with any TCP-based one and conflicts only with a second `UDP`
+//!   listener on it; listeners of one protocol family on one port need distinct
 //!   host names (`HostnameConflict`). Conflicted listeners are all refused
 //!   (`Accepted=False`, the conflict as reason), none is picked as the winner.
 //!
@@ -25,7 +27,8 @@
 //! One internal listener exists per (Gateway, port): `http` for `HTTP`; `https` when an
 //! `HTTPS` listener is programmed on the port (with the certificates of every programmed
 //! `HTTPS` listener of the port; TLS passthrough routes share it by SNI); `tcp` for `TCP`
-//! and for a port with only TLS passthrough listeners.
+//! and for a port with only TLS passthrough listeners. A `UDP` listener gets an internal
+//! `udp` listener of its own (Gateway, port) on its own internal port.
 //!
 //! ListenerSets ([`super::listener_sets`]) add their listeners to the end of the Gateway's
 //! list (with [`ListenerState::set`] naming the set); they share the internal listener of a
@@ -75,7 +78,7 @@ pub enum Protocol {
     TlsTerminate,
     /// `TCP`.
     Tcp,
-    /// `UDP` (not supported).
+    /// `UDP`.
     Udp,
     /// Anything else (not supported).
     Unknown,
@@ -103,7 +106,8 @@ impl Protocol {
             Self::Http | Self::Https => &[RouteKind::Http, RouteKind::Grpc],
             Self::TlsPassthrough => &[RouteKind::Tls],
             Self::Tcp => &[RouteKind::Tcp],
-            Self::TlsTerminate | Self::Udp | Self::Unknown => &[],
+            Self::Udp => &[RouteKind::Udp],
+            Self::TlsTerminate | Self::Unknown => &[],
         }
     }
 
@@ -113,7 +117,24 @@ impl Protocol {
             Self::Http => Some('h'),
             Self::Https | Self::TlsPassthrough => Some('s'),
             Self::Tcp => Some('t'),
-            Self::TlsTerminate | Self::Udp | Self::Unknown => None,
+            Self::Udp => Some('u'),
+            Self::TlsTerminate | Self::Unknown => None,
+        }
+    }
+
+    /// Whether listeners of this protocol take a port alone in their transport (`TCP`, `UDP`:
+    /// no host names to tell two apart).
+    fn exclusive(self) -> bool {
+        matches!(self, Self::Tcp | Self::Udp)
+    }
+
+    /// The transport the listener's port is opened on.
+    #[must_use]
+    pub fn transport(self) -> crate::runtime::services::PortProtocol {
+        if self == Self::Udp {
+            crate::runtime::services::PortProtocol::Udp
+        } else {
+            crate::runtime::services::PortProtocol::Tcp
         }
     }
 }
@@ -358,10 +379,6 @@ pub fn evaluate_listener(
     let field = format!(".spec.listeners[{index}]");
     let protocol = Protocol::of(listener);
     let accepted = match protocol {
-        Protocol::Udp => Err((
-            reasons::UNSUPPORTED_PROTOCOL,
-            "UDP listeners are not supported yet (planned for v0.8)".to_owned(),
-        )),
         Protocol::Unknown => Err((
             reasons::UNSUPPORTED_PROTOCOL,
             format!("protocol `{}` is not supported", listener.protocol),
@@ -601,10 +618,14 @@ fn certificate_refs(
 
 /// Marks conflicted listeners (see the module documentation).
 pub fn mark_conflicts(listeners: &mut [ListenerState]) {
-    let mut by_port: BTreeMap<u16, Vec<usize>> = BTreeMap::new();
+    // By transport and port: UDP and TCP-based listeners never share a socket.
+    let mut by_port: BTreeMap<(bool, u16), Vec<usize>> = BTreeMap::new();
     for (i, l) in listeners.iter().enumerate() {
         if l.accepted.is_ok() && l.protocol.family().is_some() {
-            by_port.entry(l.port).or_default().push(i);
+            by_port
+                .entry((l.protocol == Protocol::Udp, l.port))
+                .or_default()
+                .push(i);
         }
     }
     for indexes in by_port.values() {
@@ -612,11 +633,11 @@ pub fn mark_conflicts(listeners: &mut [ListenerState]) {
             .iter()
             .filter_map(|&i| listeners[i].protocol.family())
             .collect();
-        let tcp = indexes
+        let exclusive = indexes
             .iter()
-            .filter(|&&i| listeners[i].protocol == Protocol::Tcp)
+            .filter(|&&i| listeners[i].protocol.exclusive())
             .count();
-        if families.len() > 1 || tcp > 1 {
+        if families.len() > 1 || exclusive > 1 {
             for &i in indexes {
                 listeners[i].conflict = Some(reasons::PROTOCOL_CONFLICT);
             }
@@ -643,8 +664,9 @@ pub fn mark_conflicts(listeners: &mut [ListenerState]) {
 
 /// The conflict of `candidate` with the active listeners `existing` that take precedence
 /// over it (ListenerSet precedence: the earlier listener wins), if any: a different protocol
-/// family on the port, or a second `TCP` listener, is `ProtocolConflict`; the same family
-/// and host name on the port is `HostnameConflict`.
+/// family on the port, or a second `TCP` (or `UDP`) listener, is `ProtocolConflict`; the same
+/// family and host name on the port is `HostnameConflict`. `UDP` listeners only meet `UDP`
+/// ones.
 #[must_use]
 pub fn conflict_with<'a>(
     existing: impl IntoIterator<Item = &'a ListenerState>,
@@ -653,13 +675,16 @@ pub fn conflict_with<'a>(
     let family = candidate.protocol.family()?;
     let mut conflict = None;
     for other in existing {
-        if !other.active() || other.port != candidate.port {
+        if !other.active()
+            || other.port != candidate.port
+            || (other.protocol == Protocol::Udp) != (candidate.protocol == Protocol::Udp)
+        {
             continue;
         }
         let Some(other_family) = other.protocol.family() else {
             continue;
         };
-        if other_family != family || candidate.protocol == Protocol::Tcp {
+        if other_family != family || candidate.protocol.exclusive() {
             return Some(reasons::PROTOCOL_CONFLICT);
         }
         if other.hostname == candidate.hostname {
@@ -683,10 +708,14 @@ fn open_listeners(cx: &mut Context<'_>) {
             continue;
         }
         let key = gw.key.clone();
-        let ports: BTreeSet<u16> = gw
-            .listeners
-            .iter()
-            .filter(|l| l.active())
+        let active = gw.listeners.iter().filter(|l| l.active());
+        let ports: BTreeSet<u16> = active
+            .clone()
+            .filter(|l| l.protocol != Protocol::Udp)
+            .map(|l| l.port)
+            .collect();
+        let udp_ports: BTreeSet<u16> = active
+            .filter(|l| l.protocol == Protocol::Udp)
             .map(|l| l.port)
             .collect();
         let infrastructure = gw.gateway.spec.infrastructure.clone().unwrap_or_default();
@@ -699,13 +728,58 @@ fn open_listeners(cx: &mut Context<'_>) {
             name: gateway_service_name(&key.0, &key.1),
             gateway: key.clone(),
             ports: ports.iter().copied().collect(),
+            udp_ports: udp_ports.iter().copied().collect(),
             labels,
             annotations: infrastructure.annotations.clone(),
         });
         let mapped = gw.service.map(|s| s.ports.clone()).unwrap_or_default();
+        let mapped_udp = gw.service.map(|s| s.udp_ports.clone()).unwrap_or_default();
         for port in ports {
             open_port(cx, index, port, mapped.get(&port).copied(), &data_dir);
         }
+        let mapped = mapped_udp;
+        for port in udp_ports {
+            open_udp_port(cx, index, port, mapped.get(&port).copied());
+        }
+    }
+}
+
+/// The internal `udp` listener of one Gateway UDP port.
+fn open_udp_port(cx: &mut Context<'_>, index: usize, port: u16, target: Option<u16>) {
+    let key = cx.gateways[index].key.clone();
+    let on_port: Vec<usize> = cx.gateways[index]
+        .listeners
+        .iter()
+        .enumerate()
+        .filter(|(_, l)| l.active() && l.port == port && l.protocol == Protocol::Udp)
+        .map(|(i, _)| i)
+        .collect();
+    let mut ready = Vec::new();
+    for i in on_port {
+        let l = &mut cx.gateways[index].listeners[i];
+        if let Err((_, message)) = &l.resolved {
+            l.programmed = Err((reasons::INVALID, message.clone()));
+        } else if target.is_none() {
+            l.programmed = Err((
+                reasons::PENDING,
+                format!("waiting for the Gateway's Service to map UDP port {port}"),
+            ));
+        } else {
+            ready.push(i);
+        }
+    }
+    let Some(target) = target else { return };
+    if ready.is_empty() {
+        return;
+    }
+    let name = internal_udp_listener_name(&key, port);
+    let mut model = ModelListener::new(ListenAddress::any(target));
+    model.protocol = Some(ListenerProtocol::Udp);
+    cx.out.fragment.listeners.insert(name.clone(), model);
+    for i in ready {
+        let l = &mut cx.gateways[index].listeners[i];
+        l.programmed = Ok(());
+        l.internal = Some(name.clone());
     }
 }
 
@@ -722,7 +796,7 @@ fn open_port(
         .listeners
         .iter()
         .enumerate()
-        .filter(|(_, l)| l.active() && l.port == port)
+        .filter(|(_, l)| l.active() && l.port == port && l.protocol != Protocol::Udp)
         .map(|(i, _)| i)
         .collect();
     let ready: Vec<usize> = on_port
@@ -812,6 +886,16 @@ pub fn internal_listener_name(key: &ObjectKey, port: u16) -> String {
     )
 }
 
+/// The fragment name of the internal `udp` listener of Gateway `key`, UDP port `port`.
+#[must_use]
+pub fn internal_udp_listener_name(key: &ObjectKey, port: u16) -> String {
+    super::names::object_name(
+        "gwu",
+        &[&key.0, &key.1, &port.to_string()],
+        &format!("listener/udp/{}/{}/{port}", key.0, key.1),
+    )
+}
+
 /// The fragment name of the certificate of Secret `key`.
 #[must_use]
 pub fn certificate_name(key: &ObjectKey) -> String {
@@ -856,14 +940,7 @@ pub fn finish(cx: &mut Context<'_>) {
         }
         let addresses: Vec<GatewayStatusAddress> =
             gw.service.map(|s| s.addresses.clone()).unwrap_or_default();
-        let unmapped: Vec<u16> = own
-            .iter()
-            .filter(|l| l.active())
-            .map(|l| l.port)
-            .filter(|p| gw.service.is_none_or(|s| !s.ports.contains_key(p)))
-            .collect::<BTreeSet<_>>()
-            .into_iter()
-            .collect();
+        let unmapped = unmapped_ports(gw, &own);
         let programmed = if gw.accepted.is_err() {
             condition(
                 types::PROGRAMMED,
@@ -885,7 +962,7 @@ pub fn finish(cx: &mut Context<'_>) {
                 types::PROGRAMMED,
                 false,
                 reasons::PENDING,
-                format!("waiting for the Gateway's Service to map ports {unmapped:?}"),
+                format!("waiting for the Gateway's Service to map ports [{unmapped}]"),
                 generation,
             )
         } else {
@@ -912,6 +989,34 @@ pub fn finish(cx: &mut Context<'_>) {
             },
         );
     }
+}
+
+/// The ports of the active listeners `own` that the Gateway's Service does not map yet, as
+/// `80, 53/udp`.
+fn unmapped_ports(gw: &GatewayState<'_>, own: &[&ListenerState]) -> String {
+    use crate::runtime::services::{PortKey, PortProtocol};
+    let unmapped: BTreeSet<PortKey> = own
+        .iter()
+        .filter(|l| l.active())
+        .map(|l| PortKey {
+            port: l.port,
+            protocol: l.protocol.transport(),
+        })
+        .filter(|key| {
+            gw.service.is_none_or(|s| {
+                let ports = match key.protocol {
+                    PortProtocol::Udp => &s.udp_ports,
+                    PortProtocol::Tcp => &s.ports,
+                };
+                !ports.contains_key(&key.port)
+            })
+        })
+        .collect();
+    unmapped
+        .iter()
+        .map(ToString::to_string)
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// The status of one listener.
@@ -1065,10 +1170,18 @@ mod tests {
                 listener("d", 9000, Tcp, None),
                 listener("e", 9001, Tcp, None),
                 listener("f", 9001, Udp, None),
+                listener("g", 53, Udp, None),
+                listener("h", 53, Udp, None),
+                listener("i", 5353, Udp, None),
+                listener("j", 5353, Http, None),
             ]),
             vec![
                 Some(reasons::PROTOCOL_CONFLICT),
                 Some(reasons::PROTOCOL_CONFLICT),
+                Some(reasons::PROTOCOL_CONFLICT),
+                Some(reasons::PROTOCOL_CONFLICT),
+                None,
+                None,
                 Some(reasons::PROTOCOL_CONFLICT),
                 Some(reasons::PROTOCOL_CONFLICT),
                 None,
@@ -1107,9 +1220,19 @@ mod tests {
             check(listener("x", 9000, Tcp, None)),
             Some(reasons::PROTOCOL_CONFLICT)
         );
-        // Unsupported protocols never conflict (they are refused for their protocol), and a
+        // UDP is another transport: it shares port numbers with TCP-based listeners, and a
         // listener that is not active is no obstacle.
         assert_eq!(check(listener("x", 80, Udp, None)), None);
+        assert_eq!(check(listener("x", 9000, Udp, None)), None);
+        let with_udp = vec![listener("u", 53, Udp, None)];
+        assert_eq!(
+            conflict_with(&with_udp, &listener("x", 53, Udp, None)),
+            Some(reasons::PROTOCOL_CONFLICT)
+        );
+        assert_eq!(
+            conflict_with(&with_udp, &listener("x", 53, Tcp, None)),
+            None
+        );
         let mut refused = listener("r", 8080, Http, None);
         refused.conflict = Some(reasons::HOSTNAME_CONFLICT);
         assert_eq!(
@@ -1124,5 +1247,11 @@ mod tests {
         let name = internal_listener_name(&("gateway-conformance-infra".into(), long), 443);
         assert!(name.len() <= 63, "{name}");
         assert!(name.starts_with("gw-gateway-conformance-infra-aaa"));
+        let key = ("gateway-conformance-infra".into(), "g".to_owned());
+        assert_ne!(
+            internal_listener_name(&key, 53),
+            internal_udp_listener_name(&key, 53),
+            "TCP and UDP listeners of one port are two listeners"
+        );
     }
 }

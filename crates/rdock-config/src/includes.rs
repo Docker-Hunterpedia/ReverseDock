@@ -1,5 +1,5 @@
 //! Extra configuration files (`providers.file.paths`): their routes, services, middlewares,
-//! TCP objects and certificates are added to the main file before it is validated, so they can
+//! TCP and UDP objects and certificates are added to the main file before it is validated, so they can
 //! refer to each other and to the main file's objects. The objects belong to the file provider,
 //! like the main file's: a name defined twice is an error that names both files.
 //!
@@ -13,12 +13,14 @@ use serde_json::{Map, Value};
 use crate::{Format, LoadError, Loaded, System, load_value, parse};
 
 /// Sections an extra file may hold.
-pub const SECTIONS: [&str; 6] = [
+pub const SECTIONS: [&str; 8] = [
     "routes",
     "services",
     "middlewares",
     "tcp_routes",
     "tcp_services",
+    "udp_routes",
+    "udp_services",
     "certificates",
 ];
 

@@ -1,16 +1,9 @@
 [
   {
-    "path": "listeners.<name>.protocol",
-    "planned": "v0.8",
-    "what": "UDP listeners (`udp`)",
+    "path": "listeners.<name>.proxy_protocol",
+    "planned": "a later version",
+    "what": "PROXY protocol on UDP listeners",
     "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\n  dns: { address: \":53\", protocol: udp }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
-  },
-  {
-    "path": "middlewares.<name>.listing",
-    "planned": "v0.8",
-    "what": "Directory listing (F-WEB-02)",
-    "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  site: { match: \"PathPrefix(`/`)\", middlewares: [site] }\nmiddlewares:\n  site: { type: static, root: /srv/www/example, listing: true }\n"
+    "fixture": "listeners:\n  dns: { address: \":53\", protocol: udp, proxy_protocol: { trusted: [10.0.0.0/8] } }\nudp_routes:\n  dns: { listeners: [dns], service: dns }\nudp_services:\n  dns:\n    backends: [{ address: \"127.0.0.1:5353\" }]\n"
   }
 ]

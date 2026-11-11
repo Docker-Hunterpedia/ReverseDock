@@ -661,11 +661,14 @@ pub struct StaticConfig {
     /// Files and directories whose name starts with `.` (`.env`, `.git/`).
     #[serde(default)]
     pub hidden: HiddenFiles,
-    /// Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+    /// List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that
+    /// prefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request
+    /// would be refused are not listed. At most 10,000 entries, sorted by name. A directory
+    /// that exists is listed instead of getting the `fallback`.
     #[serde(default)]
     pub listing: bool,
     /// Redirect (`308`) a directory path without a trailing slash to the path with one when the
-    /// directory has an index file.
+    /// directory has an index file, or is listed.
     #[serde(default = "crate::defaults::yes")]
     pub directory_redirect: bool,
     /// Most byte ranges answered in one request, from 1 to 16. A request for more gets the

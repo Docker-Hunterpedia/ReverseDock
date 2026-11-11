@@ -195,6 +195,22 @@
       },
       "default": {}
     },
+    "udp_routes": {
+      "description": "UDP routes: which `udp` listener's datagrams go to which UDP service.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/UdpRoute"
+      },
+      "default": {}
+    },
+    "udp_services": {
+      "description": "UDP backend pools.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/UdpService"
+      },
+      "default": {}
+    },
     "version": {
       "description": "Configuration format version. Only `1` exists; omit it to use the latest.",
       "type": [
@@ -2668,6 +2684,17 @@
           ],
           "default": null
         },
+        "sessions": {
+          "description": "`udp` listeners: how many sessions (client address and port, each with its own\nupstream socket) may exist at once. Capped by default even when omitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UdpSessions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "starttls": {
           "description": "`tcp` listeners: answer a protocol's request to start TLS before reading the TLS\nClientHello. Off by default.",
           "anyOf": [
@@ -2730,7 +2757,7 @@
           "const": "tcp"
         },
         {
-          "description": "UDP datagrams.",
+          "description": "UDP datagrams, relayed per client address (a session) to a UDP service.",
           "type": "string",
           "const": "udp"
         }
@@ -3790,7 +3817,7 @@
               }
             },
             "directory_redirect": {
-              "description": "Redirect (`308`) a directory path without a trailing slash to the path with one when the\ndirectory has an index file.",
+              "description": "Redirect (`308`) a directory path without a trailing slash to the path with one when the\ndirectory has an index file, or is listed.",
               "type": "boolean",
               "default": true
             },
@@ -3826,7 +3853,7 @@
               }
             },
             "listing": {
-              "description": "Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).",
+              "description": "List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that\nprefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request\nwould be refused are not listed. At most 10,000 entries, sorted by name. A directory\nthat exists is listed instead of getting the `fallback`.",
               "type": "boolean",
               "default": false
             },
@@ -4807,6 +4834,22 @@
         "^x-": {}
       }
     },
+    "SessionLimit": {
+      "description": "A number of sessions (at least 1), or `unlimited`.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        {
+          "type": "string",
+          "enum": [
+            "unlimited"
+          ]
+        }
+      ]
+    },
     "SmtpTls": {
       "description": "How the SMTP connection is protected.",
       "oneOf": [
@@ -5436,6 +5479,324 @@
           "const": "hmac-md5"
         }
       ]
+    },
+    "UdpHealth": {
+      "description": "Health of the backends of a UDP service.",
+      "type": "object",
+      "properties": {
+        "passive": {
+          "description": "Ejection after ICMP \"port unreachable\" answers (seen as refused sends or receives on a\nsession's connected socket). On by default.",
+          "$ref": "#/$defs/UdpPassiveHealth",
+          "default": {
+            "ejection": "30s",
+            "enabled": true,
+            "failures": 3,
+            "max_ejection_percent": 50,
+            "window": "30s"
+          }
+        },
+        "tcp_check": {
+          "description": "Periodic TCP connection probes, for backends that also listen on TCP (a DNS server\ndoes on port 53). Off by default: a generic UDP probe cannot tell a healthy server\nfrom one that drops datagrams.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UdpTcpCheck"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "when_all_down": {
+          "description": "What happens when no backend is healthy.",
+          "$ref": "#/$defs/WhenAllDown",
+          "default": "fail_open"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpLbPolicy": {
+      "description": "How a UDP session's backend is chosen.",
+      "oneOf": [
+        {
+          "description": "Weighted round-robin.",
+          "type": "string",
+          "const": "round_robin"
+        },
+        {
+          "description": "Weighted random.",
+          "type": "string",
+          "const": "random"
+        },
+        {
+          "description": "Fewest open sessions relative to the weight.",
+          "type": "string",
+          "const": "least_sessions"
+        },
+        {
+          "description": "Consistent hash of the client IP: every session of a client goes to the same backend\nwhile it is up.",
+          "type": "string",
+          "const": "ip_hash"
+        }
+      ]
+    },
+    "UdpLoadBalancer": {
+      "description": "Backend selection for new UDP sessions.",
+      "type": "object",
+      "properties": {
+        "policy": {
+          "description": "Selection policy.",
+          "$ref": "#/$defs/UdpLbPolicy",
+          "default": "round_robin"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpPassiveHealth": {
+      "description": "Passive health of a UDP service.",
+      "type": "object",
+      "properties": {
+        "ejection": {
+          "description": "How long an ejected backend gets no new sessions before one session tries it again;\ndoubled for each ejection in a row, up to 5 minutes.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "enabled": {
+          "description": "Count refusals and eject backends. `false` only ends the affected session.",
+          "type": "boolean",
+          "default": true
+        },
+        "failures": {
+          "description": "Refusals within `window` that eject a backend.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        },
+        "max_ejection_percent": {
+          "description": "Largest share of the pool ejected at once, in percent.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "window": {
+          "description": "Sliding window for counting refusals.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpRoute": {
+      "description": "A UDP route: the datagrams of its `udp` listeners go to its UDP service. The backend is\nchosen once per session (a client address and port) and kept for the session's life.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Set to `false` to keep the route defined but inactive.",
+          "type": "boolean",
+          "default": true
+        },
+        "listeners": {
+          "description": "`udp` listeners the route is attached to (required).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "match": {
+          "description": "Rule made of ``ClientIP(`…`)`` matchers only (with `&&`, `||`, `!`). Omitted, the route\ntakes every datagram of its listeners; a listener has at most one such route.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "middlewares": {
+          "description": "Middlewares checked before a session is created: `ip_allow` and `ip_deny`. A datagram\nthey refuse is dropped without an answer.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "description": "Higher priorities are evaluated first. `0` uses the rule length.",
+          "type": "integer",
+          "format": "int64",
+          "default": 0
+        },
+        "service": {
+          "description": "UDP service (a key of `udp_services`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "service"
+      ]
+    },
+    "UdpService": {
+      "description": "A UDP service: backends that receive the datagrams of UDP routes. Each session (one client\naddress and port) gets its own connected socket to one backend, chosen when the session\nstarts.",
+      "type": "object",
+      "properties": {
+        "backends": {
+          "description": "Backend servers (`host:port`; Unix sockets are not supported). `weight` sets each\none's share of new sessions; `backup` ones get sessions only when no other is up.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Backend"
+          }
+        },
+        "health": {
+          "description": "Backend health: passive ejection on ICMP \"port unreachable\", optional TCP probes.",
+          "$ref": "#/$defs/UdpHealth",
+          "default": {
+            "passive": {
+              "ejection": "30s",
+              "enabled": true,
+              "failures": 3,
+              "max_ejection_percent": 50,
+              "window": "30s"
+            },
+            "tcp_check": null,
+            "when_all_down": "fail_open"
+          }
+        },
+        "load_balancer": {
+          "description": "How a new session's backend is chosen.",
+          "$ref": "#/$defs/UdpLoadBalancer",
+          "default": {
+            "policy": "round_robin"
+          }
+        },
+        "requests": {
+          "description": "Detach a session from its client address after this many datagrams from the client\n(NGINX `proxy_requests`): the next datagram opens a new session, possibly to another\nbackend, while the detached one still relays its replies until `responses` or `idle`\nends it. `1` balances every datagram on its own.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "responses": {
+          "description": "End a session after this many datagrams from the backend (NGINX `proxy_responses`).\n`1` suits request-and-answer protocols such as DNS: the socket is released as soon as\nthe answer is relayed. Omitted, a session ends only when idle.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "timeouts": {
+          "description": "Session timeouts.",
+          "$ref": "#/$defs/UdpTimeouts",
+          "default": {
+            "idle": "1m"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "backends"
+      ]
+    },
+    "UdpSessions": {
+      "description": "Session caps of a `udp` listener. Both are on by default: a UDP source address can be\nforged, so without a cap anyone could make the listener open sockets until it runs out of\nfile descriptors (each session holds one socket and one task). Datagrams that would open\na session over a cap are dropped and counted in `rdock_udp_dropped_total`, never answered.",
+      "type": "object",
+      "properties": {
+        "max": {
+          "description": "Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluster at\n1,024 by default (`max_connections` circuit breaker, checked 2026-11-11 in\ndocs/research/v0.8-cache-extensibility.md §5.1); a listener here stands for a cluster\nand may serve several clients' DNS bursts, and 4,096 sockets stay far below the\ncontainer default of 1,048,576 open files. `unlimited` removes the cap.",
+          "$ref": "#/$defs/SessionLimit",
+          "default": 4096
+        },
+        "max_per_client": {
+          "description": "Sessions per client IP address (any source port). Default 64, so one source (or one\nforged address) can take at most 1/64 of the listener's default budget; a resolver\nthat forwards many parallel queries from one address may need more. `unlimited`\nremoves the cap.",
+          "$ref": "#/$defs/SessionLimit",
+          "default": 64
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpTcpCheck": {
+      "description": "TCP probes of the backends of a UDP service.",
+      "type": "object",
+      "properties": {
+        "healthy": {
+          "description": "Consecutive successes before a backend is healthy.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
+        },
+        "interval": {
+          "description": "Time between probes.",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "port": {
+          "description": "TCP port to connect to; the backend's port when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "timeout": {
+          "description": "Probe timeout.",
+          "$ref": "#/$defs/Duration",
+          "default": "2s"
+        },
+        "unhealthy": {
+          "description": "Consecutive failures before a backend is unhealthy.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpTimeouts": {
+      "description": "Timeouts of a UDP service.",
+      "type": "object",
+      "properties": {
+        "idle": {
+          "description": "A session with no datagram in either direction for this long is closed and its socket\nreleased. Default 60 s, Envoy's `udp_proxy` default; Traefik uses 3 s and NGINX\n10 minutes (sources in docs/research/v0.8-cache-extensibility.md §5.1, checked\n2026-11-11).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "UpstreamTls": {
       "description": "TLS to backends.",

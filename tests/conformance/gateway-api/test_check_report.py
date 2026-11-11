@@ -93,6 +93,19 @@ PARTIAL_WITH_SKIP = GOOD.replace(
     "      Failed: 0\n      Passed: 8\n      Skipped: 1\n    skippedTests:\n    - HTTPRouteRequestMultipleMirrors\n",
 ).replace("    result: success\n    statistics:\n      Failed: 0\n      Passed: 8", "    result: partial\n    statistics:\n      Failed: 0\n      Passed: 8")
 
+# GATEWAY-UDP has core features only (Gateway, ReferenceGrant, UDPRoute): no extended level.
+WITH_UDP = GOOD + """- core:
+    result: success
+    statistics:
+      Failed: 0
+      Passed: 9
+      Skipped: 0
+  name: GATEWAY-UDP
+  summary: Core tests succeeded.
+"""
+
+OPTIONS_WITH_UDP = OPTIONS.replace("  - GATEWAY-GRPC\n", "  - GATEWAY-GRPC\n  - GATEWAY-UDP\n")
+
 NO_GRPC = GOOD.split("- core:\n    result: success\n    statistics:\n      Failed: 0\n      Passed: 5")[0]
 
 
@@ -171,6 +184,17 @@ class CheckReport(unittest.TestCase):
             code, text, _ = run(CORE_FAILURE, allow_partial=True)
             self.assertEqual(code, 0)
             self.assertIn("warning: GATEWAY-GRPC core: failure", text)
+        self.each(check)
+
+    def test_a_profile_with_core_tests_only(self):
+        def check():
+            code, text, md = run(WITH_UDP, OPTIONS_WITH_UDP)
+            self.assertEqual(code, 0, text)
+            self.assertIn("| GATEWAY-UDP | core | success | 9 | 0 | 0 |", md)
+            # Listed in options.yaml but absent from the report: an error.
+            code, text, _ = run(GOOD, OPTIONS_WITH_UDP)
+            self.assertEqual(code, 1)
+            self.assertIn("profile GATEWAY-UDP is in options.yaml but not in the report", text)
         self.each(check)
 
     def test_missing_profile(self):

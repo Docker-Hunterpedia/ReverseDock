@@ -32,7 +32,7 @@
 //! BackendTLSPolicies are applied to the backends of HTTPRoutes and GRPCRoutes
 //! ([`policies`]), not claimed yet. Not supported yet, and reported: static Gateway
 //! addresses, `tls.mode: Terminate` on `TLS` listeners (the listener is not accepted,
-//! `UnsupportedValue`), UDP.
+//! `UnsupportedValue`).
 
 pub mod attach;
 pub mod classes;
@@ -147,7 +147,8 @@ pub fn generation(meta: &ObjectMeta) -> Option<i64> {
     meta.generation
 }
 
-/// The rank of every HTTPRoute and GRPCRoute for precedence ([`priority`]): oldest
+/// The rank of every route for precedence ([`priority`]; the oldest UDPRoute of a listener
+/// wins it): oldest
 /// `creationTimestamp` first, then `{namespace}/{name}` in alphabetical order (a missing
 /// timestamp sorts last). HTTPRoutes and GRPCRoutes share one ranking because they can
 /// attach to the same listener.
@@ -169,6 +170,10 @@ pub fn route_ranks(inventory: &Inventory) -> BTreeMap<(RouteKind, ObjectKey), us
     for (key, route) in &inventory.tcp_routes {
         let created = route.metadata.creation_timestamp.as_ref();
         all.push((created.is_none(), created, key, RouteKind::Tcp));
+    }
+    for (key, route) in &inventory.udp_routes {
+        let created = route.metadata.creation_timestamp.as_ref();
+        all.push((created.is_none(), created, key, RouteKind::Udp));
     }
     all.sort();
     all.into_iter()

@@ -952,6 +952,18 @@ export type RdockConfig = {
         [key: string]: RdockTcpService;
     };
     /**
+     * UDP routes: which `udp` listener's datagrams go to which UDP service.
+     */
+    udp_routes?: {
+        [key: string]: RdockUdpRoute;
+    };
+    /**
+     * UDP backend pools.
+     */
+    udp_services?: {
+        [key: string]: RdockUdpService;
+    };
+    /**
      * Configuration format version. Only `1` exists; omit it to use the latest.
      */
     version?: number | null;
@@ -969,6 +981,10 @@ export type RdockConfig = {
         [key: string]: RdockTcpRoute;
     } | {
         [key: string]: RdockTcpService;
+    } | {
+        [key: string]: RdockUdpRoute;
+    } | {
+        [key: string]: RdockUdpService;
     } | number | null | undefined;
 };
 
@@ -1555,6 +1571,11 @@ export type RdockListener = {
      */
     proxy_protocol?: RdockProxyProtocolIn | null;
     /**
+     * `udp` listeners: how many sessions (client address and port, each with its own
+     * upstream socket) may exist at once. Capped by default even when omitted.
+     */
+    sessions?: RdockUdpSessions | null;
+    /**
      * `tcp` listeners: answer a protocol's request to start TLS before reading the TLS
      * ClientHello. Off by default.
      */
@@ -1567,7 +1588,7 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
 };
 
 /**
@@ -2031,7 +2052,7 @@ export type RdockMiddleware = {
     cache_control?: RdockStaticCacheControl;
     /**
      * Redirect (`308`) a directory path without a trailing slash to the path with one when the
-     * directory has an index file.
+     * directory has an index file, or is listed.
      */
     directory_redirect?: boolean;
     /**
@@ -2052,7 +2073,10 @@ export type RdockMiddleware = {
      */
     index?: Array<string>;
     /**
-     * Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+     * List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that
+     * prefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request
+     * would be refused are not listed. At most 10,000 entries, sorted by name. A directory
+     * that exists is listed instead of getting the `fallback`.
      */
     listing?: boolean;
     /**
@@ -2547,6 +2571,11 @@ export type RdockService = {
 };
 
 /**
+ * A number of sessions (at least 1), or `unlimited`.
+ */
+export type RdockSessionLimit = number | 'unlimited';
+
+/**
  * How the SMTP connection is protected.
  */
 export type RdockSmtpTls = 'starttls' | 'implicit' | 'none';
@@ -2901,6 +2930,211 @@ export type RdockTrustedProxy = string;
  * TSIG algorithms (RFC 8945).
  */
 export type RdockTsigAlgorithm = 'hmac-sha256' | 'hmac-sha384' | 'hmac-sha512' | 'hmac-sha1' | 'hmac-md5';
+
+/**
+ * Health of the backends of a UDP service.
+ */
+export type RdockUdpHealth = {
+    /**
+     * Ejection after ICMP "port unreachable" answers (seen as refused sends or receives on a
+     * session's connected socket). On by default.
+     */
+    passive?: RdockUdpPassiveHealth;
+    /**
+     * Periodic TCP connection probes, for backends that also listen on TCP (a DNS server
+     * does on port 53). Off by default: a generic UDP probe cannot tell a healthy server
+     * from one that drops datagrams.
+     */
+    tcp_check?: RdockUdpTcpCheck | null;
+    /**
+     * What happens when no backend is healthy.
+     */
+    when_all_down?: RdockWhenAllDown;
+    [key: string]: unknown | RdockUdpPassiveHealth | RdockUdpTcpCheck | null | RdockWhenAllDown | undefined;
+};
+
+/**
+ * How a UDP session's backend is chosen.
+ */
+export type RdockUdpLbPolicy = 'round_robin' | 'random' | 'least_sessions' | 'ip_hash';
+
+/**
+ * Backend selection for new UDP sessions.
+ */
+export type RdockUdpLoadBalancer = {
+    /**
+     * Selection policy.
+     */
+    policy?: RdockUdpLbPolicy;
+    [key: string]: unknown | RdockUdpLbPolicy | undefined;
+};
+
+/**
+ * Passive health of a UDP service.
+ */
+export type RdockUdpPassiveHealth = {
+    /**
+     * How long an ejected backend gets no new sessions before one session tries it again;
+     * doubled for each ejection in a row, up to 5 minutes.
+     */
+    ejection?: RdockDuration;
+    /**
+     * Count refusals and eject backends. `false` only ends the affected session.
+     */
+    enabled?: boolean;
+    /**
+     * Refusals within `window` that eject a backend.
+     */
+    failures?: number;
+    /**
+     * Largest share of the pool ejected at once, in percent.
+     */
+    max_ejection_percent?: number;
+    /**
+     * Sliding window for counting refusals.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | RdockDuration | boolean | number | undefined;
+};
+
+/**
+ * A UDP route: the datagrams of its `udp` listeners go to its UDP service. The backend is
+ * chosen once per session (a client address and port) and kept for the session's life.
+ */
+export type RdockUdpRoute = {
+    /**
+     * Set to `false` to keep the route defined but inactive.
+     */
+    enabled?: boolean;
+    /**
+     * `udp` listeners the route is attached to (required).
+     */
+    listeners?: Array<string> | null;
+    /**
+     * Rule made of ``ClientIP(`…`)`` matchers only (with `&&`, `||`, `!`). Omitted, the route
+     * takes every datagram of its listeners; a listener has at most one such route.
+     */
+    match?: string | null;
+    /**
+     * Middlewares checked before a session is created: `ip_allow` and `ip_deny`. A datagram
+     * they refuse is dropped without an answer.
+     */
+    middlewares?: Array<string>;
+    /**
+     * Higher priorities are evaluated first. `0` uses the rule length.
+     */
+    priority?: number;
+    /**
+     * UDP service (a key of `udp_services`).
+     */
+    service: string;
+    [key: string]: unknown | boolean | Array<string> | null | string | null | Array<string> | number | string | undefined;
+};
+
+/**
+ * A UDP service: backends that receive the datagrams of UDP routes. Each session (one client
+ * address and port) gets its own connected socket to one backend, chosen when the session
+ * starts.
+ */
+export type RdockUdpService = {
+    /**
+     * Backend servers (`host:port`; Unix sockets are not supported). `weight` sets each
+     * one's share of new sessions; `backup` ones get sessions only when no other is up.
+     */
+    backends: Array<RdockBackend>;
+    /**
+     * Backend health: passive ejection on ICMP "port unreachable", optional TCP probes.
+     */
+    health?: RdockUdpHealth;
+    /**
+     * How a new session's backend is chosen.
+     */
+    load_balancer?: RdockUdpLoadBalancer;
+    /**
+     * Detach a session from its client address after this many datagrams from the client
+     * (NGINX `proxy_requests`): the next datagram opens a new session, possibly to another
+     * backend, while the detached one still relays its replies until `responses` or `idle`
+     * ends it. `1` balances every datagram on its own.
+     */
+    requests?: number | null;
+    /**
+     * End a session after this many datagrams from the backend (NGINX `proxy_responses`).
+     * `1` suits request-and-answer protocols such as DNS: the socket is released as soon as
+     * the answer is relayed. Omitted, a session ends only when idle.
+     */
+    responses?: number | null;
+    /**
+     * Session timeouts.
+     */
+    timeouts?: RdockUdpTimeouts;
+    [key: string]: unknown | Array<RdockBackend> | RdockUdpHealth | RdockUdpLoadBalancer | number | null | number | null | RdockUdpTimeouts | undefined;
+};
+
+/**
+ * Session caps of a `udp` listener. Both are on by default: a UDP source address can be
+ * forged, so without a cap anyone could make the listener open sockets until it runs out of
+ * file descriptors (each session holds one socket and one task). Datagrams that would open
+ * a session over a cap are dropped and counted in `rdock_udp_dropped_total`, never answered.
+ */
+export type RdockUdpSessions = {
+    /**
+     * Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluster at
+     * 1,024 by default (`max_connections` circuit breaker, checked 2026-11-11 in
+     * docs/research/v0.8-cache-extensibility.md §5.1); a listener here stands for a cluster
+     * and may serve several clients' DNS bursts, and 4,096 sockets stay far below the
+     * container default of 1,048,576 open files. `unlimited` removes the cap.
+     */
+    max?: RdockSessionLimit;
+    /**
+     * Sessions per client IP address (any source port). Default 64, so one source (or one
+     * forged address) can take at most 1/64 of the listener's default budget; a resolver
+     * that forwards many parallel queries from one address may need more. `unlimited`
+     * removes the cap.
+     */
+    max_per_client?: RdockSessionLimit;
+    [key: string]: unknown | RdockSessionLimit | undefined;
+};
+
+/**
+ * TCP probes of the backends of a UDP service.
+ */
+export type RdockUdpTcpCheck = {
+    /**
+     * Consecutive successes before a backend is healthy.
+     */
+    healthy?: number;
+    /**
+     * Time between probes.
+     */
+    interval?: RdockDuration;
+    /**
+     * TCP port to connect to; the backend's port when omitted.
+     */
+    port?: number | null;
+    /**
+     * Probe timeout.
+     */
+    timeout?: RdockDuration;
+    /**
+     * Consecutive failures before a backend is unhealthy.
+     */
+    unhealthy?: number;
+    [key: string]: unknown | number | RdockDuration | number | null | undefined;
+};
+
+/**
+ * Timeouts of a UDP service.
+ */
+export type RdockUdpTimeouts = {
+    /**
+     * A session with no datagram in either direction for this long is closed and its socket
+     * released. Default 60 s, Envoy's `udp_proxy` default; Traefik uses 3 s and NGINX
+     * 10 minutes (sources in docs/research/v0.8-cache-extensibility.md §5.1, checked
+     * 2026-11-11).
+     */
+    idle?: RdockDuration;
+    [key: string]: unknown | RdockDuration | undefined;
+};
 
 /**
  * TLS to backends.

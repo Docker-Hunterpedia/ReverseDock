@@ -136,6 +136,13 @@ A server name that is not a valid host name (an IP address, non-ASCII, a trailin
 matches ``HostSNI(`*`)``. TCP routes are tried by priority (`0` is the rule length), then rule
 length, then name.
 
+## UDP rules
+
+<Status since="v0.8" /> A datagram shows only its source, so a [UDP route](/docs/guides/udp-routes/)
+rule takes ``ClientIP(`…`)`` matchers only, combined with `&&`, `||`, `!` and parentheses. A UDP
+route without `match` takes every datagram of its listeners; a listener has at most one such
+route.
+
 ## Structured match
 
 Instead of a rule, `match` can be an object. All given conditions must hold; inside a list, any

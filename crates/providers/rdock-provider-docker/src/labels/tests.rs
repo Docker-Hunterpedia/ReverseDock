@@ -223,6 +223,47 @@ fn full_form_objects_decode_into_the_model() {
 }
 
 #[test]
+fn static_listing_is_a_label_like_any_other_setting() {
+    let t = run(&[container(
+        "files",
+        9,
+        &[],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.files.match", "Host(`files.example.com`)"),
+            ("rdock.routes.files.middlewares", "browse"),
+            ("rdock.middlewares.browse.type", "static"),
+            ("rdock.middlewares.browse.root", "/srv/www/files"),
+            ("rdock.middlewares.browse.listing", "true"),
+            ("rdock.middlewares.browse.hidden", "refuse"),
+        ],
+    )]);
+    assert_eq!(messages(&t), Vec::<String>::new());
+    let Middleware::Static(files) = &t.fragment.middlewares["browse"] else {
+        panic!("not static")
+    };
+    assert!(files.listing);
+    assert_eq!(files.root, std::path::PathBuf::from("/srv/www/files"));
+    // Off unless the label says so.
+    let t = run(&[container(
+        "plain",
+        10,
+        &[],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.plain.match", "Host(`plain.example.com`)"),
+            ("rdock.routes.plain.middlewares", "files"),
+            ("rdock.middlewares.files.type", "static"),
+            ("rdock.middlewares.files.root", "/srv/www/plain"),
+        ],
+    )]);
+    let Middleware::Static(files) = &t.fragment.middlewares["files"] else {
+        panic!("not static")
+    };
+    assert!(!files.listing);
+}
+
+#[test]
 fn traefik_labels_map_to_the_same_model() {
     let t = run(&[container(
         "whoami",
@@ -288,7 +329,7 @@ fn unsupported_and_unsafe_labels_are_warnings() {
                 "traefik.http.middlewares.auth.basicauth.usersfile",
                 "/etc/passwd",
             ),
-            ("traefik.udp.routers.dns.entrypoints", "dns"),
+            ("traefik.udp.routers.dns.rule", "HostSNI(`*`)"),
             ("rdock.routes.x.tls", "${file:/run/secrets/x}"),
         ],
     )]);
@@ -304,7 +345,7 @@ fn unsupported_and_unsafe_labels_are_warnings() {
     assert!(
         found
             .iter()
-            .any(|m| m.contains("UDP routing") && m.contains("planned for v0.8"))
+            .any(|m| m.contains("udp.routers.dns.rule") && m.contains("not in the supported"))
     );
     assert!(
         found

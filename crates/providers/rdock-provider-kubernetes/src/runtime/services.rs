@@ -29,8 +29,94 @@ pub const FIELD_MANAGER: &str = "reversedock.dev/gateway-controller";
 /// our labels or annotations is noticed.
 pub const CONFIG_ANNOTATION: &str = "reversedock.dev/service-config";
 
-/// Listener port → internal port, by Service name.
-pub type PortMap = BTreeMap<String, BTreeMap<u16, u16>>;
+/// The transport of a Service port.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum PortProtocol {
+    /// `TCP`: every Gateway listener protocol but `UDP`.
+    Tcp,
+    /// `UDP`.
+    Udp,
+}
+
+impl PortProtocol {
+    /// The Service's `protocol` value.
+    #[must_use]
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Tcp => "TCP",
+            Self::Udp => "UDP",
+        }
+    }
+}
+
+/// A Service port: the listener port and its transport. Sorted by port, then TCP before UDP.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct PortKey {
+    /// The listener port (the Service's `port`).
+    pub port: u16,
+    /// Its transport.
+    pub protocol: PortProtocol,
+}
+
+impl PortKey {
+    /// A TCP port.
+    #[must_use]
+    pub fn tcp(port: u16) -> Self {
+        Self {
+            port,
+            protocol: PortProtocol::Tcp,
+        }
+    }
+
+    /// A UDP port.
+    #[must_use]
+    pub fn udp(port: u16) -> Self {
+        Self {
+            port,
+            protocol: PortProtocol::Udp,
+        }
+    }
+
+    /// The port's name in the Service: `tcp-53` or `udp-53`.
+    #[must_use]
+    pub fn name(self) -> String {
+        match self.protocol {
+            PortProtocol::Tcp => format!("tcp-{}", self.port),
+            PortProtocol::Udp => format!("udp-{}", self.port),
+        }
+    }
+
+    /// The name the previous version gave TCP ports, kept where a live Service has it.
+    fn legacy_name(self) -> Option<String> {
+        (self.protocol == PortProtocol::Tcp).then(|| format!("port-{}", self.port))
+    }
+}
+
+impl std::fmt::Display for PortKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.protocol {
+            PortProtocol::Tcp => write!(f, "{}", self.port),
+            PortProtocol::Udp => write!(f, "{}/udp", self.port),
+        }
+    }
+}
+
+/// The (protocol, port) keys a desired Service wants.
+#[must_use]
+pub fn wanted_ports(desired: &DesiredService) -> Vec<PortKey> {
+    let mut ports: Vec<PortKey> = desired
+        .ports
+        .iter()
+        .map(|p| PortKey::tcp(*p))
+        .chain(desired.udp_ports.iter().map(|p| PortKey::udp(*p)))
+        .collect();
+    ports.sort_unstable();
+    ports.dedup();
+    ports
+}
+
+/// Listener port and protocol → internal port, by Service name.
+pub type PortMap = BTreeMap<String, BTreeMap<PortKey, u16>>;
 
 /// The outcome of [`allocate`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -38,7 +124,7 @@ pub struct Allocation {
     /// Listener port → internal port for every desired Service.
     pub ports: PortMap,
     /// `(Service, listener port)` pairs that got no internal port: the range is exhausted.
-    pub unmapped: Vec<(String, u16)>,
+    pub unmapped: Vec<(String, PortKey)>,
 }
 
 /// Allocates internal ports (`targetPort`) from `range` for every desired Service.
@@ -47,18 +133,19 @@ pub struct Allocation {
 ///   already kept for another Service (on a clash, the Service whose name sorts first keeps
 ///   it).
 /// - New listener ports get the lowest port that no managed Service uses: two Gateways never
-///   share an internal port, and a port freed in this pass (a removed listener, a deleted
+///   share an internal port, neither do a TCP and a UDP listener of one Gateway (one number
+///   per (protocol, port), never ambiguous), and a port freed in this pass (a removed listener, a deleted
 ///   Service) is not handed out again before the Service that held it is gone.
 /// - When the range is exhausted, the pair is left out and reported in `unmapped`.
 #[must_use]
 pub fn allocate(
     range: (u16, u16),
     existing: &PortMap,
-    desired: &[(String, Vec<u16>)],
+    desired: &[(String, Vec<PortKey>)],
 ) -> Allocation {
     let (start, end) = range;
     let in_range = |p: u16| start <= p && p <= end;
-    let mut wanted: BTreeMap<&str, BTreeSet<u16>> = BTreeMap::new();
+    let mut wanted: BTreeMap<&str, BTreeSet<PortKey>> = BTreeMap::new();
     for (name, ports) in desired {
         wanted
             .entry(name.as_str())
@@ -110,9 +197,10 @@ pub fn allocate(
     allocation
 }
 
-/// The listener ports of a live Service: `port` → numeric `targetPort`.
+/// The listener ports of a live Service: (protocol, `port`) → numeric `targetPort`. Ports of
+/// other protocols (SCTP) are not ours and are left out.
 #[must_use]
-pub fn ports_of(service: &Service) -> BTreeMap<u16, u16> {
+pub fn ports_of(service: &Service) -> BTreeMap<PortKey, u16> {
     service
         .spec
         .as_ref()
@@ -121,11 +209,57 @@ pub fn ports_of(service: &Service) -> BTreeMap<u16, u16> {
         .flatten()
         .filter_map(|p| {
             let port = u16::try_from(p.port).ok()?;
+            let protocol = match p.protocol.as_deref().unwrap_or("TCP") {
+                "TCP" => PortProtocol::Tcp,
+                "UDP" => PortProtocol::Udp,
+                _ => return None,
+            };
             let target = match p.target_port.as_ref()? {
                 IntOrString::Int(t) => u16::try_from(*t).ok()?,
                 IntOrString::String(s) => s.parse().ok()?,
             };
-            Some((port, target))
+            Some((PortKey { port, protocol }, target))
+        })
+        .collect()
+}
+
+/// The names of a live Service's ports, by (protocol, port).
+fn port_names(service: &Service) -> BTreeMap<PortKey, String> {
+    service
+        .spec
+        .as_ref()
+        .and_then(|s| s.ports.as_ref())
+        .into_iter()
+        .flatten()
+        .filter_map(|p| {
+            let port = u16::try_from(p.port).ok()?;
+            let protocol = match p.protocol.as_deref().unwrap_or("TCP") {
+                "TCP" => PortProtocol::Tcp,
+                "UDP" => PortProtocol::Udp,
+                _ => return None,
+            };
+            Some((PortKey { port, protocol }, p.name.clone()?))
+        })
+        .collect()
+}
+
+/// The name of each wanted port: its legacy name (`port-<n>`, TCP) when the live Service
+/// already has it for that port, so an upgrade does not rewrite the Service, else
+/// [`PortKey::name`].
+#[must_use]
+pub fn names_for(
+    ports: &BTreeMap<PortKey, u16>,
+    live: Option<&Service>,
+) -> BTreeMap<PortKey, String> {
+    let existing = live.map(port_names).unwrap_or_default();
+    ports
+        .keys()
+        .map(|key| {
+            let name = match (existing.get(key), key.legacy_name()) {
+                (Some(have), Some(legacy)) if *have == legacy => legacy,
+                _ => key.name(),
+            };
+            (*key, name)
         })
         .collect()
 }
@@ -175,12 +309,21 @@ pub fn gateway_service(service: &Service) -> Option<(ObjectKey, GatewayService)>
             addresses.push(address("IPAddress", ip));
         }
     }
+    let mut ports = BTreeMap::new();
+    let mut udp_ports = BTreeMap::new();
+    for (key, target) in ports_of(service) {
+        match key.protocol {
+            PortProtocol::Tcp => ports.insert(key.port, target),
+            PortProtocol::Udp => udp_ports.insert(key.port, target),
+        };
+    }
     Some((
         gateway,
         GatewayService {
             namespace: service.metadata.namespace.clone().unwrap_or_default(),
             name: service.metadata.name.clone().unwrap_or_default(),
-            ports: ports_of(service),
+            ports,
+            udp_ports,
             addresses,
         },
     ))
@@ -239,11 +382,13 @@ fn fnv64(data: &[u8]) -> u64 {
     })
 }
 
-/// The server-side apply manifest of a managed Service.
+/// The server-side apply manifest of a managed Service; `names` are the port names
+/// ([`names_for`]; [`PortKey::name`] for a port missing there).
 #[must_use]
 pub fn manifest(
     desired: &DesiredService,
-    ports: &BTreeMap<u16, u16>,
+    ports: &BTreeMap<PortKey, u16>,
+    names: &BTreeMap<PortKey, String>,
     settings: &Settings,
 ) -> serde_json::Value {
     let labels = labels_of(desired);
@@ -252,8 +397,9 @@ pub fn manifest(
     let kind = service_type(settings.provider.gateway.service_type);
     let port_list: Vec<serde_json::Value> = ports
         .iter()
-        .map(|(port, target)| {
-            json!({ "name": format!("port-{port}"), "protocol": "TCP", "port": port, "targetPort": target })
+        .map(|(key, target)| {
+            let name = names.get(key).cloned().unwrap_or_else(|| key.name());
+            json!({ "name": name, "protocol": key.protocol.as_str(), "port": key.port, "targetPort": target })
         })
         .collect();
     // Everything above in a canonical form (BTreeMaps, sorted ports): its hash changes exactly
@@ -356,10 +502,10 @@ pub async fn reconcile(
     let mut outcome = Outcome::default();
     let range = settings.provider.gateway.ports().unwrap_or((20000, 29999));
     let existing: PortMap = live.iter().map(|(n, s)| (n.clone(), ports_of(s))).collect();
-    let wanted: Vec<(String, Vec<u16>)> = desired
+    let wanted: Vec<(String, Vec<PortKey>)> = desired
         .iter()
         .filter(|d| d.namespace == settings.service_namespace())
-        .map(|d| (d.name.clone(), d.ports.clone()))
+        .map(|d| (d.name.clone(), wanted_ports(d)))
         .collect();
     let allocation = allocate(range, &existing, &wanted);
     for (name, port) in &allocation.unmapped {
@@ -387,8 +533,9 @@ pub async fn reconcile(
         if ports.is_empty() {
             continue; // a Service needs at least one port
         }
-        let manifest = manifest(service, &ports, settings);
         let current = live.get(&service.name);
+        let names = names_for(&ports, current);
+        let manifest = manifest(service, &ports, &names, settings);
         let key = format!("Service {}", service.name);
         if !differs(current, &manifest) {
             errors.settled(&key);
@@ -461,14 +608,31 @@ mod tests {
     fn map(entries: &[(&str, &[(u16, u16)])]) -> PortMap {
         entries
             .iter()
-            .map(|(n, ports)| ((*n).to_owned(), ports.iter().copied().collect()))
+            .map(|(n, ports)| {
+                (
+                    (*n).to_owned(),
+                    ports.iter().map(|(p, t)| (PortKey::tcp(*p), *t)).collect(),
+                )
+            })
             .collect()
     }
 
-    fn want(entries: &[(&str, &[u16])]) -> Vec<(String, Vec<u16>)> {
+    fn want(entries: &[(&str, &[u16])]) -> Vec<(String, Vec<PortKey>)> {
         entries
             .iter()
-            .map(|(n, ports)| ((*n).to_owned(), ports.to_vec()))
+            .map(|(n, ports)| {
+                (
+                    (*n).to_owned(),
+                    ports.iter().map(|p| PortKey::tcp(*p)).collect(),
+                )
+            })
+            .collect()
+    }
+
+    fn tcp_ports(entries: &[(u16, u16)]) -> BTreeMap<PortKey, u16> {
+        entries
+            .iter()
+            .map(|(p, t)| (PortKey::tcp(*p), *t))
             .collect()
     }
 
@@ -535,7 +699,7 @@ mod tests {
             &existing,
             &want(&[("a", &[80]), ("d", &[80]), ("e", &[80])]),
         );
-        assert_eq!(a.ports["e"], BTreeMap::from([(80, 20001)]));
+        assert_eq!(a.ports["e"], tcp_ports(&[(80, 20001)]));
     }
 
     #[test]
@@ -549,11 +713,11 @@ mod tests {
             a.ports,
             map(&[("a", &[(80, 20000), (443, 20001)]), ("b", &[])])
         );
-        assert_eq!(a.unmapped, vec![("b".to_owned(), 80)]);
+        assert_eq!(a.unmapped, vec![("b".to_owned(), PortKey::tcp(80))]);
         // The range ends at 65535 without overflowing.
         let a = allocate((65535, 65535), &PortMap::new(), &want(&[("a", &[80, 443])]));
         assert_eq!(a.ports, map(&[("a", &[(80, 65535)])]));
-        assert_eq!(a.unmapped, vec![("a".to_owned(), 443)]);
+        assert_eq!(a.unmapped, vec![("a".to_owned(), PortKey::tcp(443))]);
     }
 
     #[test]
@@ -592,6 +756,7 @@ mod tests {
             name: "apps-web".to_owned(),
             gateway: ("apps".to_owned(), "web".to_owned()),
             ports: vec![80],
+            udp_ports: Vec::new(),
             labels: BTreeMap::from([("team".to_owned(), "a".to_owned())]),
             annotations: BTreeMap::from([("note".to_owned(), "x".to_owned())]),
         }
@@ -599,10 +764,11 @@ mod tests {
 
     #[test]
     fn the_manifest_and_the_live_service_compare() {
-        let ports = BTreeMap::from([(80, 20000)]);
-        let m = manifest(&desired(), &ports, &settings());
+        let ports = tcp_ports(&[(80, 20000)]);
+        let m = manifest(&desired(), &ports, &BTreeMap::new(), &settings());
         assert_eq!(m["spec"]["type"], "ClusterIP");
-        assert_eq!(m["spec"]["ports"][0]["name"], "port-80");
+        assert_eq!(m["spec"]["ports"][0]["name"], "tcp-80");
+        assert_eq!(m["spec"]["ports"][0]["protocol"], "TCP");
         assert_eq!(m["spec"]["ports"][0]["targetPort"], 20000);
         assert_eq!(m["metadata"]["labels"][MANAGED_BY_LABEL], MANAGED_BY);
         assert_eq!(m["metadata"]["labels"][GATEWAY_NAME_LABEL], "web");
@@ -618,15 +784,24 @@ mod tests {
         assert!(!differs(Some(&live), &m));
         let (gateway, service) = gateway_service(&live).unwrap();
         assert_eq!(gateway, ("apps".to_owned(), "web".to_owned()));
-        assert_eq!(service.ports, ports);
+        assert_eq!(service.ports, BTreeMap::from([(80, 20000)]));
+        assert!(service.udp_ports.is_empty());
         assert_eq!(service.addresses, vec![address("IPAddress", "10.96.0.10")]);
         // A removed annotation changes the hash; another target port is a difference.
         let mut d = desired();
         d.annotations.clear();
-        assert!(differs(Some(&live), &manifest(&d, &ports, &settings())));
         assert!(differs(
             Some(&live),
-            &manifest(&desired(), &BTreeMap::from([(80, 20001)]), &settings())
+            &manifest(&d, &ports, &BTreeMap::new(), &settings())
+        ));
+        assert!(differs(
+            Some(&live),
+            &manifest(
+                &desired(),
+                &tcp_ports(&[(80, 20001)]),
+                &BTreeMap::new(),
+                &settings()
+            )
         ));
     }
 
@@ -636,7 +811,12 @@ mod tests {
         let mut d = desired();
         d.gateway.1.clone_from(&name);
         d.name = crate::translate::gateway_service_name("apps", &name);
-        let m = manifest(&d, &BTreeMap::from([(80, 20000)]), &settings());
+        let m = manifest(
+            &d,
+            &tcp_ports(&[(80, 20000)]),
+            &BTreeMap::new(),
+            &settings(),
+        );
         let label = m["metadata"]["labels"][GATEWAY_NAME_LABEL]
             .as_str()
             .unwrap();
@@ -650,9 +830,13 @@ mod tests {
     fn load_balancer_addresses_come_from_the_ingress() {
         let mut s = settings();
         s.provider.gateway.service_type = KubernetesServiceType::LoadBalancer;
-        let mut live: Service =
-            serde_json::from_value(manifest(&desired(), &BTreeMap::from([(80, 20000)]), &s))
-                .unwrap();
+        let mut live: Service = serde_json::from_value(manifest(
+            &desired(),
+            &tcp_ports(&[(80, 20000)]),
+            &BTreeMap::new(),
+            &s,
+        ))
+        .unwrap();
         live.spec.get_or_insert_default().cluster_ip = Some("10.96.0.10".to_owned());
         let (_, service) = gateway_service(&live).unwrap();
         assert!(
@@ -670,5 +854,96 @@ mod tests {
                 address("Hostname", "lb.example")
             ]
         );
+    }
+
+    #[test]
+    fn tcp_and_udp_on_one_port_get_two_internal_ports() {
+        let mut d = desired();
+        d.ports = vec![53, 80];
+        d.udp_ports = vec![53];
+        let wanted = wanted_ports(&d);
+        assert_eq!(
+            wanted,
+            [PortKey::tcp(53), PortKey::udp(53), PortKey::tcp(80)]
+        );
+        let a = allocate(
+            (20000, 20010),
+            &PortMap::new(),
+            &[("dns".to_owned(), wanted)],
+        );
+        let ports = &a.ports["dns"];
+        assert_eq!(ports[&PortKey::tcp(53)], 20000);
+        assert_eq!(ports[&PortKey::udp(53)], 20001);
+        assert_eq!(ports[&PortKey::tcp(80)], 20002);
+        // Existing assignments are kept per (protocol, port).
+        let again = allocate(
+            (20000, 20010),
+            &a.ports,
+            &[("dns".to_owned(), vec![PortKey::udp(53), PortKey::tcp(53)])],
+        );
+        assert_eq!(
+            again.ports["dns"],
+            BTreeMap::from([(PortKey::tcp(53), 20000), (PortKey::udp(53), 20001)])
+        );
+        let m = manifest(&d, ports, &names_for(ports, None), &settings());
+        let entries: Vec<(String, String, u64, u64)> = m["spec"]["ports"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|p| {
+                (
+                    p["name"].as_str().unwrap().to_owned(),
+                    p["protocol"].as_str().unwrap().to_owned(),
+                    p["port"].as_u64().unwrap(),
+                    p["targetPort"].as_u64().unwrap(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            entries,
+            [
+                ("tcp-53".to_owned(), "TCP".to_owned(), 53, 20000),
+                ("udp-53".to_owned(), "UDP".to_owned(), 53, 20001),
+                ("tcp-80".to_owned(), "TCP".to_owned(), 80, 20002),
+            ]
+        );
+        let live: Service = serde_json::from_value(m.clone()).unwrap();
+        assert_eq!(ports_of(&live), *ports);
+        let (_, service) = gateway_service(&live).unwrap();
+        assert_eq!(service.ports, BTreeMap::from([(53, 20000), (80, 20002)]));
+        assert_eq!(service.udp_ports, BTreeMap::from([(53, 20001)]));
+        assert!(!differs(Some(&live), &m));
+    }
+
+    #[test]
+    fn services_of_the_previous_version_keep_their_port_names() {
+        // v0.7 named every port `port-<n>` and wrote no protocol other than TCP; its manifest
+        // (and so its configuration hash) is this one.
+        let ports = tcp_ports(&[(80, 20000), (443, 20001)]);
+        let legacy: BTreeMap<PortKey, String> = ports
+            .keys()
+            .map(|k| (*k, format!("port-{}", k.port)))
+            .collect();
+        let old = manifest(&desired(), &ports, &legacy, &settings());
+        let live: Service = serde_json::from_value(old).unwrap();
+        let names = names_for(&ports, Some(&live));
+        assert_eq!(names[&PortKey::tcp(80)], "port-80");
+        let m = manifest(&desired(), &ports, &names, &settings());
+        assert!(!differs(Some(&live), &m), "no rewrite, no flapping");
+        // A port added later gets the new name; the UDP twin of an old port too.
+        let mut more = ports.clone();
+        more.insert(PortKey::tcp(8080), 20002);
+        more.insert(PortKey::udp(80), 20003);
+        let names = names_for(&more, Some(&live));
+        assert_eq!(names[&PortKey::tcp(80)], "port-80");
+        assert_eq!(names[&PortKey::tcp(8080)], "tcp-8080");
+        assert_eq!(names[&PortKey::udp(80)], "udp-80");
+        // A live UDP port named `port-<n>` is not ours to keep.
+        let mut udp_old = live.clone();
+        if let Some(p) = udp_old.spec.as_mut().and_then(|s| s.ports.as_mut()) {
+            p[0].protocol = Some("UDP".to_owned());
+        }
+        let names = names_for(&tcp_ports(&[(80, 20000)]), Some(&udp_old));
+        assert_eq!(names[&PortKey::tcp(80)], "tcp-80");
     }
 }

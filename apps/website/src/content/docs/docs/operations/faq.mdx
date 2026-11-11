@@ -49,7 +49,7 @@ Yes <Status since="v0.4" />: active checks over HTTP, TCP or gRPC, passive eject
 
 ## Can it proxy TCP or UDP?
 
-TCP, yes <Status since="v0.6" />: `tcp` listeners route by TLS server name with passthrough, terminate TLS with ReverseDock's certificates, or relay plain bytes, and send the PROXY protocol to backends. See [Route TCP and TLS](/docs/guides/tcp-routes/). Every listener also accepts the [PROXY protocol](/docs/guides/behind-a-proxy/#proxy-protocol) from a TCP load balancer in front. UDP is <Status planned="v0.8" />.
+TCP, yes <Status since="v0.6" />: `tcp` listeners route by TLS server name with passthrough, terminate TLS with ReverseDock's certificates, or relay plain bytes, and send the PROXY protocol to backends. See [Route TCP and TLS](/docs/guides/tcp-routes/). Every listener also accepts the [PROXY protocol](/docs/guides/behind-a-proxy/#proxy-protocol) from a TCP load balancer in front. UDP too <Status since="v0.8" />: `udp` listeners relay datagrams per client session, with session caps on by default. See [Route UDP](/docs/guides/udp-routes/).
 
 ## Is there a dashboard?
 

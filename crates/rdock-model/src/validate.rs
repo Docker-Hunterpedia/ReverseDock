@@ -63,6 +63,7 @@ impl Config {
         v.check_services();
         v.check_middlewares();
         v.check_tcp();
+        v.check_udp();
         v.check_certificates();
         v.check_acme();
         v.check_security();
@@ -2437,3 +2438,4 @@ mod static_files;
 mod tcp;
 #[cfg(test)]
 mod tests;
+mod udp;

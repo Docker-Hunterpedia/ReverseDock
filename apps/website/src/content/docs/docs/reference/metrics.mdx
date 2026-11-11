@@ -122,6 +122,38 @@ valid ClientHello of at most 16 KiB), `denied` (`ip_allow`, `ip_deny`), `in_flig
 and `connect_failed`. Failed handshakes of terminating routes count in
 `rdock_tls_handshake_errors_total`.
 
+## UDP routes
+
+<Status since="v0.8" /> Metrics of [UDP routes](/docs/guides/udp-routes/).
+
+### `rdock_udp_sessions`
+
+**Gauge.** Open sessions (one per client address and port) of UDP routes. Labels: `listener` and
+`route`.
+
+### `rdock_udp_datagrams_total`
+
+**Counter.** Datagrams relayed by UDP routes. Labels: `route` and `direction`: `in` (from the
+client to the backend) and `out` (from the backend to the client).
+
+### `rdock_udp_bytes_total`
+
+**Counter.** Bytes relayed by UDP routes. Labels: `route` and `direction`, as above.
+
+### `rdock_udp_dropped_total`
+
+**Counter.** Datagrams a `udp` listener dropped instead of relaying them; none is ever answered.
+Labels: `listener` and `reason`: `no_route`, `denied` (`ip_allow`, `ip_deny`), `session_limit`
+and `client_limit` (the listener's session caps), `no_backend`, `socket_error`, `queue_full` (a
+session's queue or the listener's socket was full), `oversize` (too large for the destination's
+address family), `backend_unreachable` (the backend answered with ICMP "port unreachable") and
+`closing` (a new client of a listener that is being removed).
+
+### `rdock_udp_session_ends_total`
+
+**Counter.** UDP sessions that ended. Labels: `route` and `reason`: `idle`, `responses`,
+`backend_unreachable`, `error` and `closed` (the listener was removed or rdock stopped).
+
 ## Backends <Status since="v0.4" />
 
 ### `rdock_backend_requests_total`

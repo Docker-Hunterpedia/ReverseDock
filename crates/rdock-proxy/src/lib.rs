@@ -17,6 +17,7 @@ pub mod runtime;
 mod server;
 pub mod tcp;
 mod trace;
+pub mod udp;
 pub mod upstream;
 
 pub use compile::{CompileEnv, Compiled, compile};

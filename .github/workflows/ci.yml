@@ -241,7 +241,7 @@ jobs:
         run: |
           docker run --rm rdock:ci version
           docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.quickstart.yaml
-          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml
+          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml /cfg/rdock.udp.yaml
       - name: Docker provider examples (deploy/docker/examples)
         run: |
           for dir in deploy/docker/examples/*/; do

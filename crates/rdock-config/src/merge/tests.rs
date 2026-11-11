@@ -157,6 +157,48 @@ middlewares:
     );
 }
 
+#[test]
+fn provider_udp_routes_are_qualified_and_left_out_when_invalid() {
+    let file = FILE.replace(
+        "  web: { address: \":8080\" }\n",
+        "  web: { address: \":8080\" }\n  dns: { address: \":5353\", protocol: udp }\n",
+    );
+    let snapshot = docker(
+        "
+udp_routes:
+  dns: { listeners: [dns], service: dns, middlewares: [allow] }
+  second: { listeners: [dns], service: dns }
+  broken: { match: \"Host(`x.example.com`)\", listeners: [dns], service: dns }
+udp_services:
+  dns: { backends: [{ address: \"10.0.0.53:53\" }] }
+middlewares:
+  allow: { type: ip_allow, cidrs: [10.0.0.0/8] }
+",
+    );
+    let merged = assemble(&base(&file), &[&snapshot], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    let route = &merged.config.udp_routes["dns@docker"];
+    assert_eq!(route.service, "dns@docker");
+    assert_eq!(route.middlewares, ["allow@docker"]);
+    assert!(merged.config.udp_services.contains_key("dns@docker"));
+    // A second route without `match` on the listener, and an HTTP rule, are left out.
+    for name in ["broken@docker", "second@docker"] {
+        assert!(!merged.config.udp_routes.contains_key(name), "{name}");
+        assert!(
+            merged
+                .skipped
+                .iter()
+                .any(|d| d.path == format!("udp_routes[\"{name}\"]")),
+            "{:?}",
+            merged.skipped
+        );
+    }
+    assert_eq!(
+        owner("udp_services[\"dns@docker\"].backends"),
+        Some((Section::UdpServices, "dns@docker".to_owned()))
+    );
+}
+
 fn kubernetes(yaml: &str) -> Snapshot {
     let fragment: Fragment = serde_saphyr::from_str(yaml).unwrap();
     Snapshot {

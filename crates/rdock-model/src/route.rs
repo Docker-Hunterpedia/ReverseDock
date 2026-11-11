@@ -273,6 +273,31 @@ pub struct TcpRouteTls {
     pub passthrough: bool,
 }
 
+/// A UDP route: the datagrams of its `udp` listeners go to its UDP service. The backend is
+/// chosen once per session (a client address and port) and kept for the session's life.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UdpRoute {
+    /// Rule made of ``ClientIP(`…`)`` matchers only (with `&&`, `||`, `!`). Omitted, the route
+    /// takes every datagram of its listeners; a listener has at most one such route.
+    #[serde(rename = "match", default, skip_serializing_if = "Option::is_none")]
+    pub matcher: Option<String>,
+    /// `udp` listeners the route is attached to (required).
+    #[serde(default)]
+    pub listeners: Option<Vec<String>>,
+    /// Higher priorities are evaluated first. `0` uses the rule length.
+    #[serde(default)]
+    pub priority: i64,
+    /// UDP service (a key of `udp_services`).
+    pub service: String,
+    /// Middlewares checked before a session is created: `ip_allow` and `ip_deny`. A datagram
+    /// they refuse is dropped without an answer.
+    #[serde(default)]
+    pub middlewares: Vec<String>,
+    /// Set to `false` to keep the route defined but inactive.
+    #[serde(default = "crate::defaults::yes")]
+    pub enabled: bool,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

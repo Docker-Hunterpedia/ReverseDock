@@ -33,7 +33,7 @@ impl Checkers {
     pub(crate) fn restart(&self, runtime: &Runtime, client: &Arc<HttpClient>, metrics: &Metrics) {
         let mut tasks = self.tasks.lock().unwrap_or_else(PoisonError::into_inner);
         tasks.abort_all();
-        for service in runtime.services.values() {
+        for service in runtime.services.values().chain(runtime.udp_pools.values()) {
             if let Some(check) = service.health.active.clone() {
                 tasks.spawn(run(service.clone(), check, client.clone(), metrics.clone()));
             }

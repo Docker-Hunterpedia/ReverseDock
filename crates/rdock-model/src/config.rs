@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 use crate::acme::{Acme, AcmeSetting};
 use crate::middleware::Middleware;
 use crate::providers::Providers;
-use crate::route::{Route, RouteTls, TcpRoute, TlsMode};
-use crate::service::{Service, TcpService};
+use crate::route::{Route, RouteTls, TcpRoute, TlsMode, UdpRoute};
+use crate::service::{Service, TcpService, UdpService};
 use crate::settings::{Admin, Lifecycle, Observability, Security};
 use crate::values::{Duration, IpNetwork, ListenAddress};
 
@@ -45,6 +45,10 @@ pub struct Config {
     pub tcp_routes: BTreeMap<String, TcpRoute>,
     /// TCP backend pools.
     pub tcp_services: BTreeMap<String, TcpService>,
+    /// UDP routes: which `udp` listener's datagrams go to which UDP service.
+    pub udp_routes: BTreeMap<String, UdpRoute>,
+    /// UDP backend pools.
+    pub udp_services: BTreeMap<String, UdpService>,
     /// Certificates you provide yourself.
     pub certificates: BTreeMap<String, Certificate>,
     /// Dynamic configuration sources (file, Docker, Swarm, Kubernetes).
@@ -170,6 +174,10 @@ pub struct Listener {
     /// monitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.
     #[serde(default)]
     pub ping: Option<String>,
+    /// `udp` listeners: how many sessions (client address and port, each with its own
+    /// upstream socket) may exist at once. Capped by default even when omitted.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sessions: Option<UdpSessions>,
 }
 
 impl Listener {
@@ -184,6 +192,7 @@ impl Listener {
             starttls: None,
             timeouts: ListenerTimeouts::default(),
             ping: None,
+            sessions: None,
         }
     }
 
@@ -208,8 +217,105 @@ pub enum ListenerProtocol {
     Https,
     /// Raw TCP, optionally with TLS termination or SNI passthrough.
     Tcp,
-    /// UDP datagrams.
+    /// UDP datagrams, relayed per client address (a session) to a UDP service.
     Udp,
+}
+
+/// Session caps of a `udp` listener. Both are on by default: a UDP source address can be
+/// forged, so without a cap anyone could make the listener open sockets until it runs out of
+/// file descriptors (each session holds one socket and one task). Datagrams that would open
+/// a session over a cap are dropped and counted in `rdock_udp_dropped_total`, never answered.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UdpSessions {
+    /// Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluster at
+    /// 1,024 by default (`max_connections` circuit breaker, checked 2026-11-11 in
+    /// docs/research/v0.8-cache-extensibility.md §5.1); a listener here stands for a cluster
+    /// and may serve several clients' DNS bursts, and 4,096 sockets stay far below the
+    /// container default of 1,048,576 open files. `unlimited` removes the cap.
+    pub max: SessionLimit,
+    /// Sessions per client IP address (any source port). Default 64, so one source (or one
+    /// forged address) can take at most 1/64 of the listener's default budget; a resolver
+    /// that forwards many parallel queries from one address may need more. `unlimited`
+    /// removes the cap.
+    pub max_per_client: SessionLimit,
+}
+
+impl Default for UdpSessions {
+    fn default() -> Self {
+        Self {
+            max: SessionLimit::Count(4096),
+            max_per_client: SessionLimit::Count(64),
+        }
+    }
+}
+
+/// A session cap: a number of sessions, or `unlimited`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum SessionLimit {
+    /// At most this many (at least 1).
+    Count(u32),
+    /// No cap.
+    Unlimited,
+}
+
+impl SessionLimit {
+    /// The cap, `None` when unlimited.
+    #[must_use]
+    pub const fn get(self) -> Option<u32> {
+        match self {
+            Self::Count(n) => Some(n),
+            Self::Unlimited => None,
+        }
+    }
+}
+
+impl Serialize for SessionLimit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Count(n) => serializer.serialize_u32(*n),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for SessionLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Count(u64),
+            Word(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Count(0) => Err(serde::de::Error::custom(
+                "a session cap must be at least 1; write `unlimited` for no cap",
+            )),
+            Raw::Count(n) => u32::try_from(n)
+                .map(Self::Count)
+                .map_err(|_| serde::de::Error::custom("too large; write `unlimited` for no cap")),
+            Raw::Word(w) if w == "unlimited" => Ok(Self::Unlimited),
+            Raw::Word(w) => Err(serde::de::Error::custom(format!(
+                "`{w}` is not a number of sessions or `unlimited`"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for SessionLimit {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("SessionLimit")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "A number of sessions (at least 1), or `unlimited`.",
+            "oneOf": [
+                { "type": "integer", "minimum": 1, "maximum": 4_294_967_295_u64 },
+                { "type": "string", "enum": ["unlimited"] }
+            ]
+        })
+    }
 }
 
 /// Protocols whose own request to start TLS a `tcp` listener answers.

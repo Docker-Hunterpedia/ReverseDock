@@ -1,7 +1,7 @@
 //! Merging other providers' objects into the file configuration (ADR-0009, ADR-0018).
 //!
 //! The file configuration owns defaults and every setting; providers add routes, services,
-//! middlewares, TCP routes and TCP services under `name@provider` keys. Providers on
+//! middlewares, TCP and UDP routes and services under `name@provider` keys. Providers on
 //! [`LISTENER_PROVIDERS`] may also add listeners and certificates (ADR-0029); a provider
 //! listener never replaces a file listener or binds an address a file listener binds. The
 //! merged configuration goes through the model's validator, and an object with an error is
@@ -11,8 +11,8 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use rdock_model::config::{Certificate, Listener, ListenerProtocol};
 use rdock_model::middleware::Middleware;
-use rdock_model::route::{Route, RouteTls, TcpRoute};
-use rdock_model::service::{Service, TcpService};
+use rdock_model::route::{Route, RouteTls, TcpRoute, UdpRoute};
+use rdock_model::service::{Service, TcpService, UdpService};
 use rdock_model::{Config, Diagnostic};
 use serde::{Deserialize, Serialize};
 
@@ -37,6 +37,12 @@ pub struct Fragment {
     pub tcp_routes: BTreeMap<String, TcpRoute>,
     /// TCP backend pools.
     pub tcp_services: BTreeMap<String, TcpService>,
+    /// UDP routes.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub udp_routes: BTreeMap<String, UdpRoute>,
+    /// UDP backend pools.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub udp_services: BTreeMap<String, UdpService>,
     /// Listeners (providers on [`LISTENER_PROVIDERS`] only). Routes of the same fragment name
     /// them by their bare name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
@@ -98,6 +104,10 @@ pub enum Section {
     TcpRoutes,
     /// `tcp_services`
     TcpServices,
+    /// `udp_routes`
+    UdpRoutes,
+    /// `udp_services`
+    UdpServices,
     /// `listeners`
     Listeners,
     /// `certificates`
@@ -105,12 +115,14 @@ pub enum Section {
 }
 
 impl Section {
-    const ALL: [Self; 7] = [
+    const ALL: [Self; 9] = [
         Self::Routes,
         Self::Services,
         Self::Middlewares,
         Self::TcpRoutes,
         Self::TcpServices,
+        Self::UdpRoutes,
+        Self::UdpServices,
         Self::Listeners,
         Self::Certificates,
     ];
@@ -124,6 +136,8 @@ impl Section {
             Self::Middlewares => "middlewares",
             Self::TcpRoutes => "tcp_routes",
             Self::TcpServices => "tcp_services",
+            Self::UdpRoutes => "udp_routes",
+            Self::UdpServices => "udp_services",
             Self::Listeners => "listeners",
             Self::Certificates => "certificates",
         }
@@ -244,6 +258,8 @@ fn remove(config: &mut Config, (section, name): &ObjectKey) -> bool {
         Section::Middlewares => config.middlewares.remove(name).is_some(),
         Section::TcpRoutes => config.tcp_routes.remove(name).is_some(),
         Section::TcpServices => config.tcp_services.remove(name).is_some(),
+        Section::UdpRoutes => config.udp_routes.remove(name).is_some(),
+        Section::UdpServices => config.udp_services.remove(name).is_some(),
         // A file listener is never left out: it would take the implicit defaults' place.
         Section::Listeners => is_provider_owned(name) && config.listeners.remove(name).is_some(),
         Section::Certificates => config.certificates.remove(name).is_some(),
@@ -347,6 +363,25 @@ fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) 
             .middlewares
             .insert(format!("{name}@{provider}"), middleware);
     }
+    add_l4(config, provider, fragment, &own_listener);
+    dropped
+}
+
+/// Adds `fragment`'s TCP and UDP routes and services, like [`add`] does the HTTP objects.
+fn add_l4(
+    config: &mut Config,
+    provider: &str,
+    fragment: &Fragment,
+    own_listener: &dyn Fn(&str) -> bool,
+) {
+    let qualify = |reference: &str, own: &dyn Fn(&str) -> bool| -> String {
+        if !reference.contains('@') && own(reference) {
+            format!("{reference}@{provider}")
+        } else {
+            reference.to_owned()
+        }
+    };
+    let own_middleware = |name: &str| fragment.middlewares.contains_key(name);
     let own_tcp_service = |name: &str| fragment.tcp_services.contains_key(name);
     for (name, route) in &fragment.tcp_routes {
         let mut route = route.clone();
@@ -355,7 +390,7 @@ fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) 
             *middleware = qualify(middleware, &own_middleware);
         }
         for listener in route.listeners.iter_mut().flatten() {
-            *listener = qualify(listener, &own_listener);
+            *listener = qualify(listener, own_listener);
         }
         config
             .tcp_routes
@@ -366,7 +401,25 @@ fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) 
             .tcp_services
             .insert(format!("{name}@{provider}"), service.clone());
     }
-    dropped
+    let own_udp_service = |name: &str| fragment.udp_services.contains_key(name);
+    for (name, route) in &fragment.udp_routes {
+        let mut route = route.clone();
+        route.service = qualify(&route.service, &own_udp_service);
+        for middleware in &mut route.middlewares {
+            *middleware = qualify(middleware, &own_middleware);
+        }
+        for listener in route.listeners.iter_mut().flatten() {
+            *listener = qualify(listener, own_listener);
+        }
+        config
+            .udp_routes
+            .insert(format!("{name}@{provider}"), route);
+    }
+    for (name, service) in &fragment.udp_services {
+        config
+            .udp_services
+            .insert(format!("{name}@{provider}"), service.clone());
+    }
 }
 
 /// The listeners and certificates of `fragment` that may be merged, and a warning for each one

@@ -628,7 +628,7 @@ Value for files no prefix matches. `no-cache` makes clients revalidate with the 
 
 **Type:** `boolean` · **Default:** `true`
 
-Redirect (`308`) a directory path without a trailing slash to the path with one when the directory has an index file.
+Redirect (`308`) a directory path without a trailing slash to the path with one when the directory has an index file, or is listed.
 
 ### `middlewares.<name>.fallback`
 
@@ -661,11 +661,7 @@ File names tried, in order, for a request that names a directory.
 
 **Type:** `boolean` · **Default:** `false`
 
-Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
-
-:::note[Planned for v0.8]
-Directory listing (F-WEB-02): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.8.
-:::
+List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that prefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request would be refused are not listed. At most 10,000 entries, sorted by name. A directory that exists is listed instead of getting the `fallback`.
 
 ### `middlewares.<name>.max_ranges`
 
