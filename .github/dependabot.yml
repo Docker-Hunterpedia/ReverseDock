@@ -79,3 +79,16 @@ updates:
       # The types follow the Node major the website runs on (24, see .github/workflows/website.yml).
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+  - package-ecosystem: gomod
+    directory: /clients/terraform
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    labels: ["dependencies", "type/chore"]
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]

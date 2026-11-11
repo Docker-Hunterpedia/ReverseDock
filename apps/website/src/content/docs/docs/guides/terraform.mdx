@@ -1,0 +1,177 @@
+---
+title: Manage routes with Terraform or OpenTofu
+description: Build the ReverseDock provider from source and manage the routes, services and middlewares of the admin API with Terraform or OpenTofu, with import, drift detection and safe concurrent writes.
+sidebar:
+  order: 15
+---
+
+import Status from '../../../../components/Status.astro';
+
+The ReverseDock provider <Status since="v0.8" /> manages the **routes, services and middlewares that the admin API owns** (`name@api` in the running configuration) from Terraform or OpenTofu. Its source is in `clients/terraform` of the repository.
+
+:::caution[Not published yet]
+The provider is **not on the Terraform Registry or the OpenTofu Registry.** Today you build it from source and point Terraform or OpenTofu at the binary (see [Install from source](#install-from-source)). It has been tested with Terraform 1.17.2 and OpenTofu 1.13.9 against an in-process fake of the admin API; it has not yet been run against a real `rdock` outside the project's CI job for that. Publishing needs two things only a maintainer can do: a separate public repository named `terraform-provider-reversedock`, which both registries require ([Terraform Registry: publishing providers](https://developer.hashicorp.com/terraform/registry/providers/publishing), checked 2026-11-11), and a GPG key to sign releases.
+:::
+
+## What it manages, and what it cannot
+
+| Resource | Admin API | Role the token needs |
+|---|---|---|
+| `reversedock_route` | `PUT`/`DELETE /api/v1/routes/{name}` | `operator` |
+| `reversedock_service` | `PUT`/`DELETE /api/v1/services/{name}` | `operator` |
+| `reversedock_middleware` | `PUT`/`DELETE /api/v1/middlewares/{name}` | `operator` |
+
+The data sources `reversedock_route`, `reversedock_service`, `reversedock_middleware` and `reversedock_status` read the API with a `viewer` token.
+
+- Each resource is a `name` and a `spec`, **one JSON object in the shape of the matching section of `rdock.yaml`** (`jsonencode({…})`). Whatever `rdock validate` accepts in a `routes`, `services` or `middlewares` entry is accepted in `spec`, and the provider cannot fall behind the configuration model. Formatting and key order never show as a change.
+- **Only objects of the `api` provider can be changed.** Objects from the configuration file, Docker, Swarm or Kubernetes are read-only: the API answers `403` and names the owner, and the provider shows that. The data sources can still read them (`name = "whoami@docker"`).
+- **TCP and UDP routes and services have no resources.** The admin API's object endpoints serve only `routes`, `services` and `middlewares`.
+- Listeners, certificates, users and tokens are not resources either. Create the provider's token on the server.
+
+## Install from source
+
+You need Go 1.25.8 or newer (the provider needs no C compiler). In a checkout of the repository:
+
+```sh
+cd clients/terraform
+make build        # ./terraform-provider-reversedock
+```
+
+Then tell the CLI where the binary is, in `~/.terraformrc` for Terraform or `~/.tofurc` for OpenTofu, or in a file named by `TF_CLI_CONFIG_FILE`:
+
+```hcl title="~/.terraformrc"
+provider_installation {
+  dev_overrides { "Docker-Hunterpedia/reversedock" = "/path/to/ReverseDock/clients/terraform" }
+  direct {}
+}
+```
+
+With a development override you do not run `terraform init` for this provider; Terraform warns that overrides are in effect. The source address `Docker-Hunterpedia/reversedock` is the one in the examples and will change to the real owner of the registry repository when the provider is published.
+
+## Configure the provider
+
+Create a token on the server over the admin socket, which needs no token. A `viewer` token is enough to plan and to use the data sources:
+
+```sh
+rdock tokens create terraform --role operator --days 90
+```
+
+The first line of the output is the token (`rdk_pat_…`); it is shown only once. With `admin.api_writes: false` (GitOps) every write answers `403`.
+
+| Setting | Environment variable | Meaning |
+|---|---|---|
+| `endpoint` | `RDOCK_ADMIN_URL` | URL of the admin API: `https://…`, or `http://` on a loopback address only. |
+| `token` (sensitive) | `RDOCK_ADMIN_TOKEN` | The API token. |
+| `ca_cert_file` | | PEM file of the CA that signed the admin listener's certificate, added to the system roots. |
+| `timeout` | | Time limit per request, default `30s`. |
+| `conflict_retries` | | Retries after `412`, default 5. |
+| `validate_on_plan` | | Dry-run changed specs during `plan` (needs `operator`; off by default). |
+
+There is deliberately no option to skip certificate verification, and plain HTTP is refused except to a loopback address. Redirects are never followed. The `RDOCK_ADMIN` variable of the `rdock` command is an `IP:port`, which is why the URL has its own variable; see [Environment variables](/docs/reference/environment/). Keep the token out of the configuration:
+
+```sh
+export RDOCK_ADMIN_URL=https://rdock.example.com:2080
+export RDOCK_ADMIN_TOKEN=rdk_pat_…
+```
+
+## A service, a middleware and a route
+
+This is `clients/terraform/examples/complete`:
+
+```hcl title="main.tf"
+terraform {
+  required_providers {
+    reversedock = {
+      source = "Docker-Hunterpedia/reversedock"
+    }
+  }
+}
+
+provider "reversedock" {}
+
+resource "reversedock_service" "shop" {
+  name = "shop"
+  spec = jsonencode({
+    backends = [{ address = "10.0.0.5:8080" }]
+    health = {
+      active = {
+        path     = "/healthz"
+        interval = "10s"
+      }
+    }
+  })
+}
+
+resource "reversedock_middleware" "security_headers" {
+  name = "security-headers"
+  spec = jsonencode({
+    type = "headers"
+    response = {
+      set = { "X-Content-Type-Options" = "nosniff" }
+    }
+  })
+}
+
+resource "reversedock_route" "shop" {
+  name = "shop"
+  spec = jsonencode({
+    match       = "Host(`shop.example.com`) && PathPrefix(`/`)"
+    service     = reversedock_service.shop.name
+    middlewares = [reversedock_middleware.security_headers.name]
+  })
+}
+
+output "route_etag" {
+  value = reversedock_route.shop.etag
+}
+```
+
+Names follow rdock's rule: a letter or digit first, then letters, digits, `-`, `_` and `.`, at most 63 characters, no `@`. References between API objects use the bare name. Because the references are expressions, Terraform creates the service and the middleware first and deletes them last; the API refuses to delete an object that something still refers to, and says which one. `etag` is computed and informational.
+
+## Import
+
+An object created in the dashboard or with `curl` comes under Terraform's control with an `import` block (Terraform 1.5 and OpenTofu 1.6 or newer) or the command line, using the bare name:
+
+```hcl
+import {
+  to = reversedock_service.legacy
+  id = "legacy"
+}
+
+resource "reversedock_service" "legacy" {
+  name = "legacy"
+  spec = jsonencode({ backends = [{ address = "10.0.0.9:8080" }] })
+}
+```
+
+```sh
+terraform import reversedock_service.legacy legacy
+```
+
+Only API-owned objects can be imported. The first apply after an import replaces the object with your `spec`.
+
+## Drift and secrets
+
+`plan` and `refresh` read each object back. The API returns objects with every default filled in and durations normalised, so the provider never compares your text with the server's. It keeps what the server showed right after its last write: equal to that is no drift, anything else is drift, and the plan then proposes your configuration. An object deleted outside Terraform is planned for creation.
+
+The API masks secrets as `***` (and basic-auth entries as `name:***`), so **a secret changed outside Terraform is not detected.** Write secrets as `${file:…}` or `${env:…}` references (see [Secrets](/docs/guides/secrets/)); the `spec` is stored in Terraform's state as written, so the state file is sensitive all the same.
+
+## Concurrent writers
+
+All API-owned objects are one document with one version, and the provider handles that:
+
+- A lock per admin endpoint, shared by all provider instances in the process, **serialises writes** although Terraform applies resources in parallel.
+- Every write reads `GET /api/v1/config/api`, sends `PUT` or `DELETE` with `If-Match`, and on `412` (the dashboard, `curl` or another `terraform apply` wrote in between) reads again and retries, up to `conflict_retries` times with a short back-off, then fails and says another writer is active.
+- On `429` it waits for `Retry-After` and retries (the API accepts 5 configuration writes a second across all callers, bursts of 10; see [the configuration API](/docs/guides/config-api/)).
+- A write the API rejects with `422` (an unknown service, a missing middleware) changes nothing; the diagnostics appear on the `spec` attribute.
+- Each object is one write and one configuration reload on the server, so large configurations apply slowly by design; `-parallelism` does not change that.
+
+## OpenTofu
+
+The provider speaks protocol 6 and the same schema to both. The project's tests run every scenario with a Terraform binary and again with an OpenTofu binary. Use the same `.tf` files; with OpenTofu the source address `Docker-Hunterpedia/reversedock` resolves to `registry.opentofu.org/Docker-Hunterpedia/reversedock`, and the development override goes in `~/.tofurc` (or `TF_CLI_CONFIG_FILE`). OpenTofu's registry accepts providers only through its own submission form, after the repository and signing key exist ([OpenTofu registry](https://github.com/opentofu/registry), checked 2026-11-11).
+
+## Related
+
+- [Change the configuration through the API](/docs/guides/config-api/)
+- [Secrets and environment variables](/docs/guides/secrets/)
+- The provider's [README](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/clients/terraform/README.md) and generated reference

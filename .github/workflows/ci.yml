@@ -227,6 +227,90 @@ jobs:
           path: apps/dashboard/e2e/screenshots/
           retention-days: 14
 
+  # The Terraform/OpenTofu provider (F-MGMT-02, clients/terraform). Not a required check. The
+  # provider's CLI-driven tests run against its in-process fake of the admin API with Terraform
+  # and with OpenTofu, then against a real rdock built from this commit with both.
+  terraform-provider:
+    name: terraform-provider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: clients/terraform/go.mod
+          cache-dependency-path: |
+            clients/terraform/go.sum
+            clients/go/go.sum
+      # The wrappers are off: the tests call the binaries through terraform-exec, which needs
+      # their real output.
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.9
+          tofu_wrapper: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Vet, gofmt, tidy, unit tests, generated docs up to date
+        working-directory: clients/terraform
+        run: make check
+      - name: Examples validate with Terraform and OpenTofu (provider as a development override)
+        working-directory: clients/terraform
+        run: |
+          make build
+          cat > "$RUNNER_TEMP/dev.tfrc" <<EOF
+          provider_installation {
+            dev_overrides { "Docker-Hunterpedia/reversedock" = "$PWD" }
+            direct {}
+          }
+          EOF
+          export TF_CLI_CONFIG_FILE="$RUNNER_TEMP/dev.tfrc"
+          for cli in terraform tofu; do
+            for dir in examples/provider examples/complete examples/import; do
+              "$cli" -chdir="$dir" validate
+            done
+          done
+      - name: CLI-driven tests against the fake admin API (Terraform, then OpenTofu)
+        working-directory: clients/terraform
+        run: |
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test ./... -count=1 -timeout 20m
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v tofu)" TF_ACC_PROVIDER_HOST=registry.opentofu.org \
+            go test ./... -count=1 -timeout 20m
+      - name: Build rdock
+        run: cargo build --locked -p rdock
+      - name: CLI-driven tests against a real rdock (Terraform, then OpenTofu)
+        run: |
+          RDOCK_DATA_DIR="$(mktemp -d)"
+          export RDOCK_DATA_DIR
+          config="$PWD/clients/terraform/testdata/rdock.yaml"
+          log="$RUNNER_TEMP/rdock.log"
+          target/debug/rdock run --config "$config" > "$log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; cat "$log"' EXIT
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:12080/healthz > /dev/null && break
+            kill -0 "$pid" || { echo "::error::rdock exited during start"; exit 1; }
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:12080/healthz
+          # Over the admin socket in $RDOCK_DATA_DIR, which needs no token and no user. The
+          # token is the first line of the output; the second line is a reminder.
+          output="$(target/debug/rdock tokens create terraform-acc --role operator --days 1 --config "$config")"
+          token="$(printf '%s\n' "$output" | sed -n 1p)"
+          echo "::add-mask::$token"
+          export RDOCK_ADMIN_URL=http://127.0.0.1:12080
+          export RDOCK_ADMIN_TOKEN="$token"
+          cd clients/terraform
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test ./... -count=1 -timeout 20m
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v tofu)" TF_ACC_PROVIDER_HOST=registry.opentofu.org \
+            go test ./... -count=1 -timeout 20m
+
   docker:
     name: docker
     runs-on: ubuntu-24.04

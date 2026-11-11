@@ -69,6 +69,10 @@ The admin API address used by `rdock reload`, `rdock status` and `rdock healthch
 `admin.listener` in the configuration file, with `127.0.0.1` in place of an unspecified address;
 when the file cannot be read, `127.0.0.1:2080` is used.
 
+## Read by other programs, not by `rdock`
+
+The [Terraform and OpenTofu provider](/docs/guides/terraform/) <Status since="v0.8" /> reads `RDOCK_ADMIN_URL` (the URL of the admin API, `https://…`, or `http://` on a loopback address) and `RDOCK_ADMIN_TOKEN` (the same kind of API token as above). The `rdock` binary ignores `RDOCK_ADMIN_URL`; it takes `RDOCK_ADMIN` as `IP:port`.
+
 ## Variables in the configuration
 
 String values in `rdock.yaml` can refer to any environment variable as `${NAME}` or
