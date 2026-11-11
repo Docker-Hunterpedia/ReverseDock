@@ -2,8 +2,8 @@
 //! (ADR-0029, "Only what works is claimed").
 //!
 //! This is the single list. A feature is added here only together with a test that proves
-//! it (a translator test on fixtures in `tests/gateway_conformance.rs` or
-//! `tests/gateway_extended.rs` that transcribes the upstream conformance test and, once CI
+//! it (a translator test on fixtures in `tests/gateway_conformance.rs`,
+//! `tests/gateway_extended.rs` or `tests/gateway_listenerset.rs` that transcribes the upstream conformance test and, once CI
 //! runs it, the upstream conformance test itself). With no feature flags, the conformance
 //! suite runs exactly these features, so a feature listed without working support fails the
 //! suite, and one missing from the list is skipped.
@@ -19,8 +19,7 @@
 //! identical matches to combine), `GatewayHTTPListenerIsolation`,
 //! `GatewayRouteHostnameIntersectionPrecedence`, `GatewayStaticAddresses`,
 //! `GatewayAddressEmpty`, `GatewayInfrastructure`, client certificate validation,
-//! `TLSRouteModeTerminate`, `TLSRouteModeMixed`, `ListenerSet`, `BackendTLSPolicy`,
-//! `UDPRoute`.
+//! `TLSRouteModeTerminate`, `TLSRouteModeMixed`, `BackendTLSPolicy`, `UDPRoute`.
 
 /// Supported feature names (e.g. `Gateway`, `HTTPRoute`, `HTTPRouteQueryParamMatching`),
 /// sorted.
@@ -46,6 +45,7 @@ pub const SUPPORTED: &[&str] = &[
     "HTTPRouteRequestMirror",
     "HTTPRouteResponseHeaderModification",
     "HTTPRouteSchemeRedirect",
+    "ListenerSet",
     "ReferenceGrant",
     "TCPRoute",
     "TLSRoute",

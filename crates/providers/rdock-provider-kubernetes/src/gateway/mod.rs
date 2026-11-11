@@ -12,25 +12,27 @@
 //! 1. [`classes`]: GatewayClasses whose `controllerName` is ours get `Accepted`,
 //!    `SupportedVersion` and `supportedFeatures`; others are not touched.
 //! 2. [`listeners`]: each Gateway of an accepted class of ours is validated listener by
-//!    listener (protocol, route kinds, certificates, conflicts); one internal listener is
+//!    listener (protocol, route kinds, certificates, conflicts); the listeners of the
+//!    ListenerSets it allows are merged into it ([`listener_sets`]); one internal listener is
 //!    opened per Gateway port once the Gateway's Service maps it to an internal port; the
 //!    Service itself is desired as soon as the Gateway is accepted.
 //! 3. [`attach`]: every parentRef of every route is matched against the listeners
 //!    (`sectionName`, `port`, `allowedRoutes`, host names) and gets its `status.parents`
-//!    entry; parentRefs to anything that is not a Gateway of ours get none.
+//!    entry; parentRefs to anything that is not a Gateway (or a ListenerSet of a Gateway) of
+//!    ours get none.
 //! 4. [`http`] (HTTPRoute, GRPCRoute) and [`l4`] (TLSRoute, TCPRoute, UDPRoute) turn the
 //!    rules of accepted routes into routes, services and middlewares on the internal
 //!    listeners they attach to, with priorities from [`priority`].
-//! 5. The listener and Gateway status is completed (`attachedRoutes`).
+//! 5. The listener, Gateway and ListenerSet status is completed (`attachedRoutes`,
+//!    `attachedListenerSets`).
 //!
 //! Object names are built by [`names`]; every object left out gets a warning whose path
 //! starts with `kubernetes["<Kind>/<namespace>/<name>"]`.
 //!
 //! BackendTLSPolicies are applied to the backends of HTTPRoutes and GRPCRoutes
-//! ([`policies`]), not claimed yet. Not supported yet, and reported: ListenerSets (their
-//! status says `Accepted=False/NotAllowed`, routes attached to them `NoMatchingParent`),
-//! static Gateway addresses, `tls.mode: Terminate` on `TLS` listeners (the listener is not
-//! accepted, `UnsupportedValue`), UDP.
+//! ([`policies`]), not claimed yet. Not supported yet, and reported: static Gateway
+//! addresses, `tls.mode: Terminate` on `TLS` listeners (the listener is not accepted,
+//! `UnsupportedValue`), UDP.
 
 pub mod attach;
 pub mod classes;
@@ -39,6 +41,7 @@ pub mod grants;
 pub mod hostnames;
 pub mod http;
 pub mod l4;
+pub mod listener_sets;
 pub mod listeners;
 pub mod names;
 pub mod policies;
@@ -65,7 +68,7 @@ pub fn translate(inventory: &Inventory, settings: &Settings) -> Translation {
     l4::translate(&mut cx, &ranks);
     listeners::finish(&mut cx);
     policies::finish(&mut cx);
-    listener_sets(&mut cx);
+    listener_sets::finish(&mut cx);
     let notes = cx.notes.take();
     cx.out.diagnostics.extend(notes);
     cx.out
@@ -83,6 +86,10 @@ pub struct Context<'a> {
     pub gateways: Vec<listeners::GatewayState<'a>>,
     /// Index into `gateways` by key.
     pub gateway_index: BTreeMap<ObjectKey, usize>,
+    /// The ListenerSets whose parent is one of `gateways`, in precedence order.
+    pub listener_sets: Vec<listener_sets::ListenerSetState>,
+    /// Index into `listener_sets` by key.
+    pub listener_set_index: BTreeMap<ObjectKey, usize>,
     /// BackendTLSPolicies, evaluated.
     pub policies: BTreeMap<ObjectKey, policies::PolicyState>,
     /// Warnings found where only a shared borrow of the context is at hand (backend
@@ -98,6 +105,8 @@ impl<'a> Context<'a> {
             out: Translation::default(),
             gateways: Vec::new(),
             gateway_index: BTreeMap::new(),
+            listener_sets: Vec::new(),
+            listener_set_index: BTreeMap::new(),
             policies: BTreeMap::new(),
             notes: std::cell::Cell::default(),
         }
@@ -175,88 +184,6 @@ pub fn namespace_labels<'a>(
     namespace: &str,
 ) -> Option<&'a BTreeMap<String, String>> {
     inventory.namespaces.get(namespace)
-}
-
-/// ListenerSets whose parent Gateway is ours are not supported yet: they get
-/// `Accepted=False/NotAllowed` and `Programmed=False/Invalid`, and every listener entry
-/// `Accepted=False/UnsupportedValue`, so their authors see why nothing listens.
-fn listener_sets(cx: &mut Context<'_>) {
-    use conditions::{condition, reasons, types};
-    for (key, set) in &cx.inventory.listener_sets {
-        let parent = &set.spec.parent_ref;
-        let group_ok = parent
-            .group
-            .as_deref()
-            .is_none_or(|g| g == crate::api::GROUP);
-        let kind_ok = parent
-            .kind
-            .as_deref()
-            .is_none_or(|k| k == crate::api::kinds::GATEWAY);
-        let namespace = parent.namespace.clone().unwrap_or_else(|| key.0.clone());
-        if !group_ok
-            || !kind_ok
-            || !cx
-                .gateway_index
-                .contains_key(&(namespace, parent.name.clone()))
-        {
-            continue;
-        }
-        let generation = set.metadata.generation;
-        let message = "ListenerSets are not supported by ReverseDock yet";
-        cx.warn(
-            &object_id(crate::api::kinds::LISTENER_SET, &key.0, &key.1),
-            "",
-            message,
-        );
-        let listeners = set
-            .spec
-            .listeners
-            .iter()
-            .map(|l| crate::translate::DesiredListener {
-                name: l.name.clone(),
-                supported_kinds: Vec::new(),
-                attached_routes: 0,
-                conditions: vec![
-                    condition(
-                        types::ACCEPTED,
-                        false,
-                        reasons::UNSUPPORTED_VALUE,
-                        message,
-                        generation,
-                    ),
-                    condition(
-                        types::PROGRAMMED,
-                        false,
-                        reasons::INVALID,
-                        message,
-                        generation,
-                    ),
-                ],
-            })
-            .collect();
-        cx.out.status.listener_sets.insert(
-            key.clone(),
-            crate::translate::DesiredListenerSet {
-                conditions: vec![
-                    condition(
-                        types::ACCEPTED,
-                        false,
-                        reasons::NOT_ALLOWED,
-                        message,
-                        generation,
-                    ),
-                    condition(
-                        types::PROGRAMMED,
-                        false,
-                        reasons::INVALID,
-                        message,
-                        generation,
-                    ),
-                ],
-                listeners,
-            },
-        );
-    }
 }
 
 /// A set of route keys (for `attachedRoutes`).

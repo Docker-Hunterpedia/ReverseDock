@@ -25,7 +25,8 @@ It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The contro
 | TCPRoute | Yes, on `TCP` listeners. |
 | ReferenceGrant | Yes, for every reference across namespaces. |
 | BackendTLSPolicy | Applied to HTTPRoute and GRPCRoute backends, but not claimed as a supported feature. |
-| UDPRoute, ListenerSet | **Not supported.** UDP waits for v0.8; ListenerSet is not implemented and is reported. |
+| ListenerSet | Yes, when the parent Gateway allows it ([below](#listenersets)). |
+| UDPRoute | **Not supported.** UDP waits for v0.8. |
 
 ## How the pieces map
 
@@ -34,6 +35,7 @@ It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The contro
 | **GatewayClass** `controllerName: reversedock.dev/gateway-controller` | Says this ReverseDock serves the class. Its status gets `Accepted`, `SupportedVersion` (the installed CRD bundle against 1.7) and `supportedFeatures`. |
 | **Gateway** | One internal listener per (Gateway, port) in every ReverseDock pod, and **one Service per Gateway**. The Gateway's `status.addresses` is that Service's address. |
 | **HTTPRoute, GRPCRoute, TLSRoute, TCPRoute** | ReverseDock routes, services and middlewares on those listeners, named with `@kubernetes`. They appear read-only in `rdock status` and the dashboard. |
+| **ListenerSet** | More listeners for a Gateway that allows them: they join the Gateway's internal listeners and its Service ([below](#listenersets)). |
 | **Service + EndpointSlices** | The backend pool of a `backendRef`: ReverseDock sends to pod addresses, not to the Service's cluster IP, and balances, drains and health-checks them itself. |
 | **Secret** (`kubernetes.io/tls`) | The certificate of an HTTPS listener. |
 
@@ -166,6 +168,66 @@ spec:
 
 The model has no weighted split for TCP, so the backends of a rule are pooled: each endpoint gets its reference's weight divided by the number of endpoints of that Service, so each Service receives about its share whatever its size. A reference that cannot be resolved contributes nothing, and a route with no usable endpoint accepts no connection. See [TCP routes](/docs/guides/tcp-routes/) for what the proxy does with them.
 
+## ListenerSets
+
+A ListenerSet adds listeners to a Gateway it does not own, for example so that a team can bring its own host name and certificate. The Gateway must allow it: `spec.allowedListeners.namespaces.from` is `None` by default, and `Same`, `All` or `Selector` (with a namespace label `selector`; without one no namespace is selected) let ListenerSets attach.
+
+```yaml title="listenerset.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: shared
+  namespace: infra
+spec:
+  gatewayClassName: reversedock
+  allowedListeners:
+    namespaces:
+      from: All
+  listeners:
+    - name: http
+      port: 80
+      protocol: HTTP
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: ListenerSet
+metadata:
+  name: shop
+  namespace: shop
+spec:
+  parentRef:
+    name: shared
+    namespace: infra
+  listeners:
+    - name: https
+      port: 443
+      protocol: HTTPS
+      hostname: shop.example.com
+      tls:
+        certificateRefs:
+          - name: shop-example-com-tls
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: shop
+  namespace: shop
+spec:
+  parentRefs:
+    - kind: ListenerSet
+      group: gateway.networking.k8s.io
+      name: shop
+      sectionName: https
+  rules:
+    - backendRefs:
+        - name: shop
+          port: 8080
+```
+
+- **Listeners:** a ListenerSet's listeners come after the Gateway's own, ListenerSets ordered by creation time, then by namespace and name. A listener that conflicts with one before it (the same port and host name, or another protocol on the port) is refused with `Conflicted=True`, and the earlier one keeps working. A listener on a port the Gateway already has shares that port's internal listener, separated by host name; a new port gets a port on the Gateway's Service.
+- **Certificates:** `certificateRefs` without a namespace mean the ListenerSet's namespace. A Secret in another namespace needs a ReferenceGrant `from` kind `ListenerSet`; the Gateway's grants do not count.
+- **Routes:** a route attaches with a parentRef of kind `ListenerSet`, to all its listeners or, with `sectionName`, to one. `allowedRoutes` `from: Same` means the ListenerSet's namespace. A parentRef to the Gateway reaches only the Gateway's own listeners, and its `sectionName` names only those.
+- **Status:** the ListenerSet gets `Accepted` and `Programmed` and a status per listener with `attachedRoutes`; the Gateway's `status.attachedListenerSets` counts the accepted ones. `Accepted=False` says why: `NotAllowed` (the Gateway does not allow the namespace), `ParentNotAccepted`, or `ListenersNotValid` (no listener is usable). A route to a ListenerSet that is not accepted gets `NotAllowedByListeners`. A ListenerSet whose Gateway is missing or not ReverseDock's gets no status from ReverseDock.
+
 ## Several namespaces
 
 Which routes may attach to a listener is the listener's `allowedRoutes`: `namespaces.from` is `Same` (the default), `All` or `Selector`, and `kinds` narrows the route kinds. A route that is not allowed gets `Accepted=False` with the reason `NotAllowedByListeners`. A route may name a Service in another namespace in `backendRefs` only when a ReferenceGrant in the Service's namespace allows it from the route's kind and namespace; otherwise the reference is `ResolvedRefs=False` with `RefNotPermitted`.
@@ -217,7 +279,7 @@ kubectl get gatewayclass reversedock -o jsonpath='{.status.supportedFeatures[*].
 | Group | Claimed |
 |---|---|
 | Core | `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`, `TCPRoute`, `ReferenceGrant` |
-| Gateway | `GatewayPort8080` |
+| Gateway | `GatewayPort8080`, `ListenerSet` |
 | HTTP matching | `HTTPRouteMethodMatching`, `HTTPRouteQueryParamMatching`, `HTTPRouteParentRefPort`, `HTTPRouteNamedRouteRule` |
 | HTTP filters | `HTTPRouteResponseHeaderModification`, `HTTPRouteHostRewrite`, `HTTPRoutePathRewrite`, `HTTPRoutePathRedirect`, `HTTPRoutePortRedirect`, `HTTPRouteSchemeRedirect`, `HTTPRoute303RedirectStatusCode`, `HTTPRoute307RedirectStatusCode`, `HTTPRoute308RedirectStatusCode`, `HTTPRouteRequestMirror` |
 | Backends | `HTTPRouteBackendProtocolH2C`, `HTTPRouteBackendProtocolWebSocket` |
@@ -238,7 +300,6 @@ What is not supported, and what happens to it:
 | Client certificate validation on a Gateway | Not claimed. |
 | `HTTPRouteDestinationPortMatching`, `HTTPRouteBackendURLRewrite`, `GRPCRouteRequestHeaderModifier` | Not claimed. |
 | `TLSRouteModeTerminate`, `TLSRouteModeMixed` | A `TLS` listener with `mode: Terminate` is `Accepted=False` (`UnsupportedValue`). Not claimed. |
-| `ListenerSet` | Not implemented: the object is reported `Accepted=False`, and routes that attach to it get `NoMatchingParent`. |
 | `UDPRoute`, `UDP` listeners | The listener is `Accepted=False` (`UnsupportedProtocol`); a UDPRoute is not accepted. UDP is planned for v0.8. |
 | `BackendTLSPolicy` as a feature | Applied (above) but not claimed. |
 | Listener `tls.options` | Ignored with a diagnostic. |
@@ -256,10 +317,10 @@ kubectl get gatewayclass reversedock -o yaml
 
 | Condition | On | Meaning |
 |---|---|---|
-| `Accepted` | GatewayClass, Gateway, listener, route parent | The object is valid and ReverseDock will use it. `False` has a reason such as `UnsupportedProtocol`, `NotAllowedByListeners`, `NoMatchingParent`. |
-| `Programmed` | Gateway, listener | The Service has an address and maps the port, and the listener is open. `Pending` waits for the Service; `AddressNotAssigned` waits for the load balancer; `Invalid` has a message. |
+| `Accepted` | GatewayClass, Gateway, ListenerSet, listener, route parent | The object is valid and ReverseDock will use it. `False` has a reason such as `UnsupportedProtocol`, `NotAllowedByListeners`, `NoMatchingParent`. |
+| `Programmed` | Gateway, ListenerSet, listener | The Service has an address and maps the port, and the listener is open. `Pending` waits for the Service; `AddressNotAssigned` waits for the load balancer; `Invalid` has a message. |
 | `ResolvedRefs` | listener, route parent | Every reference resolves: certificates, route kinds, Services, grants. The reason names the first failure (`InvalidCertificateRef`, `RefNotPermitted`, `BackendNotFound`, `InvalidKind`). |
-| `Conflicted` | listener | Two listeners of a port disagree (`ProtocolConflict`, `HostnameConflict`); both are refused, neither wins. |
+| `Conflicted` | listener | Two listeners of a port disagree (`ProtocolConflict`, `HostnameConflict`). Between a Gateway's own listeners both are refused and neither wins; a ListenerSet's listener is refused and the one that takes precedence keeps working. |
 | `SupportedVersion` | GatewayClass | `False` means the CRD bundle is not 1.7; the class stays accepted. |
 | `PartiallyInvalid` | route parent | Some rules were dropped; the message names them. |
 
@@ -297,7 +358,7 @@ If ReverseDock gets a burst of changes, translations are coalesced: at most one 
 - One Gateway port is one listener in every pod. The port range bounds how many (10,000 by default).
 - Listeners are in-process sockets in shared pods. A Gateway's address is a Service address, not a pod: a host-port DaemonSet exposes the file-configured Ingress listeners only, not Gateway listeners.
 - `providers.kubernetes.namespaces` (chart `watchNamespaces`) limits which namespaces are watched.
-- No request timeout, retry policy, ListenerSet or UDP yet ([above](#what-is-supported)).
+- No request timeout, retry policy or UDP yet ([above](#what-is-supported)).
 - The data plane never waits for the Kubernetes API at request time; the last snapshot serves while the API is away.
 - Not yet proven: the upstream conformance suite and the Helm install on k3s run in CI as informational jobs that have not passed.
 

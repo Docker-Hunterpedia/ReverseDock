@@ -1736,7 +1736,7 @@ fn every_upstream_manifest_translates_to_a_fragment_that_compiles() {
 }
 
 // ---------------------------------------------------------------------------------------
-// Not claimed: BackendTLSPolicy (applied, CI pending) and ListenerSet (refused).
+// Not claimed: BackendTLSPolicy (applied, CI pending). ListenerSet: gateway_listenerset.rs.
 
 #[test]
 fn backend_tls_policy_sets_https_with_the_policy_hostname_and_ca() {
@@ -1840,25 +1840,4 @@ impl MatcherText for rdock_model::route::Route {
             rdock_model::route::MatchSpec::Structured(s) => format!("{s:?}"),
         }
     }
-}
-
-#[test]
-fn listener_sets_are_refused_with_a_reason() {
-    let r = router(&["listenerset-http-routing"]);
-    let t = &r.translation;
-    let set =
-        &t.status.listener_sets[&(INFRA.to_owned(), "listener-set-http-routing-1".to_owned())];
-    assert_condition(&set.conditions, "Accepted", false, "NotAllowed");
-    assert_condition(
-        &set.listeners[0].conditions,
-        "Accepted",
-        false,
-        "UnsupportedValue",
-    );
-    let p = parents(t, Http, INFRA, "attaches-to-all-listeners");
-    let to_set = p
-        .iter()
-        .find(|p| p.parent_ref.kind.as_deref() == Some("ListenerSet"))
-        .unwrap();
-    assert_condition(&to_set.conditions, "Accepted", false, "NoMatchingParent");
 }

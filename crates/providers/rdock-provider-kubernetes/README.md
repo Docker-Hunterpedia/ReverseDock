@@ -17,7 +17,10 @@ Modules (each has one owner, so they can change independently):
 - `translate`: `translate(&Inventory, &Settings) -> Translation`, pure: the fragment, the
   diagnostics, the desired status of every object, the per-Gateway Services, and the Secrets
   and ConfigMaps to write as files (`secret_paths`, `config_map_path`).
-- `gateway`, `ingress`: the two translators `translate` calls.
+- `gateway`, `ingress`: the two translators `translate` calls. ListenerSets are part of the
+  Gateway translator (`gateway::listener_sets`): their listeners join the parent Gateway's;
+  the upstream tests gated on the `ListenerSet` feature are transcribed in
+  `tests/gateway_listenerset.rs`.
 - `features`: the single list of claimed Gateway API features (only those with a passing
   test).
 - `runtime`: `run(settings, RunContext, tx, shutdown)`, the watch loop, leader election,

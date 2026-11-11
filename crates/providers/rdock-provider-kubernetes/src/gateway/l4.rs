@@ -153,7 +153,11 @@ fn translate_route(cx: &mut Context<'_>, spec: &L4Spec<'_>) {
             cx.warn(
                 &id,
                 ".spec.parentRefs",
-                format!("not accepted by Gateway `{}`: {message}", parent_ref.name),
+                format!(
+                    "not accepted by {} `{}`: {message}",
+                    parent_ref.kind.as_deref().unwrap_or("Gateway"),
+                    parent_ref.name
+                ),
             );
         }
         parents.push(parent_status(

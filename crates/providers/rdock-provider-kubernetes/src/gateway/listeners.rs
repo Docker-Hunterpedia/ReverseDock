@@ -27,6 +27,11 @@
 //! `HTTPS` listener of the port; TLS passthrough routes share it by SNI); `tcp` for `TCP`
 //! and for a port with only TLS passthrough listeners.
 //!
+//! ListenerSets ([`super::listener_sets`]) add their listeners to the end of the Gateway's
+//! list (with [`ListenerState::set`] naming the set); they share the internal listener of a
+//! port and the Gateway's Service like the Gateway's own listeners, but the Gateway's status
+//! (`status.listeners`, `Accepted`, `Programmed`) covers only its own listeners.
+//!
 //! The Gateway is `Accepted=True/Accepted` when every listener is valid, `True` with
 //! `ListenersNotValid` when some are, and `False/ListenersNotValid` when none is. Requested
 //! addresses (`spec.addresses`, the Extended `GatewayStaticAddresses`) are not supported:
@@ -155,6 +160,9 @@ pub struct ListenerState {
     pub internal: Option<String>,
     /// Routes accepted on this listener.
     pub attached: RouteSet,
+    /// The ListenerSet (an index into the context's ListenerSets) this listener comes from;
+    /// `None` for the Gateway's own listeners.
+    pub set: Option<usize>,
 }
 
 impl ListenerState {
@@ -176,10 +184,13 @@ pub struct GatewayState<'a> {
     pub generation: Option<i64>,
     /// `Accepted`.
     pub accepted: Result<(), Failure>,
-    /// Listeners in spec order.
+    /// Listeners: the Gateway's own in spec order, then those of its accepted ListenerSets
+    /// in precedence order.
     pub listeners: Vec<ListenerState>,
     /// The Gateway's Service, when it exists.
     pub service: Option<&'a GatewayService>,
+    /// `allowedListeners.namespaces`: where ListenerSets may attach from.
+    pub allowed_listeners: Namespaces,
 }
 
 impl GatewayState<'_> {
@@ -205,6 +216,7 @@ pub fn evaluate(cx: &mut Context<'_>, ours: &BTreeSet<String>) {
         cx.gateway_index.insert(key.clone(), cx.gateways.len());
         cx.gateways.push(state);
     }
+    super::listener_sets::merge(cx);
     open_listeners(cx);
 }
 
@@ -220,7 +232,10 @@ fn evaluate_gateway<'a>(
         .listeners
         .iter()
         .enumerate()
-        .map(|(i, l)| evaluate_listener(cx, &id, key, i, l))
+        .map(|(i, l)| {
+            let referrer = (kinds::GATEWAY, key.0.as_str());
+            evaluate_listener(cx, &id, referrer, i, l)
+        })
         .collect();
     mark_conflicts(&mut listeners);
     for (i, l) in listeners.iter().enumerate() {
@@ -283,6 +298,7 @@ fn evaluate_gateway<'a>(
     } else {
         Ok(())
     };
+    let allowed_listeners = allowed_listeners(cx, &id, gateway);
     GatewayState {
         key: key.clone(),
         gateway,
@@ -290,13 +306,52 @@ fn evaluate_gateway<'a>(
         accepted,
         listeners,
         service: cx.inventory.gateway_services.get(key),
+        allowed_listeners,
     }
 }
 
-fn evaluate_listener(
+/// `allowedListeners.namespaces` of a Gateway: `None` when unset (the default), and, like
+/// `allowedRoutes`, a missing selector selects nothing and an unknown value nothing.
+fn allowed_listeners(cx: &mut Context<'_>, id: &str, gateway: &Gateway) -> Namespaces {
+    let namespaces = gateway
+        .spec
+        .allowed_listeners
+        .as_ref()
+        .and_then(|a| a.namespaces.as_ref());
+    match namespaces.and_then(|n| n.from.as_deref()) {
+        None | Some(from_namespaces::NONE) => Namespaces::None,
+        Some(from_namespaces::SAME) => Namespaces::Same,
+        Some(from_namespaces::ALL) => Namespaces::All,
+        Some(from_namespaces::SELECTOR) => {
+            if let Some(selector) = namespaces.and_then(|n| n.selector.clone()) {
+                Namespaces::Selector(selector)
+            } else {
+                cx.warn(
+                    id,
+                    ".spec.allowedListeners.namespaces.selector",
+                    "`from: Selector` needs a `selector`; without one no ListenerSet may attach",
+                );
+                Namespaces::None
+            }
+        }
+        Some(other) => {
+            cx.warn(
+                id,
+                ".spec.allowedListeners.namespaces.from",
+                format!("`{other}` is not a known value; no ListenerSet may attach"),
+            );
+            Namespaces::None
+        }
+    }
+}
+
+/// Evaluates one listener of a Gateway or a ListenerSet (`referrer`: the kind and namespace
+/// of the object it belongs to, which certificate references are relative to and checked
+/// against ReferenceGrants for); `id` and `index` locate its warnings.
+pub fn evaluate_listener(
     cx: &mut Context<'_>,
     id: &str,
-    key: &ObjectKey,
+    referrer: (&'static str, &str),
     index: usize,
     listener: &Listener,
 ) -> ListenerState {
@@ -325,7 +380,7 @@ fn evaluate_listener(
     let mut resolved = kinds_resolved;
     let mut certificates = Vec::new();
     if protocol == Protocol::Https && accepted.is_ok() {
-        let (valid, failure) = certificate_refs(cx, key, listener);
+        let (valid, failure) = certificate_refs(cx, referrer, listener);
         certificates = valid;
         if resolved.is_ok()
             && let Some(failure) = failure
@@ -398,6 +453,7 @@ fn evaluate_listener(
         programmed: Err((reasons::INVALID, String::new())),
         internal: None,
         attached: RouteSet::new(),
+        set: None,
     }
 }
 
@@ -441,12 +497,14 @@ fn route_kinds(listener: &Listener, protocol: Protocol) -> (Vec<RouteKind>, Resu
     (kinds, resolved)
 }
 
-/// The usable certificate Secrets of an HTTPS listener, and the first problem found.
+/// The usable certificate Secrets of an HTTPS listener of `referrer` (kind, namespace), and
+/// the first problem found.
 fn certificate_refs(
     cx: &Context<'_>,
-    gateway: &ObjectKey,
+    referrer: (&'static str, &str),
     listener: &Listener,
 ) -> (Vec<ObjectKey>, Option<Failure>) {
+    let (referrer_kind, referrer_namespace) = referrer;
     let refs = listener
         .tls
         .as_ref()
@@ -466,7 +524,10 @@ fn certificate_refs(
     for r in refs {
         let group = r.group.as_deref().unwrap_or_default();
         let kind = r.kind.as_deref().unwrap_or("Secret");
-        let namespace = r.namespace.clone().unwrap_or_else(|| gateway.0.clone());
+        let namespace = r
+            .namespace
+            .clone()
+            .unwrap_or_else(|| referrer_namespace.to_owned());
         let problem = if !group.is_empty() || kind != "Secret" {
             Some((
                 reasons::INVALID_CERTIFICATE_REF,
@@ -478,8 +539,8 @@ fn certificate_refs(
             cx.inventory,
             Referrer {
                 group: GROUP,
-                kind: kinds::GATEWAY,
-                namespace: &gateway.0,
+                kind: referrer_kind,
+                namespace: referrer_namespace,
             },
             Target {
                 group: "",
@@ -491,7 +552,7 @@ fn certificate_refs(
             Some((
                 reasons::REF_NOT_PERMITTED,
                 format!(
-                    "no ReferenceGrant in namespace `{namespace}` allows this Gateway to use Secret `{}`",
+                    "no ReferenceGrant in namespace `{namespace}` allows this {referrer_kind} to use Secret `{}`",
                     r.name
                 ),
             ))
@@ -578,6 +639,34 @@ pub fn mark_conflicts(listeners: &mut [ListenerState]) {
             listeners[i].conflict = Some(reasons::HOSTNAME_CONFLICT);
         }
     }
+}
+
+/// The conflict of `candidate` with the active listeners `existing` that take precedence
+/// over it (ListenerSet precedence: the earlier listener wins), if any: a different protocol
+/// family on the port, or a second `TCP` listener, is `ProtocolConflict`; the same family
+/// and host name on the port is `HostnameConflict`.
+#[must_use]
+pub fn conflict_with<'a>(
+    existing: impl IntoIterator<Item = &'a ListenerState>,
+    candidate: &ListenerState,
+) -> Option<&'static str> {
+    let family = candidate.protocol.family()?;
+    let mut conflict = None;
+    for other in existing {
+        if !other.active() || other.port != candidate.port {
+            continue;
+        }
+        let Some(other_family) = other.protocol.family() else {
+            continue;
+        };
+        if other_family != family || candidate.protocol == Protocol::Tcp {
+            return Some(reasons::PROTOCOL_CONFLICT);
+        }
+        if other.hostname == candidate.hostname {
+            conflict = Some(reasons::HOSTNAME_CONFLICT);
+        }
+    }
+    conflict
 }
 
 /// Opens the internal listeners of every accepted Gateway whose Service maps the port, and
@@ -735,15 +824,13 @@ pub fn certificate_name(key: &ObjectKey) -> String {
 
 /// Writes the Gateway and listener status, once routes have attached.
 pub fn finish(cx: &mut Context<'_>) {
-    for gw in &cx.gateways {
+    for (index, gw) in cx.gateways.iter().enumerate() {
         let generation = gw.generation;
-        let listeners: Vec<DesiredListener> = gw
-            .listeners
-            .iter()
-            .map(|l| listener_status(l, generation))
-            .collect();
+        let own: Vec<&ListenerState> = gw.listeners.iter().filter(|l| l.set.is_none()).collect();
+        let listeners: Vec<DesiredListener> =
+            own.iter().map(|l| listener_status(l, generation)).collect();
         let mut conditions = Vec::new();
-        let invalid = gw.listeners.iter().filter(|l| !l.active()).count();
+        let invalid = own.iter().filter(|l| !l.active()).count();
         match &gw.accepted {
             Ok(()) if invalid == 0 => conditions.push(condition(
                 types::ACCEPTED,
@@ -756,10 +843,7 @@ pub fn finish(cx: &mut Context<'_>) {
                 types::ACCEPTED,
                 true,
                 reasons::LISTENERS_NOT_VALID,
-                format!(
-                    "{invalid} of {} listeners are not valid",
-                    gw.listeners.len()
-                ),
+                format!("{invalid} of {} listeners are not valid", own.len()),
                 generation,
             )),
             Err((reason, message)) => conditions.push(condition(
@@ -772,8 +856,7 @@ pub fn finish(cx: &mut Context<'_>) {
         }
         let addresses: Vec<GatewayStatusAddress> =
             gw.service.map(|s| s.addresses.clone()).unwrap_or_default();
-        let unmapped: Vec<u16> = gw
-            .listeners
+        let unmapped: Vec<u16> = own
             .iter()
             .filter(|l| l.active())
             .map(|l| l.port)
@@ -825,13 +908,15 @@ pub fn finish(cx: &mut Context<'_>) {
                     Vec::new()
                 },
                 listeners,
-                attached_listener_sets: None,
+                attached_listener_sets: super::listener_sets::attached_count(cx, index),
             },
         );
     }
 }
 
-fn listener_status(l: &ListenerState, generation: Option<i64>) -> DesiredListener {
+/// The status of one listener.
+#[must_use]
+pub fn listener_status(l: &ListenerState, generation: Option<i64>) -> DesiredListener {
     let accepted = match (&l.accepted, l.conflict) {
         (Err((reason, message)), _) => {
             condition(types::ACCEPTED, false, reason, message.clone(), generation)
@@ -937,6 +1022,7 @@ mod tests {
             programmed: Ok(()),
             internal: None,
             attached: RouteSet::new(),
+            set: None,
         }
     }
 
@@ -988,6 +1074,47 @@ mod tests {
                 None,
                 None
             ]
+        );
+    }
+
+    #[test]
+    fn a_later_listener_loses_against_those_that_take_precedence() {
+        use Protocol::{Http, Https, Tcp, TlsPassthrough, Udp};
+        let gateway = vec![
+            listener("a", 80, Http, Some("a.com")),
+            listener("b", 443, Https, Some("b.com")),
+            listener("c", 9000, Tcp, None),
+        ];
+        let check = |l: ListenerState| conflict_with(&gateway, &l);
+        assert_eq!(check(listener("x", 80, Http, Some("x.com"))), None);
+        assert_eq!(
+            check(listener("x", 80, Http, Some("a.com"))),
+            Some(reasons::HOSTNAME_CONFLICT)
+        );
+        assert_eq!(
+            check(listener("x", 80, Tcp, None)),
+            Some(reasons::PROTOCOL_CONFLICT)
+        );
+        assert_eq!(
+            check(listener("x", 443, TlsPassthrough, Some("b.com"))),
+            Some(reasons::HOSTNAME_CONFLICT)
+        );
+        assert_eq!(
+            check(listener("x", 443, TlsPassthrough, Some("p.com"))),
+            None
+        );
+        assert_eq!(
+            check(listener("x", 9000, Tcp, None)),
+            Some(reasons::PROTOCOL_CONFLICT)
+        );
+        // Unsupported protocols never conflict (they are refused for their protocol), and a
+        // listener that is not active is no obstacle.
+        assert_eq!(check(listener("x", 80, Udp, None)), None);
+        let mut refused = listener("r", 8080, Http, None);
+        refused.conflict = Some(reasons::HOSTNAME_CONFLICT);
+        assert_eq!(
+            conflict_with(&[refused], &listener("x", 8080, Tcp, None)),
+            None
         );
     }
 

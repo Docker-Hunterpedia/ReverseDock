@@ -34,7 +34,8 @@ use kube::config::{KubeConfigOptions, Kubeconfig};
 use kube::{Client, ResourceExt};
 use rdock_model::providers::{KubernetesProvider, KubernetesServiceType};
 use rdock_provider_kubernetes::api::{
-    Gateway, GatewayClass, HTTPRoute, ParentReference, RouteGroupKind, SupportedFeature,
+    Gateway, GatewayClass, HTTPRoute, ListenerSet, ParentReference, RouteGroupKind,
+    SupportedFeature,
 };
 use rdock_provider_kubernetes::inventory::Inventory;
 use rdock_provider_kubernetes::runtime::{
@@ -433,6 +434,236 @@ async fn a_gateway_with_a_253_character_name_is_programmed() {
             .resource_version(),
         rv
     );
+    running.stop().await;
+    let _ = classes.delete(&class, &DeleteParams::default()).await;
+}
+
+// (3d) ListenerSets, with the real translator: the ListenerSet's status (conditions and
+// listeners) and the Gateway's `attachedListenerSets` are written and read back, a foreign
+// condition on the ListenerSet is kept across a generation change, the ListenerSet's new port
+// joins the Gateway's Service, and disallowing ListenerSets takes all of it away again.
+#[tokio::test(flavor = "multi_thread")]
+async fn listener_set_status_and_attached_listener_sets_are_written() {
+    let Some((kubeconfig, client)) = cluster("listener_set").await else {
+        return;
+    };
+    let ns = namespace(&client, "lset").await;
+    let class = unique("lsclass");
+    let controller = format!("reversedock.dev/{}", unique("ctl"));
+    let gc: GatewayClass = serde_json::from_value(json!({
+        "metadata": { "name": class }, "spec": { "controllerName": controller }
+    }))
+    .unwrap();
+    let classes: Api<GatewayClass> = Api::all(client.clone());
+    classes.create(&PostParams::default(), &gc).await.unwrap();
+    let gw: Gateway = serde_json::from_value(json!({
+        "metadata": { "name": "web", "namespace": ns },
+        "spec": { "gatewayClassName": class,
+            "allowedListeners": { "namespaces": { "from": "Same" } },
+            "listeners": [{ "name": "http", "port": 80, "protocol": "HTTP", "hostname": "gw.example" }] }
+    }))
+    .unwrap();
+    let gateways: Api<Gateway> = Api::namespaced(client.clone(), &ns);
+    gateways.create(&PostParams::default(), &gw).await.unwrap();
+    let set: ListenerSet = serde_json::from_value(json!({
+        "metadata": { "name": "extra", "namespace": ns },
+        "spec": { "parentRef": { "name": "web" }, "listeners": [
+            { "name": "http", "port": 80, "protocol": "HTTP", "hostname": "set.example" },
+            { "name": "alt", "port": 8080, "protocol": "HTTP" }
+        ] }
+    }))
+    .unwrap();
+    let sets: Api<ListenerSet> = Api::namespaced(client.clone(), &ns);
+    sets.create(&PostParams::default(), &set).await.unwrap();
+    let route: HTTPRoute = serde_json::from_value(json!({
+        "metadata": { "name": "to-set", "namespace": ns },
+        "spec": { "parentRefs": [{ "group": "gateway.networking.k8s.io", "kind": "ListenerSet",
+            "name": "extra", "sectionName": "alt" }],
+            "rules": [{ "matches": [{ "path": { "type": "PathPrefix", "value": "/" } }] }] }
+    }))
+    .unwrap();
+    let routes: Api<HTTPRoute> = Api::namespaced(client.clone(), &ns);
+    routes.create(&PostParams::default(), &route).await.unwrap();
+
+    let mut provider = provider(&kubeconfig, &ns);
+    provider.controller_name.clone_from(&controller);
+    let data = tempfile::tempdir().unwrap();
+    let running = start(provider, context(&ns, data.path()), Options::default());
+
+    eventually(
+        "the ListenerSet accepted and programmed",
+        Duration::from_secs(30),
+        || async {
+            sets.get("extra").await.unwrap().status.is_some_and(|s| {
+                condition_of(&s.conditions, "Accepted").is_some_and(|c| c.status == "True")
+                    && condition_of(&s.conditions, "Programmed").is_some_and(|c| c.status == "True")
+                    && s.listeners.len() == 2
+                    && s.listeners
+                        .iter()
+                        .any(|l| l.name == "alt" && l.attached_routes == 1)
+            })
+        },
+    )
+    .await;
+    let status = sets.get("extra").await.unwrap().status.unwrap();
+    for l in &status.listeners {
+        for kind in ["Accepted", "Programmed", "ResolvedRefs"] {
+            let c = condition_of(&l.conditions, kind).unwrap();
+            assert_eq!(c.status, "True", "{}: {c:?}", l.name);
+            assert_eq!(c.observed_generation, Some(1));
+        }
+        assert_eq!(
+            l.supported_kinds[0].group.as_deref(),
+            Some("gateway.networking.k8s.io")
+        );
+    }
+    eventually(
+        "attachedListenerSets 1",
+        Duration::from_secs(10),
+        || async {
+            gateways
+                .get("web")
+                .await
+                .unwrap()
+                .status
+                .is_some_and(|s| s.attached_listener_sets == Some(1) && s.listeners.len() == 1)
+        },
+    )
+    .await;
+    eventually(
+        "the route accepted by the ListenerSet",
+        Duration::from_secs(10),
+        || async {
+            routes.get("to-set").await.unwrap().status.is_some_and(|s| {
+                s.parents.iter().any(|p| {
+                    p.controller_name == controller
+                        && p.parent_ref.kind.as_deref() == Some("ListenerSet")
+                        && condition_of(&p.conditions, "Accepted")
+                            .is_some_and(|c| c.status == "True")
+                })
+            })
+        },
+    )
+    .await;
+    let services: Api<Service> = Api::namespaced(client.clone(), &ns);
+    let service_name = gateway_service_name(&ns, "web");
+    let ports = |svc: Service| -> BTreeSet<i32> {
+        svc.spec
+            .unwrap()
+            .ports
+            .unwrap_or_default()
+            .iter()
+            .map(|p| p.port)
+            .collect()
+    };
+    assert_eq!(
+        ports(services.get(&service_name).await.unwrap()),
+        BTreeSet::from([80, 8080])
+    );
+
+    // A foreign condition on the ListenerSet survives our writes after a spec edit.
+    let live = sets.get("extra").await.unwrap();
+    let mut conditions = live.status.clone().unwrap().conditions;
+    let seeded = k8s_openapi::apimachinery::pkg::apis::meta::v1::Condition {
+        type_: STALE.to_owned(),
+        status: "True".to_owned(),
+        reason: "Seeded".to_owned(),
+        message: String::new(),
+        observed_generation: live.metadata.generation,
+        last_transition_time: k8s_openapi::apimachinery::pkg::apis::meta::v1::Time(
+            k8s_openapi::jiff::Timestamp::from_second(1_700_000_000).unwrap(),
+        ),
+    };
+    conditions.push(seeded.clone());
+    sets.patch_status(
+        "extra",
+        &PatchParams::default(),
+        &Patch::Merge(json!({
+            "metadata": { "resourceVersion": live.resource_version() },
+            "status": { "conditions": conditions },
+        })),
+    )
+    .await
+    .unwrap();
+    sets.patch(
+        "extra",
+        &PatchParams::default(),
+        &Patch::Merge(json!({ "spec": { "listeners": [
+            { "name": "http", "port": 80, "protocol": "HTTP", "hostname": "set2.example" },
+            { "name": "alt", "port": 8080, "protocol": "HTTP" }
+        ] } })),
+    )
+    .await
+    .unwrap();
+    eventually(
+        "observedGeneration 2 on the ListenerSet",
+        Duration::from_secs(10),
+        || async {
+            let s = sets.get("extra").await.unwrap();
+            let status = s.status.unwrap();
+            s.metadata.generation == Some(2)
+                && status
+                    .conditions
+                    .iter()
+                    .filter(|c| c.type_ != STALE)
+                    .all(|c| c.observed_generation == Some(2))
+                && status
+                    .listeners
+                    .iter()
+                    .flat_map(|l| &l.conditions)
+                    .all(|c| c.observed_generation == Some(2))
+        },
+    )
+    .await;
+    let status = sets.get("extra").await.unwrap().status.unwrap();
+    assert_eq!(
+        condition_of(&status.conditions, STALE),
+        Some(&seeded),
+        "foreign ListenerSet condition kept"
+    );
+
+    // Disallowed: NotAllowed, no listeners, no count, and the port leaves the Service.
+    gateways
+        .patch(
+            "web",
+            &PatchParams::default(),
+            &Patch::Merge(
+                json!({ "spec": { "allowedListeners": { "namespaces": { "from": "None" } } } }),
+            ),
+        )
+        .await
+        .unwrap();
+    eventually(
+        "the ListenerSet not allowed",
+        Duration::from_secs(10),
+        || async {
+            sets.get("extra").await.unwrap().status.is_some_and(|s| {
+                condition_of(&s.conditions, "Accepted")
+                    .is_some_and(|c| c.status == "False" && c.reason == "NotAllowed")
+                    && condition_of(&s.conditions, "Programmed")
+                        .is_some_and(|c| c.status == "False" && c.reason == "NotAllowed")
+                    && s.listeners.is_empty()
+            })
+        },
+    )
+    .await;
+    eventually(
+        "attachedListenerSets unset",
+        Duration::from_secs(10),
+        || async {
+            gateways
+                .get("web")
+                .await
+                .unwrap()
+                .status
+                .is_some_and(|s| s.attached_listener_sets.is_none())
+        },
+    )
+    .await;
+    eventually("port 8080 removed", Duration::from_secs(10), || async {
+        ports(services.get(&service_name).await.unwrap()) == BTreeSet::from([80])
+    })
+    .await;
     running.stop().await;
     let _ = classes.delete(&class, &DeleteParams::default()).await;
 }

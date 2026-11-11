@@ -75,6 +75,8 @@ pub mod reasons {
     pub const NOT_ALLOWED: &str = "NotAllowed";
     /// `ParentNotAccepted` (ListenerSet `Accepted`).
     pub const PARENT_NOT_ACCEPTED: &str = "ParentNotAccepted";
+    /// `ParentNotProgrammed` (ListenerSet `Programmed`).
+    pub const PARENT_NOT_PROGRAMMED: &str = "ParentNotProgrammed";
     /// `NoValidCACertificate` (BackendTLSPolicy `ResolvedRefs`).
     pub const INVALID_CA_CERTIFICATE_REF: &str = "InvalidCACertificateRef";
     /// `InvalidKind` for policies (BackendTLSPolicy `ResolvedRefs`).

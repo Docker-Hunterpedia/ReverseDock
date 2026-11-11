@@ -56,7 +56,8 @@ fn every_supported_feature_has_a_test() -> &'static [&'static str] {
 
 #[test]
 fn the_claimed_features_are_exactly_the_tested_ones() {
-    // Core features (tests in gateway_conformance.rs) and the Extended ones below.
+    // Core features (tests in gateway_conformance.rs), `ListenerSet` (every upstream test
+    // gated on it, in gateway_listenerset.rs) and the Extended ones below.
     let tested = [
         "GRPCRoute",
         "GRPCRouteNamedRouteRule",
@@ -79,6 +80,7 @@ fn the_claimed_features_are_exactly_the_tested_ones() {
         "HTTPRouteRequestMirror",
         "HTTPRouteResponseHeaderModification",
         "HTTPRouteSchemeRedirect",
+        "ListenerSet",
         "ReferenceGrant",
         "TCPRoute",
         "TLSRoute",

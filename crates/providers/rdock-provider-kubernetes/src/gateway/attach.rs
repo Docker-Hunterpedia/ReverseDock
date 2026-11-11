@@ -1,15 +1,19 @@
 //! Route attachment (`shared_types.go`, `ParentReference` and `RouteConditionReason`).
 //!
 //! A parentRef is ours when it names a Gateway (group `gateway.networking.k8s.io`, kind
-//! `Gateway`, both the defaults) that exists and belongs to a GatewayClass of ours; any other
-//! parentRef gets no `status.parents` entry from this controller (it may be another
-//! controller's). For ours, the candidate listeners are those named by `sectionName` and on
-//! `port` (when set); then, in this order, the first check that leaves no listener decides the
-//! `Accepted=False` reason:
+//! `Gateway`, both the defaults) that exists and belongs to a GatewayClass of ours, or a
+//! ListenerSet (kind `ListenerSet`) whose parent is such a Gateway; any other parentRef gets
+//! no `status.parents` entry from this controller (it may be another controller's). For a
+//! Gateway, the candidate listeners are its own (not those of its ListenerSets); for a
+//! ListenerSet, its own listeners, and a ListenerSet that is not accepted refuses the route
+//! with `NotAllowedByListeners`. Of those, the candidates are the listeners named by
+//! `sectionName` and on `port` (when set); then, in this order, the first check that leaves
+//! no listener decides the `Accepted=False` reason:
 //!
 //! 1. no candidate: `NoMatchingParent`;
 //! 2. no candidate that is accepted, unconflicted and allows the route's kind and namespace
-//!    (`allowedRoutes`): `NotAllowedByListeners`;
+//!    (`allowedRoutes`, where `Same` is the namespace of the listener's Gateway or
+//!    ListenerSet): `NotAllowedByListeners`;
 //! 3. no candidate whose host name intersects the route's: `NoMatchingListenerHostname`.
 //!
 //! Otherwise the route is accepted on every listener that passed, with the intersected host
@@ -62,37 +66,65 @@ pub fn resolve(cx: &Context<'_>, route: &RouteInfo<'_>, parent: &ParentReference
     if group != GROUP {
         return Parent::NotOurs;
     }
+    let key = (namespace.to_owned(), parent.name.clone());
     if kind == kinds::LISTENER_SET {
-        return listener_set(cx, namespace, &parent.name);
+        let Some(&set) = cx.listener_set_index.get(&key) else {
+            return Parent::NotOurs;
+        };
+        let state = &cx.listener_sets[set];
+        if let Err((_, message)) = &state.accepted {
+            return Parent::Rejected((
+                reasons::NOT_ALLOWED_BY_LISTENERS,
+                format!("the ListenerSet is not accepted: {message}"),
+            ));
+        }
+        return attach(cx, route, parent, state.gateway, Some(set), &state.key.0);
     }
     if kind != kinds::GATEWAY {
         return Parent::NotOurs;
     }
-    let Some(&index) = cx
-        .gateway_index
-        .get(&(namespace.to_owned(), parent.name.clone()))
-    else {
+    let Some(&index) = cx.gateway_index.get(&key) else {
         return Parent::NotOurs;
     };
+    attach(cx, route, parent, index, None, namespace)
+}
+
+/// Attaches `route` to the listeners of Gateway `index` that belong to ListenerSet `set`
+/// (the Gateway's own listeners when `None`); `home` is the namespace of that Gateway or
+/// ListenerSet, the one `allowedRoutes` `Same` means.
+fn attach(
+    cx: &Context<'_>,
+    route: &RouteInfo<'_>,
+    parent: &ParentReference,
+    index: usize,
+    set: Option<usize>,
+    home: &str,
+) -> Parent {
     let gateway = &cx.gateways[index];
+    let owner = if set.is_some() {
+        kinds::LISTENER_SET
+    } else {
+        kinds::GATEWAY
+    };
     let candidates: Vec<(usize, &ListenerState)> = gateway
         .listeners
         .iter()
         .enumerate()
+        .filter(|(_, l)| l.set == set)
         .filter(|(_, l)| parent.section_name.as_deref().is_none_or(|s| s == l.name))
         .filter(|(_, l)| parent.port.is_none_or(|p| p == l.port))
         .collect();
     if candidates.is_empty() {
         return Parent::Rejected((
             reasons::NO_MATCHING_PARENT,
-            "no listener of the Gateway matches the parentRef's sectionName and port".to_owned(),
+            format!("no listener of the {owner} matches the parentRef's sectionName and port"),
         ));
     }
     let allowed: Vec<(usize, &ListenerState)> = candidates
         .into_iter()
         .filter(|(_, l)| gateway.accepted.is_ok() && l.active())
         .filter(|(_, l)| l.kinds.contains(&route.kind))
-        .filter(|(_, l)| namespace_allowed(cx, &l.namespaces, &gateway.key.0, route.namespace))
+        .filter(|(_, l)| namespace_allowed(cx, &l.namespaces, home, route.namespace))
         .collect();
     if allowed.is_empty() {
         return Parent::Rejected((
@@ -121,38 +153,9 @@ pub fn resolve(cx: &Context<'_>, route: &RouteInfo<'_>, parent: &ParentReference
     }
 }
 
-/// A parentRef to a ListenerSet: ours when its parent Gateway is ours. ListenerSets are not
-/// supported yet, so such a parentRef is refused.
-fn listener_set(cx: &Context<'_>, namespace: &str, name: &str) -> Parent {
-    let Some(set) = cx
-        .inventory
-        .listener_sets
-        .get(&(namespace.to_owned(), name.to_owned()))
-    else {
-        return Parent::NotOurs;
-    };
-    let gateway_namespace = set
-        .spec
-        .parent_ref
-        .namespace
-        .as_deref()
-        .unwrap_or(namespace);
-    let ours = cx.gateway_index.contains_key(&(
-        gateway_namespace.to_owned(),
-        set.spec.parent_ref.name.clone(),
-    ));
-    if ours {
-        Parent::Rejected((
-            reasons::NO_MATCHING_PARENT,
-            "ListenerSets are not supported yet".to_owned(),
-        ))
-    } else {
-        Parent::NotOurs
-    }
-}
-
-/// Whether a listener with `policy` on a Gateway in `gateway_namespace` takes routes from
-/// `route_namespace`.
+/// Whether a listener with `policy` on a Gateway (or ListenerSet) in `gateway_namespace`
+/// takes routes from `route_namespace`; also whether a Gateway with `allowedListeners`
+/// `policy` takes ListenerSets from that namespace.
 #[must_use]
 pub fn namespace_allowed(
     cx: &Context<'_>,
