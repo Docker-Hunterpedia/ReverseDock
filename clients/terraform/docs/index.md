@@ -1,0 +1,106 @@
+---
+page_title: "Provider: ReverseDock"
+description: |-
+  Manage the routes, services and middlewares of a ReverseDock proxy through its admin API.
+---
+
+# ReverseDock provider
+
+The ReverseDock provider manages the **routes, services and middlewares that the admin API owns** (`name@api` in the running configuration): the API provider of [ReverseDock](https://github.com/Docker-Hunterpedia/ReverseDock), an open-source reverse proxy. It works with Terraform and OpenTofu (plugin protocol 6) and talks to the per-object endpoints `/api/v1/{routes,services,middlewares}/{name}`.
+
+~> **Status.** The provider's source is part of the ReverseDock repository and is built and tested there. It is **not published** to the Terraform or OpenTofu registry yet: the registry needs a separate public repository named `terraform-provider-reversedock` and a GPG signing key, which are maintainer actions. Until then, build it from source (see the README).
+
+## What it manages, and what it does not
+
+- `reversedock_route`, `reversedock_service` and `reversedock_middleware` create, read, update, delete and import objects **owned by the API**.
+- Objects from the configuration file, Docker, Swarm or Kubernetes are owned by those providers and the API refuses to change them (`403`, naming the owner). The data sources can still read them.
+- TCP routes and TCP services are **not manageable**: the admin API's object endpoints and its configuration document accept only routes, services and middlewares.
+- Listeners, certificates, users and tokens are not resources. Create the provider's own token with `rdock tokens create` on the server.
+
+Each object is one JSON document, the same shape as the matching section of the configuration file. The provider passes it on as it is, so it never lags behind the proxy's configuration model: whatever `rdock validate` accepts in a `routes`, `services` or `middlewares` entry is accepted in `spec`.
+
+## Authentication and roles
+
+Create a token on the server (over the admin socket, which needs none) with the role the work needs:
+
+```sh
+rdock tokens create terraform --role operator --days 90
+```
+
+| Role | Allows |
+|---|---|
+| `viewer` | data sources, `terraform plan` and refresh |
+| `operator` | everything above, and creating, changing and deleting objects, and the dry run behind `validate_on_plan` |
+
+The endpoint must be `https://…`, or `http://` on a loopback address (the admin API itself listens in clear text only there, and the `rdock` CLI sends its token to loopback only). There is no option to skip certificate verification; use `ca_cert_file` for a private CA. For a remote rdock without TLS, forward the port (`ssh -L 2080:127.0.0.1:2080 server`) and use `http://127.0.0.1:2080`.
+
+`admin.api_writes: false` (GitOps) refuses every write: plans and data sources still work, applies fail with `403`.
+
+## Concurrency
+
+All API-owned objects are one versioned document, and every write must say which version it is based on (`If-Match`). The provider handles this itself:
+
+- Writes to one admin API are **serialised** by a lock in the provider process, although Terraform applies resources in parallel.
+- Each write reads the current `ETag`, sends the change with `If-Match`, and on `412 Precondition Failed` (somebody else wrote in between: the dashboard, `curl`, another `terraform apply`) reads again and retries, up to `conflict_retries` times (5 by default) with a short back-off, then fails with a message that says so.
+- The API accepts five configuration writes a second across all callers, and every write recompiles the whole configuration. On `429` the provider waits for `Retry-After` and tries again. A configuration with hundreds of objects therefore takes a while to apply; this is the cost of one reload per object.
+- A change the API would reject (an unknown service, a reference to a middleware that does not exist) is refused **as a whole**: nothing changes, and the diagnostics are shown on the `spec` attribute. Deleting an object that something refers to fails the same way, with the reference named.
+
+## Drift
+
+`terraform plan` reads each object back. The API stores objects with every default filled in and values normalised (`1m` may come back as `60s`), so the provider does not compare your text with the server's. It remembers what the server showed right after its last write; if the server shows exactly that, nothing changed, and if it shows something else, the `spec` in state becomes what the server has and the plan proposes to put your configuration back. An object deleted outside Terraform is planned for creation again.
+
+Secrets are the exception: the API shows secrets written in place as `***` (and basic-auth users as `name:***`). The provider keeps the value you wrote, so a change of a secret made outside Terraform is **not** detected. Write secrets as `${file:/run/secrets/name}` or `${env:NAME}` references: the proxy resolves them, the API shows them as written, and no secret value enters the Terraform state through the spec.
+
+## Importing
+
+`terraform import reversedock_route.shop shop` (or an `import` block) takes the bare name of an API-owned object. The imported state holds the server's rendering, defaults included, so the first `terraform apply` after an import replaces the object with the `spec` in your configuration. Read the object first with the matching data source to copy its fields.
+
+## Compatibility
+
+Plugin protocol 6, so Terraform 1.0 and later and any OpenTofu release. `import` blocks need Terraform 1.5 or OpenTofu 1.6. The provider is tested with Terraform 1.17 and OpenTofu 1.13.
+
+## Example usage
+
+```terraform
+terraform {
+  required_providers {
+    reversedock = {
+      source = "Docker-Hunterpedia/reversedock"
+    }
+  }
+}
+
+# Every setting can come from the environment instead: RDOCK_ADMIN_URL and RDOCK_ADMIN_TOKEN
+# (the token variable is the one `rdock` itself reads). Create a token with
+# `rdock tokens create terraform --role operator --days 90` on the server.
+provider "reversedock" {
+  endpoint = "https://rdock.example.com:2080"
+  token    = var.rdock_token
+
+  # Only when the admin listener's certificate is signed by your own CA. There is no option
+  # to skip certificate verification.
+  # ca_cert_file = "/etc/ssl/internal-ca.pem"
+
+  # Optional: request time limit, retries after 412, dry run during plan.
+  # timeout          = "30s"
+  # conflict_retries = 5
+  # validate_on_plan = false
+}
+
+variable "rdock_token" {
+  type      = string
+  sensitive = true
+}
+```
+
+<!-- schema generated by tfplugindocs -->
+## Schema
+
+### Optional
+
+- `ca_cert_file` (String) PEM file with the certificate authority that signed the admin listener's certificate, added to the system roots. There is deliberately no option to skip certificate verification.
+- `conflict_retries` (Number) How many times a write is read again and retried after `412 Precondition Failed` (somebody else changed the API's objects in between) before it fails. Default 5.
+- `endpoint` (String) URL of the admin API, for example `https://rdock.example.com:2080`, or `http://127.0.0.1:2080` for a loopback address (for example through an SSH tunnel). Plain HTTP is refused for any other address, because the token would cross the network unencrypted. May also be set with `RDOCK_ADMIN_URL`.
+- `timeout` (String) Time limit for each request to the admin API, as a Go duration such as `10s` or `1m`. Default `30s`.
+- `token` (String, Sensitive) An API token (`rdk_pat_…`). The `operator` role is needed to change objects, `viewer` is enough to read them (data sources, plan and refresh). May also be set with `RDOCK_ADMIN_TOKEN`, the variable `rdock` itself reads.
+- `validate_on_plan` (Boolean) Dry-run every changed spec against `POST /api/v1/config/validate` during `terraform plan` and report the diagnostics as errors on the `spec` attribute. Needs the `operator` role, and sees only the objects that exist now: a spec that refers to an object created in the same apply is reported as invalid. Off by default; the apply always validates, because the API refuses an invalid configuration as a whole.
