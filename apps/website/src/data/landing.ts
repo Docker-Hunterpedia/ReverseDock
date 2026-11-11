@@ -35,7 +35,7 @@ export const features: { title: string; status: string; kind: Kind; body: string
   { title: 'Health checks and retries', status: 'v0.4', kind: 'shipped', body: 'Active and passive checks, consistent hashing, sticky sessions, retry budgets.' },
   { title: 'mTLS, JWT and tracing', status: 'v0.4', kind: 'shipped', body: 'Client certificates, Cloudflare origin pulls, JWT on ring, OpenTelemetry spans.' },
   { title: 'Dashboard', status: 'v0.5', kind: 'next', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
-  { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'planned', body: 'A Gateway API controller, checked with the upstream conformance tests.' },
+  { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'next', body: 'A Gateway API controller and Helm chart, implemented; passes the upstream conformance suite in CI on kind (2026-11-11); not released.' },
 ];
 
 export const compare = [

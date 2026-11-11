@@ -1,0 +1,172 @@
+---
+title: Kubernetes
+description: Install ReverseDock as a Gateway API controller with the Helm chart or the raw manifests, check it, upgrade it, remove it, and see exactly what access it gets.
+sidebar:
+  order: 6
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock runs in a cluster as one Deployment that is the controller and the proxy at once <Status planned="v0.7" />. Every replica watches the API server and serves traffic; one replica at a time, chosen with a Lease, writes status and Services. The design is in [ADR-0029](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0029-kubernetes-gateway-api.md).
+
+:::caution[Status]
+The controller is implemented in the development tree for v0.7 and is **not in a release yet**. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`: all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`), and the CI installs the chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it; no report has been submitted upstream yet. The CI does not cover Ingress, cert-manager, RKE2 or the namespaced mode. The chart's published image tag, `0.6.0-alpha.1`, predates the controller: until a release contains it, [build the image](#build-the-image) from a checkout.
+:::
+
+This page covers installing it. To use it, see [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/) and, for Ingress, [Kubernetes Ingress](/docs/guides/kubernetes-ingress/).
+
+## What you need
+
+- Kubernetes 1.33 or later (the chart's `kubeVersion`).
+- `kubectl`, and Helm 3 or 4 if you use the chart.
+- The **Gateway API CRDs**, version 1.7.0, Standard channel. Neither the chart nor the manifests contain them.
+- Something that gives a `LoadBalancer` Service an address (a cloud, MetalLB, k3s's built-in service load balancer). Without one, set the Gateway Service type to `cluster_ip` or `node_port` ([below](#without-a-load-balancer)).
+- A checkout of the repository, until the chart is published. The chart README mentions an OCI registry address as the intended home of released charts; no chart has been published there.
+
+## Install the Gateway API CRDs
+
+```sh
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml
+```
+
+Gateway API v1.7.0 was released on 2026-10-29; all the kinds ReverseDock handles are `v1` in its Standard channel ([release](https://github.com/kubernetes-sigs/gateway-api/releases/tag/v1.7.0), checked 2026-11-11). The CRDs belong to the cluster, not to one release: Helm neither upgrades nor deletes them, so run the command again when ReverseDock moves to a newer Gateway API version.
+
+Some distributions install older CRDs already (k3s with its bundled Traefik, for one). ReverseDock still starts: it reports an older or missing bundle in the `SupportedVersion` condition of the GatewayClass, and it skips a kind whose CRD does not exist and looks for it again every 60 seconds, so the CRDs may be installed after ReverseDock.
+
+## Build the image
+
+From a checkout of the repository:
+
+```sh
+docker build --tag rdock:dev .
+```
+
+Make the image available to the cluster: push it to a registry the nodes can pull from, or load it into a local cluster (`kind load docker-image rdock:dev`). Then give the chart its name and tag, as the examples below do.
+
+## Install with Helm
+
+From a checkout, with the image you built:
+
+```sh
+helm install reversedock deploy/helm/reversedock \
+  --namespace reversedock-system --create-namespace \
+  --set image.repository=rdock --set image.tag=dev
+```
+
+The chart creates the ServiceAccount and its roles, a ConfigMap with `rdock.yaml`, the Deployment (two replicas, a PodDisruptionBudget, spread over nodes) and the GatewayClass `reversedock`. Pods run as user 65532 with a read-only root file system, no capabilities and the `RuntimeDefault` seccomp profile; there is no CPU limit. Every value is documented in the [chart README](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/deploy/helm/reversedock/README.md) and in `values.yaml`; `values.schema.json` rejects unknown keys and wrong types.
+
+Useful values:
+
+| Value | What it does |
+|---|---|
+| `replicaCount` | Replicas (default 2). Every one serves traffic. |
+| `gateway.serviceType` | `load_balancer` (default), `cluster_ip` or `node_port`: the type of the Service made for each Gateway. |
+| `gateway.portRange` | Internal ports for Gateway listeners (default `20000-29999`). |
+| `watchNamespaces` | Watch only these namespaces ([namespaced mode](#namespaced-mode)). |
+| `ingress.enabled` | Also translate Ingress ([guide](/docs/guides/kubernetes-ingress/)). |
+| `allowAcme` | Allow built-in ACME with the Kubernetes provider ([why not](#certificates-in-a-cluster)). |
+| `config.extra` | More `rdock.yaml`, merged over what the chart renders. |
+
+## Install with the raw manifests
+
+For clusters without Helm, `deploy/kubernetes/install.yaml` is the committed output of `helm template` with default values, in the namespace `reversedock-system`, with a Kustomize base beside it. CI fails when it is out of date with the chart. Install the CRDs first, then, from a checkout:
+
+```sh
+kubectl apply -k deploy/kubernetes
+```
+
+The manifests name the released image tag. To use your own image, or to change anything else, do not edit `install.yaml`; make an overlay in your own repository:
+
+```yaml title="kustomization.yaml"
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../ReverseDock/deploy/kubernetes
+images:
+  - name: ghcr.io/docker-hunterpedia/rdock
+    newName: rdock
+    newTag: dev
+```
+
+Settings that live in `rdock.yaml` (Ingress, namespaces, extra listeners) are easier to change through the chart: `helm template reversedock deploy/helm/reversedock -n reversedock-system -f my-values.yaml` renders your own file.
+
+## Check it
+
+```sh
+kubectl -n reversedock-system rollout status deployment/reversedock
+kubectl get gatewayclass reversedock
+```
+
+The GatewayClass should show `ACCEPTED` as `True`. A pod becomes Ready only after its first full sync of every watched kind, so a pod never takes traffic with an empty routing table. Probes run `rdock healthcheck` in the container, which asks the admin listener's `/readyz`. The admin listener is on loopback by default, because ReverseDock refuses one on the network without TLS (the chart README describes how to serve `/healthz`, `/readyz` and `/metrics` on the pod address with a certificate you provide).
+
+Ask a pod what it sees:
+
+```sh
+kubectl -n reversedock-system exec deploy/reversedock -- rdock status
+```
+
+`rdock status` lists the `kubernetes` provider, whether it is connected, and every Kubernetes object it left out or could not fully use, with a reason. See [reading the status](/docs/guides/kubernetes-gateway-api/#when-something-is-not-programmed).
+
+Then create a Gateway: the walk-through in [examples/kubernetes](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/examples/kubernetes) and the [Gateway API guide](/docs/guides/kubernetes-gateway-api/) start here.
+
+### Without a load balancer
+
+On a local cluster, a `LoadBalancer` Service never gets an address, so the Gateway's `status.addresses` stays empty and its `Programmed` condition says why. Install with `--set gateway.serviceType=cluster_ip` (the Service's cluster IP becomes the Gateway address) or `node_port` (the address is still the cluster IP; reach the node port on a node's address), or forward a port to the Service the controller made (`kubectl -n reversedock-system get service`).
+
+## Certificates in a cluster
+
+cert-manager is the supported way to get certificates: it fills the `kubernetes.io/tls` Secrets that Gateways and Ingresses name, and ReverseDock reads them. ReverseDock's own automatic HTTPS is on unless `acme: false`, and replicas share no certificate storage until v0.9, so the chart sets `acme: false`, and `rdock validate` and `rdock run` refuse `acme` together with `providers.kubernetes` unless `providers.kubernetes.allow_acme: true`. Set that (chart value `allowAcme`) only with one replica and a persistent data directory (`data.existingClaim`); the chart refuses more than one replica with it.
+
+By default the data directory is a memory-backed `emptyDir`: the key files written from Secrets never reach a node's disk. ReverseDock writes them with mode 0600 in directories with mode 0700, and removes them when no listener refers to them.
+
+## Namespaced mode
+
+By default ReverseDock watches every namespace. To watch some:
+
+```yaml title="values.yaml"
+watchNamespaces: [team-a, team-b]
+```
+
+The chart then renders a Role and RoleBinding in each listed namespace instead of reading cluster-wide, plus a small ClusterRole for the cluster-scoped kinds it must see (GatewayClasses, Namespaces for `allowedRoutes` selectors, CRDs and, with Ingress, IngressClasses). The namespaces must exist before the install. Routes, Services and Secrets in other namespaces are not seen.
+
+## What access it gets
+
+The chart's roles follow one rule: read what is translated; write only status, one Lease and the Services of Gateways. No Kubernetes Events are written in this version, so the chart grants no access to them.
+
+| Where | What | Verbs |
+|---|---|---|
+| Cluster, or each watched namespace | Gateway API kinds (GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet, BackendTLSPolicy), Services, Secrets, ConfigMaps, EndpointSlices; Ingress with `ingress.enabled` | get, list, watch |
+| Same | `status` of the Gateway API kinds (not ReferenceGrant), and of Ingress with `ingress.enabled` | update, patch |
+| Cluster | Namespaces, CustomResourceDefinitions; IngressClasses with `ingress.enabled` | get, list, watch |
+| Release namespace | Services (the ones made for Gateways) | get, list, watch, create, update, patch, delete |
+| Release namespace | The leader-election Lease | create; get and update on the one Lease |
+
+It has no access to pods or nodes, and it never writes Secrets. It can **read every Secret** in the namespaces it watches, because Gateways and Ingresses may name any of them; namespaced mode narrows that to the namespaces you list.
+
+## Upgrade
+
+```sh
+kubectl apply --server-side -f https://github.com/kubernetes-sigs/gateway-api/releases/download/v1.7.0/standard-install.yaml   # only when the Gateway API version changes
+helm upgrade reversedock deploy/helm/reversedock -n reversedock-system
+```
+
+Pods roll one at a time (`maxUnavailable: 0`), and a new pod is Ready only after its first full sync. The Services made for Gateways stay in place, so addresses do not change.
+
+## Uninstall
+
+Delete your Gateways first, so the controller removes the Services it made for them; they are not part of the Helm release.
+
+```sh
+kubectl get gateway --all-namespaces            # find the ones with the class reversedock, delete them
+helm uninstall reversedock -n reversedock-system
+```
+
+If Services remain, delete them by label: `kubectl -n reversedock-system delete service -l reversedock.dev/gateway-namespace`. The Gateway API CRDs stay; remove them only if nothing else uses them. With the raw manifests, `kubectl delete -k deploy/kubernetes`.
+
+## Related
+
+- [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/)
+- [Kubernetes Ingress](/docs/guides/kubernetes-ingress/)
+- [Migrate from ingress-nginx](/docs/migrate/from-ingress-nginx/)
+- [`providers.kubernetes` reference](/docs/reference/configuration/providers/)
+- [Production checklist](/docs/operations/production-checklist/)

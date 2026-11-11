@@ -468,6 +468,48 @@ fn plain_routes_use_the_plain_listeners() {
 }
 
 #[test]
+fn plain_routes_never_attach_to_provider_listeners_implicitly() {
+    // A Gateway's internal listener (`name@kubernetes`) is reached only by naming it.
+    let config: Config = serde_json::from_value(with(
+        app(),
+        json!({
+            "listeners": {
+                "web": { "address": ":80" },
+                "websecure": { "address": ":443", "tls": {} },
+                "gw-a@kubernetes": { "address": ":20000" },
+                "gw-b@kubernetes": { "address": ":20001" }
+            },
+            "routes": {
+                "plain": { "match": "PathPrefix(`/`)", "service": "app", "tls": "off" },
+                "named": { "match": "PathPrefix(`/`)", "service": "app", "tls": "off", "listeners": ["gw-a@kubernetes"] }
+            }
+        }),
+    ))
+    .unwrap();
+    assert_eq!(config.route_listeners(&config.routes["plain"]), ["web"]);
+    assert_eq!(
+        config.route_listeners(&config.routes["named"]),
+        ["gw-a@kubernetes"]
+    );
+    // With only provider plain listeners, a plain route falls back to `defaults.listeners`.
+    let only_provider: Config = serde_json::from_value(with(
+        app(),
+        json!({
+            "listeners": {
+                "websecure": { "address": ":443", "tls": {} },
+                "gw-a@kubernetes": { "address": ":20000" }
+            },
+            "routes": { "plain": { "match": "PathPrefix(`/`)", "service": "app", "tls": "off" } }
+        }),
+    ))
+    .unwrap();
+    assert_eq!(
+        only_provider.route_listeners(&only_provider.routes["plain"]),
+        ["websecure"]
+    );
+}
+
+#[test]
 fn public_ip_addresses_need_shortlived_certificates() {
     let ip = with(
         app(),
@@ -1109,4 +1151,260 @@ fn docker_static_roots_are_absolute() {
             "`sites` must be an absolute path".to_owned()
         )]
     );
+}
+
+fn kubernetes(settings: Value) -> Value {
+    let mut config = with(app(), json!({ "acme": false }));
+    config["providers"]["kubernetes"] = settings;
+    config
+}
+
+#[test]
+fn kubernetes_defaults_are_valid() {
+    // The pod selector has no default: the controller never reads its own pod.
+    let selector =
+        json!({ "gateway": { "pod_selector": { "app.kubernetes.io/name": "reversedock" } } });
+    assert_eq!(validate(kubernetes(selector)), Vec::new());
+    assert_eq!(
+        validate(kubernetes(json!({ "gateway": { "enabled": false } }))),
+        Vec::new()
+    );
+    let missing = errors(kubernetes(json!({})));
+    assert!(has(
+        &missing,
+        "providers.kubernetes.gateway.pod_selector",
+        "labels of the ReverseDock pods"
+    ));
+    let full = json!({
+        "kubeconfig": "/etc/rdock/kubeconfig",
+        "namespaces": ["apps", "infra"],
+        "controller_name": "example.com/gateway",
+        "gateway": {
+            "service_type": "cluster_ip",
+            "service_namespace": "rdock-system",
+            "pod_selector": { "app.kubernetes.io/name": "reversedock" },
+            "port_range": "30000-30010",
+            "allow_external_name": true
+        },
+        "ingress": { "enabled": true, "class": "public", "publish_service": "rdock-system/reversedock" },
+        "leader_election": { "enabled": false, "lease": "rdock" }
+    });
+    assert_eq!(validate(kubernetes(full)), Vec::new());
+}
+
+#[test]
+fn a_node_port_gateway_service_is_a_warning() {
+    // The Gateway address is the cluster IP, which is not reachable from outside the cluster.
+    let found = validate(kubernetes(json!({
+        "gateway": {
+            "service_type": "node_port",
+            "pod_selector": { "app.kubernetes.io/name": "reversedock" }
+        }
+    })));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(!found[0].is_error());
+    assert_eq!(found[0].path, "providers.kubernetes.gateway.service_type");
+    assert!(found[0].message.contains("cluster IP"), "{found:?}");
+    // Not while the Gateway API is off.
+    let off = validate(kubernetes(json!({
+        "gateway": { "enabled": false, "service_type": "node_port" }
+    })));
+    assert_eq!(off, Vec::new());
+}
+
+#[test]
+fn kubernetes_settings_are_checked() {
+    let found = errors(kubernetes(json!({
+        "namespaces": ["Apps"],
+        "controller_name": "gateway-controller",
+        "gateway": { "port_range": "20000", "service_namespace": "-x" },
+        "ingress": { "class": "Public", "publish_service": "reversedock" },
+        "leader_election": { "lease": "my_lease" }
+    })));
+    for (path, fragment) in [
+        ("providers.kubernetes.namespaces[0]", "namespace name"),
+        (
+            "providers.kubernetes.controller_name",
+            "not a controller name",
+        ),
+        (
+            "providers.kubernetes.gateway.port_range",
+            "not a port range",
+        ),
+        (
+            "providers.kubernetes.gateway.service_namespace",
+            "namespace name",
+        ),
+        ("providers.kubernetes.ingress.class", "class name"),
+        (
+            "providers.kubernetes.ingress.publish_service",
+            "`namespace/name`",
+        ),
+        ("providers.kubernetes.leader_election.lease", "Lease name"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    let low = errors(kubernetes(json!({ "gateway": { "port_range": "80-90" } })));
+    assert!(has(
+        &low,
+        "providers.kubernetes.gateway.port_range",
+        "1024–65535"
+    ));
+    let reversed = errors(kubernetes(
+        json!({ "gateway": { "port_range": "30000-20000" } }),
+    ));
+    assert!(has(
+        &reversed,
+        "providers.kubernetes.gateway.port_range",
+        "starts after it ends"
+    ));
+    let too_high = errors(kubernetes(
+        json!({ "gateway": { "port_range": "20000-70000" } }),
+    ));
+    assert!(has(
+        &too_high,
+        "providers.kubernetes.gateway.port_range",
+        "not a port range"
+    ));
+    assert_eq!(
+        errors(kubernetes(
+            json!({ "gateway": { "port_range": "65535-65535", "pod_selector": { "app": "rdock" } } })
+        )),
+        Vec::new()
+    );
+}
+
+#[test]
+fn kubernetes_refuses_acme_unless_allowed() {
+    // `acme` is on unless set to `false`.
+    let implicit = with(app(), json!({ "providers": { "kubernetes": {} } }));
+    let found = validate(implicit);
+    let error = found
+        .iter()
+        .find(|d| d.path == "acme" && d.is_error())
+        .unwrap();
+    assert!(error.message.contains("providers.kubernetes"));
+    assert!(error.hint.as_deref().unwrap().contains("cert-manager"));
+    let allowed = with(
+        app(),
+        json!({ "providers": { "kubernetes": { "allow_acme": true, "gateway": { "pod_selector": { "app": "rdock" } } } } }),
+    );
+    assert_eq!(errors(allowed.clone()), Vec::new());
+    assert!(has(
+        &warnings(allowed),
+        "providers.kubernetes",
+        "replicas share no certificate storage"
+    ));
+    assert!(!has(
+        &warnings(kubernetes(json!({}))),
+        "providers.kubernetes",
+        "certificate storage"
+    ));
+}
+
+fn redirect(settings: Value) -> Vec<(String, String)> {
+    let mut middleware = json!({ "type": "redirect" });
+    merge(&mut middleware, settings);
+    let found = validate(json!({ "middlewares": { "r": middleware } }));
+    found.into_iter().map(|d| (d.path, d.message)).collect()
+}
+
+#[test]
+fn redirects_combine_their_parts() {
+    for ok in [
+        json!({ "scheme": "https" }),
+        json!({ "scheme": "https", "port": 8443, "permanent": true }),
+        json!({ "hostname": "example.org", "status": 302 }),
+        json!({ "port": 8080 }),
+        json!({ "path": "/new", "status": 303 }),
+        json!({ "prefix": { "from": "/a", "to": "/b" }, "scheme": "https", "status": 308 }),
+        json!({ "prefix": { "from": "/a", "to": "" } }),
+        json!({ "regex": "^http://(.*)$", "replacement": "https://$1", "status": 307 }),
+    ] {
+        assert_eq!(redirect(ok.clone()), Vec::new(), "{ok}");
+    }
+    let path = "middlewares.r";
+    assert!(has(&redirect(json!({})), path, "set `scheme`, `hostname`"));
+    assert!(has(
+        &redirect(json!({ "hostname": "a.test", "regex": ".*", "replacement": "x" })),
+        &format!("{path}.regex"),
+        "cannot be combined"
+    ));
+    assert!(has(
+        &redirect(json!({ "path": "/a", "prefix": { "from": "/b", "to": "/c" } })),
+        path,
+        "not both"
+    ));
+    assert!(has(
+        &redirect(json!({ "path": "a" })),
+        &format!("{path}.path"),
+        "start with `/`"
+    ));
+    assert!(has(
+        &redirect(json!({ "prefix": { "from": "a", "to": "b" } })),
+        &format!("{path}.prefix.from"),
+        "start with `/`"
+    ));
+    assert!(has(
+        &redirect(json!({ "prefix": { "from": "/a", "to": "b" } })),
+        &format!("{path}.prefix.to"),
+        "start with `/`"
+    ));
+    assert!(has(
+        &redirect(json!({ "hostname": "a.test", "status": 304 })),
+        &format!("{path}.status"),
+        "not a redirect status"
+    ));
+    assert!(has(
+        &redirect(json!({ "hostname": "*.example.com" })),
+        &format!("{path}.hostname"),
+        "wildcard"
+    ));
+    assert!(has(
+        &redirect(json!({ "hostname": "a.test", "status": 301, "permanent": true })),
+        &format!("{path}.permanent"),
+        "ignored"
+    ));
+}
+
+#[test]
+fn responding_services_take_no_backends() {
+    let split = json!({
+        "routes": { "app": { "match": "Host(`app.example.com`)", "service": "app" } },
+        "services": {
+            "app": { "split": [{ "service": "real", "weight": 9 }, { "service": "broken", "weight": 1 }] },
+            "real": { "backends": [{ "address": "app:3000" }] },
+            "broken": { "respond": { "status": 500 } }
+        }
+    });
+    assert_eq!(validate(split), Vec::new());
+    let both = errors(json!({
+        "services": {
+            "s": { "respond": { "status": 500 }, "backends": [{ "address": "app:3000" }] },
+            "t": { "respond": { "status": 99 } }
+        }
+    }));
+    assert!(has(&both, "services.s.respond", "no `backends` or `split`"));
+    assert!(has(&both, "services.t.respond.status", "200 to 599"));
+}
+
+#[test]
+fn listener_certificates_must_exist() {
+    let config = json!({
+        "acme": false,
+        "listeners": {
+            "web": { "address": ":80" },
+            "a": { "address": ":8443", "tls": { "certificates": ["one"] } },
+            "b": { "address": ":9443", "tls": { "certificates": ["two"] } }
+        },
+        "defaults": { "listeners": ["web"], "tls": "off" },
+        "certificates": { "one": { "cert_file": "/a.crt", "key_file": "/a.key" } }
+    });
+    let found = errors(config);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(has(
+        &found,
+        "listeners.b.tls.certificates[0]",
+        "certificate `two` does not exist"
+    ));
 }

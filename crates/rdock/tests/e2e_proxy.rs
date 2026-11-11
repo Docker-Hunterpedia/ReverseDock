@@ -268,6 +268,57 @@ services:
     assert!(unknown.text().contains("Request ID"), "{}", unknown.text());
 }
 
+/// cert-manager's HTTP-01 solver adds a plain-HTTP route with an exact path for the
+/// challenge (ADR-0029): a route that matches on the plain listener is served, so the
+/// automatic redirect (which only answers requests no route of the listener matches) never
+/// swallows it, even for a host that has an HTTPS route.
+#[tokio::test]
+async fn challenge_routes_on_plain_listeners_are_not_redirected() {
+    let ca = TestCa::new();
+    let dir = tempfile::tempdir().unwrap();
+    let cert = ca.issue(dir.path(), "app", &["app.test"]);
+    let backend = Backend::start("solver").await;
+    let (plain_port, tls_port) = (free_port(), free_port());
+    let config = format!(
+        r#"
+acme: false
+listeners:
+  web: {{ address: "127.0.0.1:{plain_port}" }}
+  websecure: {{ address: "127.0.0.1:{tls_port}", tls: {{}} }}
+certificates:
+  app: {{ cert_file: "{}", key_file: "{}" }}
+routes:
+  secure: {{ match: "Host(`app.test`)", service: app }}
+  solver:
+    match: "Host(`app.test`) && Path(`/.well-known/acme-challenge/t0ken`)"
+    listeners: [web]
+    tls: off
+    service: app
+services:
+  app: {{ backends: [{{ address: "{}" }}] }}
+"#,
+        cert.cert.display(),
+        cert.key.display(),
+        backend.addr
+    );
+    let _rdock = Rdock::start(RDOCK, &config);
+    let challenge = client::http1(
+        addr(plain_port),
+        get("app.test", "/.well-known/acme-challenge/t0ken"),
+    )
+    .await;
+    assert_eq!(challenge.status, 200, "the challenge is answered over HTTP");
+    assert_eq!(backend.targets(), vec!["/.well-known/acme-challenge/t0ken"]);
+    let other = client::http1(addr(plain_port), get("app.test", "/page")).await;
+    assert_eq!(other.status, 301, "everything else still goes to HTTPS");
+    let other_token = client::http1(
+        addr(plain_port),
+        get("app.test", "/.well-known/acme-challenge/other"),
+    )
+    .await;
+    assert_eq!(other_token.status, 301, "only the exact path is exempt");
+}
+
 #[tokio::test]
 async fn websocket_upgrade_round_trips() {
     let backend = Backend::start("ws").await;

@@ -32,3 +32,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0026](0026-swarm-l4-static.md) | v0.6: TCP routes and PROXY protocol in our accept loop, polling Swarm provider in task mode, static files as a terminal middleware, DNS adapters on raw REST, per-attempt connect budget |
 | [0027](0027-static-roots-for-labels.md) | Docker labels may serve static files only inside `providers.docker.static_roots` (empty by default) |
 | [0028](0028-default-connect-retries.md) | A service without `retries` retries failed connections on another backend (the `retries: {}` defaults); `attempts: 0` turns it off |
+| [0029](0029-kubernetes-gateway-api.md) | v0.7: Gateway API controller in the same binary, one Service per Gateway in front of a shared data plane, providers contribute listeners and certificates, own Lease leader election, Ingress as a translation |

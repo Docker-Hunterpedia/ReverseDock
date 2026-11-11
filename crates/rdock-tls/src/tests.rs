@@ -174,3 +174,64 @@ fn resolver_prefers_configured_then_acme_then_local() {
         "replacing the ACME index leaves the local one alone"
     );
 }
+
+#[test]
+fn scoped_certificates_serve_their_listener_only() {
+    let dir = tempfile::tempdir().unwrap();
+    let load = |name: &str, hosts: &[&str]| {
+        let (c, k, _) = self_signed(dir.path(), name, hosts);
+        load_certificate(name, &c, &k, None).unwrap()
+    };
+    // Two Gateways present different certificates for the same host name.
+    let shared = load("shared", &["app.example.com"]);
+    let first = load("first", &["app.example.com"]);
+    let second = load("second", &["app.example.com", "*.other.test"]);
+    let resolver = Arc::new(SniResolver::new(CertIndex::build(
+        std::slice::from_ref(&shared),
+        None,
+    )));
+    resolver.swap_scoped(std::collections::HashMap::from([
+        (
+            "gw-a".to_owned(),
+            Arc::new(CertIndex::build(
+                std::slice::from_ref(&first),
+                Some("first"),
+            )),
+        ),
+        (
+            "gw-b".to_owned(),
+            Arc::new(CertIndex::build(
+                std::slice::from_ref(&second),
+                Some("second"),
+            )),
+        ),
+    ]));
+    let served = |listener: &str, name: Option<&str>| resolver.lookup_for(listener, name).unwrap();
+    assert!(Arc::ptr_eq(
+        &served("gw-a", Some("app.example.com")),
+        &first.key
+    ));
+    assert!(Arc::ptr_eq(
+        &served("gw-b", Some("app.example.com")),
+        &second.key
+    ));
+    assert!(Arc::ptr_eq(
+        &served("gw-b", Some("x.other.test")),
+        &second.key
+    ));
+    // A name the listener's certificates do not cover gets its first one, never a shared one.
+    assert!(Arc::ptr_eq(
+        &served("gw-a", Some("unknown.test")),
+        &first.key
+    ));
+    assert!(Arc::ptr_eq(&served("gw-a", None), &first.key));
+    // Listeners without scoped certificates serve the shared ones, never a scoped one.
+    assert!(Arc::ptr_eq(
+        &served("web", Some("app.example.com")),
+        &shared.key
+    ));
+    assert!(resolver.lookup_for("web", Some("x.other.test")).is_none());
+    assert!(!resolver.covers("x.other.test"));
+    // The per-listener resolver builds a server configuration like the shared one.
+    assert!(server_config(TlsPolicy::Intermediate, resolver.for_listener("gw-a"), None).is_ok());
+}

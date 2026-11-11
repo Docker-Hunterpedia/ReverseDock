@@ -256,11 +256,11 @@ Tracked as W-SWM-01…03 below.
 - [x] W-SWM-03 Swarm secrets/configs; multi-node replicated proxies (global mode)
 
 ### W-K8S · Kubernetes (P2)
-- [ ] W-K8S-01 Gateway API controller targeting the latest Standard channel (v1.6+; v1.7 at rc as of Oct 2026): GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet once Standard; upstream conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` in CI
-- [ ] W-K8S-02 Ingress controller (networking.k8s.io/v1) for migration
-- [ ] W-K8S-03 EndpointSlice watches, Secrets for TLS, cert-manager compatibility
-- [ ] W-K8S-04 Leader election, RBAC, namespace scoping, readiness probes
-- [ ] W-K8S-05 Helm chart, Kustomize, raw manifests; k3s/RKE2/kind tested
+- [ ] W-K8S-01 Gateway API controller targeting the latest Standard channel (v1.7.0, released 2026-10-29; every kind below is `v1` in Standard): GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet; upstream conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` in CI. *Open:* GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute (passthrough), TCPRoute, ReferenceGrant and ListenerSet are implemented; UDPRoute is not (UDP waits for M-L4-04, v0.8); the upstream Gateway API v1.7.0 conformance suite passes in CI on kind for `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP` (all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`, [run](https://github.com/Docker-Hunterpedia/ReverseDock/actions/runs/43046671411)); the box stays open until UDPRoute exists and the release PR ticks it, and no report has been submitted upstream ([ADR-0029](decisions/0029-kubernetes-gateway-api.md), [roadmap](07-roadmap.md))
+- [ ] W-K8S-02 Ingress controller (networking.k8s.io/v1) for migration. *Open:* implemented and tested on fixtures; no cluster job exercises Ingress (the `helm-k3s` job, which passed on 2026-11-11, uses a Gateway and an HTTPRoute only)
+- [ ] W-K8S-03 EndpointSlice watches, Secrets for TLS, cert-manager compatibility. *Open:* implemented and tested on fixtures and against a bare API server; cert-manager compatibility is not exercised in a cluster job (the k3s job uses a self-made TLS Secret, not cert-manager)
+- [ ] W-K8S-04 Leader election, RBAC, namespace scoping, readiness probes. *Open:* implemented and tested without a cluster; the chart's RBAC and readiness probes ran on kind and k3s in CI on 2026-11-11 (the controller wrote status through the conformance suite, and `helm install --wait` and `helm upgrade --wait` returned); leader election is not checked by any job; the namespaced mode (`watchNamespaces`) is not exercised in a cluster job; the box waits for the release PR
+- [ ] W-K8S-05 Helm chart, Kustomize, raw manifests; k3s/RKE2/kind tested. *Open:* the chart, manifests, Kustomize base and examples exist and are checked offline in CI; the kind (conformance) and k3s (install, example, upgrade, uninstall) jobs passed in CI on 2026-11-11 (commit `19e88cc`); RKE2 has no job and is untested, and the box waits for the release PR
 
 ### W-PLAT · Other platforms
 

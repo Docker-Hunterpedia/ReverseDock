@@ -1,0 +1,58 @@
+# Options of the upstream Gateway API conformance suite v1.7.0, loaded by conformance_test.go
+# through --conformance-options-file. Keys are the json tags of suite.ConfigurableOptions
+# (conformance/utils/suite/suite.go at v1.7.0); an unknown key is silently ignored by the
+# upstream loader, so check a new key against that struct before adding it.
+# Flags after -args override this file; run.sh sets --version and --report-output.
+
+gatewayClassName: reversedock
+
+# Profiles to run and report. GATEWAY-UDP waits for UDP routes (v0.8, M-L4-04) and is not listed.
+conformanceProfiles:
+  - GATEWAY-HTTP
+  - GATEWAY-GRPC
+  - GATEWAY-TLS
+  - GATEWAY-TCP
+
+# Operating mode written to the report. Anything but "default" must be described in the
+# report's README (conformance/reports/README.md), so ReverseDock only reports "default".
+mode: default
+
+# Printed in the report; every field is mandatory when a report is written
+# (apis/v1 Implementation.Validate). `version` is filled in by run.sh (--version): a tag, or a
+# commit for CI runs; upstream refuses a branch name. `contact` takes @handles, team names or a
+# support URL (conformance/reports/README.md).
+implementation:
+  organization: Docker-Hunterpedia
+  project: ReverseDock
+  url: https://github.com/Docker-Hunterpedia/ReverseDock
+  version: ""
+  contact:
+    - "@Docker-Hunterpedia"
+    - https://github.com/Docker-Hunterpedia/ReverseDock/issues/new/choose
+
+# Features are NOT listed. The suite reads GatewayClass.status.supportedFeatures, which the
+# controller publishes from what it really implements, and runs exactly those tests. Never add
+# supportedFeatures, exemptFeatures or enableAllSupportedFeatures here to make a report look
+# better or worse: a feature the controller claims and fails is a failure by design.
+
+# Tests that are skipped on purpose. THE RULE: every entry needs a reason and an issue link in
+# the comment directly above it, and a skip that no longer appears in the report (the test
+# passes or does not apply) fails CI as stale (check-report.py). Core skips make a profile
+# `partial` at best, and upstream accepts a v1.7 report only with at most 5 skipped tests in
+# any partial result. Example of the required form:
+#
+#   skipTests:
+#     # Reason: <what is not implemented and why>.
+#     # Issue: https://github.com/Docker-Hunterpedia/ReverseDock/issues/<number>
+#     - HTTPRouteSomeTestName
+skipTests: []
+
+# Timeouts keep the suite's defaults (conformance/utils/config/timeout.go). A conformant
+# implementation must reach consistency within the default 30 s `maxTimeToConsistency`, so do
+# not raise that one. Raise others only with a comment saying which test needs it:
+#
+# timeoutConfig:
+#   gatewayMustHaveAddress: 300s
+
+cleanupBaseResources: true
+cleanupTestResources: true

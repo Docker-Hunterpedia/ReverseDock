@@ -218,13 +218,12 @@ impl DataPlane {
             if let Some(tls) = &listener.tls
                 && !(same_address && running.is_some_and(|(_, p)| p.as_ref() == Some(tls)))
             {
-                let acceptor =
-                    listener::acceptor(tls, self.resolver.clone()).map_err(|message| {
-                        ApplyError::Tls {
-                            name: name.clone(),
-                            message,
-                        }
-                    })?;
+                let acceptor = listener::acceptor(tls, self.resolver.for_listener(name)).map_err(
+                    |message| ApplyError::Tls {
+                        name: name.clone(),
+                        message,
+                    },
+                )?;
                 prepared.acceptors.insert(name.clone(), Arc::new(acceptor));
             }
             if !same_address {
@@ -244,6 +243,8 @@ impl DataPlane {
     /// Makes `runtime` the served configuration; returns what each listener should look like.
     fn publish(&self, runtime: Runtime) -> Vec<Wanted> {
         self.resolver.swap(runtime.certificates.clone());
+        self.resolver
+            .swap_scoped(runtime.listener_certificates.clone());
         for (name, expiry) in &runtime.cert_expiry {
             self.shared
                 .metrics

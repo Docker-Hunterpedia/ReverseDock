@@ -14,7 +14,8 @@ reversedock/
 │   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; semgrep (report only)
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
-│   │   ├── conformance.yml         # (v0.2+) traefik-label suite; gateway-api suite on kind (v0.7)
+│   │   ├── conformance.yml         # (v0.2+) traefik-label suite
+│   │   ├── kubernetes.yml          # (v0.7) chart lint/render/kubeconform and manifests in sync; Gateway API conformance on kind and Helm on k3s (both fail the workflow; passed 2026-11-11; not yet required checks; ADR-0029)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
 │   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary past the cap
 │   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only
@@ -42,7 +43,7 @@ reversedock/
 │       ├── rdock-provider-file/
 │       ├── rdock-provider-docker/
 │       ├── rdock-provider-swarm/
-│       ├── rdock-provider-kubernetes/
+│       ├── rdock-provider-kubernetes/ # Gateway API controller + Ingress translation (ADR-0029): api (own types), inventory, translate, gateway/, ingress/, backends, features, runtime/
 │       └── rdock-provider-api/
 ├── apps/
 │   ├── website/                    # reversedock.dev: Astro + Starlight, landing + docs (09-website.md, ADR-0017)
@@ -63,18 +64,18 @@ reversedock/
 ├── Dockerfile.release              # release image from the signed release binaries (GHCR, multi-arch)
 ├── deploy/
 │   ├── docker/                     # compose.yaml + rdock.yaml example
-│   ├── helm/reversedock/           # chart (P2)
-│   ├── kubernetes/                 # raw manifests, kustomize (P2)
+│   ├── helm/reversedock/           # chart (v0.7): templates, values.yaml, values.schema.json, ci/ value sets, README
+│   ├── kubernetes/                 # install.yaml (generated from the chart by scripts/render-kubernetes-manifests.sh), namespace.yaml, kustomization.yaml
 │   └── systemd/                    # rdock.service (Type=notify, DynamicUser, CAP_NET_BIND_SERVICE; no socket activation)
-├── examples/                       # runnable scenarios: 01-single-app, 02-compose-labels, 03-traefik-migration, 04-cloudflare-tunnel, 05-swarm, 06-kubernetes …
+├── examples/                       # runnable scenarios: config/, kubernetes/ (Gateway, HTTPRoute, GRPCRoute, TLSRoute, Ingress, cert-manager)
 ├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/
 ├── tests/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
-│   ├── conformance/gateway-api/    # upstream suite wiring
+│   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs
 │   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello; label parser later
 ├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
-├── scripts/                        # xlsx2md.py, schema-export, release helpers
+├── scripts/                        # xlsx2md.py, schema-export, render-kubernetes-manifests.sh, release helpers
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
 ├── CLAUDE.md                       # rules for AI assistants (AGENTS.md is a symlink to it); .claude/ stays local
 ├── LICENSE (Apache-2.0) · NOTICE · CHANGELOG.md · README.md · .editorconfig · .gitignore
@@ -103,7 +104,7 @@ reversedock/
 |---|---|---|
 | `docker` | on | Docker provider (`bollard`) |
 | `swarm` | on | Swarm provider |
-| `kubernetes` | on | Gateway API / Ingress controller (`kube`, `gateway-api`) |
+| `kubernetes` | on | Gateway API / Ingress controller (`kube` 5 with rustls and ring, `k8s-openapi`; the Gateway API types are our own, not the `gateway-api` crate); a build without it warns when `providers.kubernetes` is set |
 | `dashboard` | on | embedded SPA in `rdock-admin` |
 | `cache` | off until v0.8 | HTTP cache on `pingora-cache` |
 | `http3` | off, experimental | QUIC ingress; requires the `boringssl` backend |
@@ -136,7 +137,8 @@ reversedock/
 | Unit | `cargo nextest` | per crate | every PR |
 | Property / grammar | `proptest` | rules, labels, path normalisation | every PR |
 | Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; Pebble and toxiproxy later) | `crates/rdock/tests/e2e_*.rs` | every PR |
-| Conformance | Traefik-label suite; Gateway API suite (kind) | `tests/conformance` | PRs touching providers; nightly |
+| Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`; passed 2026-11-11, fails the workflow, not yet a required check) | `tests/conformance` | PRs touching providers; nightly |
+| Kubernetes | Translator and status tests on fixtures (`tests/gateway_conformance.rs` transcribes upstream conformance tests); runtime tests against a bare kube-apiserver when `RDOCK_TEST_KUBECONFIG` is set (not wired into CI); chart `helm lint --strict`, `helm template` + kubeconform, manifests in sync; Helm on k3s (fails the workflow; passed 2026-11-11) | `crates/providers/rdock-provider-kubernetes`, `deploy/`, `.github/workflows/kubernetes.yml` | PRs touching them; nightly |
 | Fuzz | `cargo-fuzz` (differential HTTP/1 framing vs httparse, rules parser, config loader) | `tests/fuzz` | weekly + parser PRs |
 | Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly rdock-vs-NGINX regression check on a shared runner (`bench.yml`); published results from fixed hardware, committed per release |
 | Security | `cargo-audit`, `cargo-deny`, Semgrep, dependency review, Trivy on images | CI | every PR |

@@ -35,6 +35,8 @@ pub struct Runtime {
     pub access_log: Arc<AccessLog>,
     /// Certificates, served through the shared resolver.
     pub certificates: Arc<rdock_tls::CertIndex>,
+    /// Certificates served by one listener only (listener name → its certificates).
+    pub listener_certificates: std::collections::HashMap<String, Arc<rdock_tls::CertIndex>>,
     /// Certificates to issue automatically.
     pub cert_requests: Vec<rdock_tls::CertRequest>,
     /// Names that get a certificate from the local CA (private names, ADR-0020).
@@ -62,6 +64,7 @@ impl Runtime {
                 sample: 1.0,
             })),
             certificates: Arc::new(rdock_tls::CertIndex::default()),
+            listener_certificates: std::collections::HashMap::new(),
             cert_requests: Vec::new(),
             local_cert_names: Vec::new(),
             cert_expiry: Vec::new(),
@@ -181,6 +184,9 @@ pub struct ServiceRuntime {
     pub split: Vec<(Arc<ServiceRuntime>, u32)>,
     /// Chooses among `split` targets.
     pub split_balancer: rdock_balancer::RoundRobin,
+    /// A service that answers every request itself with this status (`respond`); then
+    /// `backends` and `split` are empty.
+    pub respond: Option<u16>,
     /// Retry policy.
     pub retries: Option<rdock_model::service::Retries>,
     /// Requests in flight across the pool before new ones get `503`.

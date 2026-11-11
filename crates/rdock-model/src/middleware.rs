@@ -281,14 +281,28 @@ pub struct HeaderRules {
     pub remove: Vec<String>,
 }
 
-/// Redirect settings: `scheme` alone, or `regex` with `replacement`.
+/// Redirect settings: a target built from the request (`scheme`, `hostname`, `port`, `path`
+/// or `prefix`, in any combination), or `regex` with `replacement`. The query string is kept.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 pub struct RedirectConfig {
-    /// Redirect to this scheme, keeping host, path and query.
+    /// Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`; `port`,
+    /// `status` and `permanent` may be set), a request that already uses it is not
+    /// redirected, unless `always` is set.
     #[serde(default)]
     pub scheme: Option<RedirectScheme>,
-    /// Regular expression matched against the full request URL.
+    /// Replace the host name.
+    #[serde(default)]
+    pub hostname: Option<String>,
+    /// Replace the whole path, e.g. `/new`.
+    #[serde(default)]
+    pub path: Option<String>,
+    /// Replace a leading path prefix, by path segment: `{ from: /a, to: /b }` turns `/a/x`
+    /// into `/b/x` and `/a` into `/b`; other paths are kept.
+    #[serde(default)]
+    pub prefix: Option<RedirectPrefix>,
+    /// Regular expression matched against the full request URL. Not combined with the
+    /// fields above.
     #[serde(default)]
     pub regex: Option<String>,
     /// Target URL; may use `$1`, `${name}` groups from `regex`.
@@ -298,9 +312,29 @@ pub struct RedirectConfig {
     /// methods other than GET, so the method and body are kept), as in Traefik.
     #[serde(default)]
     pub permanent: bool,
-    /// Port for scheme redirects when it is not the scheme's default.
+    /// Status code of the redirect: `301`, `302`, `303`, `307` or `308`, for every method.
+    /// Overrides `permanent`.
+    #[serde(default)]
+    pub status: Option<u16>,
+    /// Port of the target, left out of the URL when it is the scheme's default. Unset: the
+    /// scheme's default port when `scheme` is set, otherwise the request's port.
     #[serde(default)]
     pub port: Option<u16>,
+    /// Redirect even a request that already uses `scheme` (a redirect that sets `hostname`,
+    /// `path` or `prefix` is always sent). The Gateway API's `RequestRedirect` filter sets it:
+    /// there a redirect is sent whatever the request's scheme. Default `false`.
+    #[serde(default)]
+    pub always: bool,
+}
+
+/// A path prefix replaced by another (`redirect.prefix`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct RedirectPrefix {
+    /// The prefix to replace, starting with `/`. It matches whole path segments: `/a`
+    /// matches `/a` and `/a/x`, not `/ab`.
+    pub from: String,
+    /// Its replacement, starting with `/`, or empty to remove the prefix.
+    pub to: String,
 }
 
 /// Redirect target schemes.

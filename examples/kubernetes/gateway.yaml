@@ -1,0 +1,28 @@
+# A Gateway of class reversedock with a plain HTTP listener on 80 and an HTTPS listener on 443.
+# The certificate Secret `example-com-tls` is made by cert-manager (cert-manager.yaml) or by you.
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: example
+  namespace: default
+spec:
+  gatewayClassName: reversedock
+  listeners:
+    - name: http
+      protocol: HTTP
+      port: 80
+      allowedRoutes:
+        namespaces:
+          from: Same
+    - name: https
+      protocol: HTTPS
+      port: 443
+      hostname: "*.example.com"
+      tls:
+        mode: Terminate
+        certificateRefs:
+          - kind: Secret
+            name: example-com-tls
+      allowedRoutes:
+        namespaces:
+          from: Same

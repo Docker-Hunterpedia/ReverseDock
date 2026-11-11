@@ -74,6 +74,9 @@ impl Config {
     /// The listeners `route` attaches to: its own `listeners`; otherwise, for a route served
     /// without TLS (`tls: off`), the plain-HTTP listeners; otherwise `defaults.listeners`
     /// (ADR-0021). A `tls: off` route on an HTTPS listener could never be served.
+    ///
+    /// Listeners contributed by a provider (`name@kubernetes`: a Gateway's internal port,
+    /// ADR-0029) are never attached implicitly: a route reaches one only by naming it.
     #[must_use]
     pub fn route_listeners(&self, route: &Route) -> Vec<String> {
         if let Some(listeners) = &route.listeners {
@@ -88,7 +91,9 @@ impl Config {
             let plain: Vec<String> = self
                 .effective_listeners()
                 .iter()
-                .filter(|(_, l)| l.effective_protocol() == ListenerProtocol::Http)
+                .filter(|(name, l)| {
+                    !name.contains('@') && l.effective_protocol() == ListenerProtocol::Http
+                })
                 .map(|(name, _)| name.clone())
                 .collect();
             if !plain.is_empty() {
@@ -250,6 +255,12 @@ pub struct ListenerTls {
     pub policy: TlsPolicy,
     /// Client certificates (mTLS). A certificate is always verified against these roots.
     pub client_auth: Option<ClientAuth>,
+    /// Certificates (keys of `certificates`) served by this listener only. When set, the
+    /// listener presents the one matching the requested name, or the first one, and these
+    /// certificates are not served by any other listener. Empty, the default: the listener
+    /// serves the shared certificates (`certificates`, automatic ones, `defaults.certificate`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub certificates: Vec<String>,
 }
 
 /// Client certificate verification.

@@ -77,29 +77,141 @@ Files or glob patterns (`/etc/rdock/conf.d/*.yaml`).
 
 Reload when the files change.
 
-## `providers.kubernetes` <Status planned="v0.7" />
+## `providers.kubernetes`
 
 **Type:** object
 
 Kubernetes Gateway API and Ingress resources.
 
-### `providers.kubernetes.gateway_class`
-
-**Type:** `string` · **Default:** `reversedock`
-
-`GatewayClass` name this instance serves.
-
-### `providers.kubernetes.ingress`
+### `providers.kubernetes.allow_acme`
 
 **Type:** `boolean` · **Default:** `false`
 
-Also translate `networking.k8s.io/v1` Ingress resources.
+Allow automatic certificates (`acme`) together with this provider. Off by default: replicas share no certificate storage, so ACME is only safe with one replica and a persistent data directory. Use cert-manager in a cluster.
+
+### `providers.kubernetes.controller_name`
+
+**Type:** `string` · **Default:** `reversedock.dev/gateway-controller`
+
+The `spec.controllerName` of the `GatewayClass` objects this instance serves. A domain-prefixed path, as the Gateway API requires.
+
+### `providers.kubernetes.gateway`
+
+**Type:** object · **Default:** see the fields below
+
+Gateway API (`gateway.networking.k8s.io/v1`).
+
+#### `providers.kubernetes.gateway.allow_external_name`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow `backendRefs` to `ExternalName` Services. Off by default: such a Service can point anywhere, including at cluster-internal names its author cannot otherwise reach.
+
+#### `providers.kubernetes.gateway.enabled`
+
+**Type:** `boolean` · **Default:** `true`
+
+Serve `Gateway` objects of the `GatewayClass` objects with our `controller_name`.
+
+#### `providers.kubernetes.gateway.pod_selector`
+
+**Type:** map of names to `string`
+
+Labels that select the ReverseDock pods, used as the selector of the per-Gateway Services. Required while `enabled` (the controller never reads pods, so it cannot take them from its own pod); the Helm chart sets them.
+
+#### `providers.kubernetes.gateway.port_range`
+
+**Type:** `string` · **Default:** `20000-29999`
+
+Internal ports allocated to (Gateway, listener port) pairs, as `start-end`, inside 1024–65535. Each pair opens one listener in every ReverseDock pod; running out is reported on the Gateway (`Programmed=False`).
+
+#### `providers.kubernetes.gateway.service_namespace`
+
+**Type:** `string`
+
+Namespace of the per-Gateway Services; the controller's own namespace when unset.
+
+#### `providers.kubernetes.gateway.service_type`
+
+**Type:** `load_balancer` · `cluster_ip` · `node_port` · **Default:** `load_balancer`
+
+Type of the Service created for each Gateway; its addresses become the Gateway's `status.addresses`.
+
+- `load_balancer`: `LoadBalancer`: an external address from the cluster's load-balancer integration.
+- `cluster_ip`: `ClusterIP`: reachable inside the cluster only; the cluster IP is the Gateway address.
+- `node_port`: `NodePort`: a port on every node. The Gateway address is still the Service's cluster IP, reachable only inside the cluster (`status.addresses` cannot hold a node port); clients outside use a node's address and the node port. `rdock validate` warns.
+
+### `providers.kubernetes.ingress`
+
+**Type:** object · **Default:** see the fields below
+
+Ingress (`networking.k8s.io/v1`), for migrations.
+
+#### `providers.kubernetes.ingress.claim_without_class`
+
+**Type:** `boolean` · **Default:** `false`
+
+Also claim Ingresses without any class. Without this, they are claimed only when our `IngressClass` is the cluster default.
+
+#### `providers.kubernetes.ingress.class`
+
+**Type:** `string` · **Default:** `reversedock`
+
+Ingress class served: Ingresses whose `ingressClassName` names an `IngressClass` with controller `reversedock.dev/ingress-controller`, or whose deprecated `kubernetes.io/ingress.class` annotation equals this value.
+
+#### `providers.kubernetes.ingress.enabled`
+
+**Type:** `boolean` · **Default:** `false`
+
+Translate `Ingress` objects. Off by default.
+
+#### `providers.kubernetes.ingress.nginx_annotations`
+
+**Type:** `boolean` · **Default:** `true`
+
+Honour the `nginx.ingress.kubernetes.io/*` annotations that map one to one onto a middleware; other annotations of that prefix are reported, `*-snippet` ones refused.
+
+#### `providers.kubernetes.ingress.publish_address`
+
+**Type:** `string`
+
+Address (IP or host name) published in the Ingresses' `status.loadBalancer`, instead of `publish_service`.
+
+#### `providers.kubernetes.ingress.publish_service`
+
+**Type:** `string`
+
+Service (`namespace/name`) whose load-balancer addresses are published in the Ingresses' `status.loadBalancer`.
+
+### `providers.kubernetes.kubeconfig`
+
+**Type:** `string`
+
+Path of a kubeconfig file. Unset, the in-cluster service account is used, then the `KUBECONFIG` variable and `~/.kube/config`.
+
+### `providers.kubernetes.leader_election`
+
+**Type:** object · **Default:** `{"enabled":true,"lease":"reversedock-leader"}`
+
+Leader election: only the leader writes to the cluster.
+
+#### `providers.kubernetes.leader_election.enabled`
+
+**Type:** `boolean` · **Default:** `true`
+
+Elect a leader. `false` makes this instance the only writer (one replica, or outside a cluster). Serving and readiness never depend on leadership.
+
+#### `providers.kubernetes.leader_election.lease`
+
+**Type:** `string` · **Default:** `reversedock-leader`
+
+Name of the Lease.
 
 ### `providers.kubernetes.namespaces`
 
 **Type:** list of `string`
 
-Namespaces to watch; all when empty.
+Namespaces whose objects are watched; all namespaces when empty. Cluster-scoped kinds (`GatewayClass`, `IngressClass`, `Namespace`) are always watched.
 
 ## `providers.swarm`
 

@@ -2276,22 +2276,174 @@
         }
       ]
     },
-    "KubernetesProvider": {
-      "description": "Kubernetes provider.",
+    "KubernetesGateway": {
+      "description": "Gateway API settings of the Kubernetes provider.",
       "type": "object",
       "properties": {
-        "gateway_class": {
-          "description": "`GatewayClass` name this instance serves.",
-          "type": "string",
-          "default": "reversedock"
-        },
-        "ingress": {
-          "description": "Also translate `networking.k8s.io/v1` Ingress resources.",
+        "allow_external_name": {
+          "description": "Allow `backendRefs` to `ExternalName` Services. Off by default: such a Service can\npoint anywhere, including at cluster-internal names its author cannot otherwise reach.",
           "type": "boolean",
           "default": false
         },
+        "enabled": {
+          "description": "Serve `Gateway` objects of the `GatewayClass` objects with our `controller_name`.",
+          "type": "boolean",
+          "default": true
+        },
+        "pod_selector": {
+          "description": "Labels that select the ReverseDock pods, used as the selector of the per-Gateway\nServices. Required while `enabled` (the controller never reads pods, so it cannot\ntake them from its own pod); the Helm chart sets them.",
+          "type": "object",
+          "additionalProperties": {
+            "type": "string"
+          },
+          "default": {}
+        },
+        "port_range": {
+          "description": "Internal ports allocated to (Gateway, listener port) pairs, as `start-end`, inside\n1024–65535. Each pair opens one listener in every ReverseDock pod; running out is\nreported on the Gateway (`Programmed=False`).",
+          "type": "string",
+          "default": "20000-29999"
+        },
+        "service_namespace": {
+          "description": "Namespace of the per-Gateway Services; the controller's own namespace when unset.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "service_type": {
+          "description": "Type of the Service created for each Gateway; its addresses become the Gateway's\n`status.addresses`.",
+          "$ref": "#/$defs/KubernetesServiceType",
+          "default": "load_balancer"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "KubernetesIngress": {
+      "description": "Ingress settings of the Kubernetes provider.",
+      "type": "object",
+      "properties": {
+        "claim_without_class": {
+          "description": "Also claim Ingresses without any class. Without this, they are claimed only when our\n`IngressClass` is the cluster default.",
+          "type": "boolean",
+          "default": false
+        },
+        "class": {
+          "description": "Ingress class served: Ingresses whose `ingressClassName` names an `IngressClass` with\ncontroller `reversedock.dev/ingress-controller`, or whose deprecated\n`kubernetes.io/ingress.class` annotation equals this value.",
+          "type": "string",
+          "default": "reversedock"
+        },
+        "enabled": {
+          "description": "Translate `Ingress` objects. Off by default.",
+          "type": "boolean",
+          "default": false
+        },
+        "nginx_annotations": {
+          "description": "Honour the `nginx.ingress.kubernetes.io/*` annotations that map one to one onto a\nmiddleware; other annotations of that prefix are reported, `*-snippet` ones refused.",
+          "type": "boolean",
+          "default": true
+        },
+        "publish_address": {
+          "description": "Address (IP or host name) published in the Ingresses' `status.loadBalancer`, instead\nof `publish_service`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "publish_service": {
+          "description": "Service (`namespace/name`) whose load-balancer addresses are published in the\nIngresses' `status.loadBalancer`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "KubernetesLeaderElection": {
+      "description": "Leader election through a `coordination.k8s.io/v1` Lease in the controller's namespace.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Elect a leader. `false` makes this instance the only writer (one replica, or outside\na cluster). Serving and readiness never depend on leadership.",
+          "type": "boolean",
+          "default": true
+        },
+        "lease": {
+          "description": "Name of the Lease.",
+          "type": "string",
+          "default": "reversedock-leader"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "KubernetesProvider": {
+      "description": "Kubernetes provider (ADR-0029): a Gateway API controller and, optionally, an Ingress\ncontroller in the same process as the data plane. Every replica watches, translates and\nserves; only the leader writes status, Events and the per-Gateway Services.",
+      "type": "object",
+      "properties": {
+        "allow_acme": {
+          "description": "Allow automatic certificates (`acme`) together with this provider. Off by default:\nreplicas share no certificate storage, so ACME is only safe with one replica and a\npersistent data directory. Use cert-manager in a cluster.",
+          "type": "boolean",
+          "default": false
+        },
+        "controller_name": {
+          "description": "The `spec.controllerName` of the `GatewayClass` objects this instance serves. A\ndomain-prefixed path, as the Gateway API requires.",
+          "type": "string",
+          "default": "reversedock.dev/gateway-controller"
+        },
+        "gateway": {
+          "description": "Gateway API (`gateway.networking.k8s.io/v1`).",
+          "$ref": "#/$defs/KubernetesGateway",
+          "default": {
+            "allow_external_name": false,
+            "enabled": true,
+            "pod_selector": {},
+            "port_range": "20000-29999",
+            "service_namespace": null,
+            "service_type": "load_balancer"
+          }
+        },
+        "ingress": {
+          "description": "Ingress (`networking.k8s.io/v1`), for migrations.",
+          "$ref": "#/$defs/KubernetesIngress",
+          "default": {
+            "claim_without_class": false,
+            "class": "reversedock",
+            "enabled": false,
+            "nginx_annotations": true,
+            "publish_address": null,
+            "publish_service": null
+          }
+        },
+        "kubeconfig": {
+          "description": "Path of a kubeconfig file. Unset, the in-cluster service account is used, then the\n`KUBECONFIG` variable and `~/.kube/config`.",
+          "type": [
+            "string",
+            "null"
+          ],
+          "default": null
+        },
+        "leader_election": {
+          "description": "Leader election: only the leader writes to the cluster.",
+          "$ref": "#/$defs/KubernetesLeaderElection",
+          "default": {
+            "enabled": true,
+            "lease": "reversedock-leader"
+          }
+        },
         "namespaces": {
-          "description": "Namespaces to watch; all when empty.",
+          "description": "Namespaces whose objects are watched; all namespaces when empty. Cluster-scoped kinds\n(`GatewayClass`, `IngressClass`, `Namespace`) are always watched.",
           "type": "array",
           "default": [],
           "items": {
@@ -2303,6 +2455,26 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "KubernetesServiceType": {
+      "description": "Kubernetes Service types for the per-Gateway Services.",
+      "oneOf": [
+        {
+          "description": "`LoadBalancer`: an external address from the cluster's load-balancer integration.",
+          "type": "string",
+          "const": "load_balancer"
+        },
+        {
+          "description": "`ClusterIP`: reachable inside the cluster only; the cluster IP is the Gateway address.",
+          "type": "string",
+          "const": "cluster_ip"
+        },
+        {
+          "description": "`NodePort`: a port on every node. The Gateway address is still the Service's cluster\nIP, reachable only inside the cluster (`status.addresses` cannot hold a node port);\nclients outside use a node's address and the node port. `rdock validate` warns.",
+          "type": "string",
+          "const": "node_port"
+        }
+      ]
     },
     "LatencyRule": {
       "description": "A p99 latency threshold.",
@@ -2598,6 +2770,13 @@
       "description": "TLS termination settings of a listener.",
       "type": "object",
       "properties": {
+        "certificates": {
+          "description": "Certificates (keys of `certificates`) served by this listener only. When set, the\nlistener presents the one matching the requested name, or the first one, and these\ncertificates are not served by any other listener. Empty, the default: the listener\nserves the shared certificates (`certificates`, automatic ones, `defaults.certificate`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
         "client_auth": {
           "description": "Client certificates (mTLS). A certificate is always verified against these roots.",
           "anyOf": [
@@ -2766,13 +2945,34 @@
           "description": "Redirect to another scheme or to a URL built from a regular expression.",
           "type": "object",
           "properties": {
+            "always": {
+              "description": "Redirect even a request that already uses `scheme` (a redirect that sets `hostname`,\n`path` or `prefix` is always sent). The Gateway API's `RequestRedirect` filter sets it:\nthere a redirect is sent whatever the request's scheme. Default `false`.",
+              "type": "boolean",
+              "default": false
+            },
+            "hostname": {
+              "description": "Replace the host name.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "path": {
+              "description": "Replace the whole path, e.g. `/new`.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
             "permanent": {
               "description": "`301`/`308` when true, `302`/`307` when false (the second code of each pair is used for\nmethods other than GET, so the method and body are kept), as in Traefik.",
               "type": "boolean",
               "default": false
             },
             "port": {
-              "description": "Port for scheme redirects when it is not the scheme's default.",
+              "description": "Port of the target, left out of the URL when it is the scheme's default. Unset: the\nscheme's default port when `scheme` is set, otherwise the request's port.",
               "type": [
                 "integer",
                 "null"
@@ -2782,8 +2982,20 @@
               "maximum": 65535,
               "minimum": 0
             },
+            "prefix": {
+              "description": "Replace a leading path prefix, by path segment: `{ from: /a, to: /b }` turns `/a/x`\ninto `/b/x` and `/a` into `/b`; other paths are kept.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/RedirectPrefix"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
             "regex": {
-              "description": "Regular expression matched against the full request URL.",
+              "description": "Regular expression matched against the full request URL. Not combined with the\nfields above.",
               "type": [
                 "string",
                 "null"
@@ -2799,7 +3011,7 @@
               "default": null
             },
             "scheme": {
-              "description": "Redirect to this scheme, keeping host, path and query.",
+              "description": "Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`; `port`,\n`status` and `permanent` may be set), a request that already uses it is not\nredirected, unless `always` is set.",
               "anyOf": [
                 {
                   "$ref": "#/$defs/RedirectScheme"
@@ -2809,6 +3021,17 @@
                 }
               ],
               "default": null
+            },
+            "status": {
+              "description": "Status code of the redirect: `301`, `302`, `303`, `307` or `308`, for every method.\nOverrides `permanent`.",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint16",
+              "default": null,
+              "maximum": 65535,
+              "minimum": 0
             },
             "type": {
               "type": "string",
@@ -3905,6 +4128,28 @@
       ],
       "pattern": "^(client_ip|route|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
     },
+    "RedirectPrefix": {
+      "description": "A path prefix replaced by another (`redirect.prefix`).",
+      "type": "object",
+      "properties": {
+        "from": {
+          "description": "The prefix to replace, starting with `/`. It matches whole path segments: `/a`\nmatches `/a` and `/a/x`, not `/ab`.",
+          "type": "string"
+        },
+        "to": {
+          "description": "Its replacement, starting with `/`, or empty to remove the prefix.",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "from",
+        "to"
+      ]
+    },
     "RedirectScheme": {
       "description": "Redirect target schemes.",
       "oneOf": [
@@ -3918,6 +4163,26 @@
           "type": "string",
           "const": "https"
         }
+      ]
+    },
+    "Respond": {
+      "description": "A fixed answer of a service (`respond`): the status with ReverseDock's error page.",
+      "type": "object",
+      "properties": {
+        "status": {
+          "description": "Status code, from 200 to 599.",
+          "type": "integer",
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "status"
       ]
     },
     "Retries": {
@@ -4382,11 +4647,11 @@
       }
     },
     "Service": {
-      "description": "An HTTP service: either a pool of backends or a weighted split over other services.",
+      "description": "An HTTP service: a pool of backends, a weighted split over other services, or a fixed\nanswer.",
       "type": "object",
       "properties": {
         "backends": {
-          "description": "Backend servers. Set this or `split`.",
+          "description": "Backend servers. Set this, `split` or `respond`.",
           "type": "array",
           "default": [],
           "items": {
@@ -4438,6 +4703,17 @@
           "type": "boolean",
           "default": true
         },
+        "respond": {
+          "description": "Answer every request with this status instead of forwarding it, e.g. `500` for a\nshare of a split that has no valid backend. Set this, `backends` or `split`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Respond"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "retries": {
           "description": "Retries of failed requests (ADR-0010, ADR-0015, ADR-0022). Without this setting the\ndefaults below apply: a connection that cannot be opened is tried again on another\nbackend, up to twice, within the retry budget (ADR-0028). `attempts: 0` turns retries off.",
           "anyOf": [
@@ -4456,7 +4732,7 @@
           "default": "http"
         },
         "split": {
-          "description": "Weighted traffic split over other services (canary, blue/green). Set this or `backends`.",
+          "description": "Weighted traffic split over other services (canary, blue/green). Set this, `backends`\nor `respond`.",
           "type": "array",
           "default": [],
           "items": {

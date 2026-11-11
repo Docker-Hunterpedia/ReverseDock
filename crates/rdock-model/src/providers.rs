@@ -125,24 +125,162 @@ pub enum SwarmEndpointMode {
     Vip,
 }
 
-/// Kubernetes provider.
+/// Kubernetes provider (ADR-0029): a Gateway API controller and, optionally, an Ingress
+/// controller in the same process as the data plane. Every replica watches, translates and
+/// serves; only the leader writes status, Events and the per-Gateway Services.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 pub struct KubernetesProvider {
-    /// `GatewayClass` name this instance serves.
-    pub gateway_class: String,
-    /// Namespaces to watch; all when empty.
+    /// Path of a kubeconfig file. Unset, the in-cluster service account is used, then the
+    /// `KUBECONFIG` variable and `~/.kube/config`.
+    pub kubeconfig: Option<PathBuf>,
+    /// Namespaces whose objects are watched; all namespaces when empty. Cluster-scoped kinds
+    /// (`GatewayClass`, `IngressClass`, `Namespace`) are always watched.
     pub namespaces: Vec<String>,
-    /// Also translate `networking.k8s.io/v1` Ingress resources.
-    pub ingress: bool,
+    /// The `spec.controllerName` of the `GatewayClass` objects this instance serves. A
+    /// domain-prefixed path, as the Gateway API requires.
+    pub controller_name: String,
+    /// Gateway API (`gateway.networking.k8s.io/v1`).
+    pub gateway: KubernetesGateway,
+    /// Ingress (`networking.k8s.io/v1`), for migrations.
+    pub ingress: KubernetesIngress,
+    /// Leader election: only the leader writes to the cluster.
+    pub leader_election: KubernetesLeaderElection,
+    /// Allow automatic certificates (`acme`) together with this provider. Off by default:
+    /// replicas share no certificate storage, so ACME is only safe with one replica and a
+    /// persistent data directory. Use cert-manager in a cluster.
+    pub allow_acme: bool,
 }
 
 impl Default for KubernetesProvider {
     fn default() -> Self {
         Self {
-            gateway_class: "reversedock".to_owned(),
+            kubeconfig: None,
             namespaces: Vec::new(),
-            ingress: false,
+            controller_name: "reversedock.dev/gateway-controller".to_owned(),
+            gateway: KubernetesGateway::default(),
+            ingress: KubernetesIngress::default(),
+            leader_election: KubernetesLeaderElection::default(),
+            allow_acme: false,
+        }
+    }
+}
+
+/// Gateway API settings of the Kubernetes provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct KubernetesGateway {
+    /// Serve `Gateway` objects of the `GatewayClass` objects with our `controller_name`.
+    pub enabled: bool,
+    /// Type of the Service created for each Gateway; its addresses become the Gateway's
+    /// `status.addresses`.
+    pub service_type: KubernetesServiceType,
+    /// Namespace of the per-Gateway Services; the controller's own namespace when unset.
+    pub service_namespace: Option<String>,
+    /// Labels that select the ReverseDock pods, used as the selector of the per-Gateway
+    /// Services. Required while `enabled` (the controller never reads pods, so it cannot
+    /// take them from its own pod); the Helm chart sets them.
+    pub pod_selector: BTreeMap<String, String>,
+    /// Internal ports allocated to (Gateway, listener port) pairs, as `start-end`, inside
+    /// 1024–65535. Each pair opens one listener in every ReverseDock pod; running out is
+    /// reported on the Gateway (`Programmed=False`).
+    pub port_range: String,
+    /// Allow `backendRefs` to `ExternalName` Services. Off by default: such a Service can
+    /// point anywhere, including at cluster-internal names its author cannot otherwise reach.
+    pub allow_external_name: bool,
+}
+
+impl Default for KubernetesGateway {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            service_type: KubernetesServiceType::LoadBalancer,
+            service_namespace: None,
+            pod_selector: BTreeMap::new(),
+            port_range: "20000-29999".to_owned(),
+            allow_external_name: false,
+        }
+    }
+}
+
+impl KubernetesGateway {
+    /// The first and last port of `port_range`, when it is well formed (`start-end`, both
+    /// numbers). Validation checks the bounds.
+    #[must_use]
+    pub fn ports(&self) -> Option<(u16, u16)> {
+        let (start, end) = self.port_range.split_once('-')?;
+        Some((start.trim().parse().ok()?, end.trim().parse().ok()?))
+    }
+}
+
+/// Kubernetes Service types for the per-Gateway Services.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum KubernetesServiceType {
+    /// `LoadBalancer`: an external address from the cluster's load-balancer integration.
+    #[default]
+    LoadBalancer,
+    /// `ClusterIP`: reachable inside the cluster only; the cluster IP is the Gateway address.
+    ClusterIp,
+    /// `NodePort`: a port on every node. The Gateway address is still the Service's cluster
+    /// IP, reachable only inside the cluster (`status.addresses` cannot hold a node port);
+    /// clients outside use a node's address and the node port. `rdock validate` warns.
+    NodePort,
+}
+
+/// Ingress settings of the Kubernetes provider.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct KubernetesIngress {
+    /// Translate `Ingress` objects. Off by default.
+    pub enabled: bool,
+    /// Ingress class served: Ingresses whose `ingressClassName` names an `IngressClass` with
+    /// controller `reversedock.dev/ingress-controller`, or whose deprecated
+    /// `kubernetes.io/ingress.class` annotation equals this value.
+    pub class: String,
+    /// Also claim Ingresses without any class. Without this, they are claimed only when our
+    /// `IngressClass` is the cluster default.
+    pub claim_without_class: bool,
+    /// Service (`namespace/name`) whose load-balancer addresses are published in the
+    /// Ingresses' `status.loadBalancer`.
+    pub publish_service: Option<String>,
+    /// Address (IP or host name) published in the Ingresses' `status.loadBalancer`, instead
+    /// of `publish_service`.
+    pub publish_address: Option<String>,
+    /// Honour the `nginx.ingress.kubernetes.io/*` annotations that map one to one onto a
+    /// middleware; other annotations of that prefix are reported, `*-snippet` ones refused.
+    pub nginx_annotations: bool,
+}
+
+impl Default for KubernetesIngress {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            class: "reversedock".to_owned(),
+            claim_without_class: false,
+            publish_service: None,
+            publish_address: None,
+            nginx_annotations: true,
+        }
+    }
+}
+
+/// Leader election through a `coordination.k8s.io/v1` Lease in the controller's namespace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct KubernetesLeaderElection {
+    /// Elect a leader. `false` makes this instance the only writer (one replica, or outside
+    /// a cluster). Serving and readiness never depend on leadership.
+    pub enabled: bool,
+    /// Name of the Lease.
+    pub lease: String,
+}
+
+impl Default for KubernetesLeaderElection {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            lease: "reversedock-leader".to_owned(),
         }
     }
 }

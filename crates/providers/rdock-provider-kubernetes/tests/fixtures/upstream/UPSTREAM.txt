@@ -1,0 +1,13 @@
+These manifests are copied unchanged from the Gateway API conformance suite,
+module sigs.k8s.io/gateway-api/conformance v1.7.0 (released 2026-10-29):
+https://github.com/kubernetes-sigs/gateway-api/tree/v1.7.0/conformance
+
+- base-manifests.yaml  <- conformance/base/manifests.yaml
+- *.yaml               <- conformance/tests/*.yaml
+
+Copyright The Kubernetes Authors. Licensed under the Apache License, Version 2.0
+(the same licence as ReverseDock; see LICENSE at the repository root).
+
+They are test input for the API types in src/api: every Gateway API document of a
+kind we model must deserialise. They contain no key material (TLS Secrets are
+created by the suite at run time).

@@ -91,6 +91,7 @@ fn compile_service(name: &str, service: &TcpService, env: &CompileEnv<'_>) -> Tc
         },
         split: Vec::new(),
         split_balancer: RoundRobin::default(),
+        respond: None,
         retries: None,
         max_requests: None,
         max_per_backend: None,

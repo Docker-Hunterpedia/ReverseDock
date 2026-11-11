@@ -245,6 +245,38 @@ services:
 - **Blue/green:** change the weights to `0` and `100` and reload. The switch is atomic: requests already running finish on the old target, new ones go to the new one.
 - The access log and metrics name the service that answered (`app-v2`), not the split.
 
+## Fixed answers
+
+<Status planned="v0.7" /> A service with `respond` answers every request with a status instead of sending it anywhere. It takes no `backends` and no `split`, and the status is from 200 to 599. The reply is ReverseDock's error page for that status, produced like a middleware's reply, so access logs, metrics and the route's response middlewares apply.
+
+It is meant as a target in a split, for a share of traffic that must fail on purpose. Here one request in ten is answered with 500 while the rest reach the backend:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    split:
+      - { service: app-real, weight: 9 }
+      - { service: app-fail, weight: 1 }
+  app-real:
+    backends: [{ address: "app:3000" }]
+  app-fail:
+    respond: { status: 500 }
+```
+
+The [Kubernetes Gateway API controller](/docs/guides/kubernetes-gateway-api/) uses this form: a `backendRef` that points at nothing valid keeps its weighted share and answers 500, as the Gateway API requires, and a Service without ready endpoints answers 503.
+
 ## Mirroring
 
 <Status since="v0.4" /> `mirror` on a route sends a copy of requests to another service, for example to try a new version with real traffic. The copy's answer is ignored, and the client never waits for it:

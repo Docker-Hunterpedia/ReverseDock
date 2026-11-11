@@ -56,7 +56,7 @@ Settings for these features are already part of the configuration model. `rdock 
 | TCP routing with SNI passthrough and TLS termination, PROXY protocol | <Status since="v0.6" /> |
 | Static files | <Status since="v0.6" /> |
 | UDP routing | <Status planned="v0.8" /> |
-| Kubernetes Gateway API controller | <Status planned="v0.7" /> |
+| Kubernetes Gateway API controller, Ingress translation, Helm chart | <Status planned="v0.7" /> implemented, not released; passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (2026-11-11) ([install](/docs/install/kubernetes/)) |
 
 Until automatic HTTPS ships, every HTTPS route needs a certificate under `certificates` or a `defaults.certificate`. The full plan is on the [roadmap](/docs/project/roadmap/).
 

@@ -93,11 +93,16 @@ impl CertIndex {
 ///
 /// A handshake that offers only the `acme-tls/1` protocol is a TLS-ALPN-01 validation: it gets
 /// the validation certificate for its name, or none.
+///
+/// Certificates scoped to one listener (`listeners.<name>.tls.certificates`, ADR-0029) are
+/// served by that listener only, through [`SniResolver::for_listener`].
 #[derive(Debug, Default)]
 pub struct SniResolver {
     index: ArcSwap<CertIndex>,
     managed: ArcSwap<CertIndex>,
     local: ArcSwap<CertIndex>,
+    /// Listener name → the certificates only that listener serves.
+    scoped: ArcSwap<HashMap<String, Arc<CertIndex>>>,
     challenges: Arc<Challenges>,
 }
 
@@ -109,8 +114,59 @@ impl SniResolver {
             index: ArcSwap::from_pointee(index),
             managed: ArcSwap::default(),
             local: ArcSwap::default(),
+            scoped: ArcSwap::default(),
             challenges: Arc::default(),
         }
+    }
+
+    /// Replaces the certificates scoped to listeners (listener name → its certificates, the
+    /// index's default being the listener's first certificate); new handshakes use them
+    /// immediately.
+    pub fn swap_scoped(&self, scoped: HashMap<String, Arc<CertIndex>>) {
+        self.scoped.store(Arc::new(scoped));
+    }
+
+    /// The resolver a listener's TLS acceptor uses: the listener's own certificates when it
+    /// has any, otherwise the shared ones ([`SniResolver::lookup`]).
+    #[must_use]
+    pub fn for_listener(self: &Arc<Self>, listener: &str) -> Arc<ListenerResolver> {
+        Arc::new(ListenerResolver {
+            listener: listener.to_owned(),
+            shared: self.clone(),
+        })
+    }
+
+    /// The certificate `listener` serves for `server_name`. A listener with scoped
+    /// certificates serves the one covering the name, else its first one, and never a shared
+    /// one; other listeners use [`SniResolver::lookup`].
+    #[must_use]
+    pub fn lookup_for(
+        &self,
+        listener: &str,
+        server_name: Option<&str>,
+    ) -> Option<Arc<CertifiedKey>> {
+        match self.scoped.load().get(listener) {
+            Some(index) => index.lookup(server_name),
+            None => self.lookup(server_name),
+        }
+    }
+
+    /// The certificate for `client_hello`: the TLS-ALPN-01 validation certificate for a
+    /// handshake that offers only `acme-tls/1`, otherwise `lookup` of the requested name.
+    fn resolve_with(
+        &self,
+        client_hello: &ClientHello<'_>,
+        lookup: impl FnOnce(Option<&str>) -> Option<Arc<CertifiedKey>>,
+    ) -> Option<Arc<CertifiedKey>> {
+        let validation = client_hello.alpn().is_some_and(|mut offered| {
+            offered.next() == Some(ACME_TLS_ALPN) && offered.next().is_none()
+        });
+        if validation {
+            return client_hello
+                .server_name()
+                .and_then(|name| self.challenges.tls_alpn01(name));
+        }
+        lookup(client_hello.server_name())
     }
 
     /// The challenge answers this resolver serves, shared with the HTTP listeners.
@@ -171,13 +227,21 @@ impl SniResolver {
 
 impl ResolvesServerCert for SniResolver {
     fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
-        if client_hello.alpn().is_some_and(|mut offered| {
-            offered.next() == Some(ACME_TLS_ALPN) && offered.next().is_none()
-        }) {
-            return client_hello
-                .server_name()
-                .and_then(|name| self.challenges.tls_alpn01(name));
-        }
-        self.lookup(client_hello.server_name())
+        self.resolve_with(&client_hello, |name| self.lookup(name))
+    }
+}
+
+/// The certificate resolver of one listener: its scoped certificates, or the shared ones.
+#[derive(Debug)]
+pub struct ListenerResolver {
+    listener: String,
+    shared: Arc<SniResolver>,
+}
+
+impl ResolvesServerCert for ListenerResolver {
+    fn resolve(&self, client_hello: ClientHello<'_>) -> Option<Arc<CertifiedKey>> {
+        self.shared.resolve_with(&client_hello, |name| {
+            self.shared.lookup_for(&self.listener, name)
+        })
     }
 }

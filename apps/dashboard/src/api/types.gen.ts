@@ -1319,23 +1319,145 @@ export type RdockJwtAlgorithm = 'RS256' | 'RS384' | 'RS512' | 'PS256' | 'PS384' 
 export type RdockKnownCa = 'letsencrypt' | 'zerossl' | 'buypass' | 'google';
 
 /**
- * Kubernetes provider.
+ * Gateway API settings of the Kubernetes provider.
+ */
+export type RdockKubernetesGateway = {
+    /**
+     * Allow `backendRefs` to `ExternalName` Services. Off by default: such a Service can
+     * point anywhere, including at cluster-internal names its author cannot otherwise reach.
+     */
+    allow_external_name?: boolean;
+    /**
+     * Serve `Gateway` objects of the `GatewayClass` objects with our `controller_name`.
+     */
+    enabled?: boolean;
+    /**
+     * Labels that select the ReverseDock pods, used as the selector of the per-Gateway
+     * Services. Required while `enabled` (the controller never reads pods, so it cannot
+     * take them from its own pod); the Helm chart sets them.
+     */
+    pod_selector?: {
+        [key: string]: string;
+    };
+    /**
+     * Internal ports allocated to (Gateway, listener port) pairs, as `start-end`, inside
+     * 1024–65535. Each pair opens one listener in every ReverseDock pod; running out is
+     * reported on the Gateway (`Programmed=False`).
+     */
+    port_range?: string;
+    /**
+     * Namespace of the per-Gateway Services; the controller's own namespace when unset.
+     */
+    service_namespace?: string | null;
+    /**
+     * Type of the Service created for each Gateway; its addresses become the Gateway's
+     * `status.addresses`.
+     */
+    service_type?: RdockKubernetesServiceType;
+    [key: string]: unknown | boolean | {
+        [key: string]: string;
+    } | string | string | null | RdockKubernetesServiceType | undefined;
+};
+
+/**
+ * Ingress settings of the Kubernetes provider.
+ */
+export type RdockKubernetesIngress = {
+    /**
+     * Also claim Ingresses without any class. Without this, they are claimed only when our
+     * `IngressClass` is the cluster default.
+     */
+    claim_without_class?: boolean;
+    /**
+     * Ingress class served: Ingresses whose `ingressClassName` names an `IngressClass` with
+     * controller `reversedock.dev/ingress-controller`, or whose deprecated
+     * `kubernetes.io/ingress.class` annotation equals this value.
+     */
+    class?: string;
+    /**
+     * Translate `Ingress` objects. Off by default.
+     */
+    enabled?: boolean;
+    /**
+     * Honour the `nginx.ingress.kubernetes.io*` annotations that map one to one onto a
+     * middleware; other annotations of that prefix are reported, `*-snippet` ones refused.
+     */
+    nginx_annotations?: boolean;
+    /**
+     * Address (IP or host name) published in the Ingresses' `status.loadBalancer`, instead
+     * of `publish_service`.
+     */
+    publish_address?: string | null;
+    /**
+     * Service (`namespace/name`) whose load-balancer addresses are published in the
+     * Ingresses' `status.loadBalancer`.
+     */
+    publish_service?: string | null;
+    [key: string]: unknown | boolean | string | string | null | string | null | undefined;
+};
+
+/**
+ * Leader election through a `coordination.k8s.io/v1` Lease in the controller's namespace.
+ */
+export type RdockKubernetesLeaderElection = {
+    /**
+     * Elect a leader. `false` makes this instance the only writer (one replica, or outside
+     * a cluster). Serving and readiness never depend on leadership.
+     */
+    enabled?: boolean;
+    /**
+     * Name of the Lease.
+     */
+    lease?: string;
+    [key: string]: unknown | boolean | string | undefined;
+};
+
+/**
+ * Kubernetes provider (ADR-0029): a Gateway API controller and, optionally, an Ingress
+ * controller in the same process as the data plane. Every replica watches, translates and
+ * serves; only the leader writes status, Events and the per-Gateway Services.
  */
 export type RdockKubernetesProvider = {
     /**
-     * `GatewayClass` name this instance serves.
+     * Allow automatic certificates (`acme`) together with this provider. Off by default:
+     * replicas share no certificate storage, so ACME is only safe with one replica and a
+     * persistent data directory. Use cert-manager in a cluster.
      */
-    gateway_class?: string;
+    allow_acme?: boolean;
     /**
-     * Also translate `networking.k8s.io/v1` Ingress resources.
+     * The `spec.controllerName` of the `GatewayClass` objects this instance serves. A
+     * domain-prefixed path, as the Gateway API requires.
      */
-    ingress?: boolean;
+    controller_name?: string;
     /**
-     * Namespaces to watch; all when empty.
+     * Gateway API (`gateway.networking.k8s.io/v1`).
+     */
+    gateway?: RdockKubernetesGateway;
+    /**
+     * Ingress (`networking.k8s.io/v1`), for migrations.
+     */
+    ingress?: RdockKubernetesIngress;
+    /**
+     * Path of a kubeconfig file. Unset, the in-cluster service account is used, then the
+     * `KUBECONFIG` variable and `~/.kube/config`.
+     */
+    kubeconfig?: string | null;
+    /**
+     * Leader election: only the leader writes to the cluster.
+     */
+    leader_election?: RdockKubernetesLeaderElection;
+    /**
+     * Namespaces whose objects are watched; all namespaces when empty. Cluster-scoped kinds
+     * (`GatewayClass`, `IngressClass`, `Namespace`) are always watched.
      */
     namespaces?: Array<string>;
-    [key: string]: unknown | string | boolean | Array<string> | undefined;
+    [key: string]: unknown | boolean | string | RdockKubernetesGateway | RdockKubernetesIngress | string | null | RdockKubernetesLeaderElection | Array<string> | undefined;
 };
+
+/**
+ * Kubernetes Service types for the per-Gateway Services.
+ */
+export type RdockKubernetesServiceType = 'load_balancer' | 'cluster_ip' | 'node_port';
 
 /**
  * A p99 latency threshold.
@@ -1482,6 +1604,13 @@ export type RdockListenerTimeouts = {
  */
 export type RdockListenerTls = {
     /**
+     * Certificates (keys of `certificates`) served by this listener only. When set, the
+     * listener presents the one matching the requested name, or the first one, and these
+     * certificates are not served by any other listener. Empty, the default: the listener
+     * serves the shared certificates (`certificates`, automatic ones, `defaults.certificate`).
+     */
+    certificates?: Array<string>;
+    /**
      * Client certificates (mTLS). A certificate is always verified against these roots.
      */
     client_auth?: RdockClientAuth | null;
@@ -1489,7 +1618,7 @@ export type RdockListenerTls = {
      * TLS versions and cipher suites.
      */
     policy?: RdockTlsPolicy;
-    [key: string]: unknown | RdockClientAuth | null | RdockTlsPolicy | undefined;
+    [key: string]: unknown | Array<string> | RdockClientAuth | null | RdockTlsPolicy | undefined;
 };
 
 /**
@@ -1553,16 +1682,37 @@ export type RdockMiddleware = {
     [key: string]: unknown | RdockHsts | null | RdockHeaderRules | 'headers' | undefined;
 } | {
     /**
+     * Redirect even a request that already uses `scheme` (a redirect that sets `hostname`,
+     * `path` or `prefix` is always sent). The Gateway API's `RequestRedirect` filter sets it:
+     * there a redirect is sent whatever the request's scheme. Default `false`.
+     */
+    always?: boolean;
+    /**
+     * Replace the host name.
+     */
+    hostname?: string | null;
+    /**
+     * Replace the whole path, e.g. `/new`.
+     */
+    path?: string | null;
+    /**
      * `301`/`308` when true, `302`/`307` when false (the second code of each pair is used for
      * methods other than GET, so the method and body are kept), as in Traefik.
      */
     permanent?: boolean;
     /**
-     * Port for scheme redirects when it is not the scheme's default.
+     * Port of the target, left out of the URL when it is the scheme's default. Unset: the
+     * scheme's default port when `scheme` is set, otherwise the request's port.
      */
     port?: number | null;
     /**
-     * Regular expression matched against the full request URL.
+     * Replace a leading path prefix, by path segment: `{ from: /a, to: /b }` turns `/a/x`
+     * into `/b/x` and `/a` into `/b`; other paths are kept.
+     */
+    prefix?: RdockRedirectPrefix | null;
+    /**
+     * Regular expression matched against the full request URL. Not combined with the
+     * fields above.
      */
     regex?: string | null;
     /**
@@ -1570,11 +1720,18 @@ export type RdockMiddleware = {
      */
     replacement?: string | null;
     /**
-     * Redirect to this scheme, keeping host, path and query.
+     * Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`; `port`,
+     * `status` and `permanent` may be set), a request that already uses it is not
+     * redirected, unless `always` is set.
      */
     scheme?: RdockRedirectScheme | null;
+    /**
+     * Status code of the redirect: `301`, `302`, `303`, `307` or `308`, for every method.
+     * Overrides `permanent`.
+     */
+    status?: number | null;
     type: 'redirect';
-    [key: string]: unknown | boolean | number | null | string | null | string | null | RdockRedirectScheme | null | 'redirect' | undefined;
+    [key: string]: unknown | boolean | string | null | string | null | number | null | RdockRedirectPrefix | null | string | null | string | null | RdockRedirectScheme | null | number | null | 'redirect' | undefined;
 } | {
     /**
      * Regular expression matched against the path.
@@ -2054,9 +2211,36 @@ export type RdockProxyProtocolVersion = 'v1' | 'v2';
 export type RdockRateLimitKey = string;
 
 /**
+ * A path prefix replaced by another (`redirect.prefix`).
+ */
+export type RdockRedirectPrefix = {
+    /**
+     * The prefix to replace, starting with `/`. It matches whole path segments: `/a`
+     * matches `/a` and `/a/x`, not `/ab`.
+     */
+    from: string;
+    /**
+     * Its replacement, starting with `/`, or empty to remove the prefix.
+     */
+    to: string;
+    [key: string]: unknown | string;
+};
+
+/**
  * Redirect target schemes.
  */
 export type RdockRedirectScheme = 'http' | 'https';
+
+/**
+ * A fixed answer of a service (`respond`): the status with ReverseDock's error page.
+ */
+export type RdockRespond = {
+    /**
+     * Status code, from 200 to 599.
+     */
+    status: number;
+    [key: string]: unknown | number;
+};
 
 /**
  * Retry policy.
@@ -2286,11 +2470,12 @@ export type RdockSecurity = {
 };
 
 /**
- * An HTTP service: either a pool of backends or a weighted split over other services.
+ * An HTTP service: a pool of backends, a weighted split over other services, or a fixed
+ * answer.
  */
 export type RdockService = {
     /**
-     * Backend servers. Set this or `split`.
+     * Backend servers. Set this, `split` or `respond`.
      */
     backends?: Array<RdockBackend>;
     /**
@@ -2314,6 +2499,11 @@ export type RdockService = {
      */
     pass_host_header?: boolean;
     /**
+     * Answer every request with this status instead of forwarding it, e.g. `500` for a
+     * share of a split that has no valid backend. Set this, `backends` or `split`.
+     */
+    respond?: RdockRespond | null;
+    /**
      * Retries of failed requests (ADR-0010, ADR-0015, ADR-0022). Without this setting the
      * defaults below apply: a connection that cannot be opened is tried again on another
      * backend, up to twice, within the retry budget (ADR-0028). `attempts: 0` turns retries off.
@@ -2324,7 +2514,8 @@ export type RdockService = {
      */
     scheme?: RdockScheme;
     /**
-     * Weighted traffic split over other services (canary, blue/green). Set this or `backends`.
+     * Weighted traffic split over other services (canary, blue/green). Set this, `backends`
+     * or `respond`.
      */
     split?: Array<RdockSplitTarget>;
     /**
@@ -2339,7 +2530,7 @@ export type RdockService = {
      * TLS to the backends when `scheme` is `https`.
      */
     tls?: RdockUpstreamTls | null;
-    [key: string]: unknown | Array<RdockBackend> | RdockHealth | null | RdockLoadBalancer | number | null | number | null | boolean | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
+    [key: string]: unknown | Array<RdockBackend> | RdockHealth | null | RdockLoadBalancer | number | null | number | null | boolean | RdockRespond | null | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
 };
 
 /**

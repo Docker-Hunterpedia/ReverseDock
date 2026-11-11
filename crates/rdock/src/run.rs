@@ -166,8 +166,13 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     let (on_change, mut changes) = mpsc::channel(1);
     let (on_snapshot, mut snapshots) = mpsc::channel(1);
     let boot_config = engine.config().await.unwrap_or_default();
-    let provider_tasks =
-        crate::providers::start(&engine, &boot_config, &stop.subscribe(), &on_snapshot);
+    let provider_tasks = crate::providers::start(
+        &engine,
+        &boot_config,
+        &args.data_dir,
+        &stop.subscribe(),
+        &on_snapshot,
+    );
     let mut watcher = (!args.no_watch)
         .then(|| start_watcher(&engine, on_change))
         .flatten();

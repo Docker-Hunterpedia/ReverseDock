@@ -1,0 +1,58 @@
+---
+title: Migrate from ingress-nginx
+description: Move a cluster off ingress-nginx, either to ReverseDock's Ingress support for the common annotations or to the Gateway API, with the differences that matter and a cutover plan.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+ingress-nginx was retired by the Kubernetes project: it announced on 2025-11-11 that maintenance would end in March 2026, with no releases, bug fixes or security updates after that, and that existing deployments keep working ([kubernetes.io, 2025-11-11](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/), checked 2026-11-11). This page is a short route off it with ReverseDock <Status planned="v0.7" />. The controller is implemented and **not in a release yet**; the upstream conformance run in CI is pending.
+
+There are two routes, and you can use both:
+
+1. **Keep your Ingress objects.** ReverseDock translates `networking.k8s.io/v1` Ingress and honours the ingress-nginx annotations that map one to one onto something it has. Everything else is reported by name. See [Kubernetes Ingress](/docs/guides/kubernetes-ingress/).
+2. **Convert to the Gateway API.** The Kubernetes project recommends Gateway over Ingress. The Gateway API project documents [migrating from ingress-nginx](https://gateway-api.sigs.k8s.io/guides/getting-started/migrating-from-ingress-nginx/) with **ingress2gateway**, a tool that converts Ingress objects and, as that page says, is under active development for the most used ingress-nginx annotations (checked 2026-11-11). Review what it produces: it is a starting point, not a guarantee. Then serve the result with ReverseDock's [Gateway API controller](/docs/guides/kubernetes-gateway-api/), whose supported features are listed on that page.
+
+## What carries over
+
+| ingress-nginx | ReverseDock |
+|---|---|
+| `ingressClassName`, IngressClass | The same, with the controller `reversedock.dev/ingress-controller`. |
+| `pathType` `Exact` and `Prefix`, host wildcards, `defaultBackend`, TLS Secrets | Implemented as the Ingress specification says. |
+| `ssl-redirect`, `force-ssl-redirect` | Honoured (308). |
+| `rewrite-target` | Honoured when it has no capture groups: the whole path becomes the target, as in ingress-nginx 0.22 and later. |
+| `backend-protocol` | `HTTP`, `HTTPS`, `GRPC`, `GRPCS`. |
+| `proxy-body-size`, `whitelist-source-range`, `enable-cors` and its `cors-*` settings | Honoured. |
+| `app-root`, `permanent-redirect`, `temporal-redirect` | Honoured. |
+| `--publish-service`, `--publish-status-address` | `ingress.publish_service`, `ingress.publish_address`. |
+| Leader election for status | A Lease; only the leader writes status. |
+
+## What does not
+
+- **Other annotations** (about 100 more: authentication, canary, rate limits, timeouts, session affinity, `use-regex` and capture-group rewrites, upstream settings) are not emulated. Each gets a diagnostic that names it, so `rdock status` is your to-do list.
+- **Snippets** (`configuration-snippet`, `server-snippet` and every annotation that ends in `-snippet`) are refused. They are raw NGINX configuration; the Ingress is served without them.
+- **Global settings** in ingress-nginx's ConfigMap are not read.
+- **Regular-expression paths** are not supported: an `ImplementationSpecific` path is matched as a literal prefix, with a diagnostic.
+- **Missing TLS Secrets.** ingress-nginx served its default certificate for a host whose Secret was missing ([ingress-nginx TLS](https://github.com/kubernetes/ingress-nginx/blob/main/docs/user-guide/tls.md), checked 2026-11-11). ReverseDock serves the host without TLS and reports it; it never falls back to a self-signed certificate.
+- **Class-less Ingresses.** ingress-nginx ignored them unless started with `--watch-ingress-without-class`. ReverseDock claims them only when its IngressClass is the cluster default or `ingress.claim_without_class` is set.
+- **Host wildcards** in Ingress match one label, as the specification says; in Gateway API objects they match any number of labels.
+- No annotation attaches a ReverseDock middleware to an Ingress.
+
+## A cutover plan
+
+1. Install ReverseDock next to ingress-nginx, with its own IngressClass and its own load balancer address ([install](/docs/install/kubernetes/)). ReverseDock leaves Ingresses of another class alone.
+2. Pick one Ingress. Give it `ingressClassName: reversedock` in a copy of the object (a second Ingress with another name and host, or a test host), so both controllers can serve the application.
+3. Run `kubectl -n reversedock-system exec deploy/reversedock -- rdock status` and read the diagnostics for that Ingress. Replace what is reported, or decide it does not matter. Anything with a Gateway API equivalent is better done there.
+4. Test through the new address with the real host names: `curl --resolve app.example.com:443:<new address> https://app.example.com/`.
+5. Move the DNS record, or the traffic, to the new address when you are satisfied, one application at a time. Keep ingress-nginx running while DNS caches expire.
+6. Remove the old Ingresses and ingress-nginx last.
+
+Certificates in a cluster come from cert-manager; ReverseDock's own ACME is off in a cluster ([why](/docs/install/kubernetes/#certificates-in-a-cluster)).
+
+## Related
+
+- [Kubernetes Ingress](/docs/guides/kubernetes-ingress/)
+- [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/)
+- [Install on Kubernetes](/docs/install/kubernetes/)
+- [Migrate from NGINX](/docs/migrate/from-nginx/), [Migrate from Traefik](/docs/migrate/from-traefik/)

@@ -3,7 +3,7 @@
 //! validate → compile → swap path as a file reload. Writes are conditional on the version
 //! they were based on.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 use std::sync::PoisonError;
 
@@ -138,6 +138,7 @@ impl Engine {
             provider: PROVIDER.to_owned(),
             fragment: candidate,
             diagnostics: Vec::new(),
+            revision: None,
         });
         let report = self.reload("api").await;
         if report.applied() {
@@ -179,9 +180,10 @@ impl Engine {
             provider: PROVIDER.to_owned(),
             fragment: candidate,
             diagnostics: Vec::new(),
+            revision: None,
         });
         let ok = self
-            .merge_and_compile(file, &snapshots, &mut diagnostics)
+            .merge_and_compile(file, &snapshots, &BTreeSet::new(), &mut diagnostics)
             .is_ok();
         for d in &mut diagnostics {
             if api_object_left_out(d) {

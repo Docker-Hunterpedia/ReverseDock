@@ -194,6 +194,7 @@ mod tests {
             provider: "docker".to_owned(),
             fragment: crate::merge::Fragment::default(),
             diagnostics: vec![rdock_model::Diagnostic::warning("x", "y")],
+            revision: None,
         };
         state.save_snapshot(&snapshot).unwrap();
         assert_eq!(state.load_snapshot("docker").unwrap(), Some(snapshot));

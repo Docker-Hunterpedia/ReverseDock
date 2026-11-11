@@ -1,6 +1,6 @@
 # ReverseDock — rules for AI assistants
 
-ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) and v0.2 (the Docker provider, Traefik labels, zero-config, `rdock migrate traefik`) and v0.3 (automatic HTTPS, ADR-0020) and v0.4 (production reliability, ADR-0022) and v0.5 (management: admin API, users and tokens, audit log, configuration API, dashboard, alerts, ADR-0024) and v0.6 (Swarm provider, TCP routes with SNI passthrough, PROXY protocol, static files, seven DNS-01 adapters, ADR-0026) are implemented. Read [docs/README.md](docs/README.md) before proposing changes.
+ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apache-2.0, free forever). Milestones M0 (workspace, rule grammar, config model and schema, `rdock validate`) and v0.1 (the HTTP proxy: `rdock run`, file provider with reload, manual TLS, P0 middlewares, admin listener) and v0.2 (the Docker provider, Traefik labels, zero-config, `rdock migrate traefik`) and v0.3 (automatic HTTPS, ADR-0020) and v0.4 (production reliability, ADR-0022) and v0.5 (management: admin API, users and tokens, audit log, configuration API, dashboard, alerts, ADR-0024) and v0.6 (Swarm provider, TCP routes with SNI passthrough, PROXY protocol, static files, seven DNS-01 adapters, ADR-0026) are implemented, and v0.7 (the Kubernetes Gateway API controller, Ingress translation, Helm chart and manifests, ADR-0029) is implemented; it passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (GATEWAY-HTTP, GATEWAY-GRPC, GATEWAY-TLS and GATEWAY-TCP: all core tests and every claimed extended feature; 2026-11-11, commit 19e88cc); not released yet; no report submitted upstream yet. Read [docs/README.md](docs/README.md) before proposing changes.
 
 ## Working rules
 
@@ -47,7 +47,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 | [docs/08-design-system.md](docs/08-design-system.md) | Harbor UI dashboard design system |
 | [docs/09-website.md](docs/09-website.md) | Public website and docs plan (Astro + Starlight, `apps/website`) |
 | [apps/website/](apps/website/README.md) | The website: landing page, docs pages, generators and checks |
-| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0025 |
+| [docs/decisions/](docs/decisions/README.md) | ADR-0001 … ADR-0029 |
 | [docs/research/](docs/research/) | Original idea, notes and the feature-matrix workbook |
 | [docs/design/](docs/design/) · [docs/assets/](docs/assets/) | Dashboard mock; logo and banner (render with `scripts/render-assets.sh`) |
 | [CONTRIBUTING.md](CONTRIBUTING.md) · [GOVERNANCE.md](GOVERNANCE.md) | How changes are proposed, reviewed and merged |

@@ -21,15 +21,14 @@ Both kinds are available <Status since="v0.1" />.
 
 ## Redirect to another URL
 
-The `redirect` middleware has two forms: `scheme` alone, or `regex` with `replacement`.
+The `redirect` middleware has two forms: a URL built from the request, or `regex` with `replacement`.
 
-- `scheme: https` (or `http`) keeps the host, path and query and changes the scheme. Set
-  `port` when the target port is not the scheme's default. If the request already uses the
-  target scheme, the middleware does nothing.
+- **Built from the request** <Status planned="v0.7" />: set any of `scheme`, `hostname`, `port`, `path` or `prefix`. Whatever you set replaces that part of the request URL, and the rest is kept, including the query string. See [Redirect to a built URL](#redirect-to-a-built-url).
+- **`scheme` alone** (`https` or `http`) keeps the host, path and query and changes the scheme. Set `port` when the target port is not the scheme's default. If the request already uses the target scheme, the middleware does nothing, unless `always: true` <Status planned="v0.7" /> is set (the Gateway API's `RequestRedirect` filter is translated with it).
 - `regex` is matched against the full request URL, `scheme://host[:port]/path?query`, where the
   scheme is `https` on a TLS connection and `http` otherwise, and the host is the `Host` header
   as the client sent it. `replacement` can use groups as `$1` or `${name}`. If the regex does
-  not match, or the result is the current URL, the request continues to the backend.
+  not match, or the result is the current URL, the request continues to the backend. `regex` is not combined with the fields above.
 
 ### Status codes
 
@@ -43,6 +42,8 @@ The `redirect` middleware has two forms: `scheme` alone, or `regex` with `replac
 The second code tells the client to repeat the request with the same method and body, so a
 redirected `POST` stays a `POST`. Browsers cache 301 and 308 answers, so start with the default
 and set `permanent: true` once the target is final.
+
+`status` <Status planned="v0.7" /> sets the code for every method: `301`, `302`, `303`, `307` or `308`. It overrides `permanent`; `rdock validate` warns when both are set.
 
 :::note
 For plain HTTP to HTTPS you usually do not need this middleware. ReverseDock redirects HTTP
@@ -100,6 +101,69 @@ curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' \
 The regex sees the `Host` header exactly as the client sent it. A client that sends
 `Host: www.example.com:80` does not match `^http://www\.example\.com/`; write
 `www\.example\.com(:\d+)?/` if that matters to you.
+
+### Redirect to a built URL
+
+<Status planned="v0.7" /> These fields can be combined; each one you leave out keeps the request's value.
+
+| Field | Replaces |
+|---|---|
+| `scheme` | The scheme (`http` or `https`). |
+| `hostname` | The host name. A wildcard is refused. |
+| `port` | The port, left out of the URL when it is the scheme's default. Unset: the scheme's default port when `scheme` is set, otherwise the request's port. |
+| `path` | The whole path, starting with `/`. |
+| `prefix` | A leading path prefix: `{ from: /a, to: /b }` turns `/a/x` into `/b/x` and `/a` into `/b`. It matches whole path segments, so `/ab` is left alone; `to` may be empty to remove the prefix. Not combined with `path`. |
+| `always` | Redirect even a request that already uses `scheme`. Default `false`. |
+
+The query string is always kept. Unlike `scheme` alone, a redirect that also sets `hostname`, `path` or `prefix` is sent even when the request already uses the scheme.
+
+This sends `example.com/help/…` to `https://docs.example.com/docs/…` with a permanent redirect for every method, and `www.example.com` to the bare domain's root:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  old-docs:
+    match: "Host(`example.com`) && PathPrefix(`/help`)"
+    service: site
+    middlewares: [docs]
+  www:
+    match: "Host(`www.example.com`)"
+    service: site
+    middlewares: [to-apex]
+
+services:
+  site:
+    backends: [{ address: "site:8080" }]
+
+middlewares:
+  docs:
+    type: redirect
+    scheme: https
+    hostname: docs.example.com
+    prefix: { from: /help, to: /docs }
+    status: 301
+  to-apex:
+    type: redirect
+    hostname: example.com
+    path: /
+    status: 308
+```
+
+```sh
+curl -s -o /dev/null -w '%{http_code} %{redirect_url}\n' -H 'Host: example.com' 'http://localhost/help/a/b?x=1'
+```
+
+```text
+301 https://docs.example.com/docs/a/b?x=1
+```
+
+These are the fields the Kubernetes Gateway API's `RequestRedirect` filter needs, and the [Gateway API controller](/docs/guides/kubernetes-gateway-api/) uses them; they work in any configuration.
 
 ## Change the path the backend sees
 
@@ -172,8 +236,9 @@ backreferences. `rdock validate` reports a pattern that does not compile.
 
 ## Check that it worked
 
-- `rdock validate /etc/rdock/rdock.yaml` reports a redirect without `scheme` or
-  `regex` + `replacement`, a prefix that does not start with `/`, and invalid patterns.
+- `rdock validate /etc/rdock/rdock.yaml` reports a redirect with none of `scheme`, `hostname`,
+  `port`, `path`, `prefix` or `regex` + `replacement`, a path or prefix that does not start with `/`,
+  a status that is not a redirect status, and invalid patterns.
 - To see the path the backend receives, point the route at an echo service such as
   `traefik/whoami` and look at the request line it prints.
 

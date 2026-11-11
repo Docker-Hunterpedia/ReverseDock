@@ -57,6 +57,57 @@ services:
 }
 
 #[tokio::test]
+async fn a_responding_service_answers_its_share_of_a_split() {
+    let app = Backend::start("app").await;
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "PathPrefix(`/`)", service: app, middlewares: [tag] }}
+  gone: {{ match: "PathPrefix(`/gone`)", service: broken }}
+middlewares:
+  tag: {{ type: headers, response: {{ set: {{ X-Route: app }} }} }}
+services:
+  app:
+    split: [{{ service: real, weight: 1 }}, {{ service: broken, weight: 1 }}]
+  real: {{ backends: [{{ address: "{}" }}] }}
+  broken: {{ respond: {{ status: 500 }} }}
+"#,
+        app.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let mut statuses = Vec::new();
+    for _ in 0..8 {
+        let reply = client::http1(addr(port), get("a", "/x")).await;
+        assert_eq!(
+            reply.header("x-route"),
+            Some("app"),
+            "the route's response middlewares run on both shares"
+        );
+        statuses.push(reply.status);
+    }
+    statuses.sort_unstable();
+    assert_eq!(statuses, [200, 200, 200, 200, 500, 500, 500, 500]);
+    assert_eq!(
+        app.traffic(),
+        4,
+        "the responding share never reaches a backend"
+    );
+    let direct = client::http1(addr(port), get("a", "/gone")).await;
+    assert_eq!(direct.status, 500, "a route can name the service directly");
+    assert!(
+        rdock
+            .access_log()
+            .iter()
+            .any(|r| r["service"] == "broken" && r["status"] == 500),
+        "the access log names the responding service"
+    );
+}
+
+#[tokio::test]
 async fn mirrors_get_a_copy_and_never_affect_the_answer() {
     let main = Backend::start("main").await;
     let shadow = Backend::start("shadow").await;

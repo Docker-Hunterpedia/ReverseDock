@@ -1,0 +1,25 @@
+# Ingress on, with its own IngressClass and a LoadBalancer Service, autoscaling and monitoring.
+ingress:
+  enabled: true
+  claimWithoutClass: false
+  service:
+    enabled: true
+    externalTrafficPolicy: Local
+ingressClass:
+  create: true
+  default: false
+autoscaling:
+  enabled: true
+admin:
+  network:
+    enabled: true
+    tlsSecretName: reversedock-admin-tls
+networkPolicy:
+  enabled: true
+metrics:
+  serviceMonitor:
+    enabled: true
+    tokenSecret:
+      name: reversedock-metrics-token
+    tlsConfig:
+      insecureSkipVerify: true

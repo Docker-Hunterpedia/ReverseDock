@@ -1,0 +1,151 @@
+---
+title: Kubernetes Ingress
+description: Serve Kubernetes Ingress objects with ReverseDock for migrations, with the class rules, path semantics, TLS, the supported ingress-nginx annotations, and what happens to the rest.
+sidebar:
+  order: 5
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock can translate `networking.k8s.io/v1` Ingress objects <Status planned="v0.7" />. It is a landing pad for clusters that still run Ingress, in particular those leaving ingress-nginx, and not a second product: the Gateway API is the way to go for new work ([Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/)). Ingress is **off by default**.
+
+:::caution[Status]
+The Ingress translation is implemented and tested on fixtures. It is not in a release yet, and it has not been proven in a cluster by CI.
+:::
+
+The Kubernetes project has frozen the Ingress API; it recommends Gateway, and has no plans to remove Ingress ([Ingress concept](https://kubernetes.io/docs/concepts/services-networking/ingress/), checked 2026-11-11). ingress-nginx, the most used Ingress controller, was retired: the project announced on 2025-11-11 that it would keep best-effort maintenance until March 2026 and then publish no releases, bug fixes or security updates, that existing deployments keep working, and that users should move to Gateway API or another controller ([kubernetes.io, 2025-11-11](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/), checked 2026-11-11). See [Migrate from ingress-nginx](/docs/migrate/from-ingress-nginx/).
+
+## Turn it on
+
+With the Helm chart ([install](/docs/install/kubernetes/)):
+
+```sh
+helm upgrade --install reversedock deploy/helm/reversedock -n reversedock-system \
+  --set ingress.enabled=true \
+  --set ingress.service.enabled=true \
+  --set ingressClass.create=true
+```
+
+- `ingress.enabled` turns the translation on, adds the read access to Ingresses and IngressClasses and the right to write Ingress status, and opens two listeners in the configuration, `web` on port 8080 (plain HTTP) and `websecure` on 8443 (HTTPS), which Ingress routes use. Ingress opens no ports of its own: it uses the listeners of the file configuration.
+- `ingress.service.enabled` creates a `LoadBalancer` Service on ports 80 and 443 for those two listeners. Without it, expose them yourself. Its address is written to the status of the Ingresses.
+- `ingressClass.create` creates an IngressClass named `reversedock` (`ingress.class`) with the controller `reversedock.dev/ingress-controller`. `ingressClass.default: true` makes it the cluster's default class.
+
+Without Helm, set it in `rdock.yaml`; the section is `providers.kubernetes.ingress`, and you must define the listeners yourself:
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  web: { address: ":8080" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+acme: false
+
+providers:
+  kubernetes:
+    gateway:
+      enabled: false          # Ingress only; otherwise gateway.pod_selector is required
+    ingress:
+      enabled: true
+      publish_service: reversedock-system/reversedock-ingress
+```
+
+The [example](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/examples/kubernetes/ingress.yaml) is an IngressClass and an Ingress for the echo backend of the Gateway API example:
+
+```yaml title="examples/kubernetes/ingress.yaml (excerpt)"
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: echo
+  namespace: default
+spec:
+  ingressClassName: reversedock
+  tls:
+    - hosts: [echo.example.com]
+      secretName: example-com-tls
+  rules:
+    - host: echo.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: echo
+                port:
+                  name: http
+```
+
+## Which Ingresses are ReverseDock's
+
+ReverseDock never silently takes every Ingress. It claims one when:
+
+1. `spec.ingressClassName` names an IngressClass whose `spec.controller` is `reversedock.dev/ingress-controller`; or
+2. there is no `ingressClassName` and the deprecated `kubernetes.io/ingress.class` annotation equals `providers.kubernetes.ingress.class` (default `reversedock`); or
+3. it names no class at all, and one of ReverseDock's IngressClasses is marked as the cluster default (`ingressclass.kubernetes.io/is-default-class: "true"`), or `ingress.claim_without_class` is `true`.
+
+An Ingress of another class is left alone: no routes, no status, no diagnostics. That is what lets ReverseDock run next to another controller while you migrate.
+
+## How paths and hosts are matched
+
+The semantics are the ones the Ingress specification gives ([Ingress concept](https://kubernetes.io/docs/concepts/services-networking/ingress/), checked 2026-11-11):
+
+| `pathType` | Matches |
+|---|---|
+| `Exact` | The path exactly, case-sensitive: `/foo` is not `/foo/`. |
+| `Prefix` | By path segment, ignoring a trailing slash: `/foo` and `/foo/` match `/foo`, `/foo/` and `/foo/bar`, not `/foobar`. `/` matches everything. |
+| `ImplementationSpecific` | Treated as `Prefix`. Regular expressions are not supported: such a path is matched literally, with a diagnostic. |
+
+- **Hosts.** An exact host, or `*.example.com`, which covers **one** label (`a.example.com`, not `a.b.example.com` or `example.com`). This differs from the Gateway API, where a wildcard covers any number of labels. A rule without a host applies to every host.
+- **Precedence.** The most specific host first (exact, then wildcard, then none); within a host the longest path first; on a tie `Exact` before `Prefix`; then the older Ingress, then namespace and name. The `defaultBackend` answers what no rule matches.
+- **Backends.** A Service by port name or number, in the Ingress's namespace. ReverseDock sends to the pod addresses from the Service's EndpointSlices, as it does for the Gateway API. `appProtocol` on the Service port picks HTTP, HTTP/2 without TLS (`kubernetes.io/h2c`) or TLS to the pods. `resource` backends are not supported: that path is left out, with a diagnostic. A Service that does not exist, or has no ready endpoint, answers 503, and so does an `ExternalName` Service.
+
+## TLS
+
+`spec.tls` names a Secret of type `kubernetes.io/tls` in the Ingress's namespace. ReverseDock writes it to a file in its data directory, as it does for Gateways, and serves it on the HTTPS listeners of the file configuration. cert-manager can fill the Secret ([`cert-manager.yaml`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/examples/kubernetes/cert-manager.yaml)); its HTTP-01 challenge path, `/.well-known/acme-challenge/…`, is never redirected or rewritten, so the challenge is answered over plain HTTP.
+
+- A host covered by a usable `spec.tls` entry is served over HTTPS, and plain HTTP requests for it are redirected to HTTPS with 308: the default of ingress-nginx's `ssl-redirect`. `ssl-redirect: "false"` serves both sides.
+- A `spec.tls` entry whose Secret is missing, or not a usable certificate, or that names no `secretName`, is reported with a diagnostic. Its hosts keep their routes and are served **without TLS**, and the Ingress picks the certificate up when the Secret appears. ReverseDock does not invent a self-signed certificate.
+- Routing by SNI alone (an entry with no `secretName`) is not supported.
+
+## ingress-nginx annotations
+
+With `ingress.nginx_annotations` on (the default), the `nginx.ingress.kubernetes.io/` annotations that map one to one onto a ReverseDock middleware are honoured:
+
+| Annotation | What ReverseDock does |
+|---|---|
+| `ssl-redirect`, `force-ssl-redirect` | `ssl-redirect` is on for hosts with a usable `spec.tls` entry; `"false"` turns it off. `force-ssl-redirect: "true"` redirects hosts without TLS too. Both redirect with 308; challenge paths are excepted. |
+| `rewrite-target` | A literal path only. As in ingress-nginx 0.22 and later, the whole request path is replaced by the target, whatever the path type (`/api` with target `/` turns `/api/x` into `/`); the query string is kept. Parts of the path are carried over only by capture groups, which are not supported: a target with `$1` is not applied, with a diagnostic. |
+| `backend-protocol` | `HTTP`, `HTTPS` and `GRPCS` (TLS to the pods) and `GRPC` (HTTP/2 without TLS). Other values are reported. |
+| `proxy-body-size` | A request body limit for the routes: NGINX size syntax (`8m`, `100k`); `0` lifts the limit. |
+| `whitelist-source-range` | An allow list of addresses or ranges. With no usable entry, every request is refused with 403. |
+| `enable-cors` with `cors-allow-origin`, `-methods`, `-headers`, `-credentials`, `-max-age` | The [`cors`](/docs/guides/cors/) middleware. Origins must be literal (`https://app.example.com`); regular expressions are left out. Methods and headers default to ingress-nginx's lists. Credentials are allowed only when `cors-allow-credentials` is `"true"` and the origins are not `*` (ingress-nginx's default is on). |
+| `app-root` | Requests for `/` are redirected (302) to the path, when the rule has a `/` prefix path. |
+| `permanent-redirect` (with `permanent-redirect-code` 301, 302, 307 or 308; default 301), `temporal-redirect` (302) | Every request of the Ingress is redirected to the URL; `permanent-redirect` wins over `temporal-redirect`. |
+
+Everything else is **reported, not silently dropped**:
+
+- Any other annotation under `nginx.ingress.kubernetes.io/` gets a diagnostic that names it and says it is ignored. There is no emulation of the 100 or so others: authentication, canaries, rate limits, regular-expression paths (`use-regex`), timeouts, session affinity and the like. Use the [Gateway API](/docs/guides/kubernetes-gateway-api/), or a file configuration, for those.
+- **Annotations ending in `-snippet`** (`configuration-snippet`, `server-snippet` and the like) hold raw NGINX configuration. They are refused, with a diagnostic: the Ingress is served without them. This is on whatever `nginx_annotations` says.
+- `traefik.ingress.kubernetes.io/` annotations are reported as not supported.
+
+With `nginx_annotations: false`, the ingress-nginx annotations are ignored (the `-snippet` ones are still reported).
+
+No annotation attaches a ReverseDock middleware to an Ingress. Diagnostics are in `rdock status`, in the controller's logs and in the dashboard; their path starts with `kubernetes["Ingress/<namespace>/<name>"]`.
+
+## Status
+
+Each claimed Ingress gets `status.loadBalancer` written by the leader replica, from:
+
+- `providers.kubernetes.ingress.publish_address`: an IP address or a host name; or
+- `providers.kubernetes.ingress.publish_service`: `namespace/name` of a Service whose load-balancer addresses (or cluster IP for a `ClusterIP` Service) are copied. The chart sets it to its own `ingress.service` when that is enabled, and `ingress.publishService` and `ingress.publishAddress` override it.
+
+With neither, the status is not written, and a diagnostic says so. If both are set, `publish_address` wins and `rdock validate` warns.
+
+## Related
+
+- [Migrate from ingress-nginx](/docs/migrate/from-ingress-nginx/)
+- [Install on Kubernetes](/docs/install/kubernetes/)
+- [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/)
+- [`providers.kubernetes` reference](/docs/reference/configuration/providers/)

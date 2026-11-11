@@ -1,0 +1,21 @@
+# A GRPCRoute: calls to the grpc.health.v1.Health service go to a gRPC backend.
+# GRPCRoute backends default to HTTP/2 without TLS (h2c). The backend Service `grpc-echo` is
+# yours; any gRPC server that listens on 9000 will do.
+apiVersion: gateway.networking.k8s.io/v1
+kind: GRPCRoute
+metadata:
+  name: grpc-echo
+  namespace: default
+spec:
+  parentRefs:
+    - name: example
+      sectionName: https
+  hostnames:
+    - grpc.example.com
+  rules:
+    - matches:
+        - method:
+            service: grpc.health.v1.Health
+      backendRefs:
+        - name: grpc-echo
+          port: 9000

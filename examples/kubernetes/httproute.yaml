@@ -1,0 +1,64 @@
+# An echo backend and an HTTPRoute that sends echo.example.com to it through the Gateway.
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: echo
+  namespace: default
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: echo
+  template:
+    metadata:
+      labels:
+        app: echo
+    spec:
+      containers:
+        - name: echo
+          # Public image, pinned. `netexec` answers /hostname with the pod name and /echo?msg=... with msg.
+          image: registry.k8s.io/e2e-test-images/agnhost:2.53
+          args: ["netexec", "--http-port=8080"]
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet: { path: /hostname, port: http }
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+            runAsNonRoot: true
+            runAsUser: 65532
+            seccompProfile: { type: RuntimeDefault }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: echo
+  namespace: default
+spec:
+  selector:
+    app: echo
+  ports:
+    - name: http
+      port: 80
+      targetPort: http
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: HTTPRoute
+metadata:
+  name: echo
+  namespace: default
+spec:
+  parentRefs:
+    - name: example
+  hostnames:
+    - echo.example.com
+  rules:
+    - matches:
+        - path:
+            type: PathPrefix
+            value: /
+      backendRefs:
+        - name: echo
+          port: 80

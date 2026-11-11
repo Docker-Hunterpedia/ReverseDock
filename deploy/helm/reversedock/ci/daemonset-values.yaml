@@ -1,0 +1,17 @@
+# Host-port DaemonSet for a single node or bare metal: Ingress listeners on host ports 80 and 443.
+kind: DaemonSet
+ingress:
+  enabled: true
+  ports:
+    http: 80
+    https: 443
+daemonSet:
+  hostPorts:
+    enabled: true
+    http: 80
+    https: 443
+  privilegedPorts: sysctl
+gateway:
+  serviceType: node_port
+leaderElection:
+  enabled: true

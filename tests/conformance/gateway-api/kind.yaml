@@ -1,0 +1,15 @@
+# kind cluster for the Gateway API conformance run (run.sh). Nested Kubernetes cannot run in this
+# repository's development sandbox; the `gateway-conformance` CI job runs it.
+#
+# Node image: Kubernetes v1.37.0 with the digest kind v0.33.0 itself ships as its default
+# (pkg/apis/config/defaults/image.go at tag v0.33.0, read 2026-11-11), so tag and digest agree.
+# Two nodes: cloud-provider-kind only load-balances to nodes that do not carry the
+# node.kubernetes.io/exclude-from-external-load-balancers label, which kind puts on the
+# control plane. The workloads (the chart's pods, the suite's echo backends) run on the worker.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
+  - role: worker
+    image: kindest/node:v1.37.0@sha256:a1ed56cfb0e7b93589bdf97c8cd566405a265939e3620fc4f5de89adff580ae5
