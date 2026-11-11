@@ -1110,3 +1110,226 @@ fn docker_static_roots_are_absolute() {
         )]
     );
 }
+
+fn kubernetes(settings: Value) -> Value {
+    let mut config = with(app(), json!({ "acme": false }));
+    config["providers"]["kubernetes"] = settings;
+    config
+}
+
+#[test]
+fn kubernetes_defaults_are_valid() {
+    assert_eq!(validate(kubernetes(json!({}))), Vec::new());
+    let full = json!({
+        "kubeconfig": "/etc/rdock/kubeconfig",
+        "namespaces": ["apps", "infra"],
+        "controller_name": "example.com/gateway",
+        "gateway": {
+            "service_type": "cluster_ip",
+            "service_namespace": "rdock-system",
+            "pod_selector": { "app.kubernetes.io/name": "reversedock" },
+            "port_range": "30000-30010",
+            "allow_external_name": true
+        },
+        "ingress": { "enabled": true, "class": "public", "publish_service": "rdock-system/reversedock" },
+        "leader_election": { "enabled": false, "lease": "rdock" }
+    });
+    assert_eq!(validate(kubernetes(full)), Vec::new());
+}
+
+#[test]
+fn kubernetes_settings_are_checked() {
+    let found = errors(kubernetes(json!({
+        "namespaces": ["Apps"],
+        "controller_name": "gateway-controller",
+        "gateway": { "port_range": "20000", "service_namespace": "-x" },
+        "ingress": { "class": "Public", "publish_service": "reversedock" },
+        "leader_election": { "lease": "my_lease" }
+    })));
+    for (path, fragment) in [
+        ("providers.kubernetes.namespaces[0]", "namespace name"),
+        (
+            "providers.kubernetes.controller_name",
+            "not a controller name",
+        ),
+        (
+            "providers.kubernetes.gateway.port_range",
+            "not a port range",
+        ),
+        (
+            "providers.kubernetes.gateway.service_namespace",
+            "namespace name",
+        ),
+        ("providers.kubernetes.ingress.class", "class name"),
+        (
+            "providers.kubernetes.ingress.publish_service",
+            "`namespace/name`",
+        ),
+        ("providers.kubernetes.leader_election.lease", "Lease name"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    let low = errors(kubernetes(json!({ "gateway": { "port_range": "80-90" } })));
+    assert!(has(
+        &low,
+        "providers.kubernetes.gateway.port_range",
+        "1024–65535"
+    ));
+    let reversed = errors(kubernetes(
+        json!({ "gateway": { "port_range": "30000-20000" } }),
+    ));
+    assert!(has(
+        &reversed,
+        "providers.kubernetes.gateway.port_range",
+        "starts after it ends"
+    ));
+    let too_high = errors(kubernetes(
+        json!({ "gateway": { "port_range": "20000-70000" } }),
+    ));
+    assert!(has(
+        &too_high,
+        "providers.kubernetes.gateway.port_range",
+        "not a port range"
+    ));
+    assert_eq!(
+        errors(kubernetes(
+            json!({ "gateway": { "port_range": "65535-65535" } })
+        )),
+        Vec::new()
+    );
+}
+
+#[test]
+fn kubernetes_refuses_acme_unless_allowed() {
+    // `acme` is on unless set to `false`.
+    let implicit = with(app(), json!({ "providers": { "kubernetes": {} } }));
+    let found = validate(implicit);
+    let error = found
+        .iter()
+        .find(|d| d.path == "acme" && d.is_error())
+        .unwrap();
+    assert!(error.message.contains("providers.kubernetes"));
+    assert!(error.hint.as_deref().unwrap().contains("cert-manager"));
+    let allowed = with(
+        app(),
+        json!({ "providers": { "kubernetes": { "allow_acme": true } } }),
+    );
+    assert_eq!(errors(allowed.clone()), Vec::new());
+    assert!(has(
+        &warnings(allowed),
+        "providers.kubernetes",
+        "replicas share no certificate storage"
+    ));
+    assert!(!has(
+        &warnings(kubernetes(json!({}))),
+        "providers.kubernetes",
+        "certificate storage"
+    ));
+}
+
+fn redirect(settings: Value) -> Vec<(String, String)> {
+    let mut middleware = json!({ "type": "redirect" });
+    merge(&mut middleware, settings);
+    let found = validate(json!({ "middlewares": { "r": middleware } }));
+    found.into_iter().map(|d| (d.path, d.message)).collect()
+}
+
+#[test]
+fn redirects_combine_their_parts() {
+    for ok in [
+        json!({ "scheme": "https" }),
+        json!({ "scheme": "https", "port": 8443, "permanent": true }),
+        json!({ "hostname": "example.org", "status": 302 }),
+        json!({ "port": 8080 }),
+        json!({ "path": "/new", "status": 303 }),
+        json!({ "prefix": { "from": "/a", "to": "/b" }, "scheme": "https", "status": 308 }),
+        json!({ "prefix": { "from": "/a", "to": "" } }),
+        json!({ "regex": "^http://(.*)$", "replacement": "https://$1", "status": 307 }),
+    ] {
+        assert_eq!(redirect(ok.clone()), Vec::new(), "{ok}");
+    }
+    let path = "middlewares.r";
+    assert!(has(&redirect(json!({})), path, "set `scheme`, `hostname`"));
+    assert!(has(
+        &redirect(json!({ "hostname": "a.test", "regex": ".*", "replacement": "x" })),
+        &format!("{path}.regex"),
+        "cannot be combined"
+    ));
+    assert!(has(
+        &redirect(json!({ "path": "/a", "prefix": { "from": "/b", "to": "/c" } })),
+        path,
+        "not both"
+    ));
+    assert!(has(
+        &redirect(json!({ "path": "a" })),
+        &format!("{path}.path"),
+        "start with `/`"
+    ));
+    assert!(has(
+        &redirect(json!({ "prefix": { "from": "a", "to": "b" } })),
+        &format!("{path}.prefix.from"),
+        "start with `/`"
+    ));
+    assert!(has(
+        &redirect(json!({ "prefix": { "from": "/a", "to": "b" } })),
+        &format!("{path}.prefix.to"),
+        "start with `/`"
+    ));
+    assert!(has(
+        &redirect(json!({ "hostname": "a.test", "status": 304 })),
+        &format!("{path}.status"),
+        "not a redirect status"
+    ));
+    assert!(has(
+        &redirect(json!({ "hostname": "*.example.com" })),
+        &format!("{path}.hostname"),
+        "wildcard"
+    ));
+    assert!(has(
+        &redirect(json!({ "hostname": "a.test", "status": 301, "permanent": true })),
+        &format!("{path}.permanent"),
+        "ignored"
+    ));
+}
+
+#[test]
+fn responding_services_take_no_backends() {
+    let split = json!({
+        "routes": { "app": { "match": "Host(`app.example.com`)", "service": "app" } },
+        "services": {
+            "app": { "split": [{ "service": "real", "weight": 9 }, { "service": "broken", "weight": 1 }] },
+            "real": { "backends": [{ "address": "app:3000" }] },
+            "broken": { "respond": { "status": 500 } }
+        }
+    });
+    assert_eq!(validate(split), Vec::new());
+    let both = errors(json!({
+        "services": {
+            "s": { "respond": { "status": 500 }, "backends": [{ "address": "app:3000" }] },
+            "t": { "respond": { "status": 99 } }
+        }
+    }));
+    assert!(has(&both, "services.s.respond", "no `backends` or `split`"));
+    assert!(has(&both, "services.t.respond.status", "200 to 599"));
+}
+
+#[test]
+fn listener_certificates_must_exist() {
+    let config = json!({
+        "acme": false,
+        "listeners": {
+            "web": { "address": ":80" },
+            "a": { "address": ":8443", "tls": { "certificates": ["one"] } },
+            "b": { "address": ":9443", "tls": { "certificates": ["two"] } }
+        },
+        "defaults": { "listeners": ["web"], "tls": "off" },
+        "certificates": { "one": { "cert_file": "/a.crt", "key_file": "/a.key" } }
+    });
+    let found = errors(config);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(has(
+        &found,
+        "listeners.b.tls.certificates[0]",
+        "certificate `two` does not exist"
+    ));
+}

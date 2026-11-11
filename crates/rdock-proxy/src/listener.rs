@@ -23,7 +23,7 @@ use rdock_middleware::ClientIdentity;
 use rdock_model::config::{ListenerProtocol, ListenerTimeouts, ProxyProtocolIn, StartTls};
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
-use rdock_tls::SniResolver;
+use rdock_tls::ListenerResolver;
 use tokio::io::AsyncReadExt;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
@@ -113,7 +113,7 @@ fn identity(der: &[u8]) -> Option<ClientIdentity> {
 
 /// Builds a TLS acceptor for `tls`. Pingora's `TlsSettings` is only used for its
 /// handshake-complete callback; the rustls configuration is ours.
-pub fn acceptor(tls: &ListenerTls, resolver: Arc<SniResolver>) -> Result<Acceptor, String> {
+pub fn acceptor(tls: &ListenerTls, resolver: Arc<ListenerResolver>) -> Result<Acceptor, String> {
     let verifier = match &tls.client_auth {
         Some(auth) => Some(auth.verifier().map_err(|e| e.to_string())?),
         None => None,

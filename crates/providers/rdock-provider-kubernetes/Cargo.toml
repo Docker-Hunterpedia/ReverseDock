@@ -10,5 +10,21 @@ repository.workspace = true
 homepage.workspace = true
 publish.workspace = true
 
+[dependencies]
+futures-util.workspace = true
+k8s-openapi.workspace = true
+kube.workspace = true
+rdock-config.workspace = true
+rdock-model.workspace = true
+schemars.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio.workspace = true
+tracing.workspace = true
+
+[dev-dependencies]
+serde-saphyr.workspace = true
+
 [lints]
 workspace = true

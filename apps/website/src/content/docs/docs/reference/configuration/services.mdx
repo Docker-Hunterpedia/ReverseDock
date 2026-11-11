@@ -15,7 +15,7 @@ Backend pools that routes send traffic to.
 
 **Type:** list of object
 
-Backend servers. Set this or `split`.
+Backend servers. Set this, `split` or `respond`.
 
 ### `services.<name>.backends[].address`
 
@@ -228,6 +228,18 @@ Requests in flight across the pool; more are answered `503` (circuit breaker).
 
 Forward the client's `Host` header (otherwise the backend address is used).
 
+## `services.<name>.respond`
+
+**Type:** object
+
+Answer every request with this status instead of forwarding it, e.g. `500` for a share of a split that has no valid backend. Set this, `backends` or `split`.
+
+### `services.<name>.respond.status`
+
+**Type:** `integer` · **Required**
+
+Status code, from 200 to 599.
+
 ## `services.<name>.retries`
 
 **Type:** object
@@ -272,7 +284,7 @@ Protocol spoken to the backends. gRPC uses `h2c` (cleartext) or `https`.
 
 **Type:** list of object
 
-Weighted traffic split over other services (canary, blue/green). Set this or `backends`.
+Weighted traffic split over other services (canary, blue/green). Set this, `backends` or `respond`.
 
 ### `services.<name>.split[].service`
 

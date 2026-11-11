@@ -79,13 +79,14 @@ struct Applied {
 }
 
 /// Providers whose snapshots the engine merges.
-const PROVIDERS: [&str; 3] = ["docker", "swarm", api::PROVIDER];
+const PROVIDERS: [&str; 4] = ["docker", "swarm", "kubernetes", api::PROVIDER];
 
 /// Whether the file configuration enables `provider`.
 fn enabled(file: &Config, provider: &str) -> bool {
     match provider {
         "docker" => file.providers.docker.is_some(),
         "swarm" => file.providers.swarm.is_some(),
+        "kubernetes" => file.providers.kubernetes.is_some(),
         api::PROVIDER => true,
         _ => false,
     }
@@ -118,6 +119,9 @@ pub(crate) struct Engine {
     snapshots: Mutex<BTreeMap<String, Snapshot>>,
     /// Why a provider cannot reach its source, while it cannot.
     degraded: Mutex<BTreeMap<String, String>>,
+    /// Providers whose first live snapshot readiness waits for (Kubernetes, ADR-0029): `true`
+    /// once it arrived; removed once a configuration with it is applied.
+    awaiting: Mutex<BTreeMap<String, bool>>,
     started_at: SystemTime,
     /// One configuration write through the API at a time (version check and apply).
     api_writes: tokio::sync::Mutex<()>,
@@ -197,6 +201,7 @@ impl Engine {
             included: Mutex::new(Included::default()),
             snapshots: Mutex::new(BTreeMap::new()),
             degraded: Mutex::new(BTreeMap::new()),
+            awaiting: Mutex::new(BTreeMap::new()),
             started_at: SystemTime::now(),
             api_writes: tokio::sync::Mutex::new(()),
             alerts,
@@ -243,6 +248,39 @@ impl Engine {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .insert(snapshot.provider.clone(), snapshot);
+    }
+
+    /// Holds readiness until `provider` has published a snapshot and it has been applied: a
+    /// restored snapshot from disk does not count, so a replica never reports ready on a
+    /// routing table it has not seen its source confirm (ADR-0029).
+    pub(crate) fn await_provider(&self, provider: &str) {
+        self.awaiting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .insert(provider.to_owned(), false);
+    }
+
+    /// Takes a snapshot a provider has just published from its source; the caller reloads.
+    pub(crate) fn set_live_snapshot(&self, snapshot: Snapshot) {
+        if let Some(received) = self
+            .awaiting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get_mut(&snapshot.provider)
+        {
+            *received = true;
+        }
+        self.set_snapshot(snapshot);
+    }
+
+    /// Whether the engine is ready: started, and no provider readiness waits for is pending.
+    fn is_ready(&self) -> bool {
+        self.ready.load(Ordering::SeqCst)
+            && self
+                .awaiting
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .is_empty()
     }
 
     /// Records whether a provider can reach its source (`None`: it can).
@@ -478,6 +516,12 @@ impl Engine {
                 .await;
         }
         self.update_background(&config, acme_plan, local_names);
+        self.awaiting
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|provider, received| {
+                !(*received && snapshots.iter().any(|s| &s.provider == provider))
+            });
         let summary = summarize(applied.config.as_ref(), &config);
         let api = snapshots
             .iter()
@@ -809,6 +853,8 @@ impl Engine {
                         "middlewares": s.fragment.middlewares.len(),
                         "tcp_routes": s.fragment.tcp_routes.len(),
                         "tcp_services": s.fragment.tcp_services.len(),
+                        "listeners": s.fragment.listeners.len(),
+                        "certificates": s.fragment.certificates.len(),
                         "diagnostics": s.diagnostics,
                     }),
                 )
@@ -821,7 +867,7 @@ impl Engine {
 #[async_trait]
 impl rdock_admin::Control for Engine {
     fn ready(&self) -> bool {
-        self.ready.load(Ordering::SeqCst)
+        self.is_ready()
     }
 
     fn metrics(&self) -> Option<String> {
@@ -844,7 +890,7 @@ impl rdock_admin::Control for Engine {
             "version": crate::VERSION,
             "commit": crate::COMMIT,
             "started_at": rdock_observability::rfc3339(self.started_at),
-            "ready": self.ready.load(Ordering::SeqCst),
+            "ready": self.is_ready(),
             "generation": self.plane.runtime().generation,
             "config_file": file,
             "origin": origin,

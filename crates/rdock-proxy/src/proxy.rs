@@ -738,6 +738,14 @@ impl ProxyHttp for RdockProxy {
             }
         }
         ctx.mw = Some(cx);
+        // A service that answers itself (`respond`, e.g. a share of a split with an invalid
+        // backend) replies like a middleware would, so access logs, metrics and the route's
+        // response middlewares (`compress`, `headers`) apply.
+        if let Some(status) = ctx.service.as_ref().and_then(|s| s.respond) {
+            self.reply(session, ctx, Reply::status(status), &route.middlewares)
+                .await?;
+            return Ok(true);
+        }
         start_mirror(session.req_header(), ctx, &route);
         Ok(false)
     }

@@ -111,6 +111,10 @@ app.kubernetes.io/component: controller
 {{- $_ := set $defaults "redirect_http_to_https" false -}}
 {{- end -}}
 {{- $config := dict "admin" $admin "lifecycle" (dict "drain_timeout" (printf "%ds" (int .Values.drainTimeoutSeconds))) "observability" (dict "metrics" (dict "prometheus" true)) "providers" (dict "kubernetes" $kubernetes) -}}
+{{- /* Automatic HTTPS is on by default in rdock and refused in a cluster unless allow_acme is set (ADR-0029). */ -}}
+{{- if not .Values.allowAcme -}}
+{{- $_ := set $config "acme" false -}}
+{{- end -}}
 {{- if $listeners }}{{ $_ := set $config "listeners" $listeners }}{{ $_ := set $config "defaults" $defaults }}{{ end -}}
 {{- mustMergeOverwrite $config (deepCopy .Values.config.extra) | toYaml -}}
 {{- end }}

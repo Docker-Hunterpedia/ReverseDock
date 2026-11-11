@@ -52,9 +52,6 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
             );
         }
     }
-    if config.providers.kubernetes.is_some() {
-        gate.unsupported("providers.kubernetes", "the Kubernetes provider", "v0.7");
-    }
 }
 
 #[cfg(test)]
@@ -72,15 +69,15 @@ mod tests {
 
     #[test]
     fn reports_unsupported_settings_by_mode() {
-        let yaml = "listeners:\n  dns: { address: \":53\", protocol: udp }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\nproviders:\n  kubernetes: {}\n";
+        let yaml = "listeners:\n  dns: { address: \":53\", protocol: udp }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n";
         let validate = diagnostics(yaml, Mode::Validate);
-        assert_eq!(validate.len(), 2, "{validate:?}");
+        assert_eq!(validate.len(), 1, "{validate:?}");
         assert!(validate.iter().all(|d| !d.is_error()));
         assert!(validate.iter().any(|d| d.path == "listeners.dns.protocol"
             && d.message == "UDP listeners: not supported in this version (planned for v0.8)"));
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
-        assert!(run.iter().any(|d| d.path == "providers.kubernetes"));
+        assert!(run.iter().any(|d| d.path == "listeners.dns.protocol"));
     }
 
     #[test]
@@ -108,6 +105,9 @@ mod tests {
         );
         assert!(proxy_protocol.contains("trusted"));
         assert_eq!(diagnostics(&proxy_protocol, Mode::Run), Vec::new());
+        // The Kubernetes provider is implemented (v0.7, ADR-0029).
+        let kubernetes = format!("{acme_off}providers:\n  kubernetes: {{}}\n");
+        assert_eq!(diagnostics(&kubernetes, Mode::Run), Vec::new());
         let tcp = "listeners:\n  db: { address: \":5432\", protocol: tcp }\ntcp_routes:\n  db: { match: \"HostSNI(`*`)\", listeners: [db], service: db }\ntcp_services:\n  db: { backends: [{ address: \"db:5432\" }] }\n";
         assert_eq!(diagnostics(tcp, Mode::Run), Vec::new());
     }

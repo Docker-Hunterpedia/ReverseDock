@@ -28,6 +28,8 @@ const PROVIDERS: [&str; 5] = ["file", "docker", "swarm", "kubernetes", "api"];
 const MAX_NAME_LEN: usize = 63;
 const MAX_RETRY_ATTEMPTS: u32 = 10;
 const REGEX_SIZE_LIMIT: usize = 1 << 20;
+/// Status codes a `redirect` may answer with.
+const REDIRECT_STATUSES: [u16; 5] = [301, 302, 303, 307, 308];
 
 impl Config {
     /// Checks references, rules, listeners and settings.
@@ -285,6 +287,16 @@ impl Validator<'_> {
             }
             if let Some(ping) = &listener.ping {
                 self.check_starts_with_slash(&format!("{path}.ping"), ping);
+            }
+            if let Some(tls) = &listener.tls {
+                for (i, certificate) in tls.certificates.iter().enumerate() {
+                    self.check_reference(
+                        &path_index(&format!("{path}.tls.certificates"), i),
+                        "certificate",
+                        certificate,
+                        &self.config.certificates,
+                    );
+                }
             }
             if let Some(auth) = listener.tls.as_ref().and_then(|t| t.client_auth.as_ref())
                 && auth.ca_files.is_empty()
@@ -660,13 +672,29 @@ impl Validator<'_> {
     }
 
     fn check_service_targets(&mut self, path: &str, name: &str, service: &Service) {
-        match (service.backends.is_empty(), service.split.is_empty()) {
-            (true, true) => self.push(
-                Diagnostic::error(path, "the service has no backends")
-                    .with_hint("add `backends: [{ address: \"app:3000\" }]` or a weighted `split`"),
-            ),
-            (false, false) => self.error(path, "set either `backends` or `split`, not both"),
-            _ => {}
+        if let Some(respond) = &service.respond {
+            if !service.backends.is_empty() || !service.split.is_empty() {
+                self.error(
+                    format!("{path}.respond"),
+                    "a service that responds itself takes no `backends` or `split`",
+                );
+            }
+            if !(200..=599).contains(&respond.status) {
+                self.error(
+                    format!("{path}.respond.status"),
+                    format!("`{}` is not a status from 200 to 599", respond.status),
+                );
+            }
+        } else {
+            match (service.backends.is_empty(), service.split.is_empty()) {
+                (true, true) => self.push(
+                    Diagnostic::error(path, "the service has no backends").with_hint(
+                        "add `backends: [{ address: \"app:3000\" }]`, a weighted `split` or a fixed `respond`",
+                    ),
+                ),
+                (false, false) => self.error(path, "set either `backends` or `split`, not both"),
+                _ => {}
+            }
         }
         for (i, backend) in service.backends.iter().enumerate() {
             if backend.weight == 0 {
@@ -1111,13 +1139,64 @@ impl Validator<'_> {
     }
 
     fn check_redirect(&mut self, path: &str, redirect: &RedirectConfig) {
-        match (&redirect.scheme, &redirect.regex, &redirect.replacement) {
-            (Some(_), None, None) => {}
-            (None, Some(regex), Some(_)) => self.check_regex(&format!("{path}.regex"), regex),
-            _ => self.error(path, "set `scheme`, or `regex` together with `replacement`"),
+        let built = redirect.scheme.is_some()
+            || redirect.hostname.is_some()
+            || redirect.port.is_some()
+            || redirect.path.is_some()
+            || redirect.prefix.is_some();
+        match (built, &redirect.regex, &redirect.replacement) {
+            (false, Some(regex), Some(_)) => self.check_regex(&format!("{path}.regex"), regex),
+            (true, None, None) => {}
+            (true, Some(_), _) => self.error(
+                format!("{path}.regex"),
+                "`regex` cannot be combined with `scheme`, `hostname`, `port`, `path` or `prefix`",
+            ),
+            (_, None, Some(_)) | (false, Some(_), None) => {
+                self.error(path, "`regex` and `replacement` go together");
+            }
+            (false, None, None) => self.error(
+                path,
+                "set `scheme`, `hostname`, `port`, `path` or `prefix`, or `regex` together with `replacement`",
+            ),
         }
         if redirect.port == Some(0) {
             self.error(format!("{path}.port"), "port must be between 1 and 65535");
+        }
+        if let Some(hostname) = &redirect.hostname {
+            if let Err(message) = check_host(hostname) {
+                self.error(format!("{path}.hostname"), message);
+            } else if hostname.contains('*') {
+                self.error(
+                    format!("{path}.hostname"),
+                    "a redirect needs a concrete host name, not a wildcard",
+                );
+            }
+        }
+        if redirect.path.is_some() && redirect.prefix.is_some() {
+            self.error(path, "set `path` or `prefix`, not both");
+        }
+        if let Some(full) = &redirect.path {
+            self.check_starts_with_slash(&format!("{path}.path"), full);
+        }
+        if let Some(prefix) = &redirect.prefix {
+            self.check_starts_with_slash(&format!("{path}.prefix.from"), &prefix.from);
+            if !prefix.to.is_empty() {
+                self.check_starts_with_slash(&format!("{path}.prefix.to"), &prefix.to);
+            }
+        }
+        if let Some(status) = redirect.status {
+            if !REDIRECT_STATUSES.contains(&status) {
+                self.error(
+                    format!("{path}.status"),
+                    format!("`{status}` is not a redirect status; use 301, 302, 303, 307 or 308"),
+                );
+            }
+            if redirect.permanent {
+                self.warning(
+                    format!("{path}.permanent"),
+                    "`permanent` is ignored because `status` is set",
+                );
+            }
         }
     }
 
@@ -2122,20 +2201,187 @@ impl Validator<'_> {
             self.check_swarm(swarm);
         }
         if let Some(kubernetes) = &providers.kubernetes {
-            let class = &kubernetes.gateway_class;
-            let valid = !class.is_empty()
-                && class.len() <= 253
-                && class.chars().all(|c| {
-                    c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, '-' | '.')
-                });
-            if !valid {
+            self.check_kubernetes(kubernetes);
+        }
+    }
+
+    /// Settings of the Kubernetes provider (ADR-0029), and ACME on replicas that share
+    /// nothing.
+    fn check_kubernetes(&mut self, kubernetes: &crate::providers::KubernetesProvider) {
+        const PATH: &str = "providers.kubernetes";
+        if kubernetes
+            .kubeconfig
+            .as_ref()
+            .is_some_and(|p| p.as_os_str().is_empty())
+        {
+            self.error(format!("{PATH}.kubeconfig"), "path is empty");
+        }
+        for (i, namespace) in kubernetes.namespaces.iter().enumerate() {
+            if !is_dns_label(namespace) {
                 self.error(
-                    "providers.kubernetes.gateway_class",
-                    "must be a lowercase DNS subdomain name",
+                    path_index(&format!("{PATH}.namespaces"), i),
+                    format!("`{namespace}` is not a namespace name (a lowercase DNS label)"),
+                );
+            }
+        }
+        if !is_controller_name(&kubernetes.controller_name) {
+            self.push(
+                Diagnostic::error(
+                    format!("{PATH}.controller_name"),
+                    format!("`{}` is not a controller name", kubernetes.controller_name),
+                )
+                .with_hint("a domain-prefixed path such as `reversedock.dev/gateway-controller`"),
+            );
+        }
+        self.check_kubernetes_gateway(&kubernetes.gateway);
+        self.check_kubernetes_ingress(&kubernetes.ingress);
+        if !is_dns_label(&kubernetes.leader_election.lease) {
+            self.error(
+                format!("{PATH}.leader_election.lease"),
+                format!(
+                    "`{}` is not a Lease name (a lowercase DNS label)",
+                    kubernetes.leader_election.lease
+                ),
+            );
+        }
+        self.check_kubernetes_acme(kubernetes.allow_acme);
+    }
+
+    fn check_kubernetes_gateway(&mut self, gateway: &crate::providers::KubernetesGateway) {
+        const PATH: &str = "providers.kubernetes";
+        match gateway.ports() {
+            None => self.push(
+                Diagnostic::error(
+                    format!("{PATH}.gateway.port_range"),
+                    format!("`{}` is not a port range", gateway.port_range),
+                )
+                .with_hint("write it as `start-end`, e.g. `20000-29999`"),
+            ),
+            Some((start, _)) if start < 1024 => self.error(
+                format!("{PATH}.gateway.port_range"),
+                "the range must lie inside 1024–65535",
+            ),
+            Some((start, end)) if start > end => self.error(
+                format!("{PATH}.gateway.port_range"),
+                format!("the range starts after it ends ({start} > {end})"),
+            ),
+            Some(_) => {}
+        }
+        if let Some(namespace) = &gateway.service_namespace
+            && !is_dns_label(namespace)
+        {
+            self.error(
+                format!("{PATH}.gateway.service_namespace"),
+                format!("`{namespace}` is not a namespace name (a lowercase DNS label)"),
+            );
+        }
+        for key in gateway.pod_selector.keys() {
+            if key.is_empty() || key.contains(char::is_whitespace) {
+                self.error(
+                    path_key(&format!("{PATH}.gateway.pod_selector"), key),
+                    format!("`{key}` is not a label key"),
                 );
             }
         }
     }
+
+    fn check_kubernetes_ingress(&mut self, ingress: &crate::providers::KubernetesIngress) {
+        const PATH: &str = "providers.kubernetes";
+        if !is_dns_label(&ingress.class) {
+            self.error(
+                format!("{PATH}.ingress.class"),
+                format!(
+                    "`{}` is not a class name (a lowercase DNS label)",
+                    ingress.class
+                ),
+            );
+        }
+        if let Some(service) = &ingress.publish_service {
+            let valid = service
+                .split_once('/')
+                .is_some_and(|(ns, name)| is_dns_label(ns) && is_dns_label(name));
+            if !valid {
+                self.push(
+                    Diagnostic::error(
+                        format!("{PATH}.ingress.publish_service"),
+                        format!("`{service}` is not `namespace/name`"),
+                    )
+                    .with_hint("e.g. `rdock-system/reversedock`"),
+                );
+            }
+        }
+        if ingress
+            .publish_address
+            .as_ref()
+            .is_some_and(|a| a.trim().is_empty())
+        {
+            self.error(
+                format!("{PATH}.ingress.publish_address"),
+                "the address is empty",
+            );
+        }
+        if ingress.publish_service.is_some() && ingress.publish_address.is_some() {
+            self.warning(
+                format!("{PATH}.ingress.publish_address"),
+                "`publish_address` is used; `publish_service` is ignored",
+            );
+        }
+    }
+
+    /// ACME on replicas that share no certificate storage (ADR-0029).
+    fn check_kubernetes_acme(&mut self, allow_acme: bool) {
+        const PATH: &str = "providers.kubernetes";
+        if self.config.effective_acme().is_some() {
+            if allow_acme {
+                self.push(
+                    Diagnostic::warning(
+                        PATH,
+                        "automatic HTTPS is on: replicas share no certificate storage",
+                    )
+                    .with_hint(
+                        "run exactly one replica with a persistent data directory, or use cert-manager and set `acme: false`",
+                    ),
+                );
+            } else {
+                self.push(
+                    Diagnostic::error(
+                        "acme",
+                        "automatic HTTPS (`acme`, on unless set to `false`) cannot be combined with `providers.kubernetes`: replicas share no certificate storage",
+                    )
+                    .with_hint(
+                        "set `acme: false` and let cert-manager fill the Secrets that Gateways and Ingresses name; `providers.kubernetes.allow_acme: true` allows ACME for one replica with a persistent data directory",
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// A DNS label (RFC 1123): 1–63 lowercase letters, digits and `-`, starting and ending with a
+/// letter or digit. Kubernetes names namespaces, Leases and classes this way.
+fn is_dns_label(name: &str) -> bool {
+    !name.is_empty()
+        && name.len() <= 63
+        && name
+            .chars()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '-')
+        && !name.starts_with('-')
+        && !name.ends_with('-')
+}
+
+/// A Gateway API controller name: a DNS subdomain, `/`, and a non-empty path
+/// (`example.com/controller`), at most 253 characters.
+fn is_controller_name(name: &str) -> bool {
+    let Some((domain, path)) = name.split_once('/') else {
+        return false;
+    };
+    name.len() <= 253
+        && !path.is_empty()
+        && path
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | '/' | '~' | '%'))
+        && domain.contains('.')
+        && domain.split('.').all(is_dns_label)
 }
 
 /// The address, when `host` is an IP address a public CA can certify (not loopback or private).

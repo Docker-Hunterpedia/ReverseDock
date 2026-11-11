@@ -7,13 +7,6 @@
     "fixture": "listeners:\n  web: { address: \":80\" }\n  dns: { address: \":53\", protocol: udp }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   },
   {
-    "path": "providers.kubernetes",
-    "planned": "v0.7",
-    "what": "The Kubernetes provider",
-    "value": false,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\nproviders:\n  kubernetes: {}\n"
-  },
-  {
     "path": "middlewares.<name>.listing",
     "planned": "v0.8",
     "what": "Directory listing (F-WEB-02)",

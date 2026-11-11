@@ -7,15 +7,21 @@ use serde::{Deserialize, Serialize};
 
 use crate::values::{BackendAddress, Duration};
 
-/// An HTTP service: either a pool of backends or a weighted split over other services.
+/// An HTTP service: a pool of backends, a weighted split over other services, or a fixed
+/// answer.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 pub struct Service {
-    /// Backend servers. Set this or `split`.
+    /// Backend servers. Set this, `split` or `respond`.
     #[serde(default)]
     pub backends: Vec<Backend>,
-    /// Weighted traffic split over other services (canary, blue/green). Set this or `backends`.
+    /// Weighted traffic split over other services (canary, blue/green). Set this, `backends`
+    /// or `respond`.
     #[serde(default)]
     pub split: Vec<SplitTarget>,
+    /// Answer every request with this status instead of forwarding it, e.g. `500` for a
+    /// share of a split that has no valid backend. Set this, `backends` or `split`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub respond: Option<Respond>,
     /// Protocol spoken to the backends. gRPC uses `h2c` (cleartext) or `https`.
     #[serde(default)]
     pub scheme: Scheme,
@@ -48,6 +54,13 @@ pub struct Service {
     /// Requests in flight to one backend; a backend at the limit gets no more until one ends.
     #[serde(default)]
     pub max_connections_per_backend: Option<u32>,
+}
+
+/// A fixed answer of a service (`respond`): the status with ReverseDock's error page.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct Respond {
+    /// Status code, from 200 to 599.
+    pub status: u16,
 }
 
 /// One backend server.

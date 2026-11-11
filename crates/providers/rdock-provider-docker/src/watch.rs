@@ -32,14 +32,9 @@ const RECONCILE: Duration = Duration::from_secs(60);
 const BACKOFF_MIN: Duration = Duration::from_secs(1);
 const BACKOFF_MAX: Duration = Duration::from_secs(30);
 
-/// What the provider reports: its latest snapshot and whether Docker is reachable.
-#[derive(Debug, Clone, Default, PartialEq)]
-pub struct State {
-    /// The latest snapshot; `None` until the first listing succeeds.
-    pub snapshot: Option<Snapshot>,
-    /// Why Docker is unreachable, while it is.
-    pub degraded: Option<String>,
-}
+/// What the provider reports: its latest snapshot (`None` until the first listing succeeds)
+/// and whether Docker is reachable. The type is shared with the other providers.
+pub use rdock_config::merge::ProviderState as State;
 
 /// Runs until `shutdown` turns true, publishing on `tx`.
 pub async fn run(
@@ -236,12 +231,7 @@ pub fn connect(endpoint: &Endpoint) -> Result<Docker, String> {
 
 /// Publishes `snapshot` and clears the degraded state; watchers wake only on a change.
 pub fn publish_snapshot(tx: &watch::Sender<State>, snapshot: Snapshot) {
-    tx.send_if_modified(|state| {
-        let changed = state.snapshot.as_ref() != Some(&snapshot) || state.degraded.is_some();
-        state.snapshot = Some(snapshot);
-        state.degraded = None;
-        changed
-    });
+    tx.send_if_modified(|state| state.publish(snapshot));
 }
 
 /// Lists, translates and publishes a new snapshot when it differs from the last one.

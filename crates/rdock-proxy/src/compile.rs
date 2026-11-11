@@ -68,10 +68,8 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let mut out = Vec::new();
     gate::check(config, env.mode, &mut out);
     let certs = load_certificates(config, &mut out);
-    let index = Arc::new(CertIndex::build(
-        &certs,
-        config.defaults.certificate.as_deref(),
-    ));
+    let (index, listener_certificates) = index_certificates(config, &certs);
+    let index = Arc::new(index);
     let services = compile_services(config, env, &mut out);
     let tracer = tracer(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
@@ -87,6 +85,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &services,
         &middlewares,
         &mut auto_tls,
+        &listener_certificates,
         &env.live.routes,
         &mut out,
     );
@@ -100,6 +99,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         limits: config.security.limits,
         access_log: access_log(config, env.previous),
         certificates: index,
+        listener_certificates,
         cert_requests,
         local_cert_names,
         cert_expiry: certs
@@ -214,6 +214,45 @@ fn load_certificates(config: &Config, out: &mut Vec<Diagnostic>) -> Vec<LoadedCe
         }
     }
     certs
+}
+
+/// Splits the loaded certificates into the shared index and one index per listener that
+/// names its own (`listeners.<name>.tls.certificates`, ADR-0029). A certificate a listener
+/// names is served by that listener only, so two listeners can present different
+/// certificates for the same host name; each listener's first certificate is its default.
+fn index_certificates(
+    config: &Config,
+    certs: &[LoadedCert],
+) -> (CertIndex, HashMap<String, Arc<CertIndex>>) {
+    let listeners = config.effective_listeners();
+    let mut scoped_names: BTreeSet<&str> = BTreeSet::new();
+    let mut scoped = HashMap::new();
+    for (name, listener) in listeners.iter() {
+        let Some(tls) = listener.tls.as_ref().filter(|t| !t.certificates.is_empty()) else {
+            continue;
+        };
+        let own: Vec<LoadedCert> = tls
+            .certificates
+            .iter()
+            .filter_map(|reference| certs.iter().find(|c| c.name == key(reference)))
+            .cloned()
+            .collect();
+        scoped_names.extend(tls.certificates.iter().map(|r| key(r)));
+        let first = own.first().map(|c| c.name.clone());
+        scoped.insert(
+            name.clone(),
+            Arc::new(CertIndex::build(&own, first.as_deref())),
+        );
+    }
+    let shared: Vec<LoadedCert> = certs
+        .iter()
+        .filter(|c| !scoped_names.contains(c.name.as_str()))
+        .cloned()
+        .collect();
+    (
+        CertIndex::build(&shared, config.defaults.certificate.as_deref()),
+        scoped,
+    )
 }
 
 /// Mirrored copies in flight per route; more are dropped rather than queued.
@@ -333,6 +372,7 @@ fn compile_service(
         health: compile_health(service.health.as_ref())?,
         split,
         split_balancer: RoundRobin::default(),
+        respond: service.respond.as_ref().map(|r| r.status),
         // No `retries` means the defaults (connection failures only), as `retries: {}` (ADR-0028).
         retries: Some(service.retries.clone().unwrap_or_default()).filter(|r| r.attempts > 0),
         max_requests: service.max_requests,
@@ -693,6 +733,7 @@ fn compile_listeners(
     services: &HashMap<String, Arc<ServiceRuntime>>,
     middlewares: &HashMap<String, Arc<dyn Middleware>>,
     auto_tls: &mut AutoTls<'_>,
+    scoped: &HashMap<String, Arc<CertIndex>>,
     rings: &rdock_observability::live::Rings,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
@@ -730,8 +771,12 @@ fn compile_listeners(
             let Some(listener) = listeners.get_mut(listener_name) else {
                 continue;
             };
-            if listener.tls.is_some() {
-                tls_hosts.extend(HostSet::of(&expr));
+            // A listener with its own certificates (a Gateway's) needs no automatic ones,
+            // and its hosts do not make the file's plain listeners redirect.
+            if listener.tls.is_some() && !scoped.contains_key(listener_name) {
+                if !is_provider_listener(listener_name) {
+                    tls_hosts.extend(HostSet::of(&expr));
+                }
                 if wants_auto_tls(config, route) {
                     auto_tls.route(&path, route, &expr, config, out);
                 }
@@ -739,9 +784,11 @@ fn compile_listeners(
             listener.routes.push(compiled.clone());
         }
     }
+    // The automatic redirect points at the file's HTTPS listener: a provider's listeners
+    // (a Gateway's internal ports) are neither its source nor its target.
     let https_port = listeners
         .values()
-        .find(|l| l.protocol == ListenerProtocol::Https)
+        .find(|l| l.protocol == ListenerProtocol::Https && !is_provider_listener(&l.name))
         .map(|l| l.address.port());
     for listener in listeners.values_mut() {
         listener.routes.sort_by(|a, b| {
@@ -751,6 +798,7 @@ fn compile_listeners(
         });
         report_shadowed(&listener.name, &listener.routes, out);
         if listener.protocol == ListenerProtocol::Http
+            && !is_provider_listener(&listener.name)
             && config.defaults.redirect_http_to_https
             && let Some(port) = https_port
         {
@@ -761,6 +809,11 @@ fn compile_listeners(
         }
     }
     listeners
+}
+
+/// Whether a listener came from a provider (`name@kubernetes`, ADR-0029).
+fn is_provider_listener(name: &str) -> bool {
+    key(name).contains('@')
 }
 
 fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, String> {

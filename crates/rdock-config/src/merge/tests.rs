@@ -155,3 +155,175 @@ middlewares:
         merged.skipped
     );
 }
+
+fn kubernetes(yaml: &str) -> Snapshot {
+    let fragment: Fragment = serde_saphyr::from_str(yaml).unwrap();
+    Snapshot {
+        provider: "kubernetes".to_owned(),
+        fragment,
+        diagnostics: Vec::new(),
+    }
+}
+
+/// A Gateway's internal listener with its own certificate and a route on it.
+const GATEWAY: &str = "
+listeners:
+  gw-443: { address: \":20001\", tls: { certificates: [gw-cert] } }
+  gw-80: { address: \":20000\" }
+certificates:
+  gw-cert: { cert_file: /data/kubernetes/secrets/ns/gw/tls.crt, key_file: /data/kubernetes/secrets/ns/gw/tls.key }
+routes:
+  app: { match: \"Host(`app.example.com`)\", service: app, listeners: [gw-443, web], tls: { certificate: gw-cert } }
+  plain: { match: \"Host(`app.example.com`)\", service: app, listeners: [gw-80], tls: \"off\" }
+services:
+  app: { backends: [{ address: \"10.0.0.5:3000\" }] }
+";
+
+#[test]
+fn kubernetes_listeners_and_certificates_are_merged_and_referenced_by_bare_name() {
+    let merged = assemble(&base(FILE), &[&kubernetes(GATEWAY)], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    assert_eq!(merged.skipped, Vec::new());
+    let config = &merged.config;
+    let listener = &config.listeners["gw-443@kubernetes"];
+    assert_eq!(
+        listener.tls.as_ref().unwrap().certificates,
+        ["gw-cert@kubernetes"]
+    );
+    assert!(
+        config.listeners.contains_key("web"),
+        "the file's listener stays"
+    );
+    assert!(config.certificates.contains_key("gw-cert@kubernetes"));
+    let route = &config.routes["app@kubernetes"];
+    // Its own listener is qualified; `web` exists only in the file.
+    assert_eq!(
+        route.listeners.as_deref(),
+        Some(&["gw-443@kubernetes".to_owned(), "web".to_owned()][..])
+    );
+    let Some(rdock_model::route::RouteTls::Options(tls)) = &route.tls else {
+        panic!("route tls options")
+    };
+    assert_eq!(tls.certificate.as_deref(), Some("gw-cert@kubernetes"));
+    assert_eq!(
+        config.routes["plain@kubernetes"].listeners.as_deref(),
+        Some(&["gw-80@kubernetes".to_owned()][..])
+    );
+}
+
+#[test]
+fn implicit_listeners_survive_provider_listeners() {
+    let file = "
+routes:
+  site: { match: \"Host(`site.example.com`)\", service: site }
+services:
+  site: { backends: [{ address: \"site:80\" }] }
+";
+    let merged = assemble(&base(file), &[&kubernetes(GATEWAY)], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    let names: Vec<&str> = merged.config.listeners.keys().map(String::as_str).collect();
+    assert_eq!(
+        names,
+        ["gw-443@kubernetes", "gw-80@kubernetes", "web", "websecure"]
+    );
+}
+
+#[test]
+fn only_allowed_providers_contribute_listeners_and_certificates() {
+    let mut snapshot = kubernetes(GATEWAY);
+    snapshot.provider = "docker".to_owned();
+    let merged = assemble(&base(FILE), &[&snapshot], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    assert!(!merged.config.listeners.keys().any(|k| k.contains('@')));
+    assert!(merged.config.certificates.is_empty());
+    for path in [
+        "listeners[\"gw-443@docker\"]",
+        "listeners[\"gw-80@docker\"]",
+        "certificates[\"gw-cert@docker\"]",
+    ] {
+        assert!(
+            merged
+                .skipped
+                .iter()
+                .any(|d| d.path == path && d.message.contains("cannot contribute")),
+            "{path}: {:?}",
+            merged.skipped
+        );
+    }
+    // The routes that needed them are left out; nothing else is.
+    assert!(!merged.config.routes.contains_key("app@docker"));
+    assert!(!merged.config.routes.contains_key("plain@docker"));
+    assert!(merged.config.services.contains_key("app@docker"));
+    assert!(merged.config.routes.contains_key("site"));
+}
+
+#[test]
+fn a_provider_listener_on_a_file_address_is_left_out() {
+    let snapshot = kubernetes(
+        "
+listeners:
+  clash: { address: \"0.0.0.0:8080\" }
+  fine: { address: \":20000\" }
+routes:
+  a: { match: \"Host(`a.example.com`)\", service: app, listeners: [clash], tls: \"off\" }
+  b: { match: \"Host(`b.example.com`)\", service: app, listeners: [fine], tls: \"off\" }
+services:
+  app: { backends: [{ address: \"10.0.0.5:3000\" }] }
+",
+    );
+    let merged = assemble(&base(FILE), &[&snapshot], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    assert!(!merged.config.listeners.contains_key("clash@kubernetes"));
+    assert!(merged.config.listeners.contains_key("fine@kubernetes"));
+    assert!(merged.skipped.iter().any(|d| {
+        d.path == "listeners[\"clash@kubernetes\"]"
+            && d.message
+                .contains("already bound by the file's listener `web`")
+    }));
+    // `clash` was not this provider's, so the route names a listener that does not exist.
+    assert!(!merged.config.routes.contains_key("a@kubernetes"));
+    assert!(merged.config.routes.contains_key("b@kubernetes"));
+}
+
+#[test]
+fn invalid_provider_listeners_and_certificates_are_left_out_one_by_one() {
+    let snapshot = kubernetes(
+        "
+listeners:
+  good: { address: \":20001\", tls: { certificates: [good] } }
+  bad: { address: \":20002\", tls: { certificates: [bad] } }
+  twin: { address: \":20001\" }
+certificates:
+  good: { cert_file: /a.crt, key_file: /a.key }
+  bad: { cert_file: \"\", key_file: /b.key }
+",
+    );
+    let merged = assemble(&base(FILE), &[&snapshot], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    let config = &merged.config;
+    assert!(config.certificates.contains_key("good@kubernetes"));
+    assert!(!config.certificates.contains_key("bad@kubernetes"));
+    assert!(
+        !config.listeners.contains_key("bad@kubernetes"),
+        "it needs the certificate that was left out"
+    );
+    // Two provider listeners on one address: one of them goes.
+    assert_eq!(
+        usize::from(config.listeners.contains_key("good@kubernetes"))
+            + usize::from(config.listeners.contains_key("twin@kubernetes")),
+        1
+    );
+    assert!(config.listeners.contains_key("web"));
+}
+
+#[test]
+fn owners_of_listeners_and_certificates() {
+    assert_eq!(
+        owner("listeners[\"gw@kubernetes\"].tls.certificates[0]"),
+        Some((Section::Listeners, "gw@kubernetes".to_owned()))
+    );
+    assert_eq!(
+        owner("certificates[\"c@kubernetes\"].cert_file"),
+        Some((Section::Certificates, "c@kubernetes".to_owned()))
+    );
+}

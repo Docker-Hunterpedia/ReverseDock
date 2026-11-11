@@ -91,6 +91,18 @@ Replace headers.
 
 Redirect to another scheme or to a URL built from a regular expression.
 
+### `middlewares.<name>.hostname`
+
+**Type:** `string`
+
+Replace the host name.
+
+### `middlewares.<name>.path`
+
+**Type:** `string`
+
+Replace the whole path, e.g. `/new`.
+
 ### `middlewares.<name>.permanent`
 
 **Type:** `boolean` · **Default:** `false`
@@ -101,13 +113,31 @@ Redirect to another scheme or to a URL built from a regular expression.
 
 **Type:** `integer`
 
-Port for scheme redirects when it is not the scheme's default.
+Port of the target, left out of the URL when it is the scheme's default. Unset: the scheme's default port when `scheme` is set, otherwise the request's port.
+
+### `middlewares.<name>.prefix`
+
+**Type:** object
+
+Replace a leading path prefix, by path segment: `{ from: /a, to: /b }` turns `/a/x` into `/b/x` and `/a` into `/b`; other paths are kept.
+
+#### `middlewares.<name>.prefix.from`
+
+**Type:** `string` · **Required**
+
+The prefix to replace, starting with `/`. It matches whole path segments: `/a` matches `/a` and `/a/x`, not `/ab`.
+
+#### `middlewares.<name>.prefix.to`
+
+**Type:** `string` · **Required**
+
+Its replacement, starting with `/`, or empty to remove the prefix.
 
 ### `middlewares.<name>.regex`
 
 **Type:** `string`
 
-Regular expression matched against the full request URL.
+Regular expression matched against the full request URL. Not combined with the fields above.
 
 ### `middlewares.<name>.replacement`
 
@@ -119,10 +149,16 @@ Target URL; may use `$1`, `${name}` groups from `regex`.
 
 **Type:** `http` · `https`
 
-Redirect to this scheme, keeping host, path and query.
+Redirect to this scheme. Alone (without `hostname`, `path` or `prefix`), a request that already uses it is not redirected.
 
 - `http`: `http://`.
 - `https`: `https://`.
+
+### `middlewares.<name>.status`
+
+**Type:** `integer`
+
+Status code of the redirect: `301`, `302`, `303`, `307` or `308`, for every method. Overrides `permanent`.
 
 ## `type: rewrite`
 

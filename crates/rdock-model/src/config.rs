@@ -250,6 +250,12 @@ pub struct ListenerTls {
     pub policy: TlsPolicy,
     /// Client certificates (mTLS). A certificate is always verified against these roots.
     pub client_auth: Option<ClientAuth>,
+    /// Certificates (keys of `certificates`) served by this listener only. When set, the
+    /// listener presents the one matching the requested name, or the first one, and these
+    /// certificates are not served by any other listener. Empty, the default: the listener
+    /// serves the shared certificates (`certificates`, automatic ones, `defaults.certificate`).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub certificates: Vec<String>,
 }
 
 /// Client certificate verification.

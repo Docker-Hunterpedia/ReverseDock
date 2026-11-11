@@ -1,20 +1,27 @@
 //! Merging other providers' objects into the file configuration (ADR-0009, ADR-0018).
 //!
-//! The file configuration owns listeners, defaults, certificates and every setting; providers
-//! add routes, services, middlewares, TCP routes and TCP services under `name@provider` keys. The merged configuration
-//! goes through the model's validator, and an object with an error is left out (with the
-//! objects that need it) instead of rejecting everything.
+//! The file configuration owns defaults and every setting; providers add routes, services,
+//! middlewares, TCP routes and TCP services under `name@provider` keys. Providers on
+//! [`LISTENER_PROVIDERS`] may also add listeners and certificates (ADR-0029); a provider
+//! listener never replaces a file listener or binds an address a file listener binds. The
+//! merged configuration goes through the model's validator, and an object with an error is
+//! left out (with the objects that need it) instead of rejecting everything.
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use rdock_model::config::{Certificate, Listener, ListenerProtocol};
 use rdock_model::middleware::Middleware;
-use rdock_model::route::{Route, TcpRoute};
+use rdock_model::route::{Route, RouteTls, TcpRoute};
 use rdock_model::service::{Service, TcpService};
 use rdock_model::{Config, Diagnostic};
 use serde::{Deserialize, Serialize};
 
 /// Rounds of "leave out what fails, check again" before giving up on a provider.
 const ROUNDS: usize = 4;
+
+/// Providers that may contribute listeners and certificates (ADR-0029). Docker and Swarm
+/// labels cannot open ports or name certificate files.
+pub const LISTENER_PROVIDERS: [&str; 1] = ["kubernetes"];
 
 /// The objects a provider contributes, by bare name.
 #[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
@@ -30,6 +37,14 @@ pub struct Fragment {
     pub tcp_routes: BTreeMap<String, TcpRoute>,
     /// TCP backend pools.
     pub tcp_services: BTreeMap<String, TcpService>,
+    /// Listeners (providers on [`LISTENER_PROVIDERS`] only). Routes of the same fragment name
+    /// them by their bare name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub listeners: BTreeMap<String, Listener>,
+    /// Certificates as files (providers on [`LISTENER_PROVIDERS`] only); never key material
+    /// itself. Listeners and routes of the same fragment name them by their bare name.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub certificates: BTreeMap<String, Certificate>,
 }
 
 /// A provider's complete view: never a diff (ADR-0009).
@@ -41,6 +56,28 @@ pub struct Snapshot {
     pub fragment: Fragment,
     /// Problems found while building it (unsupported labels, missing ports, …).
     pub diagnostics: Vec<Diagnostic>,
+}
+
+/// What a provider reports to the engine over its watch channel: its latest snapshot and
+/// whether its source is reachable. Shared by every provider (Docker, Swarm, Kubernetes).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct ProviderState {
+    /// The latest snapshot; `None` until the provider has a complete view of its source
+    /// (for Kubernetes: every watched kind listed once).
+    pub snapshot: Option<Snapshot>,
+    /// Why the source is unreachable, while it is.
+    pub degraded: Option<String>,
+}
+
+impl ProviderState {
+    /// Takes `snapshot` and clears the degraded state; returns whether anything changed, for
+    /// `watch::Sender::send_if_modified`, so watchers wake only on a change.
+    pub fn publish(&mut self, snapshot: Snapshot) -> bool {
+        let changed = self.snapshot.as_ref() != Some(&snapshot) || self.degraded.is_some();
+        self.snapshot = Some(snapshot);
+        self.degraded = None;
+        changed
+    }
 }
 
 /// The configuration sections providers contribute to.
@@ -56,15 +93,21 @@ pub enum Section {
     TcpRoutes,
     /// `tcp_services`
     TcpServices,
+    /// `listeners`
+    Listeners,
+    /// `certificates`
+    Certificates,
 }
 
 impl Section {
-    const ALL: [Self; 5] = [
+    const ALL: [Self; 7] = [
         Self::Routes,
         Self::Services,
         Self::Middlewares,
         Self::TcpRoutes,
         Self::TcpServices,
+        Self::Listeners,
+        Self::Certificates,
     ];
 
     /// The section's key in the configuration.
@@ -76,6 +119,8 @@ impl Section {
             Self::Middlewares => "middlewares",
             Self::TcpRoutes => "tcp_routes",
             Self::TcpServices => "tcp_services",
+            Self::Listeners => "listeners",
+            Self::Certificates => "certificates",
         }
     }
 }
@@ -102,10 +147,15 @@ pub struct Merged {
 #[must_use]
 pub fn assemble(base: &Config, snapshots: &[&Snapshot], excluded: &BTreeSet<ObjectKey>) -> Merged {
     let mut config = base.clone();
-    for snapshot in snapshots {
-        add(&mut config, &snapshot.provider, &snapshot.fragment);
-    }
     let mut skipped = Vec::new();
+    for snapshot in snapshots {
+        skipped.extend(add(
+            &mut config,
+            base,
+            &snapshot.provider,
+            &snapshot.fragment,
+        ));
+    }
     for key in excluded {
         remove(&mut config, key);
     }
@@ -189,6 +239,9 @@ fn remove(config: &mut Config, (section, name): &ObjectKey) -> bool {
         Section::Middlewares => config.middlewares.remove(name).is_some(),
         Section::TcpRoutes => config.tcp_routes.remove(name).is_some(),
         Section::TcpServices => config.tcp_services.remove(name).is_some(),
+        // A file listener is never left out: it would take the implicit defaults' place.
+        Section::Listeners => is_provider_owned(name) && config.listeners.remove(name).is_some(),
+        Section::Certificates => config.certificates.remove(name).is_some(),
     }
 }
 
@@ -216,8 +269,8 @@ pub fn is_provider_owned(key: &str) -> bool {
 
 /// Adds `fragment`'s objects under `name@provider`, with their references resolved
 /// same-provider first: a bare `x` names this provider's `x` when it defines one, otherwise
-/// the file's `x`.
-fn add(config: &mut Config, provider: &str, fragment: &Fragment) {
+/// the file's `x`. Returns a warning for each listener or certificate that is not added.
+fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) -> Vec<Diagnostic> {
     let qualify = |reference: &str, own: &dyn Fn(&str) -> bool| -> String {
         if !reference.contains('@') && own(reference) {
             format!("{reference}@{provider}")
@@ -225,13 +278,47 @@ fn add(config: &mut Config, provider: &str, fragment: &Fragment) {
             reference.to_owned()
         }
     };
+    let (listeners, certificates, dropped) = admitted_listeners(base, provider, fragment);
     let own_service = |name: &str| fragment.services.contains_key(name);
     let own_middleware = |name: &str| fragment.middlewares.contains_key(name);
+    let own_listener = |name: &str| listeners.contains_key(name);
+    let own_certificate = |name: &str| certificates.contains_key(name);
+    if !listeners.is_empty() && config.listeners.is_empty() {
+        // The implicit `web` and `websecure` apply only while no listener is configured.
+        config.listeners = base.effective_listeners().into_owned();
+    }
+    for (name, listener) in &listeners {
+        let mut listener = (*listener).clone();
+        if let Some(tls) = &mut listener.tls {
+            for certificate in &mut tls.certificates {
+                *certificate = qualify(certificate, &own_certificate);
+            }
+        }
+        config
+            .listeners
+            .insert(format!("{name}@{provider}"), listener);
+    }
+    for (name, certificate) in &certificates {
+        config
+            .certificates
+            .insert(format!("{name}@{provider}"), (*certificate).clone());
+    }
     for (name, route) in &fragment.routes {
         let mut route = route.clone();
         route.service = route.service.map(|service| qualify(&service, &own_service));
         for middleware in &mut route.middlewares {
             *middleware = qualify(middleware, &own_middleware);
+        }
+        for listener in route.listeners.iter_mut().flatten() {
+            *listener = qualify(listener, &own_listener);
+        }
+        if let Some(RouteTls::Options(options)) = &mut route.tls
+            && let Some(certificate) = &mut options.certificate
+        {
+            *certificate = qualify(certificate, &own_certificate);
+        }
+        if let Some(mirror) = &mut route.mirror {
+            mirror.service = qualify(&mirror.service, &own_service);
         }
         config.routes.insert(format!("{name}@{provider}"), route);
     }
@@ -262,6 +349,9 @@ fn add(config: &mut Config, provider: &str, fragment: &Fragment) {
         for middleware in &mut route.middlewares {
             *middleware = qualify(middleware, &own_middleware);
         }
+        for listener in route.listeners.iter_mut().flatten() {
+            *listener = qualify(listener, &own_listener);
+        }
         config
             .tcp_routes
             .insert(format!("{name}@{provider}"), route);
@@ -271,6 +361,74 @@ fn add(config: &mut Config, provider: &str, fragment: &Fragment) {
             .tcp_services
             .insert(format!("{name}@{provider}"), service.clone());
     }
+    dropped
+}
+
+/// The listeners and certificates of `fragment` that may be merged, and a warning for each one
+/// that may not: every one from a provider not on [`LISTENER_PROVIDERS`], and listeners that
+/// would bind an address a file listener binds.
+fn admitted_listeners<'a>(
+    base: &Config,
+    provider: &str,
+    fragment: &'a Fragment,
+) -> (
+    BTreeMap<&'a str, &'a Listener>,
+    BTreeMap<&'a str, &'a Certificate>,
+    Vec<Diagnostic>,
+) {
+    let mut dropped = Vec::new();
+    if !LISTENER_PROVIDERS.contains(&provider) {
+        let objects = fragment
+            .listeners
+            .keys()
+            .map(|n| (Section::Listeners, n))
+            .chain(
+                fragment
+                    .certificates
+                    .keys()
+                    .map(|n| (Section::Certificates, n)),
+            );
+        for (section, name) in objects {
+            let key = format!("{name}@{provider}");
+            dropped.push(Diagnostic::warning(
+                rdock_model::path_key(section.as_str(), &key),
+                format!(
+                    "left out: the {provider} provider cannot contribute {}",
+                    section.as_str()
+                ),
+            ));
+        }
+        return (BTreeMap::new(), BTreeMap::new(), dropped);
+    }
+    let file = base.effective_listeners();
+    let udp = |l: &Listener| l.effective_protocol() == ListenerProtocol::Udp;
+    let mut listeners = BTreeMap::new();
+    for (name, listener) in &fragment.listeners {
+        let clash = file
+            .iter()
+            .find(|(_, f)| udp(f) == udp(listener) && f.address.overlaps(&listener.address));
+        if let Some((file_name, file_listener)) = clash {
+            let key = format!("{name}@{provider}");
+            dropped.push(
+                Diagnostic::warning(
+                    rdock_model::path_key("listeners", &key),
+                    format!(
+                        "left out: `{}` is already bound by the file's listener `{file_name}` (`{}`)",
+                        listener.address, file_listener.address
+                    ),
+                )
+                .with_hint("a provider listener never replaces a file listener; move one of them to another address"),
+            );
+            continue;
+        }
+        listeners.insert(name.as_str(), listener);
+    }
+    let certificates = fragment
+        .certificates
+        .iter()
+        .map(|(name, certificate)| (name.as_str(), certificate))
+        .collect();
+    (listeners, certificates, dropped)
 }
 
 #[cfg(test)]
