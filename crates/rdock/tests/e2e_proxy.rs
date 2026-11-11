@@ -149,6 +149,29 @@ async fn h2c_downstream_and_upstream() {
     );
 }
 
+/// Regression for the tokio 1.54 cap: Pingora 0.9.0 wrapped every accepted (and outgoing)
+/// connection in a `tokio::io::BufStream` with a zero read capacity, which tokio 1.54 turned into a
+/// panic (tokio-rs/tokio#8494; fixed by cloudflare/pingora#1059 in Pingora 0.9.1). One HTTP/1.1
+/// and one h2c request through a listener, each answered by the backend, prove that accepted and
+/// upstream connections work on the tokio the lockfile resolves.
+#[tokio::test]
+async fn tokio_1_54_regression_accepts_http1_and_h2_connections() {
+    let backend = Backend::start("tokio").await;
+    let port = free_port();
+    let config =
+        plain(port, backend.addr, "").replace("backends: [", "scheme: h2c\n    backends: [");
+    let rdock = Rdock::start(RDOCK, &config);
+    let h1 = client::http1(addr(port), get("app.test", "/h1")).await;
+    assert_eq!(h1.status, 200, "{}", h1.text());
+    assert_eq!(h1.version, http::Version::HTTP_11);
+    let h2 = client::h2c(addr(port), request("POST", "app.test", "/h2", "body")).await;
+    assert_eq!(h2.status, 200, "{}", h2.text());
+    assert_eq!(h2.version, http::Version::HTTP_2);
+    assert_eq!(h2.json()["body_len"], 4);
+    assert_eq!(backend.traffic(), 2);
+    assert!(!rdock.log().contains("panicked"), "{}", rdock.log());
+}
+
 #[tokio::test]
 async fn tls_listener_serves_h2_and_h1_with_sni() {
     let ca = TestCa::new();

@@ -2092,6 +2092,19 @@ export type RdockMiddleware = {
     [key: string]: unknown | RdockStaticCacheControl | boolean | string | null | Array<string> | RdockHiddenFiles | Array<string> | number | Array<RdockCompressAlgorithm> | string | RdockSymlinkPolicy | 'static' | {
         [key: string]: string;
     } | undefined;
+} | {
+    /**
+     * Largest body held, at most 64MiB; a longer one is refused with `413`. The route's
+     * `max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.
+     */
+    max?: RdockByteSize;
+    /**
+     * Longest time from the first body byte to the last; a slower upload is refused with
+     * `408`. The service's `timeouts.read` also runs while the backend waits for the body.
+     */
+    timeout?: RdockDuration;
+    type: 'hold_body';
+    [key: string]: unknown | RdockByteSize | RdockDuration | 'hold_body' | undefined;
 };
 
 /**

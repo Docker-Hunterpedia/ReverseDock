@@ -983,6 +983,20 @@ impl Validator<'_> {
         }
     }
 
+    fn check_hold_body(&mut self, path: &str, hold: &crate::middleware::HoldBodyConfig) {
+        self.check_not_zero(&format!("{path}.max"), hold.max.as_u64() == 0);
+        if hold.max > crate::middleware::HoldBodyConfig::MAX {
+            self.error(
+                format!("{path}.max"),
+                format!(
+                    "at most {}: a held body is kept in memory in full when it is released",
+                    crate::middleware::HoldBodyConfig::MAX
+                ),
+            );
+        }
+        self.check_not_zero(&format!("{path}.timeout"), hold.timeout.as_std().is_zero());
+    }
+
     fn check_middlewares(&mut self) {
         for (name, middleware) in &self.config.middlewares {
             let path = path_key("middlewares", name);
@@ -1028,6 +1042,7 @@ impl Validator<'_> {
                     }
                 }
                 Middleware::GrpcWeb(_) => {}
+                Middleware::HoldBody(h) => self.check_hold_body(&path, h),
                 Middleware::Static(st) => self.check_static(&path, st),
                 Middleware::Jwt(j) => self.check_jwt(&path, j),
                 Middleware::ClientCert(c) => {

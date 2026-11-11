@@ -3889,6 +3889,33 @@
             "type",
             "root"
           ]
+        },
+        {
+          "description": "Hold the request body until it is complete (up to `max`) before any of it reaches the\nbackend. The backend connection and the request head are already sent, so this does\nnot shield backend workers from slow uploads; it refuses oversize bodies with `413`\nand lets body middlewares see the whole body.",
+          "type": "object",
+          "properties": {
+            "max": {
+              "description": "Largest body held, at most 64MiB; a longer one is refused with `413`. The route's\n`max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1MiB"
+            },
+            "timeout": {
+              "description": "Longest time from the first body byte to the last; a slower upload is refused with\n`408`. The service's `timeouts.read` also runs while the backend waits for the body.",
+              "$ref": "#/$defs/Duration",
+              "default": "30s"
+            },
+            "type": {
+              "type": "string",
+              "const": "hold_body"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
         }
       ]
     },

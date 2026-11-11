@@ -17,7 +17,7 @@ reversedock/
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite
 │   │   ├── kubernetes.yml          # (v0.7) chart lint/render/kubeconform and manifests in sync; Gateway API conformance on kind and Helm on k3s (both fail the workflow; passed 2026-11-11; not yet required checks; ADR-0029)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
-│   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary past the cap
+│   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary on the newest 1.x
 │   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only
 │   │   └── release.yml             # build → package (checksums, SBOM; also on PRs) → publish (tags: provenance, cosign, release)
 │   ├── ISSUE_TEMPLATE/             # issue forms: bug, compatibility gap, feature, design proposal, docs + config.yml
@@ -90,7 +90,7 @@ reversedock/
 | Clippy | `clippy::all` + selected `pedantic`; `unwrap_used`/`expect_used`/`panic` denied in library crates (allowed in tests and the binary's startup path with a message) |
 | Errors | `thiserror` enums in libraries; `miette` diagnostics with source spans for config/label errors; `anyhow` only in the binary |
 | Logging | `tracing` only; structured fields, no `println!`; secrets never logged (newtype `Secret<T>` with redacted `Debug`) |
-| Async | Tokio, capped at `<1.54` until Pingora handles tokio 1.54's `BufStream` change (Dependabot ignores it too; the weekly `tokio-canary` job reports when the cap can be lifted); blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
+| Async | Tokio 1.x (the `<1.54` cap went with Pingora 0.9.1, which fixed the zero-capacity `BufStream` panic; the weekly `tokio-canary` job tests the newest 1.x ahead of the lockfile); blocking I/O via `spawn_blocking`; no `std::sync::Mutex` across awaits; `ArcSwap` for shared config |
 | Build tools | A C compiler and **CMake** (Pingora builds zlib-ng; ring and zstd need C) |
 | Public API | `#![warn(missing_docs)]` on lib crates; `pub` surface minimised; `#[non_exhaustive]` on config enums |
 | Features | One table (below) is the source of truth; 05 and the ADRs point here |

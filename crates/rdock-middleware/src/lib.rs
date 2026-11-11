@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+use std::any::Any;
 use std::fmt;
 use std::net::IpAddr;
 use std::path::{Path, PathBuf};
@@ -12,6 +13,7 @@ use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_model::middleware::Middleware as Config;
 
 mod auth;
+pub mod chain;
 pub mod client;
 mod client_cert;
 mod compress;
@@ -20,6 +22,8 @@ mod errors;
 mod forward_auth;
 mod hashes;
 mod headers;
+pub mod held;
+mod hold_body;
 mod ip;
 mod jwt;
 #[doc(hidden)]
@@ -27,18 +31,26 @@ pub use jwt::fuzz_verify as fuzz_jwt;
 mod limits;
 mod maintenance;
 mod paths;
+pub mod phase;
 mod ratelimit;
 mod redirect;
 mod static_files;
 
+pub use chain::{Answered, Chain, Flags, Released};
 pub use client::{FetchError, Fetched, HttpClient};
 pub use client_cert::{ClientIdentity, IDENTITY_HEADERS};
 pub use compress::Encoder;
+pub use held::{BodyHolder, HeldBody, HoldError, Spool};
 pub use limits::Throttle;
+pub use phase::{BodyHold, BodyVerdict, Capabilities, Consumer, LogSummary, Phases, Upstream};
 pub use static_files::FileBody;
 
-/// What middlewares know about a request and share between its request and response phases.
-#[derive(Debug)]
+/// What middlewares know about a request and share between its phases.
+///
+/// Fields are set by the proxy (client, route, upstream) or by middlewares (user, consumer,
+/// compression…). Per-middleware data that must survive from one phase to a later one goes in
+/// the typed state slot ([`Self::state`], [`Self::set_state`]), which belongs to the middleware's
+/// position in the chain.
 pub struct Context {
     /// Resolved client IP (after trusted-proxy handling).
     pub client_ip: IpAddr,
@@ -64,6 +76,12 @@ pub struct Context {
     pub admitted: Vec<rdock_limits::Admitted>,
     /// Response byte limit set by `bandwidth`.
     pub throttle: Option<Throttle>,
+    /// The consumer the request is attributed to, set by an authenticating middleware.
+    pub consumer: Option<Consumer>,
+    /// The backend of the current attempt: set before `upstream_request`, kept for `log`.
+    pub upstream: Option<Upstream>,
+    state: Vec<Option<Box<dyn Any + Send + Sync>>>,
+    slot: usize,
     encoding: Option<rdock_model::middleware::CompressAlgorithm>,
     head_request: bool,
     cors_origin: Option<HeaderValue>,
@@ -92,10 +110,81 @@ impl Context {
             client_cert: None,
             admitted: Vec::new(),
             throttle: None,
+            consumer: None,
+            upstream: None,
+            state: Vec::new(),
+            slot: 0,
             encoding: None,
             head_request: false,
             cors_origin: None,
         }
+    }
+}
+
+impl fmt::Debug for Context {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("Context")
+            .field("client_ip", &self.client_ip)
+            .field("tls", &self.tls)
+            .field("route", &self.route)
+            .field("request_id", &self.request_id)
+            .field("authority", &self.authority)
+            .field("user", &self.user)
+            .field("consumer", &self.consumer)
+            .field("upstream", &self.upstream)
+            .field("compression", &self.compression.is_some())
+            .field("state_slots", &self.state.len())
+            .finish_non_exhaustive()
+    }
+}
+
+impl Context {
+    /// This middleware's state of type `T`, if it set one in an earlier phase.
+    #[must_use]
+    pub fn state<T: Any>(&self) -> Option<&T> {
+        self.state.get(self.slot)?.as_ref()?.downcast_ref()
+    }
+
+    /// This middleware's state of type `T`, mutably.
+    pub fn state_mut<T: Any>(&mut self) -> Option<&mut T> {
+        self.state.get_mut(self.slot)?.as_mut()?.downcast_mut()
+    }
+
+    /// Sets this middleware's state, replacing any earlier value.
+    ///
+    /// The slots are allocated when the request starts for chains in which a middleware
+    /// declared [`Capabilities::with_state`]; a middleware that did not declare it still gets
+    /// a slot here, at the cost of an allocation.
+    pub fn set_state<T: Any + Send + Sync>(&mut self, value: T) {
+        if self.state.len() <= self.slot {
+            self.state.resize_with(self.slot + 1, || None);
+        }
+        self.state[self.slot] = Some(Box::new(value));
+    }
+
+    /// Takes this middleware's state of type `T` out of its slot.
+    pub fn take_state<T: Any>(&mut self) -> Option<T> {
+        let slot = self.state.get_mut(self.slot)?;
+        if !slot.as_ref()?.is::<T>() {
+            return None;
+        }
+        slot.take()?.downcast().ok().map(|b| *b)
+    }
+
+    /// Whether state slots were allocated for this request.
+    #[must_use]
+    pub fn has_state_slots(&self) -> bool {
+        !self.state.is_empty()
+    }
+
+    /// Allocates one empty slot per middleware of the chain.
+    pub(crate) fn prepare_state(&mut self, len: usize) {
+        self.state.resize_with(len, || None);
+    }
+
+    /// Selects the slot of the middleware at `position` before one of its hooks runs.
+    pub(crate) fn enter(&mut self, position: usize) {
+        self.slot = position;
     }
 }
 
@@ -179,19 +268,51 @@ pub enum Flow {
     Reply(Reply),
 }
 
-/// A built-in middleware.
+/// A middleware: hooks for the phases of a request (ADR-0030, "Pipeline and body phase").
 ///
-/// The request phase runs in chain order and may answer the request. The response phase runs in
-/// reverse order, also for answers produced by later middlewares or by the proxy.
+/// On the way in the hooks run in the route's list order (`request`, `upstream_request`,
+/// `request_body`); on the way out in reverse order (`response`, `response_body`, `log`).
+/// `request` and `response` run for every middleware; the other hooks only for middlewares
+/// whose [`Self::capabilities`] declare them, so a chain that uses none pays nothing. `response`
+/// also runs for answers produced by later middlewares or by the proxy.
 #[async_trait]
 pub trait Middleware: Send + Sync + fmt::Debug {
-    /// Inspects or changes the request before it is forwarded.
+    /// The phases this middleware uses, whether it wants a state slot, and whether the proxy
+    /// should hold the request body for it. Read once, when the route's chain is built.
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::DEFAULT
+    }
+
+    /// Inspects or changes the request before it is forwarded, or answers it.
     async fn request(&self, _req: &mut RequestHeader, _cx: &mut Context) -> Flow {
         Flow::Next
     }
 
+    /// Changes the request head about to be sent to the chosen backend
+    /// ([`Context::upstream`]), or answers instead (the attempt is abandoned, no retry).
+    /// Runs once per attempt, on a fresh copy of the request. Needs
+    /// [`Phases::UPSTREAM_REQUEST`].
+    async fn upstream_request(&self, _req: &mut RequestHeader, _cx: &mut Context) -> Flow {
+        Flow::Next
+    }
+
+    /// Inspects the complete request body before any of it is forwarded, and lets it pass,
+    /// replaces it or answers instead. Needs [`Capabilities::with_body`].
+    async fn request_body(&self, _body: &HeldBody, _cx: &mut Context) -> BodyVerdict {
+        BodyVerdict::Continue
+    }
+
     /// Changes the response before it is sent to the client.
     async fn response(&self, _resp: &mut ResponseHeader, _cx: &mut Context) {}
+
+    /// Changes or counts one chunk of the response body before it is compressed and sent.
+    /// Synchronous, as Pingora's body filter is: it cannot await. A middleware that changes
+    /// the length removes `Content-Length` in [`Self::response`]. Needs
+    /// [`Phases::RESPONSE_BODY`].
+    fn response_body(&self, _body: &mut Option<Bytes>, _end_of_stream: bool, _cx: &mut Context) {}
+
+    /// Observes the finished request. Cannot change anything. Needs [`Phases::LOG`].
+    fn log(&self, _summary: &LogSummary, _cx: &Context) {}
 
     /// Whether the proxy translates gRPC-Web for routes using this middleware.
     fn translates_grpc_web(&self) -> bool {
@@ -284,6 +405,7 @@ pub fn build(
         Config::Static(c) => Arc::new(static_files::Static::new(c)?),
         // The proxy converts the protocol itself (it needs the trailers); see `rdock-proxy`.
         Config::GrpcWeb(_) => Arc::new(GrpcWeb),
+        Config::HoldBody(c) => Arc::new(hold_body::HoldBody::new(c)),
     })
 }
 

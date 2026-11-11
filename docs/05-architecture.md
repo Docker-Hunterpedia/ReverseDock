@@ -249,14 +249,14 @@ sequenceDiagram
 | `early_request_filter` | Listener timeouts; client IP from peer + trusted proxies; header count/size, target length, `Content-Length` limits; `Host` required for HTTP/1.1; only `Expect: 100-continue`; request ID (kept only from trusted proxies) |
 | `request_filter` | Path normalisation; route match in priority order (or HTTP→HTTPS redirect / 404); forwarding headers rewritten; middleware phase `request`; may answer and return `true` (earlier middlewares still run their response phase on the answer) |
 | `upstream_peer` | Service lookup, split/canary pick, sticky lookup, balancer selection → `HttpPeer` with scheme, SNI, timeouts, mTLS, h2c |
-| `upstream_request_filter` | Host policy (`pass_host_header`; a Host-less HTTP/1.0 request gets the backend's). Pingora has already stripped request hop-by-hop headers |
+| `upstream_request_filter` | Host policy (`pass_host_header`; a Host-less HTTP/1.0 request gets the backend's). Pingora has already stripped request hop-by-hop headers. v0.8: middleware phase `upstream_request` in list order, once per attempt, with the chosen backend in the context; drops `Content-Length` when a held body may be replaced (ADR-0030) |
 | `upstream_response_filter` / `response_filter` | Strip response hop-by-hop headers (Pingora only cleans requests); HTTP/1.1 towards HTTP/1 clients; middleware phase `response` in reverse order; `X-Request-ID`; status-code retries (v0.4) |
-| `response_body_filter` | Streaming gzip of the `compress` middleware (Pingora's compression module is not used: it buffers event streams and ignores q-values); custom error page bodies |
-| `request_body_filter` | Body size accounting, also for chunked bodies (`max_body_bytes`) |
+| `response_body_filter` | v0.8: middleware phase `response_body` in reverse order, before compression and the throttle (and for cached answers once the cache lands; `upstream_response_body_filter` is not used); streaming gzip of the `compress` middleware (Pingora's compression module is not used: it buffers event streams and ignores q-values); custom error page bodies |
+| `request_body_filter` | Body size accounting, also for chunked bodies (`max_body_bytes`). v0.8: the shared body holder (memory to 64 KiB, then an unlinked spool file) and, at the end of the stream, middleware phase `request_body` in list order; an answer aborts the upstream request (ADR-0030) |
 | `fail_to_connect` | v0.4: mark connect errors retryable (`e.set_retry(true)`) when the policy allows (idempotent method or `retry_non_idempotent`, attempts left, budget available) and record the failure for passive health; v0.1 counts the error and does not retry |
 | `error_while_proxy` | Resolve Pingora's "reused connection" retry state; never retry once the client saw a response; v0.4 adds the policy of ADR-0015 |
 | `fail_to_proxy` | Terminal: custom error page, `Retry-After`, error metrics; no retry here |
-| `logging` | Access log line, metrics, OTel span end, dashboard ring buffer, audit of blocked requests |
+| `logging` | Middleware phase `log` in reverse order (v0.8, read-only); access log line, metrics, OTel span end, dashboard ring buffer, audit of blocked requests |
 | `response_cache_filter` / cache hooks | Cache track (P2) |
 
 **Real client IP algorithm (B-NET-08/W-CF-02):** start from the TCP peer. If the peer is in `trusted_proxies`, walk `X-Forwarded-For` from right to left, skipping trusted addresses; the first untrusted one is the client. If the peer is a verified Cloudflare range and `client_ip_header: auto`, use `CF-Connecting-IP` instead. If the peer is untrusted, all forwarded headers are ignored and **overwritten** before reaching the upstream.

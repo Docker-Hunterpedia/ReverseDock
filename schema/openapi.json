@@ -4466,6 +4466,33 @@
               "root"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Hold the request body until it is complete (up to `max`) before any of it reaches the\nbackend. The backend connection and the request head are already sent, so this does\nnot shield backend workers from slow uploads; it refuses oversize bodies with `413`\nand lets body middlewares see the whole body.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "max": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "1MiB",
+                "description": "Largest body held, at most 64MiB; a longer one is refused with `413`. The route's\n`max_body` (or `security.limits.max_body_bytes`) applies when it is smaller."
+              },
+              "timeout": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "30s",
+                "description": "Longest time from the first body byte to the last; a slower upload is refused with\n`408`. The service's `timeouts.read` also runs while the backend waits for the body."
+              },
+              "type": {
+                "const": "hold_body",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
         ]
       },

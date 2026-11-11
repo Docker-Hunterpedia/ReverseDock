@@ -103,6 +103,44 @@ routes:
     max_body: 2GiB
 ```
 
+## Hold the body until it is complete: `hold_body` <Status since="v0.8" />
+
+By default a request body streams to the backend as it arrives. The `hold_body` middleware holds it instead and forwards it in one piece once the last byte is in:
+
+```yaml title="rdock.yaml"
+listeners:
+  web:       { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+routes:
+  upload:
+    match: "Host(`files.example.com`) && PathPrefix(`/upload`)"
+    service: files
+    middlewares: [hold-upload]
+
+services:
+  files:
+    backends: [{ address: "10.0.0.7:8080" }]
+
+middlewares:
+  hold-upload: { type: hold_body, max: 10MiB, timeout: 30s }
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `max` | `1MiB` | Largest body held, at most `64MiB`. A longer one is refused with `413`; the route's `max_body` (or `max_body_bytes`) applies when it is smaller. |
+| `timeout` | `30s` | Longest time from the first body byte to the last. A slower upload is refused with `408`. |
+
+What it does:
+
+- **The backend never sees part of a body.** A body over `max` is refused with `413`: one with a `Content-Length` over the limit before the backend is contacted, a chunked or HTTP/2 body as soon as it grows past it. Middlewares that inspect bodies (request validation, agents) build on the same holder.
+- **Small bodies stay in memory, larger ones go to disk.** Up to 64 KiB the body is kept in memory; beyond that it is written to a file in `spool/` under the data directory, created readable only by ReverseDock and removed from the directory at once, so nothing is left behind when the request ends or the process stops. The directory is emptied when ReverseDock starts. The whole body is read back into memory when it is sent, which is why `max` is capped.
+- **The client's framing is kept.** A body with a `Content-Length` keeps it; a chunked upload stays chunked, because the request head reaches the backend before the body.
+- **`Expect: 100-continue`** is passed to the backend as usual; its `100 Continue` reaches the client, which then sends the body that ReverseDock holds.
+- **Retries:** a held body up to 64 KiB can be sent again to another backend; a larger one cannot, so such a request is not retried.
+
+What it does **not** do: it does not shield backend workers from slow uploads. ReverseDock chooses the backend, connects and sends the request head when the upload starts, and only the body waits; a backend that takes a worker per connection still holds that worker for the whole upload. The service's `timeouts.read` also keeps running while the backend waits for the body, so keep `timeout` below it. Full request buffering, where the backend is contacted only after the whole body has arrived, is planned.
+
 **Load shedding:** `max_in_flight` <Status since="v0.4" /> caps the requests in flight across all listeners. More are answered `503 Service Unavailable` with `Retry-After` before any work is done for them, so an overloaded instance stays responsive and a load balancer can send the traffic elsewhere. Size it from a load test of your slowest routes.
 
 **Connections to backends:** each listener keeps up to `upstream_idle_connections` <Status since="v0.4" /> idle keep-alive connections to backends for reuse, 4096 by default. A pool smaller than the number of requests in flight makes every request beyond it open and close its own backend connection, which under heavy load costs more than the requests themselves. Lower it only for backends that limit connections per client. It applies to listeners started after the change.

@@ -56,6 +56,11 @@ pub enum Middleware {
     /// Serve files from a directory on ReverseDock's own file system. It answers the request,
     /// so a route that ends with it needs no service (unless `pass_through` is on).
     Static(StaticConfig),
+    /// Hold the request body until it is complete (up to `max`) before any of it reaches the
+    /// backend. The backend connection and the request head are already sent, so this does
+    /// not shield backend workers from slow uploads; it refuses oversize bodies with `413`
+    /// and lets body middlewares see the whole body.
+    HoldBody(HoldBodyConfig),
 }
 
 impl Middleware {
@@ -235,6 +240,33 @@ pub enum ClientCertForward {
     Traefik,
     /// Envoy's `X-Forwarded-Client-Cert`.
     Xfcc,
+}
+
+/// Holding the request body (`hold_body`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[schemars(inline)]
+pub struct HoldBodyConfig {
+    /// Largest body held, at most 64MiB; a longer one is refused with `413`. The route's
+    /// `max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.
+    pub max: ByteSize,
+    /// Longest time from the first body byte to the last; a slower upload is refused with
+    /// `408`. The service's `timeouts.read` also runs while the backend waits for the body.
+    pub timeout: Duration,
+}
+
+impl HoldBodyConfig {
+    /// Largest `max` accepted: a held body is in memory in full when it is released.
+    pub const MAX: ByteSize = ByteSize::mib(64);
+}
+
+impl Default for HoldBodyConfig {
+    fn default() -> Self {
+        Self {
+            max: ByteSize::mib(1),
+            timeout: Duration::from_secs(30),
+        }
+    }
 }
 
 /// gRPC-Web translation has no settings.

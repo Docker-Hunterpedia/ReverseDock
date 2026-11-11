@@ -880,7 +880,7 @@ impl Router {
             .build()
             .unwrap();
         runtime.block_on(async {
-            for middleware in route.middlewares.iter() {
+            for middleware in route.middlewares.middlewares() {
                 if let rdock_middleware::Flow::Reply(reply) =
                     rdock_middleware::Middleware::request(&**middleware, &mut req, &mut cx).await
                 {

@@ -46,6 +46,7 @@ uuid.workspace = true
 x509-parser.workspace = true
 
 [dev-dependencies]
+http-body-util.workspace = true
 rdock-testkit.workspace = true
 tempfile.workspace = true
 

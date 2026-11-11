@@ -114,6 +114,17 @@ impl Signals {
     }
 }
 
+/// The data plane with its persistent sticky-cookie key and the spool for held request bodies
+/// (emptied here of whatever an earlier run left).
+fn data_plane(data_dir: &Path, metrics: Metrics) -> anyhow::Result<Arc<DataPlane>> {
+    let plane = DataPlane::new(metrics, Runtime::empty()).with_sticky_key(sticky_key(data_dir)?);
+    let spool = data_dir.join("spool");
+    plane
+        .open_spool(&spool)
+        .with_context(|| format!("opening the spool directory {}", spool.display()))?;
+    Ok(Arc::new(plane))
+}
+
 async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     // Before anything else: the default action of SIGHUP would end the process.
     let mut signals = Signals::install()?;
@@ -135,9 +146,7 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
-    let plane = Arc::new(
-        DataPlane::new(metrics, Runtime::empty()).with_sticky_key(sticky_key(&args.data_dir)?),
-    );
+    let plane = data_plane(&args.data_dir, metrics)?;
     let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
     tokio::spawn(engine.clone().watch_thresholds());
 

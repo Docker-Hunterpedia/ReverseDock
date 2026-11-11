@@ -1,7 +1,9 @@
 //! A test backend speaking HTTP/1.1 and h2c on one port (optionally TLS with h2 by ALPN).
 //!
 //! - `GET /sse?n=3&ms=200`: `n` server-sent events, one every `ms` milliseconds.
-//! - `GET /status/<code>`: that status with a short body.
+//! - `GET /status/<code>`: that status with a short body (after reading the request body).
+//! - `POST /echo-body`: the request body as it arrived, with `x-body-len` and
+//!   `x-request-content-length` / `x-request-transfer-encoding` copied from the request.
 //! - `GET /bytes/<n>`: `n` bytes of text.
 //! - `GET /slow/<ms>`: answers after `ms` milliseconds.
 //! - `GET /ws`: WebSocket echo.
@@ -241,7 +243,12 @@ async fn handle(
             .body(full(format!("status 503 from {name}\n")))
             .unwrap());
     }
+    if path == "/echo-body" {
+        return Ok(echo_body(req).await);
+    }
     if let Some(code) = path.strip_prefix("/status/") {
+        let code = code.to_owned();
+        let _ = req.into_body().collect().await;
         let status = StatusCode::from_u16(code.parse().unwrap_or(500)).unwrap_or(StatusCode::OK);
         return Ok(Response::builder()
             .status(status)
@@ -270,6 +277,30 @@ async fn handle(
         "/grpc" => Ok(grpc(req).await),
         _ => Ok(echo(&name, req).await),
     }
+}
+
+async fn echo_body(req: Request<Incoming>) -> Response<Body> {
+    let (parts, body) = req.into_parts();
+    let body = body
+        .collect()
+        .await
+        .map(http_body_util::Collected::to_bytes)
+        .unwrap_or_default();
+    let copy = |name: &str| {
+        parts
+            .headers
+            .get(name)
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("-")
+            .to_owned()
+    };
+    Response::builder()
+        .header("content-type", "application/octet-stream")
+        .header("x-body-len", body.len().to_string())
+        .header("x-request-content-length", copy("content-length"))
+        .header("x-request-transfer-encoding", copy("transfer-encoding"))
+        .body(full(body))
+        .unwrap()
 }
 
 async fn echo(name: &str, req: Request<Incoming>) -> Response<Body> {

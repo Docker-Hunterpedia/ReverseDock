@@ -116,6 +116,7 @@ impl DataPlane {
                 challenges: resolver.challenges(),
                 client: client.clone(),
                 in_flight: Arc::default(),
+                spool: std::sync::OnceLock::new(),
             }),
             resolver,
             dns: Arc::new(Dns::default()),
@@ -130,6 +131,25 @@ impl DataPlane {
             }),
             generation: AtomicU64::new(0),
         }
+    }
+
+    /// Opens the spool directory for held request bodies (`<data dir>/spool`) and removes the
+    /// files an earlier run left there. Without it, held bodies stay in memory.
+    ///
+    /// # Errors
+    ///
+    /// The directory cannot be created, opened or emptied.
+    pub fn open_spool(&self, path: &std::path::Path) -> std::io::Result<()> {
+        let spool = rdock_middleware::Spool::open(path)?;
+        // A second call keeps the first spool.
+        let _ = self.shared.spool.set(Arc::new(spool));
+        Ok(())
+    }
+
+    /// The spool for held request bodies, once [`Self::open_spool`] has run.
+    #[must_use]
+    pub fn spool(&self) -> Option<Arc<rdock_middleware::Spool>> {
+        self.shared.spool.get().cloned()
     }
 
     /// Signs sticky cookies with `key` instead of a key that lives only as long as the process.

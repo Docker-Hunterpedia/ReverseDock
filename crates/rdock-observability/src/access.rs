@@ -69,6 +69,9 @@ pub struct AccessRecord {
     /// User authenticated by a middleware.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// Consumer the request was attributed to by an authenticating middleware (v0.8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<String>,
     /// `User-Agent`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,

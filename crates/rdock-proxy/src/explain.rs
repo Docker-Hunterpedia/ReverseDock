@@ -1,6 +1,7 @@
 //! Explains a routing decision without sending a request (ADR-0024, "Explaining routing
 //! decisions"): every route of a listener in evaluation order with why it does or does not
-//! match, the winner, and the backends its service would consider with why others are out.
+//! match, the winner, its middlewares with the pipeline phases each uses (ADR-0030), and the
+//! backends its service would consider with why others are out.
 //! Runs on the admin runtime against the live snapshot, never on the request path.
 
 use std::net::IpAddr;
@@ -102,12 +103,38 @@ pub fn explain(runtime: &Runtime, listener: &str, request: &Request) -> Result<V
     }))
 }
 
+/// Each middleware of the route with the phases it runs in, in list order. `request`,
+/// `upstream_request` and `request_body` run in this order; `response`, `response_body` and
+/// `log` in reverse.
+fn phases(route: &RouteRuntime) -> Vec<Value> {
+    route
+        .middlewares
+        .capabilities()
+        .map(|(name, caps)| {
+            let mut entry = json!({
+                "middleware": name,
+                "phases": caps.phases().names().collect::<Vec<_>>(),
+            });
+            if let Some(hold) = caps.body() {
+                entry["hold_body"] = json!({
+                    "max": hold.max,
+                    "timeout_ms": u64::try_from(hold.timeout.as_millis()).unwrap_or(u64::MAX),
+                    "replaces": hold.replaces,
+                });
+            }
+            entry
+        })
+        .collect()
+}
+
 /// The outcome for the winning route: its service and the backends it would consider.
 fn route_outcome(route: &RouteRuntime, now: Instant) -> Value {
     let Some(service) = &route.service else {
         return json!({
             "result": "route", "route": &*route.name,
             "reason": "the route's middlewares answer every request; it has no service",
+            "middlewares": route.middlewares.names().collect::<Vec<_>>(),
+            "phases": phases(route),
         });
     };
     let backends: Vec<Value> = service
@@ -129,5 +156,10 @@ fn route_outcome(route: &RouteRuntime, now: Instant) -> Value {
             })
         })
         .collect();
-    json!({ "result": "route", "route": &*route.name, "service": &*service.name, "backends": backends })
+    json!({
+        "result": "route", "route": &*route.name, "service": &*service.name,
+        "middlewares": route.middlewares.names().collect::<Vec<_>>(),
+        "phases": phases(route),
+        "backends": backends,
+    })
 }

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use rdock_balancer::{BackendState, Balancer, Pool, StickyKeys};
-use rdock_middleware::Middleware;
+use rdock_middleware::Chain;
 use rdock_model::config::{
     ListenerProtocol, ListenerTimeouts, ProxyProtocolIn, StartTls, TlsPolicy,
 };
@@ -134,8 +134,8 @@ pub struct RouteRuntime {
     pub expr: String,
     /// Target service; none when the last middleware answers every request.
     pub service: Option<Arc<ServiceRuntime>>,
-    /// Middlewares, in order.
-    pub middlewares: Arc<[Arc<dyn Middleware>]>,
+    /// Middlewares, in order, with the phases they use (computed once, here).
+    pub middlewares: Chain,
     /// Per-route timeout overrides.
     pub timeouts: RouteTimeouts,
     /// Copies of requests sent to another service.

@@ -520,6 +520,23 @@ pub(crate) fn routes(command: &RoutesCommand) -> anyhow::Result<ExitCode> {
             if !middlewares.is_empty() {
                 out.push(format!("middlewares: {}", middlewares.join(" → ")));
             }
+            for m in outcome["phases"].as_array().into_iter().flatten() {
+                let phases: Vec<String> = m["phases"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(text)
+                    .collect();
+                let hold = match m["hold_body"]["max"].as_u64() {
+                    Some(max) => format!(" (holds the body up to {max} bytes)"),
+                    None => String::new(),
+                };
+                out.push(format!(
+                    "  {:<24} {}{hold}",
+                    text(&m["middleware"]),
+                    phases.join(", ")
+                ));
+            }
             for b in outcome["backends"].as_array().into_iter().flatten() {
                 let state = if b["considered"] == true {
                     "considered".to_owned()

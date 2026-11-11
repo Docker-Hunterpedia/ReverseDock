@@ -712,3 +712,19 @@ Which symbolic links are followed.
 **Type:** map of names to `string`
 
 File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.
+
+## `type: hold_body`
+
+Hold the request body until it is complete (up to `max`) before any of it reaches the backend. The backend connection and the request head are already sent, so this does not shield backend workers from slow uploads; it refuses oversize bodies with `413` and lets body middlewares see the whole body.
+
+### `middlewares.<name>.max`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `1MiB`
+
+Largest body held, at most 64MiB; a longer one is refused with `413`. The route's `max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.
+
+### `middlewares.<name>.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
+
+Longest time from the first body byte to the last; a slower upload is refused with `408`. The service's `timeouts.read` also runs while the backend waits for the body.

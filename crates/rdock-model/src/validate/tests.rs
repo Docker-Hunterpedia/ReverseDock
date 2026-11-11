@@ -1408,3 +1408,29 @@ fn listener_certificates_must_exist() {
         "certificate `two` does not exist"
     ));
 }
+
+#[test]
+fn hold_body_needs_a_bounded_positive_size_and_timeout() {
+    let hold = |settings: Value| {
+        let mut m = json!({ "type": "hold_body" });
+        merge(&mut m, settings);
+        errors(with(app(), json!({ "middlewares": { "hold": m } })))
+    };
+    assert_eq!(hold(json!({})), [], "defaults: 1MiB within 30s");
+    assert_eq!(hold(json!({ "max": "64MiB", "timeout": "2m" })), []);
+    assert!(has(
+        &hold(json!({ "max": 0 })),
+        "middlewares.hold.max",
+        "greater than zero"
+    ));
+    assert!(has(
+        &hold(json!({ "max": "65MiB" })),
+        "middlewares.hold.max",
+        "at most 64MiB"
+    ));
+    assert!(has(
+        &hold(json!({ "timeout": "0s" })),
+        "middlewares.hold.timeout",
+        "greater than zero"
+    ));
+}

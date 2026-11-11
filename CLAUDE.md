@@ -31,7 +31,7 @@ ReverseDock is an open-source reverse proxy in Rust on Cloudflare Pingora (Apach
 - `unsafe_code = "forbid"`; no `unwrap`/`expect`/`panic` in library crates; `thiserror` in libraries, `miette` for config diagnostics, `anyhow` only in the binary; `tracing` for all logging.
 - Names: binary `rdock`, crates `rdock-*`, Docker labels `rdock.*`, config `rdock.yaml`, env `RDOCK_*`, metrics `rdock_*`.
 - The data plane never depends on the admin API, dashboard or providers at request time (ADR-0009, ADR-0012). Retries follow ADR-0015; HTTP semantics and the "planned for vX.Y" gate follow ADR-0014.
-- Build needs a C compiler and CMake. tokio stays `<1.54` until Pingora fixes its `BufStream` panic.
+- Build needs a C compiler and CMake.
 
 ## Map of the repository
 

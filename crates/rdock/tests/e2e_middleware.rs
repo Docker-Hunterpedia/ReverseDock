@@ -330,3 +330,31 @@ async fn forward_auth_allows_refuses_and_fails_closed() {
     assert_eq!(outage.status, 502, "fails closed");
     assert_eq!(auth.requests(), 2);
 }
+
+/// `hold_body` through the real binary (ADR-0030): the body reaches the backend only once
+/// complete, an oversize one is refused with 413 before the backend sees it, and `rdock run`
+/// keeps its spool directory in the data directory.
+#[tokio::test]
+async fn hold_body_holds_and_refuses_oversize_bodies() {
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let routes = "  app: { match: \"PathPrefix(`/`)\", service: app, middlewares: [hold] }\n";
+    let middlewares = "  hold: { type: hold_body, max: 1KiB, timeout: 5s }\n";
+    let rdock = Rdock::start(RDOCK, &config(port, backend.addr, routes, middlewares));
+    assert!(rdock.data_dir().join("spool").is_dir());
+    let reply = client::http1(
+        addr(port),
+        request("POST", "a.test", "/echo-body", "x".repeat(1024)),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    assert_eq!(reply.body.len(), 1024);
+    let before = backend.requests();
+    let reply = client::http1(
+        addr(port),
+        request("POST", "a.test", "/echo-body", "x".repeat(1025)),
+    )
+    .await;
+    assert_eq!(reply.status, 413);
+    assert_eq!(backend.requests(), before);
+}

@@ -904,7 +904,7 @@ fn compile_route(
             out.push(unavailable("middleware", reference));
             return None;
         };
-        chain.push(m.clone());
+        chain.push((Arc::<str>::from(reference.as_str()), m.clone()));
     }
     // Validation checks this too, except for another provider's last middleware.
     let terminal = route
@@ -938,6 +938,7 @@ fn compile_route(
         }
         None => None,
     };
+    let chain = rdock_middleware::Chain::new(chain);
     Some(Arc::new(RouteRuntime {
         name: Arc::from(name),
         priority,
@@ -945,8 +946,8 @@ fn compile_route(
         service,
         expr: expr.to_string(),
         max_body: route.max_body,
-        grpc_web: chain.iter().any(|m| m.translates_grpc_web()),
-        middlewares: chain.into(),
+        grpc_web: chain.translates_grpc_web(),
+        middlewares: chain,
         timeouts: route.timeouts,
         mirror,
         live: context.live.clone(),

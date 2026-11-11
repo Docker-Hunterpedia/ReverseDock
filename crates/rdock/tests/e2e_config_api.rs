@@ -443,6 +443,10 @@ async fn explain_shows_why_routes_match_and_backends_are_excluded() {
     );
     assert_eq!(answer["outcome"]["route"], "api");
     assert_eq!(answer["outcome"]["middlewares"], serde_json::json!(["tag"]));
+    assert_eq!(
+        answer["outcome"]["phases"],
+        serde_json::json!([{ "middleware": "tag", "phases": ["request", "response"] }])
+    );
     let excluded = answer["outcome"]["backends"]
         .as_array()
         .unwrap()
@@ -464,7 +468,9 @@ async fn explain_shows_why_routes_match_and_backends_are_excluded() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{text}");
     assert!(
-        text.contains("route api → service app") && text.contains("excluded: drained"),
+        text.contains("route api → service app")
+            && text.contains("excluded: drained")
+            && text.contains(&format!("  {:<24} request, response", "tag")),
         "{text}"
     );
 }

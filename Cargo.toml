@@ -78,11 +78,13 @@ serde_path_to_error = "0.1.20"
 thiserror = "2.0.21"
 url = "2.5.8"
 
-# Data plane (Pingora 0.9.0 and the crates it already brings in, at the same versions)
-pingora = { version = "0.9.0", default-features = false, features = ["proxy", "rustls"] }
-# Pingora 0.9.0 panics on every accepted connection with tokio >= 1.54 (zero-capacity BufStream,
-# tokio#8494); 1.53.3 has no open advisory. Keep this cap until Pingora ships a fix.
-tokio = { version = ">=1.53.3, <1.54", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+# Data plane (Pingora 0.9.1, released 2026-11-03, and the crates it already brings in, at the same
+# versions). 0.9.1 replaces the zero-capacity `BufStream` that panicked on every accepted connection
+# with tokio >= 1.54 (tokio#8494, pingora#1059), so the `<1.54` cap is gone (checked 2026-11-11 with
+# the whole suite and `e2e_proxy::tokio_1_54_regression_*`).
+pingora = { version = "0.9.1", default-features = false, features = ["proxy", "rustls"] }
+# tokio 1.54.1 (1.54.0 is yanked) declares rust-version 1.85, within our MSRV.
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 arc-swap = "1.9.3"
 async-trait = "0.1.92"
 bytes = "1.12.1"
