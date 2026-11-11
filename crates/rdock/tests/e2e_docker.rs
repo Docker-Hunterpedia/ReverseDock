@@ -203,7 +203,21 @@ async fn docker_containers_are_routed_and_socket_loss_keeps_traffic() {
     let removed = start.elapsed();
     eprintln!("route removed {removed:?} after the container stopped");
     assert!(removed < Duration::from_secs(1), "took {removed:?}");
-    wait_for(addr, &host, 404, Duration::from_secs(10)).await;
+    // The route is gone from the provider; the data plane follows with the next reload. On
+    // failure, say what the proxy answered and show its log.
+    let start = Instant::now();
+    loop {
+        let status = status_of(addr, &host).await;
+        if status == 404 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{host} answered {status}, not 404, 10 s after its route was removed:\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     forwarder.cut();
     rdock.stop(Duration::from_secs(10));

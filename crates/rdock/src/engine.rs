@@ -980,8 +980,7 @@ impl rdock_admin::Control for Engine {
     }
 
     async fn api_config(&self) -> (Value, String) {
-        let fragment = serde_json::to_value(self.api_fragment()).unwrap_or(Value::Null);
-        (fragment, self.api_etag())
+        (api::document(&self.api_fragment()), self.api_etag())
     }
 
     async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {

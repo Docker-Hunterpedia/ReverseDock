@@ -37,6 +37,17 @@ struct Document {
     middlewares: BTreeMap<String, Middleware>,
 }
 
+/// The API provider's fragment as clients read it: exactly the sections [`parse`] accepts, so
+/// what `GET /api/v1/config/api` returns can be sent back unchanged. The fragment's other
+/// sections belong to other providers and are always empty here.
+pub(crate) fn document(fragment: &Fragment) -> Value {
+    serde_json::json!({
+        "routes": fragment.routes,
+        "services": fragment.services,
+        "middlewares": fragment.middlewares,
+    })
+}
+
 /// A client's document as a fragment, or why it is not one.
 pub(crate) fn parse(candidate: Value) -> Result<Fragment, String> {
     let document: Document = serde_path_to_error::deserialize(candidate)
