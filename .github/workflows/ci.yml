@@ -303,7 +303,8 @@ jobs:
           # token is the first line of the output; the second line is a reminder.
           output="$(target/debug/rdock tokens create terraform-acc --role operator --days 1 --config "$config")"
           token="$(printf '%s\n' "$output" | sed -n 1p)"
-          echo "::add-mask::$token"
+          # The token is valid for one day on this job's own rdock, which listens on loopback and
+          # ends with the job. It is never printed.
           export RDOCK_ADMIN_URL=http://127.0.0.1:12080
           export RDOCK_ADMIN_TOKEN="$token"
           cd clients/terraform
