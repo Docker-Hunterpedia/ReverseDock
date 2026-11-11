@@ -33,3 +33,4 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0027](0027-static-roots-for-labels.md) | Docker labels may serve static files only inside `providers.docker.static_roots` (empty by default) |
 | [0028](0028-default-connect-retries.md) | A service without `retries` retries failed connections on another backend (the `retries: {}` defaults); `attempts: 0` turns it off |
 | [0029](0029-kubernetes-gateway-api.md) | v0.7: Gateway API controller in the same binary, one Service per Gateway in front of a shared data plane, providers contribute listeners and certificates, own Lease leader election, Ingress as a translation |
+| [0030](0030-v0-8-cache-extensibility-gateway.md) | v0.8: HTTP cache on pingora-cache with our own stores and safe defaults, phased pipeline with compiled-in plugins and HTTP agents (fail closed), consumers and API keys, OIDC login, UDP routes, held request bodies; what waits |
