@@ -97,6 +97,7 @@ impl Source<'_> {
                 provider: PROVIDER.to_owned(),
                 fragment: translation.fragment,
                 diagnostics: translation.diagnostics,
+                revision: None,
             },
         );
         Ok(())

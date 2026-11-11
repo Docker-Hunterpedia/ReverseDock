@@ -4229,18 +4229,34 @@ version = "0.6.0-alpha.1"
 name = "rdock-provider-kubernetes"
 version = "0.6.0-alpha.1"
 dependencies = [
+ "base64 0.23.1",
+ "fastrand",
  "futures-util",
+ "http",
  "k8s-openapi",
  "kube",
+ "rcgen",
+ "rdock-balancer",
  "rdock-config",
+ "rdock-middleware",
  "rdock-model",
+ "rdock-observability",
+ "rdock-proxy",
+ "rdock-rules",
+ "rdock-testkit",
+ "rdock-tls",
+ "regex",
+ "rustls",
+ "rustls-pki-types",
  "schemars",
  "serde",
  "serde-saphyr",
  "serde_json",
+ "tempfile",
  "thiserror 2.0.21",
  "tokio",
  "tracing",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

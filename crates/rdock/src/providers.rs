@@ -119,12 +119,12 @@ fn start_kubernetes(
 ) {
     use rdock_provider_kubernetes::{PROVIDER, RunContext, State, run};
 
+    // Namespace and pod name from the downward API; `run` resolves the rest and logs one line
+    // with the namespace, identity, scopes and what is enabled.
     let context = RunContext::from_env(data_dir.to_path_buf());
     // Ready only once the provider has published its first complete view (ADR-0029).
     engine.await_provider(PROVIDER);
     let (tx, rx) = watch::channel(State::default());
-    tracing::info!(provider = PROVIDER, namespace = %context.pod_namespace,
-        controller = %settings.controller_name, "watching Kubernetes");
     tasks.push(tokio::spawn(run(
         settings.clone(),
         context,

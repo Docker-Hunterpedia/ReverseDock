@@ -178,7 +178,8 @@ pub struct KubernetesGateway {
     /// Namespace of the per-Gateway Services; the controller's own namespace when unset.
     pub service_namespace: Option<String>,
     /// Labels that select the ReverseDock pods, used as the selector of the per-Gateway
-    /// Services. Empty, the default, uses the pod's own labels.
+    /// Services. Required while `enabled` (the controller never reads pods, so it cannot
+    /// take them from its own pod); the Helm chart sets them.
     pub pod_selector: BTreeMap<String, String>,
     /// Internal ports allocated to (Gateway, listener port) pairs, as `start-end`, inside
     /// 1024–65535. Each pair opens one listener in every ReverseDock pod; running out is

@@ -1119,7 +1119,20 @@ fn kubernetes(settings: Value) -> Value {
 
 #[test]
 fn kubernetes_defaults_are_valid() {
-    assert_eq!(validate(kubernetes(json!({}))), Vec::new());
+    // The pod selector has no default: the controller never reads its own pod.
+    let selector =
+        json!({ "gateway": { "pod_selector": { "app.kubernetes.io/name": "reversedock" } } });
+    assert_eq!(validate(kubernetes(selector)), Vec::new());
+    assert_eq!(
+        validate(kubernetes(json!({ "gateway": { "enabled": false } }))),
+        Vec::new()
+    );
+    let missing = errors(kubernetes(json!({})));
+    assert!(has(
+        &missing,
+        "providers.kubernetes.gateway.pod_selector",
+        "labels of the ReverseDock pods"
+    ));
     let full = json!({
         "kubeconfig": "/etc/rdock/kubeconfig",
         "namespaces": ["apps", "infra"],
@@ -1193,7 +1206,7 @@ fn kubernetes_settings_are_checked() {
     ));
     assert_eq!(
         errors(kubernetes(
-            json!({ "gateway": { "port_range": "65535-65535" } })
+            json!({ "gateway": { "port_range": "65535-65535", "pod_selector": { "app": "rdock" } } })
         )),
         Vec::new()
     );
@@ -1212,7 +1225,7 @@ fn kubernetes_refuses_acme_unless_allowed() {
     assert!(error.hint.as_deref().unwrap().contains("cert-manager"));
     let allowed = with(
         app(),
-        json!({ "providers": { "kubernetes": { "allow_acme": true } } }),
+        json!({ "providers": { "kubernetes": { "allow_acme": true, "gateway": { "pod_selector": { "app": "rdock" } } } } }),
     );
     assert_eq!(errors(allowed.clone()), Vec::new());
     assert!(has(

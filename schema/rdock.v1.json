@@ -2291,7 +2291,7 @@
           "default": true
         },
         "pod_selector": {
-          "description": "Labels that select the ReverseDock pods, used as the selector of the per-Gateway\nServices. Empty, the default, uses the pod's own labels.",
+          "description": "Labels that select the ReverseDock pods, used as the selector of the per-Gateway\nServices. Required while `enabled` (the controller never reads pods, so it cannot\ntake them from its own pod); the Helm chart sets them.",
           "type": "object",
           "additionalProperties": {
             "type": "string"

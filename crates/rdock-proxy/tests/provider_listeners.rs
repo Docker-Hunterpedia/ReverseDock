@@ -79,6 +79,7 @@ services:
         provider: "kubernetes".to_owned(),
         fragment,
         diagnostics: Vec::new(),
+        revision: None,
     };
     let merged = assemble(&base.config, &[&snapshot], &BTreeSet::new());
     assert_eq!(merged.errors, Vec::new());

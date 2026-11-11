@@ -1333,7 +1333,8 @@ export type RdockKubernetesGateway = {
     enabled?: boolean;
     /**
      * Labels that select the ReverseDock pods, used as the selector of the per-Gateway
-     * Services. Empty, the default, uses the pod's own labels.
+     * Services. Required while `enabled` (the controller never reads pods, so it cannot
+     * take them from its own pod); the Helm chart sets them.
      */
     pod_selector?: {
         [key: string]: string;

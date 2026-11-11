@@ -2275,6 +2275,15 @@ impl Validator<'_> {
                 format!("`{namespace}` is not a namespace name (a lowercase DNS label)"),
             );
         }
+        if gateway.enabled && gateway.pod_selector.is_empty() {
+            self.push(
+                Diagnostic::error(
+                    format!("{PATH}.gateway.pod_selector"),
+                    "the per-Gateway Services need the labels of the ReverseDock pods (the controller does not read pods)",
+                )
+                .with_hint("set the labels of the rdock pods, e.g. `app.kubernetes.io/name: reversedock` (the Helm chart sets them), or `gateway.enabled: false`"),
+            );
+        }
         for key in gateway.pod_selector.keys() {
             if key.is_empty() || key.contains(char::is_whitespace) {
                 self.error(

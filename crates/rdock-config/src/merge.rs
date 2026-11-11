@@ -56,6 +56,11 @@ pub struct Snapshot {
     pub fragment: Fragment,
     /// Problems found while building it (unsupported labels, missing ports, …).
     pub diagnostics: Vec<Diagnostic>,
+    /// Changes whenever files the fragment names changed although the fragment did not (the
+    /// Kubernetes provider's Secret files, ADR-0029), so the engine reloads and reads them
+    /// again. An opaque counter: never derived from the files' content.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub revision: Option<String>,
 }
 
 /// What a provider reports to the engine over its watch channel: its latest snapshot and

@@ -248,6 +248,7 @@ async fn publish(
         provider: PROVIDER.to_owned(),
         fragment: translation.fragment,
         diagnostics: translation.diagnostics,
+        revision: None,
     };
     publish_snapshot(tx, snapshot);
     Ok(())

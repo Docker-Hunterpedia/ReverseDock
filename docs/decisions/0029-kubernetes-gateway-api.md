@@ -70,7 +70,7 @@ providers:
       enabled: true
       service_type: load_balancer     # load_balancer | cluster_ip | node_port
       service_namespace: null         # default: the pod's namespace
-      pod_selector: {}                # labels of the rdock pods; default from the pod's own labels
+      pod_selector: {}                # labels of the rdock pods; required while gateway.enabled (the chart sets it)
       port_range: "20000-29999"
       allow_external_name: false
     ingress:
@@ -85,7 +85,7 @@ providers:
       lease: reversedock-leader
     allow_acme: false
 ```
-`gateway_class` and the boolean `ingress` of the unreleased model are replaced by this shape (GatewayClasses are selected by `controller_name`, as the specification says). The pod's namespace, name and labels come from the service-account namespace file and the downward API (`RDOCK_POD_NAMESPACE`, `RDOCK_POD_NAME`).
+`gateway_class` and the boolean `ingress` of the unreleased model are replaced by this shape (GatewayClasses are selected by `controller_name`, as the specification says). The pod's namespace and name come from the downward API (`RDOCK_POD_NAMESPACE`, `RDOCK_POD_NAME`), else the service-account namespace file (and, out of a cluster, the kubeconfig's namespace) and the host name. The controller never reads pods, so it cannot take the selector from its own pod's labels: `gateway.pod_selector` is required while `gateway.enabled` (`rdock validate` and `rdock run` say so), and the chart sets it.
 
 ### Packaging and CI (W-K8S-05)
 - **Chart** `deploy/helm/reversedock` (`apiVersion: v2`, works with Helm 3 and 4, `values.schema.json`): ServiceAccount; a ClusterRole that reads the kinds above and writes only their `status` and Events; a Role in the release namespace for the Lease and the per-Gateway Services; Deployment (2 replicas, PodDisruptionBudget, topology spread; `runAsNonRoot`, read-only root file system, all capabilities dropped, `RuntimeDefault` seccomp, no CPU limit); a ConfigMap with `rdock.yaml`; admin and metrics Service; the `GatewayClass` and an optional `IngressClass`; ServiceMonitor and HPA off by default; namespaced mode (`watchNamespaces`) with Roles instead of the ClusterRole. **The chart does not contain the Gateway API CRDs**; the docs give the upstream install command.

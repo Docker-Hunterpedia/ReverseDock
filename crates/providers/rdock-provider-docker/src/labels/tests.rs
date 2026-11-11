@@ -389,6 +389,7 @@ fn translated_objects_pass_the_merged_validation() {
         provider: "docker".to_owned(),
         fragment: t.fragment,
         diagnostics: t.diagnostics,
+        revision: None,
     };
     let merged =
         rdock_config::merge::assemble(&base, &[&snapshot], &std::collections::BTreeSet::new());
@@ -450,6 +451,7 @@ fn native_tcp_labels_build_tcp_routes_that_pass_the_merged_validation() {
         provider: "docker".to_owned(),
         fragment: t.fragment,
         diagnostics: t.diagnostics,
+        revision: None,
     };
     let merged =
         rdock_config::merge::assemble(&base, &[&snapshot], &std::collections::BTreeSet::new());

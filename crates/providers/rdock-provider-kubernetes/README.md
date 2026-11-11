@@ -21,6 +21,8 @@ Modules (each has one owner, so they can change independently):
 - `features`: the single list of claimed Gateway API features (only those with a passing
   test).
 - `runtime`: `run(settings, RunContext, tx, shutdown)`, the watch loop, leader election,
-  status writes and Service provisioning.
+  status writes and Service provisioning. Its tests against a real API server
+  (`tests/runtime_cluster.rs`) run when `RDOCK_TEST_KUBECONFIG` names a kubeconfig with the
+  Gateway API v1.7.0 standard CRDs installed, and are skipped otherwise.
 
 Built on kube 5 with rustls and ring (ADR-0013) and k8s-openapi 0.29 (`v1_33`).

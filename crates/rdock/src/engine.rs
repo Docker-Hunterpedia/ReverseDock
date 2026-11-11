@@ -9,13 +9,15 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use async_trait::async_trait;
 use rdock_config::includes::{Included, expand, load_file_with_includes};
-use rdock_config::merge::{ObjectKey, Snapshot, assemble, is_provider_owned, owner, skipped};
+use rdock_config::merge::{
+    ObjectKey, Section, Snapshot, assemble, is_provider_owned, owner, skipped,
+};
 use rdock_config::state::{HISTORY_LIMIT, HistoryEntry, StateDir};
 use rdock_config::{Format, Loaded, System, load_str, load_value};
 use rdock_model::middleware::Middleware;
 use rdock_model::values::TrustedProxy;
 use rdock_model::{Config, Diagnostic};
-use rdock_proxy::{DataPlane, Runtime};
+use rdock_proxy::{ApplyError, DataPlane, Runtime};
 use serde::Serialize;
 use serde_json::Value;
 
@@ -498,23 +500,16 @@ impl Engine {
         for snapshot in &snapshots {
             diagnostics.extend(snapshot.diagnostics.iter().cloned());
         }
-        let (config, runtime) = match self.merge_and_compile(&file, &snapshots, &mut diagnostics) {
-            Ok(compiled) => compiled,
+        let (config, generation, acme_plan, local_names) = match self
+            .compile_and_apply(&file, &snapshots, &mut diagnostics)
+            .await
+        {
+            Ok(done) => done,
             Err(error) => {
                 drop(applied);
                 return self.rejected(trigger, Some(error), diagnostics).await;
             }
         };
-        let generation = runtime.generation;
-        let drain = config.lifecycle.drain_timeout.as_std();
-        let acme_plan = acme_plan(&config, &runtime);
-        let local_names = runtime.local_cert_names.clone();
-        if let Err(err) = self.plane.apply(runtime, drain).await {
-            drop(applied);
-            return self
-                .rejected(trigger, Some(err.to_string()), diagnostics)
-                .await;
-        }
         self.update_background(&config, acme_plan, local_names);
         self.awaiting
             .lock()
@@ -574,6 +569,59 @@ impl Engine {
         report
     }
 
+    /// Merges, compiles and hands the result to the data plane. A provider listener whose
+    /// address cannot be bound (in use) is left out like a provider object that fails to
+    /// compile, and the configuration is compiled again without it; a file listener that
+    /// cannot bind still rejects the reload. `diagnostics` receives the attempt's findings.
+    async fn compile_and_apply(
+        &self,
+        file: &Config,
+        snapshots: &[Snapshot],
+        diagnostics: &mut Vec<Diagnostic>,
+    ) -> Result<(Config, u64, rdock_acme::Plan, Vec<String>), String> {
+        let mut unbindable: BTreeSet<ObjectKey> = BTreeSet::new();
+        let mut left_out: Vec<Diagnostic> = Vec::new();
+        loop {
+            let mut attempt = diagnostics.clone();
+            let compiled = self.merge_and_compile(file, snapshots, &unbindable, &mut attempt);
+            let (config, runtime) = match compiled {
+                Ok(compiled) => compiled,
+                Err(error) => {
+                    attempt.extend(left_out);
+                    *diagnostics = attempt;
+                    return Err(error);
+                }
+            };
+            let generation = runtime.generation;
+            let drain = config.lifecycle.drain_timeout.as_std();
+            let acme_plan = acme_plan(&config, &runtime);
+            let local_names = runtime.local_cert_names.clone();
+            match self.plane.apply(runtime, drain).await {
+                Ok(()) => {
+                    attempt.extend(left_out);
+                    *diagnostics = attempt;
+                    return Ok((config, generation, acme_plan, local_names));
+                }
+                Err(err @ ApplyError::Bind { .. })
+                    if bind_failure_of_provider(&err).is_some_and(|key| unbindable.insert(key)) =>
+                {
+                    if let ApplyError::Bind { name, .. } = &err {
+                        let error = Diagnostic::error(
+                            rdock_model::path_key("listeners", name),
+                            err.to_string(),
+                        );
+                        left_out.push(skipped(Section::Listeners, name, &error));
+                    }
+                }
+                Err(err) => {
+                    attempt.extend(left_out);
+                    *diagnostics = attempt;
+                    return Err(err.to_string());
+                }
+            }
+        }
+    }
+
     /// Remembers the files the applied configuration reads, for the watcher and reload checks.
     fn watch_files(&self, file: &Config) {
         let files = match &self.source {
@@ -626,14 +674,17 @@ impl Engine {
     /// Merges the providers' objects into the file configuration and compiles it. Provider
     /// objects that fail validation or compilation are left out with a warning; errors in the
     /// file's own objects reject the whole configuration, as without providers.
+    /// `left_out` are provider objects to leave out from the start (listeners that cannot
+    /// bind); the caller reports them.
     fn merge_and_compile(
         &self,
         file: &Config,
         snapshots: &[Snapshot],
+        left_out_first: &BTreeSet<ObjectKey>,
         out: &mut Vec<Diagnostic>,
     ) -> Result<(Config, Runtime), String> {
         let snapshots: Vec<&Snapshot> = snapshots.iter().collect();
-        let mut excluded: BTreeSet<ObjectKey> = BTreeSet::new();
+        let mut excluded: BTreeSet<ObjectKey> = left_out_first.clone();
         let mut left_out = Vec::new();
         for _ in 0..COMPILE_ROUNDS {
             let merged = assemble(file, &snapshots, &excluded);
@@ -717,6 +768,16 @@ impl Engine {
             "diagnostics": report.diagnostics.len(),
         }));
         report
+    }
+}
+
+/// The provider listener a bind failure is about (`name@provider`), when it is one.
+fn bind_failure_of_provider(err: &ApplyError) -> Option<ObjectKey> {
+    match err {
+        ApplyError::Bind { name, .. } if is_provider_owned(name) => {
+            Some((Section::Listeners, name.clone()))
+        }
+        _ => None,
     }
 }
 
@@ -1127,4 +1188,99 @@ impl rdock_admin::Control for Engine {
 #[allow(clippy::cast_precision_loss)]
 fn percent(part: u64, total: u64) -> f64 {
     100.0 * part as f64 / total as f64
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn free_port() -> u16 {
+        std::net::TcpListener::bind("127.0.0.1:0")
+            .unwrap()
+            .local_addr()
+            .unwrap()
+            .port()
+    }
+
+    #[tokio::test]
+    async fn a_provider_listener_that_cannot_bind_is_left_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let config = dir.path().join("rdock.yaml");
+        std::fs::write(
+            &config,
+            format!(
+                "acme: false\nlisteners:\n  web: {{ address: \"127.0.0.1:{}\" }}\n\
+                 providers:\n  kubernetes:\n    gateway:\n      pod_selector: {{ app: rdock }}\n",
+                free_port()
+            ),
+        )
+        .unwrap();
+        let metrics = rdock_observability::Metrics::new("test", "test").unwrap();
+        let plane = Arc::new(DataPlane::new(metrics, Runtime::empty()));
+        let engine = Engine::new(Source::File(config), dir.path(), plane.clone());
+        // Something else holds this port.
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let busy_port = busy.local_addr().unwrap().port();
+        let fragment: rdock_config::merge::Fragment = serde_json::from_value(serde_json::json!({
+            "listeners": {
+                "gw-busy": { "address": format!("127.0.0.1:{busy_port}") },
+                "gw-free": { "address": format!("127.0.0.1:{}", free_port()) }
+            },
+            "routes": {
+                "on-busy": { "match": "PathPrefix(`/`)", "service": "app", "listeners": ["gw-busy"], "tls": "off" },
+                "on-free": { "match": "PathPrefix(`/`)", "service": "app", "listeners": ["gw-free"], "tls": "off" }
+            },
+            "services": { "app": { "backends": [{ "address": "127.0.0.1:9" }] } }
+        }))
+        .unwrap();
+        engine.set_snapshot(Snapshot {
+            provider: "kubernetes".to_owned(),
+            fragment,
+            diagnostics: Vec::new(),
+            revision: None,
+        });
+        let report = engine.reload("test").await;
+        assert!(
+            report.applied(),
+            "{:?} {:?}",
+            report.error,
+            report.diagnostics
+        );
+        let left_out = report
+            .diagnostics
+            .iter()
+            .find(|d| d.path.contains("gw-busy@kubernetes"))
+            .expect("a diagnostic for the listener that cannot bind");
+        assert!(!left_out.is_error());
+        assert!(
+            left_out.message.contains("left out"),
+            "{}",
+            left_out.message
+        );
+        assert!(
+            left_out.message.contains("cannot listen"),
+            "{}",
+            left_out.message
+        );
+        let runtime = plane.runtime();
+        assert!(runtime.listeners.contains_key("gw-free@kubernetes"));
+        assert!(!runtime.listeners.contains_key("gw-busy@kubernetes"));
+        assert!(runtime.listeners.contains_key("web"));
+        drop(busy);
+
+        // A file listener that cannot bind still rejects the reload.
+        let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let config = dir.path().join("rdock.yaml");
+        std::fs::write(
+            &config,
+            format!(
+                "acme: false\nlisteners:\n  web: {{ address: \"127.0.0.1:{}\" }}\n\
+                 providers:\n  kubernetes:\n    gateway:\n      pod_selector: {{ app: rdock }}\n",
+                busy.local_addr().unwrap().port()
+            ),
+        )
+        .unwrap();
+        let report = engine.reload("test").await;
+        assert!(!report.applied());
+    }
 }

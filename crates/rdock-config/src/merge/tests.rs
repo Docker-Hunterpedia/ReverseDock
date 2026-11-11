@@ -27,6 +27,7 @@ fn docker(yaml: &str) -> Snapshot {
         provider: "docker".to_owned(),
         fragment,
         diagnostics: Vec::new(),
+        revision: None,
     }
 }
 
@@ -162,6 +163,7 @@ fn kubernetes(yaml: &str) -> Snapshot {
         provider: "kubernetes".to_owned(),
         fragment,
         diagnostics: Vec::new(),
+        revision: None,
     }
 }
 
