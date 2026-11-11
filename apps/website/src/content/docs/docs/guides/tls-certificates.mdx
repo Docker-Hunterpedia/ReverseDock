@@ -60,6 +60,42 @@ If nothing matches and no default is set, the handshake fails. Clients that send
 
 The common name (CN) is not used, only subject alternative names. A certificate without them is only served as the default, and `rdock validate` warns about it.
 
+## Certificates for one listener only
+
+<Status planned="v0.7" /> By default every TLS listener serves every certificate. When two listeners must present different certificates, for the same host name or otherwise, name them under the listener's `tls.certificates`:
+
+```yaml title="rdock.yaml"
+acme: false
+
+listeners:
+  public:
+    address: ":443"
+    tls:
+      certificates: [public]
+  partners:
+    address: ":8443"
+    tls:
+      certificates: [partners]
+
+defaults:
+  listeners: [public]
+
+certificates:
+  public:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+  partners:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+```
+
+- Entries are keys of `certificates`; `rdock validate` reports one that does not exist.
+- A listener with its own certificates presents the one that covers the requested name, or its first one when none does, and **never a shared certificate**. Matching follows the same [rules](#how-a-certificate-is-chosen).
+- A certificate named by a listener is served by that listener only; it is kept out of the shared set that other listeners use.
+- A listener with no `tls.certificates`, the default, serves the shared certificates as before.
+
+The [Kubernetes Gateway API controller](/docs/guides/kubernetes-gateway-api/#https) uses this for HTTPS listeners, so two Gateways can present different certificates for the same host name.
+
 ## Every HTTPS host needs a certificate
 
 With automatic certificates off (`acme: false`), each route on a TLS listener needs a certificate that covers its hosts, or a `defaults.certificate`. Otherwise `rdock validate` reports:

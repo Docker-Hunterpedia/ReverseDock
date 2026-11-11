@@ -18,7 +18,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 | v0.4 | Production reliability | run busy APIs with load balancing, health checks, retries, mTLS and JWT | <Status since="v0.4" />  0.4.0-alpha.1 |
 | v0.5 | Management | operate it from a dashboard and REST API with history and rollback | <Status since="v0.5" />  0.5.0-alpha.1 |
 | v0.6 | Swarm, L4, static | multi-node Docker, TCP and SNI passthrough, static sites | <Status since="v0.6" />  0.6.0-alpha.1 |
-| v0.7 | Kubernetes | run it as a Gateway API controller | <Status planned="v0.7" /> |
+| v0.7 | Kubernetes | run it as a Gateway API controller | <Status planned="v0.7" /> implemented, not released; conformance run in CI pending |
 | v0.8 | Cache and extensibility | cache like NGINX, extend it with plugins | <Status planned="v0.8" /> |
 | v0.9 | Scale | several instances with a control plane, distributed limits, zero-downtime upgrades, HTTP/3 (experimental) | <Status planned="v0.9" /> |
 | v1.0 | Stable | stability guarantees, a security audit, conformance, the full docs site | <Status planned="v1.0" /> |
@@ -47,9 +47,12 @@ The embedded dashboard and the versioned REST API with its OpenAPI document and 
 
 The Docker Swarm provider in task mode, TCP routes with SNI passthrough and TLS termination, the PROXY protocol in and out, static sites with SPA fallback, DNS-01 with seven more providers, a per-attempt connect budget and connection retries by default, with [results](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/benchmarks/results/2026-11-07-v06/report.md) for a 3-node Swarm and a soak.
 
-## v0.7 to v1.0
+## v0.7: Kubernetes <Status planned="v0.7" />
 
-- **v0.7:** Kubernetes Gateway API controller and Helm chart, tested with the upstream conformance suite.
+Implemented in the development tree, not released: a Gateway API controller in the same binary (Gateway API v1.7.0, Standard channel: GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute with passthrough, TCPRoute, ReferenceGrant), one Service and address per Gateway, status written by a leader chosen with a Lease, EndpointSlice backends, TLS from Secrets and cert-manager, Ingress translation with the common ingress-nginx annotations, a Helm chart, raw manifests and Kustomize. The upstream conformance suite and a Helm install on k3s run in CI as informational jobs that have not passed yet, so no conformance claim is made. ListenerSet, UDPRoute (UDP waits for v0.8) and request timeouts and retries on routes are not part of it. See [install](/docs/install/kubernetes/) and the [Gateway API guide](/docs/guides/kubernetes-gateway-api/).
+
+## v0.8 to v1.0
+
 - **v0.8:** HTTP cache, plugins, API-gateway features, UDP.
 - **v0.9:** a control plane for several instances, distributed rate limits, zero-downtime binary upgrades, experimental HTTP/3.
 - **v1.0:** stability and deprecation guarantees, a third-party security audit, migration guides, benchmarks.

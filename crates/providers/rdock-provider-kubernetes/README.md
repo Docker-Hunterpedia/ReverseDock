@@ -2,10 +2,10 @@
 
 Kubernetes provider (W-K8S-01…05, ADR-0029): a Gateway API controller and Ingress
 translation in the same process as the data plane. Every replica watches, translates and
-serves; only the leader writes status, Events and the per-Gateway Services.
+serves; only the leader writes status and the per-Gateway Services (the controller writes no
+Kubernetes Events yet).
 
-**Status:** v0.7, in progress. Shared types are in place; the translators and the cluster
-runtime are stubs. Design: [ADR-0029](../../../docs/decisions/0029-kubernetes-gateway-api.md).
+**Status:** v0.7, implemented: the Gateway API translator, the Ingress translator and the cluster runtime are in place. The upstream conformance run in CI is pending and no conformance claim is made; the Helm install on k3s is likewise unproven. Design: [ADR-0029](../../../docs/decisions/0029-kubernetes-gateway-api.md); user documentation: the website pages "Kubernetes" (install), "Kubernetes Gateway API" and "Kubernetes Ingress".
 
 Modules (each has one owner, so they can change independently):
 
@@ -24,5 +24,7 @@ Modules (each has one owner, so they can change independently):
   status writes and Service provisioning. Its tests against a real API server
   (`tests/runtime_cluster.rs`) run when `RDOCK_TEST_KUBECONFIG` names a kubeconfig with the
   Gateway API v1.7.0 standard CRDs installed, and are skipped otherwise.
+  For example `RDOCK_TEST_KUBECONFIG=/path/to/kubeconfig cargo test -p rdock-provider-kubernetes
+  --test runtime_cluster`. They are not wired into CI.
 
 Built on kube 5 with rustls and ring (ADR-0013) and k8s-openapi 0.29 (`v1_33`).
