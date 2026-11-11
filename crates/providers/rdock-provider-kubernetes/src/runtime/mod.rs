@@ -5,9 +5,9 @@
 //! **Owner:** the cluster runtime. Only this module (and files below `src/runtime/`) changes
 //! for it.
 //!
-//! The loop, once every watch has listed once ([`store`]):
+//! The loop, once every watch has listed once (`store`):
 //! 1. translate the inventory with the pure [`crate::translate::translate`];
-//! 2. write the Secret and ConfigMap files the translation names ([`files`]);
+//! 2. write the Secret and ConfigMap files the translation names (`files`);
 //! 3. publish the snapshot when it changed (a changed file changes its `revision`, so the
 //!    engine reloads and reads the files again even when the fragment is the same);
 //! 4. hand the desired status and Services to the writer task, which acts only while this
