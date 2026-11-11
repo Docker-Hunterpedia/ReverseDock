@@ -87,3 +87,20 @@ website-check:
     cargo build --locked -p rdock
     cd apps/website && pnpm gen && git diff --exit-code -- src/content/docs
     cd apps/website && pnpm check:status && pnpm check:snippets && pnpm check && pnpm build && pnpm check:a11y && pnpm check:playground
+
+# Helm chart: lint, render every value set through kubeconform, raw manifests in sync, kustomize (needs helm, kubectl, kubeconform; `just ci` does not run it)
+chart:
+    helm lint --strict deploy/helm/reversedock
+    for v in deploy/helm/reversedock/ci/*.yaml; do helm lint --strict deploy/helm/reversedock --values "$v"; done
+    helm template reversedock deploy/helm/reversedock --namespace reversedock-system --kube-version 1.37.2 | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version 1.37.2 -
+    for v in deploy/helm/reversedock/ci/*.yaml; do helm template reversedock deploy/helm/reversedock --namespace reversedock-system --kube-version 1.37.2 --values "$v" | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version 1.37.2 -; done
+    scripts/render-kubernetes-manifests.sh --check
+    kubectl kustomize deploy/kubernetes | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version 1.37.2 -
+
+# Re-render deploy/kubernetes/install.yaml from the chart after changing it
+k8s-manifests:
+    scripts/render-kubernetes-manifests.sh
+
+# Gateway API conformance suite on a local kind cluster (needs Docker, kind, kubectl, helm, cloud-provider-kind, Go; builds nothing: `just docker rdock:ci` first), e.g. `just conformance rdock:dev`
+conformance image="rdock:ci":
+    RDOCK_IMAGE={{image}} tests/conformance/gateway-api/run.sh

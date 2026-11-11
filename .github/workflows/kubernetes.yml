@@ -1,0 +1,374 @@
+# Kubernetes checks for v0.7 (ADR-0029, "Packaging and CI"). None of these jobs is a required check
+# today: required checks for main are docs, dco, pr-title, rust, msrv, deny, docker, clients.
+#
+#   chart                Helm lint and render, kubeconform, raw manifests in sync, kustomize build,
+#                        and the offline checks of the conformance harness. Cheap and
+#                        deterministic: becomes required once the chart has landed.
+#   gateway-conformance  The upstream Gateway API v1.7.0 conformance suite on kind. INFORMATIONAL.
+#   helm-k3s             Helm install, the example Gateway, upgrade and uninstall on k3s. INFORMATIONAL.
+#   k8s-image            Builds the image once for the two cluster jobs (the Rust build takes ~10 min).
+#   k8s-changes          Decides which of the above a pull request needs (the path filters differ).
+#
+# The two cluster jobs cannot run in the repository's development sandbox (no nested Kubernetes),
+# so they are proven only here. They stay informational (`continue-on-error`) until the core
+# tests of GATEWAY-HTTP, GATEWAY-GRPC and GATEWAY-TLS pass in CI (ADR-0029); they then become
+# required and the report is submitted upstream. Until then no conformance claim is made.
+name: kubernetes
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - deploy/**
+      - examples/kubernetes/**
+      - scripts/render-kubernetes-manifests.sh
+      - crates/providers/rdock-provider-kubernetes/**
+      - crates/rdock-proxy/**
+      - crates/rdock-config/**
+      - crates/rdock-model/**
+      - tests/conformance/gateway-api/**
+      - .github/workflows/kubernetes.yml
+  push:
+    branches: [main]
+    paths:
+      - deploy/**
+      - examples/kubernetes/**
+      - scripts/render-kubernetes-manifests.sh
+      - tests/conformance/gateway-api/**
+      - .github/workflows/kubernetes.yml
+  schedule:
+    - cron: "17 2 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kubernetes-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  # One place for the names the jobs share with the chart (deploy/helm/reversedock).
+  RDOCK_IMAGE: rdock:ci
+  RELEASE: reversedock
+  NAMESPACE: reversedock-system
+  HARNESS: tests/conformance/gateway-api
+
+jobs:
+  k8s-changes:
+    name: k8s-changes
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    outputs:
+      chart: ${{ steps.filter.outputs.chart }}
+      conformance: ${{ steps.filter.outputs.conformance }}
+      k3s: ${{ steps.filter.outputs.k3s }}
+      image: ${{ steps.filter.outputs.image }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Which jobs does this event need
+        id: filter
+        env:
+          EVENT: ${{ github.event_name }}
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+        run: |
+          chart=false conformance=false k3s=false
+          case "$EVENT" in
+            pull_request)
+              files=$(git diff --name-only "$BASE...$HEAD")
+              grep -Eq '^(deploy/|examples/kubernetes/|scripts/render-kubernetes-manifests\.sh$|tests/conformance/gateway-api/|\.github/workflows/kubernetes\.yml$)' <<< "$files" && chart=true
+              cluster='^(crates/providers/rdock-provider-kubernetes/|crates/rdock-proxy/|crates/rdock-config/|crates/rdock-model/|deploy/helm/|tests/conformance/gateway-api/|\.github/workflows/kubernetes\.yml$)'
+              grep -Eq "$cluster" <<< "$files" && conformance=true
+              grep -Eq "$cluster|^examples/kubernetes/" <<< "$files" && k3s=true
+              ;;
+            push)
+              # Pushes to main run the cheap job only; the cluster jobs run nightly.
+              chart=true
+              ;;
+            *)
+              chart=true conformance=true k3s=true
+              ;;
+          esac
+          image=false
+          if [ "$conformance" = true ] || [ "$k3s" = true ]; then image=true; fi
+          {
+            echo "chart=$chart"
+            echo "conformance=$conformance"
+            echo "k3s=$k3s"
+            echo "image=$image"
+          } | tee -a "$GITHUB_OUTPUT"
+
+  chart:
+    name: chart
+    needs: k8s-changes
+    if: needs.k8s-changes.outputs.chart == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml==6.0.2
+      # Pinned releases, checksum verified (install-tools.sh): Helm 4 as `helm`, Helm 3 as `helm3`.
+      - name: Install helm, helm3, kubectl and kubeconform
+        run: tests/conformance/gateway-api/install-tools.sh helm helm3 kubectl kubeconform
+      - name: helm lint --strict, with Helm 4 and Helm 3, default values and every ci/ value set
+        run: |
+          shopt -s nullglob
+          values=(deploy/helm/reversedock/ci/*.yaml)
+          for h in helm helm3; do
+            "$h" version --short
+            "$h" lint --strict deploy/helm/reversedock
+            for v in "${values[@]}"; do
+              "$h" lint --strict deploy/helm/reversedock --values "$v"
+            done
+          done
+      # Kubernetes 1.37 schemas from yannh/kubernetes-json-schema. The Gateway API kinds have no
+      # schema in that set and are skipped (-ignore-missing-schemas); the upstream suite and the
+      # k3s job exercise them against real CRDs.
+      - name: helm template, then kubeconform (Kubernetes 1.37), with both Helm versions
+        run: |
+          shopt -s nullglob
+          values=(deploy/helm/reversedock/ci/*.yaml)
+          check() { kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version 1.37.2 -; }
+          for h in helm helm3; do
+            echo "::group::$h, default values"
+            "$h" template reversedock deploy/helm/reversedock --namespace reversedock-system --kube-version 1.37.2 | check
+            echo "::endgroup::"
+            for v in "${values[@]}"; do
+              echo "::group::$h, $v"
+              "$h" template reversedock deploy/helm/reversedock --namespace reversedock-system --kube-version 1.37.2 --values "$v" | check
+              echo "::endgroup::"
+            done
+          done
+      - name: deploy/kubernetes/install.yaml is in sync with the chart
+        run: scripts/render-kubernetes-manifests.sh --check
+      - name: kubectl kustomize deploy/kubernetes builds and validates
+        run: |
+          kubectl kustomize deploy/kubernetes | kubeconform -strict -summary -ignore-missing-schemas -kubernetes-version 1.37.2 -
+      - name: Conformance harness, offline checks (shellcheck, report checker tests)
+        run: |
+          shellcheck -x "$HARNESS"/*.sh
+          python3 -I "$HARNESS/test_check_report.py"
+
+  k8s-image:
+    name: k8s-image
+    needs: k8s-changes
+    if: needs.k8s-changes.outputs.image == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The same command as the `docker` job in ci.yml. The two workflows share no layer cache,
+      # so this is a second full build; sharing it between the cluster jobs is what the artifact is for.
+      - name: Build the image
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag "$RDOCK_IMAGE" .
+      - name: Save the image
+        run: docker save "$RDOCK_IMAGE" | gzip --fast > "$RUNNER_TEMP/rdock-ci.tar.gz"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: rdock-image
+          path: ${{ runner.temp }}/rdock-ci.tar.gz
+          retention-days: 1
+          compression-level: 0
+
+  gateway-conformance:
+    name: gateway-conformance
+    needs: [k8s-changes, k8s-image]
+    if: needs.k8s-changes.outputs.conformance == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    # INFORMATIONAL: it becomes a required check, without continue-on-error, once the core tests
+    # of GATEWAY-HTTP, GATEWAY-GRPC and GATEWAY-TLS pass here (ADR-0029). RDOCK_ALLOW_PARTIAL
+    # below is the matching switch for check-report.py: failures are warnings in the summary.
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      # The suite's module needs Go 1.27 (go.mod of sigs.k8s.io/gateway-api/conformance v1.7.0).
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: tests/conformance/gateway-api/go.mod
+          cache-dependency-path: tests/conformance/gateway-api/go.sum
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install PyYAML
+        run: python -m pip install --disable-pip-version-check pyyaml==6.0.2
+      - name: The harness compiles (go vet with the conformance tag)
+        working-directory: tests/conformance/gateway-api
+        run: go vet -tags conformance ./...
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rdock-image
+          path: ${{ runner.temp }}/rdock-image
+      - name: Install kind, kubectl, helm and cloud-provider-kind (pinned, checksum verified)
+        run: tests/conformance/gateway-api/install-tools.sh kind kubectl helm cloud-provider-kind
+      # kind nodes watch many files; the runner's default inotify limits are too low for two nodes.
+      - name: Raise inotify limits
+        run: sudo sysctl -w fs.inotify.max_user_watches=524288 fs.inotify.max_user_instances=512
+      - name: Cluster, CRDs, chart, suite, report
+        env:
+          RDOCK_IMAGE_ARCHIVE: ${{ runner.temp }}/rdock-image/rdock-ci.tar.gz
+          RDOCK_ALLOW_PARTIAL: "1"
+          KEEP_CLUSTER: "1"
+        run: RDOCK_VERSION="${GITHUB_SHA::12}" "$HARNESS/run.sh"
+      # report.yaml, summary.txt, go-test.log, supported-features.txt, cloud-provider-kind.log and,
+      # on a failure, diagnostics/ (Gateway API objects, events, controller logs, kind logs).
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: gateway-conformance
+          path: tests/conformance/gateway-api/out/
+          retention-days: 14
+          if-no-files-found: warn
+
+  helm-k3s:
+    name: helm-k3s
+    needs: [k8s-changes, k8s-image]
+    if: needs.k8s-changes.outputs.k3s == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    # INFORMATIONAL, like gateway-conformance, and for the same reason.
+    continue-on-error: true
+    env:
+      K3S_VERSION: v1.37.2+k3s1
+      # SHA-256 of install.sh at the tag above (raw.githubusercontent.com/k3s-io/k3s), 2026-11-11.
+      K3S_INSTALL_SHA256: ed01f89fd977bf20ac1516bbebf8370bf3ddbaa55dac8aba610956a4c78cc00b
+      KUBECONFIG: /etc/rancher/k3s/k3s.yaml
+      # The example's Gateway and route (examples/kubernetes/{gateway,httproute}.yaml).
+      GATEWAY: example
+      ROUTE_HOST: echo.example.com
+      # jq program: the Services that are neither k3s's own (kube-system) nor default/kubernetes,
+      # i.e. what the controller created for Gateways. Nothing else lives outside kube-system here.
+      SVC_FILTER: >-
+        .items[]
+        | select(.metadata.namespace != "kube-system" and (.metadata.namespace + "/" + .metadata.name) != "default/kubernetes")
+        | .metadata.namespace + "/" + .metadata.name
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: rdock-image
+          path: ${{ runner.temp }}/rdock-image
+      - name: Install kubectl and helm (pinned, checksum verified)
+        run: tests/conformance/gateway-api/install-tools.sh kubectl helm
+      # k3s without Traefik (--disable=traefik) so it does not own ports 80 and 443; ServiceLB stays
+      # and gives every LoadBalancer Service the node's address, which is what a Gateway reports.
+      - name: Install k3s (official install script at the tag, checksum verified)
+        run: |
+          sudo systemctl stop nginx apache2 2> /dev/null || true
+          curl -sSfL -o "$RUNNER_TEMP/k3s-install.sh" "https://raw.githubusercontent.com/k3s-io/k3s/${K3S_VERSION//+/%2B}/install.sh"
+          echo "${K3S_INSTALL_SHA256}  $RUNNER_TEMP/k3s-install.sh" | sha256sum --check --quiet -
+          sudo env INSTALL_K3S_VERSION="$K3S_VERSION" INSTALL_K3S_EXEC="server --disable=traefik --write-kubeconfig-mode=644" \
+            sh "$RUNNER_TEMP/k3s-install.sh"
+          kubectl wait --for=condition=Ready node --all --timeout=180s
+      - name: Gateway API v1.7.0 Standard CRDs
+        run: tests/conformance/gateway-api/install-gateway-crds.sh
+      - name: Import the image into k3s
+        run: |
+          docker load --input "$RUNNER_TEMP/rdock-image/rdock-ci.tar.gz"
+          docker save "$RDOCK_IMAGE" | sudo k3s ctr images import -
+      - name: helm install --wait
+        run: |
+          helm install "$RELEASE" deploy/helm/reversedock --namespace "$NAMESPACE" --create-namespace \
+            --set "image.repository=${RDOCK_IMAGE%:*}" --set "image.tag=${RDOCK_IMAGE##*:}" --set image.pullPolicy=Never \
+            --set gateway.serviceType=load_balancer \
+            --wait --timeout 5m
+          kubectl wait --for=condition=Accepted --timeout=120s gatewayclass/reversedock
+      - name: The example Gateway is Programmed and answers through its address
+        run: |
+          # The example's HTTPS listener needs the Secret that cert-manager would make.
+          openssl req -x509 -newkey rsa:2048 -nodes -days 1 -subj "/CN=*.example.com" \
+            -addext "subjectAltName=DNS:*.example.com" -keyout "$RUNNER_TEMP/tls.key" -out "$RUNNER_TEMP/tls.crt"
+          kubectl create secret tls example-com-tls --cert="$RUNNER_TEMP/tls.crt" --key="$RUNNER_TEMP/tls.key"
+          kubectl apply -f examples/kubernetes/gateway.yaml -f examples/kubernetes/httproute.yaml
+          kubectl rollout status deployment/echo --timeout=180s
+          kubectl wait --for=condition=Programmed --timeout=180s "gateway/$GATEWAY"
+          kubectl wait --for=condition=Accepted --timeout=120s httproute/echo
+          addr=""
+          for _ in $(seq 1 60); do
+            addr=$(kubectl get "gateway/$GATEWAY" -o jsonpath='{.status.addresses[0].value}')
+            [ -n "$addr" ] && break
+            sleep 2
+          done
+          [ -n "$addr" ] || { echo "::error::the Gateway has no status.addresses"; exit 1; }
+          echo "GATEWAY_ADDR=$addr" >> "$GITHUB_ENV"
+          # The per-Gateway Service the controller created: the thing the uninstall must not leave behind.
+          services=$(kubectl get svc -A -o json | jq -r "$SVC_FILTER")
+          [ -n "$services" ] || { echo "::error::the controller created no Service for the Gateway"; exit 1; }
+          echo "per-Gateway Services: $services"
+          pods=$(kubectl get pods -l app=echo -o jsonpath='{.items[*].metadata.name}')
+          curl_args=(--fail --silent --show-error --max-time 5 --retry 30 --retry-delay 2 --retry-all-errors)
+          got=$(curl "${curl_args[@]}" --header "Host: $ROUTE_HOST" "http://$addr/hostname")
+          echo "HTTP answered by $got"
+          grep -qw -- "$got" <<< "$pods" || { echo "::error::$got is not an echo pod ($pods)"; exit 1; }
+          got=$(curl "${curl_args[@]}" --insecure --resolve "$ROUTE_HOST:443:$addr" "https://$ROUTE_HOST/hostname")
+          echo "HTTPS answered by $got"
+          grep -qw -- "$got" <<< "$pods" || { echo "::error::$got is not an echo pod ($pods)"; exit 1; }
+      - name: helm upgrade keeps the Gateway serving
+        run: |
+          helm upgrade "$RELEASE" deploy/helm/reversedock --namespace "$NAMESPACE" \
+            --set "image.repository=${RDOCK_IMAGE%:*}" --set "image.tag=${RDOCK_IMAGE##*:}" --set image.pullPolicy=Never \
+            --set gateway.serviceType=load_balancer --set replicaCount=3 \
+            --wait --timeout 5m
+          test "$(kubectl -n "$NAMESPACE" get deployment "$RELEASE" -o jsonpath='{.status.readyReplicas}')" = 3
+          addr=$(kubectl get "gateway/$GATEWAY" -o jsonpath='{.status.addresses[0].value}')
+          test "$addr" = "$GATEWAY_ADDR"
+          kubectl wait --for=condition=Programmed --timeout=120s "gateway/$GATEWAY"
+          curl --fail --silent --show-error --max-time 5 --retry 30 --retry-delay 2 --retry-all-errors \
+            --header "Host: $ROUTE_HOST" "http://$addr/hostname"
+      # The controller, not Helm, creates the per-Gateway Services, so the Gateway goes first: a
+      # Gateway still present when the controller is uninstalled would keep its Service.
+      - name: helm uninstall leaves no Service behind
+        run: |
+          kubectl delete -f examples/kubernetes/httproute.yaml -f examples/kubernetes/gateway.yaml --wait --timeout=180s
+          kubectl delete secret example-com-tls
+          leftovers() { kubectl get svc -A -o json | jq -r "$SVC_FILTER"; }
+          for _ in $(seq 1 60); do
+            [ -z "$(leftovers)" ] && break
+            sleep 2
+          done
+          [ -z "$(leftovers)" ] || { echo "::error::Services remain after the Gateway was deleted"; leftovers; exit 1; }
+          helm uninstall "$RELEASE" --namespace "$NAMESPACE" --wait --timeout 5m
+          [ -z "$(leftovers)" ] || { echo "::error::Services remain after helm uninstall"; leftovers; exit 1; }
+          if kubectl get clusterrole,clusterrolebinding,gatewayclass -l "app.kubernetes.io/instance=$RELEASE" -o name | grep .; then
+            echo "::error::cluster-scoped objects of the release remain"
+            exit 1
+          fi
+          # Informational: the leader's Lease is made by the controller at run time, not by the chart.
+          kubectl -n "$NAMESPACE" get lease || true
+      - name: Diagnostics
+        if: failure()
+        run: |
+          mkdir -p "$RUNNER_TEMP/k3s-diagnostics"
+          cd "$RUNNER_TEMP/k3s-diagnostics"
+          kubectl get gatewayclasses,gateways,httproutes -A -o yaml > gateway-resources.yaml 2>&1 || true
+          kubectl get all,endpointslices,events -A -o wide > cluster.txt 2>&1 || true
+          kubectl -n "$NAMESPACE" describe pods > controller-pods.txt 2>&1 || true
+          kubectl -n "$NAMESPACE" logs -l "app.kubernetes.io/instance=$RELEASE" --all-containers --prefix --tail=-1 --max-log-requests=20 > controller.log 2>&1 || true
+          sudo journalctl -u k3s --no-pager --lines 1000 2>&1 | tee k3s.log > /dev/null || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: failure()
+        with:
+          name: helm-k3s-diagnostics
+          path: ${{ runner.temp }}/k3s-diagnostics/
+          retention-days: 14
+          if-no-files-found: warn
