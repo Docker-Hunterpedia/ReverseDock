@@ -196,6 +196,8 @@ async fn serve(
         &stop.subscribe(),
         &on_snapshot,
     );
+    // Provider listeners left out because their address was in use are retried until they bind.
+    tokio::spawn(engine.clone().retry_unbound(stop.subscribe()));
     let mut watcher = (!args.no_watch)
         .then(|| start_watcher(&engine, on_change))
         .flatten();

@@ -18,7 +18,7 @@ use crate::compile::{CompileEnv, Compiled, compile};
 use crate::dns::DNS_TICK;
 use crate::forwarded::CloudflareRanges;
 use crate::gate::Mode;
-use crate::listener::{self, Running, Settings};
+use crate::listener::{self, Running, Settings, Stopping};
 use crate::proxy::Shared;
 use crate::runtime::{ListenerTls, Runtime};
 use crate::upstream::Dns;
@@ -33,6 +33,8 @@ pub enum ApplyError {
         name: String,
         /// Address.
         address: ListenAddress,
+        /// The listener's protocol (`udp` binds a UDP socket, the others a TCP one).
+        protocol: rdock_model::config::ListenerProtocol,
         /// Underlying error.
         #[source]
         source: std::io::Error,
@@ -62,6 +64,10 @@ pub struct ListenerStatus {
 
 struct State {
     running: BTreeMap<String, (Running, Option<ListenerTls>)>,
+    /// `udp` listeners a reload removed whose sessions still drain. They keep their socket,
+    /// since the sessions' replies leave from it, until the drain ends or a later reload needs
+    /// the port for another `udp` listener (their sessions then end at once).
+    draining: Vec<Stopping>,
 }
 
 /// Sockets and acceptors made ready before a configuration is published.
@@ -69,6 +75,9 @@ struct State {
 struct Prepared {
     sockets: BTreeMap<String, listener::Socket>,
     acceptors: BTreeMap<String, Arc<pingora::listeners::tls::Acceptor>>,
+    /// New listener → the running listener whose socket it takes over: same address and
+    /// transport, given up by this reload (removed, or moved to another address).
+    hand_offs: BTreeMap<String, String>,
 }
 
 /// What a listener should look like after an apply.
@@ -140,6 +149,7 @@ impl DataPlane {
             plugins: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
+                draining: Vec::new(),
             }),
             generation: AtomicU64::new(0),
         }
@@ -249,22 +259,42 @@ impl DataPlane {
 
     /// Applies `runtime`. New listener sockets are bound first; if any bind fails, nothing
     /// changes. Removed listeners stop accepting and drain for `drain`.
+    ///
+    /// An address that this reload gives up (its listener is removed or moves) and that a new
+    /// listener of the same transport wants is handed over: the old listener stops accepting
+    /// and passes its socket on, so the new one never fails to bind it and no datagram or
+    /// connection attempt in the kernel's queue is lost. A replaced `udp` listener ends its
+    /// sessions at once (their replies would leave from the socket the new listener now owns);
+    /// a replaced TCP listener's connections drain as usual. A removed TCP listener closes its
+    /// socket before this returns; a removed `udp` listener keeps it while its sessions drain,
+    /// unless a later reload needs the port, which then ends the drain.
     pub async fn apply(&self, runtime: Runtime, drain: Duration) -> Result<(), ApplyError> {
         let mut state = self.state.lock().await;
-        let prepared = self.prepare(&state, &runtime)?;
+        state.draining.retain(|d| !d.is_finished());
+        let mut prepared = self.prepare(&mut state, &runtime).await?;
         self.dns.resolve_new().await;
+        take_over(&mut state, &mut prepared, &runtime, drain).await?;
         let wanted = self.publish(runtime);
         let stopping = self.reconcile(&mut state, wanted, prepared);
-        drop(state);
         for old in stopping {
-            tokio::spawn(old.stop(drain));
+            let mut old = old.stop(drain);
+            if old.udp {
+                state.draining.push(old);
+            } else {
+                old.released().await;
+                tokio::spawn(old.finished());
+            }
         }
         Ok(())
     }
 
-    /// Binds new sockets and builds new TLS acceptors, without changing anything.
-    fn prepare(&self, state: &State, runtime: &Runtime) -> Result<Prepared, ApplyError> {
+    /// Binds new sockets and builds new TLS acceptors, without changing the served
+    /// configuration. A `udp` bind that fails because a draining `udp` listener holds the port
+    /// ends that listener's drain and is tried once more: its sessions belong to a listener the
+    /// configuration no longer has.
+    async fn prepare(&self, state: &mut State, runtime: &Runtime) -> Result<Prepared, ApplyError> {
         let mut prepared = Prepared::default();
+        let mut released = released_addresses(state, runtime);
         for (name, listener) in &runtime.listeners {
             let running = state.running.get(name);
             let udp = listener.protocol == rdock_model::config::ListenerProtocol::Udp;
@@ -281,18 +311,64 @@ impl DataPlane {
                 )?;
                 prepared.acceptors.insert(name.clone(), Arc::new(acceptor));
             }
-            if !same_address {
-                let bind_error = |source| ApplyError::Bind {
-                    name: name.clone(),
-                    address: listener.address,
-                    source,
-                };
-                let socket = listener::Socket::bind(&listener.address, listener.protocol)
-                    .map_err(bind_error)?;
-                prepared.sockets.insert(name.clone(), socket);
+            if same_address {
+                continue;
             }
+            if let Some(i) = released
+                .iter()
+                .position(|(address, u, _)| *address == listener.address && *u == udp)
+            {
+                let (_, _, old) = released.swap_remove(i);
+                prepared.hand_offs.insert(name.clone(), old);
+                continue;
+            }
+            let bind_error = |source| ApplyError::Bind {
+                name: name.clone(),
+                address: listener.address,
+                protocol: listener.protocol,
+                source,
+            };
+            let socket = match listener::Socket::bind(&listener.address, listener.protocol) {
+                Ok(socket) => socket,
+                Err(err)
+                    if udp
+                        && err.kind() == std::io::ErrorKind::AddrInUse
+                        && end_draining_on(state, listener.address.port()).await =>
+                {
+                    listener::Socket::bind(&listener.address, listener.protocol)
+                        .map_err(bind_error)?
+                }
+                Err(err) => return Err(bind_error(err)),
+            };
+            prepared.sockets.insert(name.clone(), socket);
         }
         Ok(prepared)
+    }
+
+    /// Whether a listener of `protocol` could bind `address` now: nothing else holds it, or
+    /// only a draining `udp` listener of this process that a reload would end. Used to decide
+    /// when to retry a listener that could not bind (the engine's bind retry).
+    pub async fn can_bind(
+        &self,
+        address: &ListenAddress,
+        protocol: rdock_model::config::ListenerProtocol,
+    ) -> bool {
+        let udp = protocol == rdock_model::config::ListenerProtocol::Udp;
+        let state = self.state.lock().await;
+        if udp
+            && state
+                .draining
+                .iter()
+                .any(|d| d.udp && !d.is_finished() && d.address.port() == address.port())
+        {
+            return true;
+        }
+        drop(state);
+        if udp {
+            listener::bind_udp(address).is_ok()
+        } else {
+            listener::bind(address).is_ok()
+        }
     }
 
     /// Makes `runtime` the served configuration; returns what each listener should look like.
@@ -401,16 +477,22 @@ impl DataPlane {
 
     /// Stops every listener, letting open requests finish for up to `drain`.
     pub async fn shutdown(&self, drain: Duration) {
-        let running: Vec<Running> = {
+        let (running, draining): (Vec<Running>, Vec<Stopping>) = {
             let mut state = self.state.lock().await;
-            std::mem::take(&mut state.running)
-                .into_values()
-                .map(|(r, _)| r)
-                .collect()
+            (
+                std::mem::take(&mut state.running)
+                    .into_values()
+                    .map(|(r, _)| r)
+                    .collect(),
+                std::mem::take(&mut state.draining),
+            )
         };
         let mut tasks = tokio::task::JoinSet::new();
         for listener in running {
-            tasks.spawn(listener.stop(drain));
+            tasks.spawn(listener.stop(drain).finished());
+        }
+        for listener in draining {
+            tasks.spawn(listener.finished());
         }
         while tasks.join_next().await.is_some() {}
     }
@@ -434,6 +516,74 @@ impl DataPlane {
             })
             .collect()
     }
+}
+
+/// The addresses of running listeners that `runtime` gives up: the listener is removed, moves
+/// to another address or changes transport. (address, UDP, listener name).
+fn released_addresses(state: &State, runtime: &Runtime) -> Vec<(ListenAddress, bool, String)> {
+    state
+        .running
+        .iter()
+        .filter(|(name, (running, _))| {
+            !runtime.listeners.get(*name).is_some_and(|l| {
+                l.address == running.address
+                    && (l.protocol == rdock_model::config::ListenerProtocol::Udp) == running.udp
+            })
+        })
+        .map(|(name, (running, _))| (running.address, running.udp, name.clone()))
+        .collect()
+}
+
+/// Ends the drain of the draining `udp` listeners on `port` and waits until their sockets are
+/// closed; whether there was one.
+async fn end_draining_on(state: &mut State, port: u16) -> bool {
+    let mut ended = false;
+    for draining in &mut state.draining {
+        if draining.udp && draining.address.port() == port && !draining.is_finished() {
+            tracing::info!(address = %draining.address, "a new listener needs the port; ending the drain of the removed UDP listener");
+            draining.end_now().await;
+            ended = true;
+        }
+    }
+    state.draining.retain(|d| !d.is_finished());
+    ended
+}
+
+/// Takes the sockets of the listeners `prepared.hand_offs` names out of `state` and gives them
+/// to their successors. Runs after every bind has succeeded, so nothing can fail after the old
+/// listeners stopped: a socket that is not handed back (the listener's task ended without it,
+/// which does not happen) is bound afresh, and only that bind could still fail.
+async fn take_over(
+    state: &mut State,
+    prepared: &mut Prepared,
+    runtime: &Runtime,
+    drain: Duration,
+) -> Result<(), ApplyError> {
+    for (new, old) in std::mem::take(&mut prepared.hand_offs) {
+        let Some(protocol) = runtime.listeners.get(&new).map(|l| l.protocol) else {
+            continue;
+        };
+        let Some((running, _)) = state.running.remove(&old) else {
+            continue;
+        };
+        let address = running.address;
+        tracing::info!(listener = %new, from = %old, %address, "taking over the socket of a replaced listener");
+        let (socket, stopping) = running.hand_off(drain).await;
+        tokio::spawn(stopping.finished());
+        let socket = match socket {
+            Some(socket) => socket,
+            None => {
+                listener::Socket::bind(&address, protocol).map_err(|source| ApplyError::Bind {
+                    name: new.clone(),
+                    address,
+                    protocol,
+                    source,
+                })?
+            }
+        };
+        prepared.sockets.insert(new, socket);
+    }
+    Ok(())
 }
 
 /// 32 random bytes.

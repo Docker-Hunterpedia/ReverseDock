@@ -26,7 +26,7 @@ pub mod services;
 pub mod status;
 mod store;
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::sync::atomic::AtomicUsize;
@@ -153,6 +153,11 @@ pub struct Options {
     /// Counts the writer's passes (one per translation or due retry while leading), for
     /// tests: an idle writer does not count.
     pub writer_passes: Option<Arc<AtomicUsize>>,
+    /// The internal listeners (fragment names, without `@kubernetes`) this replica's data
+    /// plane left out because their port was in use; a change translates again, and their
+    /// Gateway listeners report `Programmed=False` meanwhile ([`Inventory::unbound_listeners`]).
+    /// Each replica reads its own; only the leader's view is written to the status.
+    pub unbound: Option<watch::Receiver<BTreeSet<String>>>,
 }
 
 impl Default for Options {
@@ -164,6 +169,7 @@ impl Default for Options {
             recovered_after: RECOVERED_AFTER,
             leadership: None,
             writer_passes: None,
+            unbound: None,
         }
     }
 }
@@ -264,7 +270,7 @@ pub async fn run_with(
     );
 
     let (work_tx, work_rx) = watch::channel::<Option<Arc<Work>>>(None);
-    let (extra_tx, mut extra_rx) = watch::channel::<Vec<Diagnostic>>(Vec::new());
+    let (extra_tx, extra_rx) = watch::channel::<Vec<Diagnostic>>(Vec::new());
     tasks.spawn(writer(
         client.clone(),
         settings.clone(),
@@ -274,8 +280,7 @@ pub async fn run_with(
         options.writer_passes.clone(),
     ));
 
-    let mut tick = tokio::time::interval(Duration::from_secs(1));
-    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    let mut tick = ticker();
     let mut dirty = true;
     let mut last: Option<Instant> = None;
     let mut pass = Pass {
@@ -286,13 +291,16 @@ pub async fn run_with(
         work: &work_tx,
         revision: 0,
         first: true,
+        unbound: Unbound::new(options.unbound.clone()),
+        extra: extra_rx,
     };
     let mut degraded: Option<String> = None;
     let mut waiting_logged = Instant::now();
     loop {
         tokio::select! {
             () = shared.changed.notified() => dirty = true,
-            r = extra_rx.changed() => if r.is_ok() { dirty = true },
+            r = pass.extra.changed() => if r.is_ok() { dirty = true },
+            () = pass.unbound.changed() => dirty = true,
             _ = tick.tick() => {}
             () = store::stopped(&mut shutdown) => break,
         }
@@ -332,8 +340,7 @@ pub async fn run_with(
         }
         dirty = false;
         last = Some(Instant::now());
-        let extra = extra_rx.borrow_and_update().clone();
-        pass.run(&extra, degraded.clone()).await;
+        pass.run(degraded.clone()).await;
     }
 
     tasks.abort_all();
@@ -416,14 +423,62 @@ struct Pass<'a> {
     /// Counts changes of the materialised files (the snapshot's `revision`).
     revision: u64,
     first: bool,
+    /// The data plane's left-out internal listeners ([`Options::unbound`]).
+    unbound: Unbound,
+    /// Diagnostics of the writer (an exhausted port range) to publish with the snapshot.
+    extra: watch::Receiver<Vec<Diagnostic>>,
+}
+
+/// [`Options::unbound`], or a channel that never changes when there is none (tests).
+struct Unbound {
+    rx: watch::Receiver<BTreeSet<String>>,
+    _none: Option<watch::Sender<BTreeSet<String>>>,
+}
+
+impl Unbound {
+    fn new(rx: Option<watch::Receiver<BTreeSet<String>>>) -> Self {
+        if let Some(rx) = rx {
+            Self { rx, _none: None }
+        } else {
+            Self::fixed(BTreeSet::new())
+        }
+    }
+
+    fn fixed(names: BTreeSet<String>) -> Self {
+        let (tx, rx) = watch::channel(names);
+        Self {
+            rx,
+            _none: Some(tx),
+        }
+    }
+
+    /// Resolves when the set changes; never once the data plane's side is gone (it then keeps
+    /// its last value).
+    async fn changed(&mut self) {
+        while self.rx.changed().await.is_err() {
+            let last = self.rx.borrow().clone();
+            *self = Self::fixed(last);
+        }
+    }
+}
+
+/// The runtime loop's 1 s tick (it notices a degraded provider).
+fn ticker() -> tokio::time::Interval {
+    let mut tick = tokio::time::interval(Duration::from_secs(1));
+    tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+    tick
 }
 
 impl Pass<'_> {
-    async fn run(&mut self, extra: &[Diagnostic], degraded: Option<String>) {
-        let (inventory, managed) = {
+    async fn run(&mut self, degraded: Option<String>) {
+        let extra = self.extra.borrow_and_update().clone();
+        let (mut inventory, managed) = {
             let stores = self.shared.lock();
             (stores.inventory(), stores.managed_by_name())
         };
+        inventory
+            .unbound_listeners
+            .clone_from(&self.unbound.rx.borrow_and_update());
         // The translation and the file writes are CPU and disk work: they run on the
         // blocking pool, so the watches and the writer keep running meanwhile.
         let translate = self.translate.clone();
@@ -484,7 +539,7 @@ impl Pass<'_> {
 
         // (b) The snapshot.
         let mut diagnostics = translation.diagnostics.clone();
-        diagnostics.extend(extra.iter().cloned());
+        diagnostics.extend(extra);
         let snapshot = Snapshot {
             provider: PROVIDER.to_owned(),
             fragment: translation.fragment.clone(),
@@ -524,6 +579,11 @@ async fn writer(
     let services: kube::Api<Service> =
         kube::Api::namespaced(client.clone(), settings.service_namespace());
     let mut published_ingresses = std::collections::BTreeSet::new();
+    // Internal ports released recently (`services::QUARANTINE`). In memory and only while
+    // leading: a new leader starts empty, and the data plane covers what it does not know (a
+    // reload ends the drain of a removed UDP listener on a port it needs, and retries a
+    // provider listener that cannot bind).
+    let mut quarantine = services::Quarantine::default();
     let watching = leader.clone();
     let leading = move || *watching.borrow();
     loop {
@@ -546,6 +606,7 @@ async fn writer(
         if !*leader.borrow_and_update() {
             errors.reset();
             published_ingresses.clear();
+            quarantine = services::Quarantine::default();
             continue;
         }
         let Some(item) = work.borrow_and_update().clone() else {
@@ -561,6 +622,7 @@ async fn writer(
                 &settings,
                 &item.managed,
                 &item.services,
+                &mut quarantine,
                 &mut errors,
                 &leading,
             )
@@ -576,6 +638,7 @@ async fn writer(
         if !*leader.borrow() {
             errors.reset();
             published_ingresses.clear();
+            quarantine = services::Quarantine::default();
             continue;
         }
         let mut writer = status::Writer {

@@ -112,6 +112,8 @@ impl Stores {
                 .collect(),
             crd_bundle_version: self.crd_bundle_version.clone(),
             missing_kinds: self.missing_kinds.clone(),
+            // Not a cluster object: the runtime sets it from the data plane before translating.
+            unbound_listeners: std::collections::BTreeSet::new(),
         }
     }
 

@@ -518,6 +518,42 @@ tcp_services:
     assert_eq!((one.connections(), two.connections()), (1, 1));
 }
 
+#[tokio::test]
+async fn a_listener_replaced_on_its_address_in_one_reload_takes_its_socket_over() {
+    let one = EchoBackend::start().await;
+    let two = EchoBackend::start().await;
+    let port = free_port();
+    // The listener's name changes and its address stays: the old listener is removed, the new
+    // one needs the same port in the same reload.
+    let config = |listener: &str, backend: SocketAddr| {
+        format!(
+            r#"
+lifecycle: {{ drain_timeout: 10s }}
+listeners:
+  {listener}: {{ address: "127.0.0.1:{port}", protocol: tcp }}
+tcp_routes:
+  any: {{ match: "HostSNI(`*`)", listeners: [{listener}], service: echo }}
+tcp_services:
+  echo: {{ backends: [{{ address: "{backend}" }}] }}
+"#
+        )
+    };
+    let rdock = Rdock::start(RDOCK, &config("old", one.addr));
+    let mut open = TcpStream::connect(addr(port)).await.unwrap();
+    assert_eq!(echo(&mut open, b"before").await, b"before");
+    rdock.write_config(&config("new", two.addr));
+    let (status, body) = rdock.reload();
+    assert_eq!(status, 200, "{body}");
+    let mut fresh = TcpStream::connect(addr(port)).await.unwrap();
+    assert_eq!(echo(&mut fresh, b"new").await, b"new");
+    assert_eq!(
+        echo(&mut open, b"after").await,
+        b"after",
+        "the old listener's relay drains"
+    );
+    assert_eq!((one.connections(), two.connections()), (1, 1));
+}
+
 fn docker_tests() -> bool {
     let enabled = std::env::var("RDOCK_DOCKER_TESTS").is_ok_and(|v| v == "1");
     if !enabled {

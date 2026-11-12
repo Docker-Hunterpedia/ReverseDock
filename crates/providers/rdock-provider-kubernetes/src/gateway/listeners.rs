@@ -58,7 +58,7 @@ use crate::api::{
     GROUP, Gateway, GatewayStatusAddress, LabelSelector, Listener, RouteGroupKind, from_namespaces,
     kinds, protocols, tls_modes,
 };
-use crate::inventory::{GatewayService, ObjectKey};
+use crate::inventory::{GatewayService, Inventory, ObjectKey};
 use crate::translate::{
     DesiredGateway, DesiredListener, DesiredService, GATEWAY_NAME_LABEL, GATEWAY_NAMESPACE_LABEL,
     MANAGED_BY, MANAGED_BY_LABEL, RouteKind, gateway_label_value, gateway_service_name,
@@ -786,10 +786,29 @@ fn open_udp_port(cx: &mut Context<'_>, index: usize, port: u16, target: Option<u
         ..UdpSessions::default()
     });
     cx.out.fragment.listeners.insert(name.clone(), model);
+    let programmed = bound(cx.inventory, &name, target);
     for i in ready {
         let l = &mut cx.gateways[index].listeners[i];
-        l.programmed = Ok(());
+        l.programmed.clone_from(&programmed);
         l.internal = Some(name.clone());
+    }
+}
+
+/// `Programmed` of the listeners served by internal listener `name` on `target`: `Ok`, unless
+/// this replica's data plane could not bind it ([`Inventory::unbound_listeners`]). The
+/// internal listener stays in the fragment either way, so the data plane keeps retrying it and
+/// routes keep attaching to it.
+fn bound(inventory: &Inventory, name: &str, target: u16) -> Result<(), Failure> {
+    if inventory.unbound_listeners.contains(name) {
+        Err((
+            reasons::PENDING,
+            format!(
+                "internal port {target} is in use on this replica (a listener that was just \
+                 removed may still hold it); the data plane retries it"
+            ),
+        ))
+    } else {
+        Ok(())
     }
 }
 
@@ -879,9 +898,10 @@ fn open_port(
         });
     }
     cx.out.fragment.listeners.insert(name.clone(), model);
+    let programmed = bound(cx.inventory, &name, target);
     for i in ready {
         let l = &mut cx.gateways[index].listeners[i];
-        l.programmed = Ok(());
+        l.programmed.clone_from(&programmed);
         l.internal = Some(name.clone());
     }
 }
@@ -973,6 +993,21 @@ pub fn finish(cx: &mut Context<'_>) {
                 false,
                 reasons::PENDING,
                 format!("waiting for the Gateway's Service to map ports [{unmapped}]"),
+                generation,
+            )
+        } else if let Some(l) = own.iter().find(|l| {
+            l.internal
+                .as_ref()
+                .is_some_and(|n| cx.inventory.unbound_listeners.contains(n))
+        }) {
+            condition(
+                types::PROGRAMMED,
+                false,
+                reasons::PENDING,
+                format!(
+                    "listener `{}` is not serving yet on this replica: its internal port is in use; the data plane retries it",
+                    l.name
+                ),
                 generation,
             )
         } else {

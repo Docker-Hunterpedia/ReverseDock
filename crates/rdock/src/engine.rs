@@ -97,6 +97,36 @@ fn enabled(file: &Config, provider: &str) -> bool {
 /// Rounds of "leave out the provider objects that fail to compile, try again".
 const COMPILE_ROUNDS: usize = 4;
 
+/// Waits between checks whether a provider listener left out for a bind failure can bind now:
+/// these, then the last one again and again.
+const BIND_RETRY: [Duration; 5] = [
+    Duration::from_millis(250),
+    Duration::from_millis(500),
+    Duration::from_secs(1),
+    Duration::from_secs(2),
+    Duration::from_secs(5),
+];
+
+/// Provider listeners the applied configuration left out because their address could not be
+/// bound: name (`name@provider`) → address and protocol.
+pub(crate) type Unbound = BTreeMap<
+    String,
+    (
+        rdock_model::values::ListenAddress,
+        rdock_model::config::ListenerProtocol,
+    ),
+>;
+
+/// What [`Engine::compile_and_apply`] applied.
+struct Done {
+    config: Config,
+    generation: u64,
+    acme_plan: rdock_acme::Plan,
+    local_names: Vec<String>,
+    /// Provider listeners left out because they could not bind.
+    unbound: Unbound,
+}
+
 /// The engine shared by signal handlers, the file watcher, providers and the admin API.
 pub(crate) struct Engine {
     source: Source,
@@ -129,6 +159,9 @@ pub(crate) struct Engine {
     api_writes: tokio::sync::Mutex<()>,
     /// The alert settings of the applied configuration, for the alert dispatcher.
     alerts: tokio::sync::watch::Sender<rdock_model::settings::Alerts>,
+    /// Provider listeners the applied configuration left out for a bind failure; the bind
+    /// retry ([`Engine::retry_unbound`]) and the providers watch it.
+    unbound: tokio::sync::watch::Sender<Unbound>,
 }
 
 /// What the certificate manager should do for an applied configuration: nothing when
@@ -207,7 +240,14 @@ impl Engine {
             started_at: SystemTime::now(),
             api_writes: tokio::sync::Mutex::new(()),
             alerts,
+            unbound: tokio::sync::watch::Sender::new(Unbound::new()),
         }
+    }
+
+    /// The provider listeners the applied configuration left out because their address could
+    /// not be bound, kept current.
+    pub(crate) fn unbound(&self) -> tokio::sync::watch::Receiver<Unbound> {
+        self.unbound.subscribe()
     }
 
     pub(crate) fn set_ready(&self, ready: bool) {
@@ -500,7 +540,13 @@ impl Engine {
         for snapshot in &snapshots {
             diagnostics.extend(snapshot.diagnostics.iter().cloned());
         }
-        let (config, generation, acme_plan, local_names) = match self
+        let Done {
+            config,
+            generation,
+            acme_plan,
+            local_names,
+            unbound,
+        } = match self
             .compile_and_apply(&file, &snapshots, &mut diagnostics)
             .await
         {
@@ -511,6 +557,13 @@ impl Engine {
             }
         };
         self.update_background(&config, acme_plan, local_names);
+        self.unbound.send_if_modified(|current| {
+            let changed = *current != unbound;
+            if changed {
+                *current = unbound;
+            }
+            changed
+        });
         self.awaiting
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
@@ -578,8 +631,9 @@ impl Engine {
         file: &Config,
         snapshots: &[Snapshot],
         diagnostics: &mut Vec<Diagnostic>,
-    ) -> Result<(Config, u64, rdock_acme::Plan, Vec<String>), String> {
+    ) -> Result<Done, String> {
         let mut unbindable: BTreeSet<ObjectKey> = BTreeSet::new();
+        let mut unbound = Unbound::new();
         let mut left_out: Vec<Diagnostic> = Vec::new();
         loop {
             let mut attempt = diagnostics.clone();
@@ -600,17 +654,30 @@ impl Engine {
                 Ok(()) => {
                     attempt.extend(left_out);
                     *diagnostics = attempt;
-                    return Ok((config, generation, acme_plan, local_names));
+                    return Ok(Done {
+                        config,
+                        generation,
+                        acme_plan,
+                        local_names,
+                        unbound,
+                    });
                 }
                 Err(err @ ApplyError::Bind { .. })
                     if bind_failure_of_provider(&err).is_some_and(|key| unbindable.insert(key)) =>
                 {
-                    if let ApplyError::Bind { name, .. } = &err {
+                    if let ApplyError::Bind {
+                        name,
+                        address,
+                        protocol,
+                        ..
+                    } = &err
+                    {
                         let error = Diagnostic::error(
                             rdock_model::path_key("listeners", name),
                             err.to_string(),
                         );
                         left_out.push(skipped(Section::Listeners, name, &error));
+                        unbound.insert(name.clone(), (*address, *protocol));
                     }
                 }
                 Err(err) => {
@@ -618,6 +685,57 @@ impl Engine {
                     *diagnostics = attempt;
                     return Err(err.to_string());
                 }
+            }
+        }
+    }
+
+    /// Retries provider listeners that were left out because their address was in use, until
+    /// they bind or are no longer wanted; runs until `stop` fires.
+    ///
+    /// While [`Engine::unbound`] is not empty, it checks after 250 ms, 500 ms, 1 s, 2 s and
+    /// then every 5 s whether one of their addresses can be bound ([`DataPlane::can_bind`]),
+    /// and only then reloads: a port that stays taken costs a bind attempt every 5 s, not a
+    /// reload, and its warning is not logged again. A change of the set (a reload that left
+    /// out other listeners, or none) starts the schedule over; an empty set ends it. File
+    /// listeners are never in the set: their bind failure rejects the reload. A rejected retry
+    /// (the configuration file has errors now) waits for the next applied configuration.
+    pub(crate) async fn retry_unbound(
+        self: Arc<Self>,
+        mut stop: tokio::sync::watch::Receiver<bool>,
+    ) {
+        let mut unbound = self.unbound.subscribe();
+        let mut attempt = 0usize;
+        let mut blocked = false;
+        loop {
+            let waiting = !blocked && !unbound.borrow_and_update().is_empty();
+            let delay = BIND_RETRY[attempt.min(BIND_RETRY.len() - 1)];
+            tokio::select! {
+                _ = stop.changed() => return,
+                changed = unbound.changed() => {
+                    if changed.is_err() {
+                        return;
+                    }
+                    attempt = 0;
+                    blocked = false;
+                    continue;
+                }
+                () = tokio::time::sleep(delay), if waiting => {}
+            }
+            attempt = attempt.saturating_add(1);
+            let wanted = unbound.borrow().clone();
+            let mut free = Vec::new();
+            for (name, (address, protocol)) in &wanted {
+                if self.plane.can_bind(address, *protocol).await {
+                    free.push(name.as_str());
+                }
+            }
+            if free.is_empty() {
+                continue;
+            }
+            tracing::info!(listeners = %free.join(", "), "the address of a left-out provider listener is free; reloading");
+            let report = self.reload("bind retry").await;
+            if !report.applied() {
+                blocked = true;
             }
         }
     }
@@ -1266,8 +1384,10 @@ mod tests {
             .port()
     }
 
+    // One scenario, read top to bottom.
+    #[allow(clippy::too_many_lines)]
     #[tokio::test]
-    async fn a_provider_listener_that_cannot_bind_is_left_out() {
+    async fn a_provider_listener_that_cannot_bind_is_left_out_and_retried() {
         let dir = tempfile::tempdir().unwrap();
         let config = dir.path().join("rdock.yaml");
         std::fs::write(
@@ -1281,20 +1401,25 @@ mod tests {
         .unwrap();
         let metrics = rdock_observability::Metrics::new("test", "test").unwrap();
         let plane = Arc::new(DataPlane::new(metrics, Runtime::empty()));
-        let engine = Engine::new(Source::File(config), dir.path(), plane.clone());
-        // Something else holds this port.
+        let engine = Arc::new(Engine::new(Source::File(config), dir.path(), plane.clone()));
+        // Something else holds these ports: a TCP one and a UDP one.
         let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let busy_port = busy.local_addr().unwrap().port();
+        let busy_udp = std::net::UdpSocket::bind("127.0.0.1:0").unwrap();
+        let busy_udp_port = busy_udp.local_addr().unwrap().port();
         let fragment: rdock_config::merge::Fragment = serde_json::from_value(serde_json::json!({
             "listeners": {
                 "gw-busy": { "address": format!("127.0.0.1:{busy_port}") },
+                "gwu-busy": { "address": format!("127.0.0.1:{busy_udp_port}"), "protocol": "udp" },
                 "gw-free": { "address": format!("127.0.0.1:{}", free_port()) }
             },
             "routes": {
                 "on-busy": { "match": "PathPrefix(`/`)", "service": "app", "listeners": ["gw-busy"], "tls": "off" },
                 "on-free": { "match": "PathPrefix(`/`)", "service": "app", "listeners": ["gw-free"], "tls": "off" }
             },
-            "services": { "app": { "backends": [{ "address": "127.0.0.1:9" }] } }
+            "services": { "app": { "backends": [{ "address": "127.0.0.1:9" }] } },
+            "udp_routes": { "on-busy-udp": { "listeners": ["gwu-busy"], "service": "dns" } },
+            "udp_services": { "dns": { "backends": [{ "address": "127.0.0.1:9" }] } }
         }))
         .unwrap();
         engine.set_snapshot(Snapshot {
@@ -1310,29 +1435,77 @@ mod tests {
             report.error,
             report.diagnostics
         );
-        let left_out = report
-            .diagnostics
-            .iter()
-            .find(|d| d.path.contains("gw-busy@kubernetes"))
-            .expect("a diagnostic for the listener that cannot bind");
-        assert!(!left_out.is_error());
-        assert!(
-            left_out.message.contains("left out"),
-            "{}",
-            left_out.message
-        );
-        assert!(
-            left_out.message.contains("cannot listen"),
-            "{}",
-            left_out.message
-        );
+        for name in ["gw-busy@kubernetes", "gwu-busy@kubernetes"] {
+            let left_out = report
+                .diagnostics
+                .iter()
+                .find(|d| d.path.contains(name))
+                .expect("a diagnostic for the listener that cannot bind");
+            assert!(!left_out.is_error());
+            assert!(
+                left_out.message.contains("left out"),
+                "{}",
+                left_out.message
+            );
+            assert!(
+                left_out.message.contains("cannot listen"),
+                "{}",
+                left_out.message
+            );
+        }
         let runtime = plane.runtime();
         assert!(runtime.listeners.contains_key("gw-free@kubernetes"));
         assert!(!runtime.listeners.contains_key("gw-busy@kubernetes"));
+        assert!(!runtime.listeners.contains_key("gwu-busy@kubernetes"));
         assert!(runtime.listeners.contains_key("web"));
-        drop(busy);
+        assert_eq!(
+            engine
+                .unbound()
+                .borrow()
+                .keys()
+                .cloned()
+                .collect::<Vec<_>>(),
+            ["gw-busy@kubernetes", "gwu-busy@kubernetes"]
+        );
 
-        // A file listener that cannot bind still rejects the reload.
+        // The retry checks the addresses without reloading while they stay taken.
+        let (stop, stop_rx) = tokio::sync::watch::channel(false);
+        let retry = tokio::spawn(engine.clone().retry_unbound(stop_rx));
+        let generation = plane.runtime().generation;
+        tokio::time::sleep(Duration::from_millis(1200)).await;
+        assert_eq!(
+            plane.runtime().generation,
+            generation,
+            "no reload while the ports are taken"
+        );
+
+        // Released: both come up without any configuration change, and the retry stops.
+        drop(busy);
+        drop(busy_udp);
+        let started = std::time::Instant::now();
+        while !(plane.runtime().listeners.contains_key("gw-busy@kubernetes")
+            && plane
+                .runtime()
+                .listeners
+                .contains_key("gwu-busy@kubernetes"))
+        {
+            assert!(
+                started.elapsed() < Duration::from_secs(8),
+                "the listeners did not come up"
+            );
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert!(engine.unbound().borrow().is_empty());
+        let listening = plane.listeners().await;
+        assert!(listening.iter().any(|l| l.name == "gw-busy@kubernetes"));
+        assert!(listening.iter().any(|l| l.name == "gwu-busy@kubernetes"));
+        assert!(std::net::TcpListener::bind(("127.0.0.1", busy_port)).is_err());
+        assert!(std::net::UdpSocket::bind(("127.0.0.1", busy_udp_port)).is_err());
+        let generation = plane.runtime().generation;
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert_eq!(plane.runtime().generation, generation, "the retry stopped");
+
+        // A file listener that cannot bind still rejects the reload, and is not retried.
         let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let config = dir.path().join("rdock.yaml");
         std::fs::write(
@@ -1346,5 +1519,15 @@ mod tests {
         .unwrap();
         let report = engine.reload("test").await;
         assert!(!report.applied());
+        assert!(engine.unbound().borrow().is_empty());
+        drop(busy);
+        tokio::time::sleep(Duration::from_millis(1500)).await;
+        assert_eq!(
+            plane.runtime().generation,
+            generation,
+            "no retry of a file listener"
+        );
+        stop.send(true).unwrap();
+        retry.await.unwrap();
     }
 }

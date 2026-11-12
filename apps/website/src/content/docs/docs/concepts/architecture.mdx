@@ -28,7 +28,7 @@ Owning the listeners is what makes these behaviours possible:
 | Behaviour | Why it needs own listeners |
 |---|---|
 | A port that cannot be bound is reported before anything changes | rdock binds new sockets first and publishes the configuration only when every bind succeeded |
-| Listeners are added, changed and removed without a restart | unchanged addresses keep their socket; removed listeners stop accepting and drain |
+| Listeners are added, changed and removed without a restart | unchanged addresses keep their socket; removed listeners stop accepting and drain; a new listener on a removed one's address takes its socket over |
 | Readiness means "listening" | systemd `READY=1` and `/readyz` are sent after the first configuration is applied |
 | Shutdown waits only as long as needed | rdock exits as soon as no connection is open, or when `lifecycle.drain_timeout` (8 s by default) has passed |
 | Per-listener TLS policies | each listener has its own rustls configuration |

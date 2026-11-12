@@ -444,6 +444,9 @@ async fn a_gateway_with_tcp_and_udp_on_one_port_gets_both_service_ports() {
         leadership: Some(leader_tx),
         ..Options::default()
     };
+    // Desired from the start: the first pass after taking the lead must not see the old
+    // Service as stale and delete it.
+    *desired.lock().unwrap() = vec![old.clone()];
     let running = start(provider, context(&ns, data.path()), options);
     tokio::time::timeout(Duration::from_secs(10), leader_rx.wait_for(|l| *l))
         .await
@@ -524,6 +527,166 @@ async fn a_gateway_with_tcp_and_udp_on_one_port_gets_both_service_ports() {
         old_rv,
         "the previous version's Service was rewritten"
     );
+    running.stop().await;
+}
+
+// (2d) A UDP Gateway is deleted and another created right after: the new Service does not get
+// the internal port the old one just released, which the replicas may still hold for the
+// removed listener while its sessions drain.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_released_internal_port_is_not_handed_out_again_at_once() {
+    let Some((kubeconfig, client)) = cluster("quarantine").await else {
+        return;
+    };
+    let ns = namespace(&client, "quar").await;
+    let data = tempfile::tempdir().unwrap();
+    let seen: Seen = Arc::default();
+    let desired: Arc<Mutex<Vec<DesiredService>>> = Arc::default();
+    let translate = {
+        let (seen, desired) = (seen.clone(), desired.clone());
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            *seen.lock().unwrap() = Some(inventory.clone());
+            Translation {
+                services: desired.lock().unwrap().clone(),
+                ..Translation::default()
+            }
+        })
+    };
+    let service = |gateway: &str| DesiredService {
+        namespace: ns.clone(),
+        name: gateway_service_name("apps", gateway),
+        gateway: ("apps".to_owned(), gateway.to_owned()),
+        udp_ports: vec![53],
+        ..DesiredService::default()
+    };
+    let running = start(
+        provider(&kubeconfig, &ns),
+        context(&ns, data.path()),
+        Options {
+            translate,
+            ..Options::default()
+        },
+    );
+    let services: Api<Service> = Api::namespaced(client.clone(), &ns);
+    let udp_target = |s: &Service| -> Vec<String> {
+        s.spec
+            .as_ref()
+            .unwrap()
+            .ports
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|p| format!("{:?}", p.target_port.as_ref().unwrap()))
+            .collect()
+    };
+    let first = gateway_service_name("apps", "first");
+    let second = gateway_service_name("apps", "second");
+    *desired.lock().unwrap() = vec![service("first")];
+    poke(&client, &ns).await;
+    eventually("the first Service", Duration::from_secs(10), || async {
+        services.get_opt(&first).await.unwrap().is_some()
+    })
+    .await;
+    assert_eq!(
+        udp_target(&services.get(&first).await.unwrap()),
+        ["Int(20000)"]
+    );
+    eventually(
+        "the first Service in the inventory",
+        Duration::from_secs(10),
+        || async {
+            seen.lock().unwrap().as_ref().is_some_and(|i| {
+                i.gateway_services
+                    .contains_key(&("apps".to_owned(), "first".to_owned()))
+            })
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Deleted; once its Service is gone, a new UDP Gateway arrives.
+    desired.lock().unwrap().clear();
+    poke(&client, &ns).await;
+    eventually(
+        "the first Service deleted",
+        Duration::from_secs(10),
+        || async { services.get_opt(&first).await.unwrap().is_none() },
+    )
+    .await;
+    *desired.lock().unwrap() = vec![service("second")];
+    poke(&client, &ns).await;
+    eventually("the second Service", Duration::from_secs(10), || async {
+        services.get_opt(&second).await.unwrap().is_some()
+    })
+    .await;
+    assert_eq!(
+        udp_target(&services.get(&second).await.unwrap()),
+        ["Int(20001)"],
+        "the port released moments ago is in quarantine"
+    );
+    running.stop().await;
+}
+
+// (2e) The data plane's left-out internal listeners reach the translation: a change translates
+// again, with the names in the inventory.
+#[tokio::test(flavor = "multi_thread")]
+async fn left_out_internal_listeners_reach_the_translation() {
+    let Some((kubeconfig, client)) = cluster("unbound").await else {
+        return;
+    };
+    let ns = namespace(&client, "unb").await;
+    let data = tempfile::tempdir().unwrap();
+    let seen: Seen = Arc::default();
+    let translate = {
+        let seen = seen.clone();
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            *seen.lock().unwrap() = Some(inventory.clone());
+            Translation::default()
+        })
+    };
+    let (unbound_tx, unbound_rx) = watch::channel(BTreeSet::new());
+    let running = start(
+        provider(&kubeconfig, &ns),
+        context(&ns, data.path()),
+        Options {
+            translate,
+            unbound: Some(unbound_rx),
+            ..Options::default()
+        },
+    );
+    eventually("a first translation", Duration::from_secs(20), || async {
+        seen.lock().unwrap().is_some()
+    })
+    .await;
+    assert!(
+        seen.lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .unbound_listeners
+            .is_empty()
+    );
+    let names = BTreeSet::from(["gwu-apps-dns-53-0123456789".to_owned()]);
+    unbound_tx.send_replace(names.clone());
+    eventually(
+        "the names in the inventory",
+        Duration::from_secs(5),
+        || async {
+            seen.lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|i| i.unbound_listeners == names)
+        },
+    )
+    .await;
+    unbound_tx.send_replace(BTreeSet::new());
+    eventually("an empty set again", Duration::from_secs(5), || async {
+        seen.lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|i| i.unbound_listeners.is_empty())
+    })
+    .await;
     running.stop().await;
 }
 

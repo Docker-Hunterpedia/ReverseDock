@@ -6,8 +6,14 @@
 //! retried on the next pass. Services are written with server-side apply under our field
 //! manager, only when they differ from what is wanted, and deleted (by label) when their
 //! Gateway is no longer desired.
+//!
+//! A port a Service let go is not handed to another Gateway for [`QUARANTINE`]: every replica
+//! may still hold it for a removed listener (a `udp` listener keeps its socket while its
+//! sessions drain). The writer remembers released ports in a [`Quarantine`] and passes their
+//! ages to [`allocate`], which stays a pure function of its inputs.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::time::{Duration, Instant};
 
 use k8s_openapi::api::core::v1::Service;
 use k8s_openapi::apimachinery::pkg::util::intstr::IntOrString;
@@ -118,6 +124,14 @@ pub fn wanted_ports(desired: &DesiredService) -> Vec<PortKey> {
 /// Listener port and protocol → internal port, by Service name.
 pub type PortMap = BTreeMap<String, BTreeMap<PortKey, u16>>;
 
+/// An internal port and the transport it was used for.
+pub type InternalPort = (u16, PortProtocol);
+
+/// How long an internal port stays out of new allocations after the last managed Service that
+/// used it let it go. Longer than a removed listener's drain (`lifecycle.drain_timeout`, 8 s by
+/// default and 10 s in the Helm chart), during which every replica may still hold the port.
+pub const QUARANTINE: Duration = Duration::from_secs(30);
+
 /// The outcome of [`allocate`].
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Allocation {
@@ -125,6 +139,9 @@ pub struct Allocation {
     pub ports: PortMap,
     /// `(Service, listener port)` pairs that got no internal port: the range is exhausted.
     pub unmapped: Vec<(String, PortKey)>,
+    /// `(Service, listener port, internal port)`: a port still in quarantine, handed out because
+    /// the range had no other (the oldest released one).
+    pub reused: Vec<(String, PortKey, u16)>,
 }
 
 /// Allocates internal ports (`targetPort`) from `range` for every desired Service.
@@ -136,12 +153,17 @@ pub struct Allocation {
 ///   share an internal port, neither do a TCP and a UDP listener of one Gateway (one number
 ///   per (protocol, port), never ambiguous), and a port freed in this pass (a removed listener, a deleted
 ///   Service) is not handed out again before the Service that held it is gone.
+/// - `released` holds, for internal ports a managed Service let go recently, how long ago
+///   (by transport). A port released less than [`QUARANTINE`] ago is not given to a new
+///   listener port of the same transport, unless the range has no other free port: then the
+///   one released longest ago is, and the pair is reported in `reused`.
 /// - When the range is exhausted, the pair is left out and reported in `unmapped`.
 #[must_use]
 pub fn allocate(
     range: (u16, u16),
     existing: &PortMap,
     desired: &[(String, Vec<PortKey>)],
+    released: &BTreeMap<InternalPort, Duration>,
 ) -> Allocation {
     let (start, end) = range;
     let in_range = |p: u16| start <= p && p <= end;
@@ -156,6 +178,11 @@ pub fn allocate(
         .values()
         .flat_map(|m| m.values().copied())
         .collect();
+    let quarantined = |p: u16, protocol: PortProtocol| {
+        released
+            .get(&(p, protocol))
+            .is_some_and(|age| *age < QUARANTINE)
+    };
     let mut claimed: BTreeSet<u16> = BTreeSet::new();
     let mut allocation = Allocation::default();
     for (name, ports) in &wanted {
@@ -169,6 +196,7 @@ pub fn allocate(
             }
         }
     }
+    // Every port below `next` is busy or claimed, so the search starts there.
     let mut next = start;
     for (name, ports) in &wanted {
         for port in ports {
@@ -179,22 +207,75 @@ pub fn allocate(
             {
                 continue;
             }
-            // Every port below `next` is taken, so the search resumes there.
-            if let Some(free) = (next..=end).find(|p| !busy.contains(p) && !claimed.contains(p)) {
-                claimed.insert(free);
-                next = free;
+            let free = |p: u16| !busy.contains(&p) && !claimed.contains(&p);
+            let mut found = (next..=end).find(|p| free(*p) && !quarantined(*p, port.protocol));
+            if found.is_none() {
+                // Only ports in quarantine are left: the one released longest ago.
+                found = (next..=end)
+                    .filter(|p| free(*p))
+                    .max_by_key(|p| (released.get(&(*p, port.protocol)), std::cmp::Reverse(*p)));
+                if let Some(oldest) = found {
+                    allocation.reused.push(((*name).to_owned(), *port, oldest));
+                }
+            }
+            if let Some(found) = found {
+                claimed.insert(found);
                 allocation
                     .ports
                     .entry((*name).to_owned())
                     .or_default()
-                    .insert(*port, free);
+                    .insert(*port, found);
+                while next < end && (busy.contains(&next) || claimed.contains(&next)) {
+                    next += 1;
+                }
             } else {
-                next = end;
                 allocation.unmapped.push(((*name).to_owned(), *port));
             }
         }
     }
     allocation
+}
+
+/// The internal ports managed Services released recently, kept by the leader's writer in
+/// memory: (internal port, transport) → when the last Service that had it let it go.
+///
+/// It is not shared: a replica that becomes leader starts with an empty quarantine and may hand
+/// out a port another replica's removed listener still drains on. The data plane covers that
+/// case on its own: a reload that needs a port a draining `udp` listener holds ends that drain,
+/// and a provider listener that still cannot bind is retried until it can.
+#[derive(Debug, Default, Clone)]
+pub struct Quarantine {
+    /// Internal ports the managed Services had at the last [`Quarantine::observe`].
+    seen: BTreeSet<InternalPort>,
+    released: BTreeMap<InternalPort, Instant>,
+}
+
+impl Quarantine {
+    /// Takes the managed Services' ports as they are at `now`: a port the previous call saw
+    /// and no Service has now was released at `now`; one in use again is no longer
+    /// quarantined; entries older than [`QUARANTINE`] are forgotten.
+    pub fn observe(&mut self, existing: &PortMap, now: Instant) {
+        let current: BTreeSet<InternalPort> = existing
+            .values()
+            .flat_map(|m| m.iter().map(|(key, target)| (*target, key.protocol)))
+            .collect();
+        for gone in self.seen.difference(&current) {
+            self.released.insert(*gone, now);
+        }
+        self.released.retain(|port, at| {
+            !current.contains(port) && now.saturating_duration_since(*at) < QUARANTINE
+        });
+        self.seen = current;
+    }
+
+    /// How long ago each quarantined port was released, at `now` (the input of [`allocate`]).
+    #[must_use]
+    pub fn ages(&self, now: Instant) -> BTreeMap<InternalPort, Duration> {
+        self.released
+            .iter()
+            .map(|(port, at)| (*port, now.saturating_duration_since(*at)))
+            .collect()
+    }
 }
 
 /// The listener ports of a live Service: (protocol, `port`) → numeric `targetPort`. Ports of
@@ -496,6 +577,7 @@ pub async fn reconcile(
     settings: &Settings,
     live: &BTreeMap<String, Service>,
     desired: &[DesiredService],
+    quarantine: &mut Quarantine,
     errors: &mut super::status::ErrorLog,
     leading: &(dyn Fn() -> bool + Send + Sync),
 ) -> Outcome {
@@ -507,7 +589,13 @@ pub async fn reconcile(
         .filter(|d| d.namespace == settings.service_namespace())
         .map(|d| (d.name.clone(), wanted_ports(d)))
         .collect();
-    let allocation = allocate(range, &existing, &wanted);
+    let now = Instant::now();
+    quarantine.observe(&existing, now);
+    let allocation = allocate(range, &existing, &wanted, &quarantine.ages(now));
+    for (name, port, target) in &allocation.reused {
+        tracing::warn!(provider = crate::PROVIDER, service = %name, %port, internal_port = target,
+            "no internal port outside quarantine left in the port range; reusing the one released longest ago");
+    }
     for (name, port) in &allocation.unmapped {
         outcome.diagnostics.push(
             Diagnostic::warning(
@@ -642,6 +730,7 @@ mod tests {
             (20000, 20010),
             &PortMap::new(),
             &want(&[("a", &[443, 80]), ("b", &[80])]),
+            &BTreeMap::new(),
         );
         assert_eq!(
             a.ports,
@@ -657,6 +746,7 @@ mod tests {
             (20000, 20010),
             &existing,
             &want(&[("a", &[80, 443]), ("b", &[80])]),
+            &BTreeMap::new(),
         );
         assert_eq!(
             a.ports,
@@ -672,6 +762,7 @@ mod tests {
             (20000, 20010),
             &existing,
             &want(&[("a", &[80]), ("b", &[80])]),
+            &BTreeMap::new(),
         );
         assert_eq!(
             a.ports,
@@ -687,6 +778,7 @@ mod tests {
             (20000, 20010),
             &existing,
             &want(&[("a", &[80]), ("d", &[80])]),
+            &BTreeMap::new(),
         );
         assert_eq!(
             a.ports,
@@ -698,6 +790,7 @@ mod tests {
             (20000, 20010),
             &existing,
             &want(&[("a", &[80]), ("d", &[80]), ("e", &[80])]),
+            &BTreeMap::new(),
         );
         assert_eq!(a.ports["e"], tcp_ports(&[(80, 20001)]));
     }
@@ -708,6 +801,7 @@ mod tests {
             (20000, 20001),
             &PortMap::new(),
             &want(&[("a", &[80, 443]), ("b", &[80])]),
+            &BTreeMap::new(),
         );
         assert_eq!(
             a.ports,
@@ -715,7 +809,12 @@ mod tests {
         );
         assert_eq!(a.unmapped, vec![("b".to_owned(), PortKey::tcp(80))]);
         // The range ends at 65535 without overflowing.
-        let a = allocate((65535, 65535), &PortMap::new(), &want(&[("a", &[80, 443])]));
+        let a = allocate(
+            (65535, 65535),
+            &PortMap::new(),
+            &want(&[("a", &[80, 443])]),
+            &BTreeMap::new(),
+        );
         assert_eq!(a.ports, map(&[("a", &[(80, 65535)])]));
         assert_eq!(a.unmapped, vec![("a".to_owned(), PortKey::tcp(443))]);
     }
@@ -723,7 +822,12 @@ mod tests {
     #[test]
     fn assignments_outside_a_changed_range_are_replaced() {
         let existing = map(&[("a", &[(80, 30000)])]);
-        let a = allocate((20000, 20010), &existing, &want(&[("a", &[80])]));
+        let a = allocate(
+            (20000, 20010),
+            &existing,
+            &want(&[("a", &[80])]),
+            &BTreeMap::new(),
+        );
         assert_eq!(a.ports, map(&[("a", &[(80, 20000)])]));
     }
 
@@ -734,9 +838,109 @@ mod tests {
         let mut reversed = desired.clone();
         reversed.reverse();
         assert_eq!(
-            allocate((20000, 20010), &existing, &desired),
-            allocate((20000, 20010), &existing, &reversed)
+            allocate((20000, 20010), &existing, &desired, &BTreeMap::new()),
+            allocate((20000, 20010), &existing, &reversed, &BTreeMap::new())
         );
+    }
+
+    fn udp_want(entries: &[(&str, &[u16])]) -> Vec<(String, Vec<PortKey>)> {
+        entries
+            .iter()
+            .map(|(n, ports)| {
+                (
+                    (*n).to_owned(),
+                    ports.iter().map(|p| PortKey::udp(*p)).collect(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_released_port_waits_out_its_quarantine() {
+        // Gateway a's UDP 53 had 20000; its Service is gone and b is new.
+        let existing = PortMap::new();
+        let want_b = udp_want(&[("b", &[53])]);
+        let recent = BTreeMap::from([((20000, PortProtocol::Udp), Duration::from_secs(2))]);
+        let a = allocate((20000, 20010), &existing, &want_b, &recent);
+        assert_eq!(
+            a.ports["b"][&PortKey::udp(53)],
+            20001,
+            "not the port freed 2 s ago"
+        );
+        assert_eq!(a.reused, Vec::new());
+        // Quarantine is per transport: a TCP listener may take it.
+        let a = allocate((20000, 20010), &existing, &want(&[("c", &[80])]), &recent);
+        assert_eq!(a.ports["c"][&PortKey::tcp(80)], 20000);
+        // Once the quarantine is over, the lowest port is free again.
+        let old = BTreeMap::from([((20000, PortProtocol::Udp), QUARANTINE)]);
+        let a = allocate((20000, 20010), &existing, &want_b, &old);
+        assert_eq!(a.ports["b"][&PortKey::udp(53)], 20000);
+        // Existing assignments are kept even on a quarantined port.
+        let kept = BTreeMap::from([("b".to_owned(), BTreeMap::from([(PortKey::udp(53), 20000)]))]);
+        let a = allocate((20000, 20010), &kept, &want_b, &recent);
+        assert_eq!(a.ports["b"][&PortKey::udp(53)], 20000);
+    }
+
+    #[test]
+    fn an_exhausted_range_reuses_the_port_released_longest_ago() {
+        let existing =
+            BTreeMap::from([("x".to_owned(), BTreeMap::from([(PortKey::udp(1), 20001)]))]);
+        let recent = BTreeMap::from([
+            ((20000, PortProtocol::Udp), Duration::from_secs(5)),
+            ((20002, PortProtocol::Udp), Duration::from_secs(20)),
+        ]);
+        let wanted = udp_want(&[("b", &[53, 54]), ("x", &[1])]);
+        let a = allocate((20000, 20002), &existing, &wanted, &recent);
+        assert_eq!(a.ports["b"][&PortKey::udp(53)], 20002, "the oldest first");
+        assert_eq!(a.ports["b"][&PortKey::udp(54)], 20000);
+        assert_eq!(
+            a.reused,
+            vec![
+                ("b".to_owned(), PortKey::udp(53), 20002),
+                ("b".to_owned(), PortKey::udp(54), 20000)
+            ]
+        );
+        assert_eq!(a.unmapped, Vec::new());
+        // With no port at all left, the pair is unmapped as before.
+        let a = allocate(
+            (20000, 20002),
+            &existing,
+            &udp_want(&[("b", &[53, 54, 55]), ("x", &[1])]),
+            &recent,
+        );
+        assert_eq!(a.unmapped, vec![("b".to_owned(), PortKey::udp(55))]);
+    }
+
+    #[test]
+    fn the_quarantine_records_ports_the_services_let_go() {
+        let t0 = Instant::now();
+        let mut q = Quarantine::default();
+        let both = BTreeMap::from([
+            ("a".to_owned(), BTreeMap::from([(PortKey::udp(53), 20000)])),
+            ("b".to_owned(), BTreeMap::from([(PortKey::tcp(80), 20001)])),
+        ]);
+        q.observe(&both, t0);
+        assert!(q.ages(t0).is_empty(), "nothing released yet");
+        let only_b =
+            BTreeMap::from([("b".to_owned(), BTreeMap::from([(PortKey::tcp(80), 20001)]))]);
+        q.observe(&only_b, t0 + Duration::from_secs(1));
+        let t = t0 + Duration::from_secs(3);
+        assert_eq!(
+            q.ages(t),
+            BTreeMap::from([((20000, PortProtocol::Udp), Duration::from_secs(2))])
+        );
+        // The allocation that follows does not hand 20000 to a new UDP listener.
+        let mut desired = want(&[("b", &[80])]);
+        desired.extend(udp_want(&[("c", &[53])]));
+        let a = allocate((20000, 20010), &only_b, &desired, &q.ages(t));
+        assert_eq!(a.ports["c"][&PortKey::udp(53)], 20002);
+        // Forgotten after the quarantine; a port in use again is no longer quarantined.
+        q.observe(&only_b, t0 + Duration::from_secs(1) + QUARANTINE);
+        assert!(q.ages(t0 + QUARANTINE * 2).is_empty());
+        q.observe(&both, t);
+        q.observe(&only_b, t);
+        q.observe(&both, t);
+        assert!(q.ages(t).is_empty());
     }
 
     fn settings() -> Settings {
@@ -870,6 +1074,7 @@ mod tests {
             (20000, 20010),
             &PortMap::new(),
             &[("dns".to_owned(), wanted)],
+            &BTreeMap::new(),
         );
         let ports = &a.ports["dns"];
         assert_eq!(ports[&PortKey::tcp(53)], 20000);
@@ -880,6 +1085,7 @@ mod tests {
             (20000, 20010),
             &a.ports,
             &[("dns".to_owned(), vec![PortKey::udp(53), PortKey::tcp(53)])],
+            &BTreeMap::new(),
         );
         assert_eq!(
             again.ports["dns"],

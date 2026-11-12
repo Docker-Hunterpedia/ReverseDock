@@ -46,7 +46,7 @@ tcp_services:
 
 - **A session is one client address and port** on one listener. It gets its own socket, connected to one backend that the service's balancer picks when the session starts, and keeps that backend for its whole life, so a protocol with state (WireGuard, QUIC, a game) always reaches the same server. The connected socket also means the kernel delivers only that backend's datagrams to the session.
 - **Replies** of the backend go back to the client from the listener's socket. ReverseDock never sends a datagram that is not a backend's reply on a live session: no error answers, no reply to an address that has not sent anything.
-- **A session ends** after `timeouts.idle` with no datagram in either direction, after `responses` replies when set, when its backend answers with ICMP "port unreachable" (the next datagram from the client opens a new session, on another backend if one is up), or when its listener is removed.
+- **A session ends** after `timeouts.idle` with no datagram in either direction, after `responses` replies when set, when its backend answers with ICMP "port unreachable" (the next datagram from the client opens a new session, on another backend if one is up), or when its listener is removed (see [Reloads](#reloads)).
 - **Datagrams up to 64 KiB** are relayed whole. One that cannot be sent on (an IPv6 datagram over 65,507 bytes to an IPv4 backend) is dropped and counted as `oversize`, never cut.
 
 ## Routes
@@ -107,7 +107,9 @@ A session keeps its backend until it ends, also across reloads and when the back
 
 ## Reloads
 
-A reload keeps a `udp` listener's socket when its address is unchanged: open sessions keep their sockets and backends, and new sessions follow the new routes and services. A removed listener (or one that moves) opens no more sessions and closes the open ones after `lifecycle.drain_timeout` (default `8s`); sessions that end before that end normally.
+A reload keeps a `udp` listener's socket when its address is unchanged: open sessions keep their sockets and backends, and new sessions follow the new routes and services. A removed listener (or one that moves) opens no more sessions and closes the open ones after `lifecycle.drain_timeout` (default `8s`); sessions that end before that end normally. Its socket stays bound while its sessions drain, because their replies leave from it.
+
+**A UDP listener replaced on its address ends its sessions immediately.** When a reload removes a listener and another `udp` listener needs the same address (a listener renamed, or a Kubernetes Gateway that gets the internal port of one just deleted), the new listener takes the old one's socket over and answers at once; the old listener's sessions end (`rdock_udp_session_ends_total{reason="closed"}`), and their clients' next datagrams open sessions on the new listener. The same holds when a later reload needs the port of a listener that is still draining: the drain ends and the port is bound. A draining session would gain little here, since its client's next datagram reaches the new listener anyway. Listeners whose address is unchanged are not affected.
 
 ## Metrics and logs
 

@@ -352,7 +352,7 @@ kubectl get gatewayclass reversedock -o yaml
 | Condition | On | Meaning |
 |---|---|---|
 | `Accepted` | GatewayClass, Gateway, ListenerSet, listener, route parent | The object is valid and ReverseDock will use it. `False` has a reason such as `UnsupportedProtocol`, `NotAllowedByListeners`, `NoMatchingParent`. |
-| `Programmed` | Gateway, ListenerSet, listener | The Service has an address and maps the port, and the listener is open. `Pending` waits for the Service; `AddressNotAssigned` waits for the load balancer; `Invalid` has a message. |
+| `Programmed` | Gateway, ListenerSet, listener | The Service has an address and maps the port, and the listener is open. `Pending` waits for the Service, or for the internal port to be free on this replica (a removed listener may hold it for a moment; it is retried); `AddressNotAssigned` waits for the load balancer; `Invalid` has a message. |
 | `ResolvedRefs` | listener, route parent | Every reference resolves: certificates, route kinds, Services, grants. The reason names the first failure (`InvalidCertificateRef`, `RefNotPermitted`, `BackendNotFound`, `InvalidKind`). |
 | `Conflicted` | listener | Two listeners of a port disagree (`ProtocolConflict`, `HostnameConflict`). Between a Gateway's own listeners both are refused and neither wins; a ListenerSet's listener is refused and the one that takes precedence keeps working. |
 | `SupportedVersion` | GatewayClass | `False` means the CRD bundle is not 1.7; the class stays accepted. |
@@ -390,6 +390,7 @@ If ReverseDock gets a burst of changes, translations are coalesced: at most one 
 ## Limits
 
 - One Gateway port is one listener in every pod. The port range bounds how many (10,000 by default).
+- An internal port a deleted Gateway released is not given to another Gateway for 30 seconds (unless the range has no other). `Programmed` reflects the leader's own data plane; another replica that cannot bind a port yet retries it without saying so in the status.
 - Listeners are in-process sockets in shared pods. A Gateway's address is a Service address, not a pod: a host-port DaemonSet exposes the file-configured Ingress listeners only, not Gateway listeners.
 - `providers.kubernetes.namespaces` (chart `watchNamespaces`) limits which namespaces are watched.
 - No request timeout or retry policy yet ([above](#what-is-supported)).

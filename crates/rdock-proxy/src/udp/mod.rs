@@ -15,7 +15,10 @@
 //! never answered: rdock sends a client nothing but the backend's replies on its own session.
 //!
 //! A session ends after `timeouts.idle` without a datagram in either direction, after
-//! `responses` replies, when its backend refuses, or when its listener closes. Replies leave
+//! `responses` replies, when its backend refuses, or when its listener closes. A removed
+//! listener drains its sessions for `lifecycle.drain_timeout` and keeps its socket that long,
+//! unless a reload needs the address for another `udp` listener: the replaced listener then
+//! ends its sessions at once and hands the socket over (see `server.rs`). Replies leave
 //! from the listener's socket; on a wildcard bind (`:53`) of a host with several addresses the
 //! kernel picks their source address by route, so such listeners should name their address.
 
@@ -33,12 +36,13 @@ use rdock_model::config::UdpSessions;
 use rdock_model::values::IpNetwork;
 use rdock_observability::{IntCounter, Metrics};
 use tokio::net::UdpSocket;
-use tokio::sync::{mpsc, watch};
+use tokio::sync::{mpsc, oneshot, watch};
 use tokio::task::JoinSet;
 use tokio::time::Instant;
 
 pub(crate) use compile::compile_udp;
 
+use crate::listener::{Socket, Stop};
 use crate::proxy::Shared;
 use crate::runtime::{Candidate, Member, ServiceRuntime};
 use crate::tcp::rule::{TcpFacts, TcpRule};
@@ -174,11 +178,15 @@ fn drop_datagram(metrics: &Metrics, listener: &str, reason: &str) {
 }
 
 /// Serves a `udp` listener until `stop` asks for it to close; then lets the open sessions run
-/// for up to the drain time (new clients are refused) and closes the rest.
+/// for up to the drain time (new clients are refused) and closes the rest. A later request may
+/// shorten the drain (a reload that needs the port ends it at once). With `hand_off`, the
+/// sessions end at once and the socket goes back through `hand_back` to the listener that takes
+/// the address over; otherwise the socket is closed and `hand_back` dropped when the drain ends.
 pub(crate) async fn serve(
     name: Arc<str>,
     socket: UdpSocket,
-    mut stop: watch::Receiver<Option<Duration>>,
+    mut stop: watch::Receiver<Option<Stop>>,
+    hand_back: oneshot::Sender<Socket>,
     shared: Arc<Shared>,
 ) {
     let (close, closed) = watch::channel(false);
@@ -192,6 +200,8 @@ pub(crate) async fn serve(
     let mut sessions = JoinSet::new();
     let mut buf = vec![0u8; DATAGRAM_BUFFER];
     let mut deadline: Option<Instant> = None;
+    let mut stop_open = true;
+    let mut hand_off = false;
     loop {
         while sessions.try_join_next().is_some() {}
         if deadline.is_some() && sessions.is_empty() {
@@ -204,10 +214,22 @@ pub(crate) async fn serve(
             }
         };
         tokio::select! {
-            changed = stop.changed(), if deadline.is_none() => {
-                let requested = *stop.borrow();
-                if changed.is_err() || requested.is_some() {
-                    deadline = Some(Instant::now() + requested.unwrap_or_default());
+            changed = stop.changed(), if stop_open => {
+                let requested = *stop.borrow_and_update();
+                let request = if changed.is_err() {
+                    // The listener's owner is gone: close now.
+                    stop_open = false;
+                    Some(Stop::drain(Duration::ZERO))
+                } else {
+                    requested
+                };
+                if let Some(request) = request {
+                    if request.hand_off {
+                        hand_off = true;
+                        break;
+                    }
+                    let at = Instant::now() + request.drain;
+                    deadline = Some(deadline.map_or(at, |d| d.min(at)));
                 }
             }
             () = drain_over => {
@@ -235,8 +257,29 @@ pub(crate) async fn serve(
             },
         }
     }
+    if hand_off && !sessions.is_empty() {
+        tracing::info!(listener = %listener.name, sessions = sessions.len(),
+            "another UDP listener takes over the address; ending the open sessions");
+    }
     let _ = close.send(true);
     while sessions.join_next().await.is_some() {}
+    // Every session task has ended, so the listener holds the only reference to the socket.
+    let Listener { socket, .. } = listener;
+    if hand_off {
+        match Arc::try_unwrap(socket) {
+            Ok(socket) => {
+                let _ = hand_back.send(Socket::Udp(socket));
+            }
+            Err(socket) => {
+                drop(socket);
+                drop(hand_back);
+            }
+        }
+    } else {
+        // The socket closes before the reload hears that it did.
+        drop(socket);
+        drop(hand_back);
+    }
 }
 
 /// Errors a UDP socket reports for an earlier datagram (an ICMP answer), not about itself.

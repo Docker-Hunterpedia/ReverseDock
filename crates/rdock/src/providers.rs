@@ -117,7 +117,8 @@ fn start_kubernetes(
     changed: &mpsc::Sender<()>,
     tasks: &mut Vec<JoinHandle<()>>,
 ) {
-    use rdock_provider_kubernetes::{PROVIDER, RunContext, State, run};
+    use rdock_provider_kubernetes::runtime::{Options, run_with};
+    use rdock_provider_kubernetes::{PROVIDER, RunContext, State};
 
     // Namespace and pod name from the downward API; `run` resolves the rest and logs one line
     // with the namespace, identity, scopes and what is enabled.
@@ -125,9 +126,22 @@ fn start_kubernetes(
     // Ready only once the provider has published its first complete view (ADR-0029).
     engine.await_provider(PROVIDER);
     let (tx, rx) = watch::channel(State::default());
-    tasks.push(tokio::spawn(run(
+    // The provider's internal listeners the data plane could not bind, so their Gateway
+    // listeners do not report `Programmed=True` while they do not serve.
+    let (unbound_tx, unbound_rx) = watch::channel(std::collections::BTreeSet::new());
+    tasks.push(tokio::spawn(own_unbound(
+        engine.unbound(),
+        PROVIDER,
+        unbound_tx,
+    )));
+    let options = Options {
+        unbound: Some(unbound_rx),
+        ..Options::default()
+    };
+    tasks.push(tokio::spawn(run_with(
         settings.clone(),
         context,
+        options,
         tx,
         stop.clone(),
     )));
@@ -153,6 +167,35 @@ fn start_kubernetes(
     );
 }
 
+/// Forwards the names of `provider`'s listeners in the engine's unbound set (without the
+/// `@provider` suffix) until the provider stops listening.
+#[cfg(feature = "kubernetes")]
+async fn own_unbound(
+    mut unbound: watch::Receiver<crate::engine::Unbound>,
+    provider: &'static str,
+    tx: watch::Sender<std::collections::BTreeSet<String>>,
+) {
+    let suffix = format!("@{provider}");
+    loop {
+        let names: std::collections::BTreeSet<String> = unbound
+            .borrow_and_update()
+            .keys()
+            .filter_map(|name| name.strip_suffix(&suffix).map(str::to_owned))
+            .collect();
+        tx.send_if_modified(|current| {
+            let changed = *current != names;
+            if changed {
+                *current = names;
+            }
+            changed
+        });
+        tokio::select! {
+            changed = unbound.changed() => if changed.is_err() { return },
+            () = tx.closed() => return,
+        }
+    }
+}
+
 /// Hands each new state of a provider to the engine and asks for a reload.
 #[cfg(any(feature = "docker", feature = "swarm", feature = "kubernetes"))]
 async fn follow(
@@ -170,5 +213,32 @@ async fn follow(
             // A full queue already holds a pending reload.
             let _ = changed.try_send(());
         }
+    }
+}
+
+#[cfg(all(test, feature = "kubernetes"))]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn the_provider_sees_its_own_unbound_listeners_without_the_suffix() {
+        let address = rdock_model::values::ListenAddress::any(20004);
+        let udp = rdock_model::config::ListenerProtocol::Udp;
+        let (engine_tx, engine_rx) = watch::channel(crate::engine::Unbound::from([
+            ("gwu-a@kubernetes".to_owned(), (address, udp)),
+            ("web@docker".to_owned(), (address, udp)),
+        ]));
+        let (tx, mut rx) = watch::channel(std::collections::BTreeSet::new());
+        let task = tokio::spawn(own_unbound(engine_rx, "kubernetes", tx));
+        rx.changed().await.unwrap();
+        assert_eq!(
+            *rx.borrow_and_update(),
+            std::collections::BTreeSet::from(["gwu-a".to_owned()])
+        );
+        engine_tx.send_replace(crate::engine::Unbound::new());
+        rx.changed().await.unwrap();
+        assert!(rx.borrow_and_update().is_empty());
+        drop(rx);
+        task.await.unwrap();
     }
 }

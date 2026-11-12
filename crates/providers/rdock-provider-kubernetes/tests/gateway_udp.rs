@@ -72,6 +72,47 @@ fn udp_route() {
 }
 
 #[test]
+fn a_listener_the_data_plane_cannot_bind_is_not_reported_programmed() {
+    // Not an upstream test: the replica's data plane left the internal listener out (its port
+    // was still held by a removed listener). The Gateway and its listener say so, and the
+    // internal listener stays in the fragment, so the data plane keeps retrying it.
+    let (mut cluster, r) = router(&["udproute-simple"]);
+    let gw = (INFRA, "udp-gateway");
+    let port = listener_port(&cluster, gw, "udp");
+    assert_condition(
+        &gateway(&r.translation, gw.0, gw.1).conditions,
+        "Programmed",
+        true,
+        "Programmed",
+    );
+    let internal = rdock_provider_kubernetes::gateway::listeners::internal_udp_listener_name(
+        &(gw.0.to_owned(), gw.1.to_owned()),
+        port,
+    );
+    cluster.inventory.unbound_listeners.insert(internal.clone());
+    let r = Router::new(&mut cluster);
+    let g = gateway(&r.translation, gw.0, gw.1);
+    assert_condition(&g.conditions, "Programmed", false, "Pending");
+    let l = listener(g, "udp");
+    assert_condition(&l.conditions, "Programmed", false, "Pending");
+    assert_condition(&l.conditions, "Accepted", true, "Accepted");
+    assert!(r.translation.fragment.listeners.contains_key(&internal));
+    assert_eq!(r.datagram(gw, port), deployments(&["udp-echo"]));
+    // Bound on the retry: programmed again.
+    cluster.inventory.unbound_listeners.clear();
+    let r = Router::new(&mut cluster);
+    let g = gateway(&r.translation, gw.0, gw.1);
+    assert_condition(&g.conditions, "Programmed", true, "Programmed");
+    assert_condition(
+        &listener(g, "udp").conditions,
+        "Programmed",
+        true,
+        "Programmed",
+    );
+    assert_udp_accepted(&r, (INFRA, "udp-route"), gw);
+}
+
+#[test]
 fn udp_route_invalid_backend_ref_nonexistent() {
     // UDPRouteInvalidBackendRefNonexistent.
     let (cluster, r) = router(&["udproute-invalid-backendref-nonexistent"]);

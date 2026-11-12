@@ -67,6 +67,11 @@ pub struct Inventory {
     /// Gateway API kinds whose CRD is not installed (e.g. `TLSRoute`); they are skipped, not
     /// fatal.
     pub missing_kinds: BTreeSet<String>,
+    /// Internal listeners (fragment names, without `@kubernetes`) that this replica's data
+    /// plane left out because their port could not be bound; it retries them. Not a cluster
+    /// object: the runtime fills it in before translating. Their Gateway listeners report
+    /// `Programmed=False/Pending` meanwhile.
+    pub unbound_listeners: BTreeSet<String>,
 }
 
 impl Inventory {

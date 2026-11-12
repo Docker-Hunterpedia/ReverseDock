@@ -427,6 +427,96 @@ listeners:
     assert_eq!(receive(&leaving, SILENCE).await, None);
 }
 
+/// A configuration with a `udp` listener `name` on `port` (when given) to `backend`, beside a
+/// listener `kept` on `kept_port` that every version has, with a 10 s drain.
+fn replacing_config(listener: Option<(&str, u16)>, kept_port: u16, backend: SocketAddr) -> String {
+    let (listeners, routes) = match listener {
+        Some((name, port)) => (
+            format!("  {name}: {{ address: \"127.0.0.1:{port}\", protocol: udp }}\n"),
+            format!("  {name}: {{ listeners: [{name}], service: s }}\n"),
+        ),
+        None => (String::new(), String::new()),
+    };
+    format!(
+        r#"
+lifecycle: {{ drain_timeout: 10s }}
+listeners:
+  kept: {{ address: "127.0.0.1:{kept_port}", protocol: udp }}
+{listeners}udp_routes:
+  kept: {{ listeners: [kept], service: s }}
+{routes}udp_services:
+  s: {{ backends: [{{ address: "{backend}" }}] }}
+"#
+    )
+}
+
+#[tokio::test]
+async fn a_udp_listener_replaced_on_its_address_in_one_reload_answers_at_once() {
+    let one = UdpEcho::start("one").await;
+    let two = UdpEcho::start("two").await;
+    let (port, kept) = (free_udp_port(), free_udp_port());
+    let rdock = Rdock::start(
+        RDOCK,
+        &replacing_config(Some(("old", port)), kept, one.addr),
+    );
+    let open = udp::client(addr(port)).await;
+    assert_eq!(text(ask(&open, b"before", WAIT).await), "one:before");
+    assert_eq!(sessions(&rdock, "old", "old"), "1");
+    // Another name on the same address: the old listener is removed and the new one needs its
+    // port, with the old one's session still open and a 10 s drain.
+    rdock.write_config(&replacing_config(Some(("new", port)), kept, two.addr));
+    let (status, body) = rdock.reload();
+    assert_eq!(status, 200, "{body}");
+    let started = Instant::now();
+    let fresh = udp::client(addr(port)).await;
+    assert_eq!(text(ask(&fresh, b"new", WAIT).await), "two:new");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    // The replaced listener's session ended at once; its client's next datagram opens a
+    // session on the new listener.
+    eventually(WAIT, "sessions", "0", || sessions(&rdock, "old", "old"));
+    assert_eq!(ends(&rdock, "old", "closed"), "1");
+    assert_eq!(text(ask(&open, b"again", WAIT).await), "two:again");
+    assert_eq!(sessions(&rdock, "new", "new"), "2");
+}
+
+#[tokio::test]
+async fn a_port_a_draining_udp_listener_holds_is_free_for_the_next_reload() {
+    let one = UdpEcho::start("one").await;
+    let two = UdpEcho::start("two").await;
+    let (port, kept) = (free_udp_port(), free_udp_port());
+    let rdock = Rdock::start(
+        RDOCK,
+        &replacing_config(Some(("old", port)), kept, one.addr),
+    );
+    let open = udp::client(addr(port)).await;
+    assert_eq!(text(ask(&open, b"before", WAIT).await), "one:before");
+    // Removed: its session drains (for up to 10 s) and keeps the socket meanwhile.
+    rdock.write_config(&replacing_config(None, kept, one.addr));
+    let (status, body) = rdock.reload();
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(text(ask(&open, b"draining", WAIT).await), "one:draining");
+    assert_eq!(sessions(&rdock, "old", "old"), "1");
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    // A second reload wants the port for a new listener: the drain ends, the port is bound.
+    rdock.write_config(&replacing_config(Some(("new", port)), kept, two.addr));
+    let (status, body) = rdock.reload();
+    assert_eq!(status, 200, "{body}");
+    let started = Instant::now();
+    let fresh = udp::client(addr(port)).await;
+    assert_eq!(text(ask(&fresh, b"new", WAIT).await), "two:new");
+    assert!(
+        started.elapsed() < Duration::from_secs(1),
+        "{:?}",
+        started.elapsed()
+    );
+    eventually(WAIT, "sessions", "0", || sessions(&rdock, "old", "old"));
+    assert_eq!(ends(&rdock, "old", "closed"), "1");
+}
+
 #[tokio::test]
 async fn large_datagrams_round_trip_and_oversize_ones_are_counted() {
     let echo = UdpEcho::start("e").await;
