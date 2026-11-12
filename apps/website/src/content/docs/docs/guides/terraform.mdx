@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The ReverseDock provider <Status since="v0.8" /> manages the **routes, services and middlewares that the admin API owns** (`name@api` in the running configuration) from Terraform or OpenTofu. Its source is in `clients/terraform` of the repository.
+The ReverseDock provider <Status planned="v0.8" /> manages the **routes, services and middlewares that the admin API owns** (`name@api` in the running configuration) from Terraform or OpenTofu. Its source is in `clients/terraform` of the repository.
 
 :::caution[Not published yet]
 The provider is **not on the Terraform Registry or the OpenTofu Registry.** Today you build it from source and point Terraform or OpenTofu at the binary (see [Install from source](#install-from-source)). It has been tested with Terraform 1.17.2 and OpenTofu 1.13.9 against an in-process fake of the admin API; it has not yet been run against a real `rdock` outside the project's CI job for that. Publishing needs two things only a maintainer can do: a separate public repository named `terraform-provider-reversedock`, which both registries require ([Terraform Registry: publishing providers](https://developer.hashicorp.com/terraform/registry/providers/publishing), checked 2026-11-11), and a GPG key to sign releases.

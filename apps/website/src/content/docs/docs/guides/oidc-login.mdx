@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The `oidc` middleware <Status since="v0.8" /> logs browser users in with an OpenID Connect
+The `oidc` middleware <Status planned="v0.8" /> logs browser users in with an OpenID Connect
 provider before a request reaches the backend. The backend gets the user's identity in headers
 and never handles the login itself; [rate limits, quotas](/docs/guides/quotas/), the cache key
 and the access log see the user as the request's [consumer](/docs/guides/api-keys/).

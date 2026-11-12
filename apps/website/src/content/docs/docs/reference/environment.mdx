@@ -71,7 +71,7 @@ when the file cannot be read, `127.0.0.1:2080` is used.
 
 ## Read by other programs, not by `rdock`
 
-The [Terraform and OpenTofu provider](/docs/guides/terraform/) <Status since="v0.8" /> reads `RDOCK_ADMIN_URL` (the URL of the admin API, `https://…`, or `http://` on a loopback address) and `RDOCK_ADMIN_TOKEN` (the same kind of API token as above). The `rdock` binary ignores `RDOCK_ADMIN_URL`; it takes `RDOCK_ADMIN` as `IP:port`.
+The [Terraform and OpenTofu provider](/docs/guides/terraform/) <Status planned="v0.8" /> reads `RDOCK_ADMIN_URL` (the URL of the admin API, `https://…`, or `http://` on a loopback address) and `RDOCK_ADMIN_TOKEN` (the same kind of API token as above). The `rdock` binary ignores `RDOCK_ADMIN_URL`; it takes `RDOCK_ADMIN` as `IP:port`.
 
 ## Variables in the configuration
 

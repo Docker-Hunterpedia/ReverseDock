@@ -103,7 +103,7 @@ routes:
     max_body: 2GiB
 ```
 
-## Hold the body until it is complete: `hold_body` <Status since="v0.8" />
+## Hold the body until it is complete: `hold_body` <Status planned="v0.8" />
 
 By default a request body streams to the backend as it arrives. The `hold_body` middleware holds it instead and forwards it in one piece once the last byte is in:
 

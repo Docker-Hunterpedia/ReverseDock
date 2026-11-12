@@ -16,6 +16,7 @@ reversedock/
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite
 │   │   ├── kubernetes.yml          # (v0.7) chart lint/render/kubeconform and manifests in sync; Gateway API conformance on kind and Helm on k3s (both fail the workflow; passed 2026-11-11; not yet required checks; ADR-0029)
+│   │   ├── cache.yml               # (v0.8) `http-cache`: the public RFC 9111 suite http-tests/cache-tests (pinned by commit, Node.js 24) against the cache at safe defaults, gated by tests/conformance/http-cache/allowlist.json; on PRs touching the cache, weekly; passed its gate 2026-11-12; not a required check (ADR-0030)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly + on parser changes (tests/fuzz)
 │   │   ├── weekly.yml              # RustSec advisories for both lockfiles; tokio canary on the newest 1.x
 │   │   ├── bench.yml               # nightly regression check: rdock vs NGINX in one job, artifacts only
@@ -63,6 +64,7 @@ reversedock/
 │       ├── package.json · vite.config.ts · tsconfig.json · components.json
 │       └── dist/                   # build output (gitignored), embedded by rdock-admin
 ├── clients/
+│   ├── go/                         # generated Go client of the admin API (used by the Terraform provider)
 │   └── terraform/                  # (v0.8) Terraform/OpenTofu provider (Go module, replace to ../go): internal/provider, examples, generated docs, testdata/rdock.yaml; not published (ADR-0030)
 ├── schema/
 │   └── rdock.v1.json               # generated JSON Schema, committed; CI fails if stale
@@ -78,6 +80,7 @@ reversedock/
 ├── tests/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
+│   ├── conformance/http-cache/     # (v0.8) harness for http-tests/cache-tests: rdock.yaml (the cache at safe defaults), summarize.mjs (the gate), allowlist.json (test id → reason), README
 │   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs
 │   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello, disk_cache_header, json_patch and oidc_cookie (v0.8); label parser later
 ├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
@@ -145,7 +148,7 @@ reversedock/
 | Unit | `cargo nextest` | per crate | every PR |
 | Property / grammar | `proptest` | rules, labels, path normalisation | every PR |
 | Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; Pebble and toxiproxy later) | `crates/rdock/tests/e2e_*.rs` | every PR |
-| Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`; passed 2026-11-11, fails the workflow, not yet a required check) | `tests/conformance` | PRs touching providers; nightly |
+| Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`; GATEWAY-HTTP, -GRPC, -TLS, -TCP passed 2026-11-11 and GATEWAY-UDP 2026-11-12, commit `43d81de`; fails the workflow, not yet a required check); RFC 9111 suite `http-tests/cache-tests` (`cache.yml`; gate passed 2026-11-12, not a required check) | `tests/conformance` | PRs touching providers; nightly |
 | Kubernetes | Translator and status tests on fixtures (`tests/gateway_conformance.rs` transcribes upstream conformance tests); runtime tests against a bare kube-apiserver when `RDOCK_TEST_KUBECONFIG` is set (not wired into CI); chart `helm lint --strict`, `helm template` + kubeconform, manifests in sync; Helm on k3s (fails the workflow; passed 2026-11-11) | `crates/providers/rdock-provider-kubernetes`, `deploy/`, `.github/workflows/kubernetes.yml` | PRs touching them; nightly |
 | Fuzz | `cargo-fuzz` (differential HTTP/1 framing vs httparse, rules parser, config loader) | `tests/fuzz` | weekly + parser PRs |
 | Load / soak | `oha`, `wrk2`, `k6`, 24 h soak | `benchmarks/` | nightly rdock-vs-NGINX regression check on a shared runner (`bench.yml`); published results from fixed hardware, committed per release |

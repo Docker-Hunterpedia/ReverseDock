@@ -8,7 +8,7 @@ sidebar:
 import Status from '../../../../components/Status.astro';
 
 When a route (or `defaults`) sets `errors.format: problem` or `auto`
-<Status since="v0.8" />, the errors ReverseDock produces itself are
+<Status planned="v0.8" />, the errors ReverseDock produces itself are
 `application/problem+json` documents ([RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)). Each
 `type` below is a stable URI: this page and the type's anchor, for example
 `https://reversedock.oday-bakkour.com/docs/reference/problems/#quota-exceeded`. Match on `type`
@@ -47,7 +47,7 @@ Sent by: A credential sent twice (two `X-API-Key` headers, two tokens), an HTTP/
 
 **400 — Request validation failed.** The request does not match the schema of this route. `errors` lists where.
 
-Sent by: [`validate`](/docs/guides/request-validation/) <Status since="v0.8" />. `errors` holds at most `max_errors` entries (default 5) `{ "pointer": "/query/limit", "message": "must be at most 100" }`: `pointer` is a JSON Pointer into an object with the members `path`, `query`, `headers`, `cookies` and `body`; `message` names the failing rule and the schema's own limits, never the value sent. `errors_truncated: true` says more errors were found. A body that is not JSON is reported as `{ "pointer": "/body", "message": "is not valid JSON" }`. The pre-v0.8 JSON object (`errors.format: html` with a client that asks for JSON) carries `errors` too.
+Sent by: [`validate`](/docs/guides/request-validation/) <Status planned="v0.8" />. `errors` holds at most `max_errors` entries (default 5) `{ "pointer": "/query/limit", "message": "must be at most 100" }`: `pointer` is a JSON Pointer into an object with the members `path`, `query`, `headers`, `cookies` and `body`; `message` names the failing rule and the schema's own limits, never the value sent. `errors_truncated: true` says more errors were found. A body that is not JSON is reported as `{ "pointer": "/body", "message": "is not valid JSON" }`. The pre-v0.8 JSON object (`errors.format: html` with a client that asks for JSON) carries `errors` too.
 
 ```json
 {
@@ -115,7 +115,7 @@ Sent by: `security.limits.max_uri_bytes`.
 
 **415 — Unsupported media type.** The request body's content type is not accepted here.
 
-Sent by: [`validate`](/docs/guides/request-validation/) when the route checks the body and its `Content-Type` is not JSON (or not a type the OpenAPI operation lists); [`transform`](/docs/guides/transforming-requests/) with `on_non_json: reject` <Status since="v0.8" />.
+Sent by: [`validate`](/docs/guides/request-validation/) when the route checks the body and its `Content-Type` is not JSON (or not a type the OpenAPI operation lists); [`transform`](/docs/guides/transforming-requests/) with `on_non_json: reject` <Status planned="v0.8" />.
 
 ### `expectation-failed`
 
@@ -127,7 +127,7 @@ Sent by: Any other `Expect` value.
 
 **422 — Request transformation failed.** The request body cannot be transformed for this route: it lacks a value the route expects.
 
-Sent by: [`transform`](/docs/guides/transforming-requests/) <Status since="v0.8" /> when its request patch cannot be applied (a `test` operation fails, a location is missing) and `on_error` is `reject` (the default). `errors` holds one entry `{ "operation": 0, "op": "test", "message": "the value is not the expected one" }`, naming the operation of the configured patch, never the body's content.
+Sent by: [`transform`](/docs/guides/transforming-requests/) <Status planned="v0.8" /> when its request patch cannot be applied (a `test` operation fails, a location is missing) and `on_error` is `reject` (the default). `errors` holds one entry `{ "operation": 0, "op": "test", "message": "the value is not the expected one" }`, naming the operation of the configured patch, never the body's content.
 
 ### `rate-limited`
 

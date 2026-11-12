@@ -65,7 +65,7 @@ Middlewares before `static` run as usual, so you can put `basic_auth`, `ip_allow
 | `nosniff` | `true` | Send `X-Content-Type-Options: nosniff`. |
 | `types` | `{}` | Extension → media type, overriding the built-in table. |
 | `pass_through` | `false` | Send requests that name no file on to the route's service. |
-| `listing` | `false` | List a directory that has no index file <Status since="v0.8" />; see [directory listings](#directory-listings). |
+| `listing` | `false` | List a directory that has no index file <Status planned="v0.8" />; see [directory listings](#directory-listings). |
 
 ## A single-page app
 
@@ -196,7 +196,7 @@ stops browsers from guessing. `.ts` is MPEG transport stream video in the table;
 
 ## Directory listings
 
-With `listing: true` <Status since="v0.8" />, a request for a directory that has no index file
+With `listing: true` <Status planned="v0.8" />, a request for a directory that has no index file
 answers with the names in it instead of 404, like NGINX's `autoindex`, Caddy's `browse` and
 Apache's `Indexes`. It is off by default.
 

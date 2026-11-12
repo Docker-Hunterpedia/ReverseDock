@@ -52,7 +52,7 @@ rdock-proxy          compile → Runtime · own listeners/accept loops (ADR-0012
 rdock-tls            rustls SNI resolver · cert store/index · TLS policies · mTLS · PROXY protocol glue · local CA
 rdock-acme           instant-acme client · challenge solvers (HTTP-01, TLS-ALPN-01, DNS-01) · `DnsProvider` trait · ARI scheduler · storage
 rdock-balancer       BackendSelection impls (wrr, least-conn, p2c, hash) · active/passive health · retry policy · circuit breaker · outlier detection
-rdock-middleware     built-ins: headers, redirect, rewrite, strip/add prefix, basic/forward auth, jwt, cors, compress, ip filter, rate limit, errors, static, maintenance, mirror
+rdock-middleware     built-ins: headers, redirect, rewrite, strip/add prefix, basic/forward auth, jwt, cors, compress, ip filter, rate limit, errors, static, maintenance, mirror · v0.8: cache glue, plugin host, `agent` (HTTP agents; gRPC and SPOP are not implemented), api_key, quota, oidc, validate, transform, cloudflare_access
 rdock-limits         token bucket · concurrency gate with queue · body/header limits · bounded-cardinality maps · calendar-window quotas persisted under the data directory (v0.8)
 rdock-credentials    credential formats shared by `rdock-admin` and the data plane (v0.8, ADR-0030): admin tokens `rdk_pat_…`, API keys `rdk_<id>_<secret><crc32>`, SHA-256 of the secret, constant-time comparison, a redacting `Secret` type
 rdock-observability  tracing setup · access log formatter + redaction · metrics registry · OTLP exporter · 15-min ring buffer for the dashboard
@@ -60,7 +60,8 @@ rdock-admin          v0.1: health, readiness, metrics, status, reload on its own
 rdock-cloudflare     IP-range sync · Cloudflare `DnsProvider` impl (depends on rdock-acme) · Origin CA helpers (the Access JWT check is the `cloudflare_access` preset of `jwt` in `rdock-middleware`, ADR-0030)
 rdock-dns-providers  DNS-01 adapters on the `DnsSolver` trait (depends on rdock-acme): Route 53 (SigV4), Google Cloud DNS (RS256 service-account JWT), Azure DNS, DigitalOcean, Hetzner Cloud, deSEC, RFC 2136 with TSIG · shared REST client, OAuth token cache, backoff, zone discovery, per-zone record-set lock (ADR-0026)
 rdock-cache          HTTP cache on pingora-cache (v0.8, §19): RFC 9111 policy, memory and disk stores, tags, purge, coalescing, stale-if-error
-rdock-plugins        (P2/P3) native plugin trait, WASM host (wasmtime), out-of-process agent client
+rdock-plugin-api     (v0.8, ADR-0030) the only crate a native plugin depends on: `Plugin` trait, `http`-typed heads, `Factory`, `Registry`, `testing` harness; its own `0.x` version line
+rdock-wasm           (v0.8, experimental, ADR-0030) WASM plugins: `sha256` pin and minisign checks (always built), the wasmtime host and the WIT world `rdock:plugin/filter` behind the cargo feature `wasm` (off by default)
 rdock-control        (P3) optional control plane: config rollout ACK/NACK, shared cert storage, distributed limits
 rdock-provider-file  · rdock-provider-docker · rdock-provider-swarm · rdock-provider-kubernetes · rdock-provider-api
 rdock-migrate        traefik (labels + dynamic yaml) → rdock.yaml · nginx subset (later)

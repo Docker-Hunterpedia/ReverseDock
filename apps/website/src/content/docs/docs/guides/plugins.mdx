@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-A native plugin <Status since="v0.8" /> is a middleware you write in Rust against the
+A native plugin <Status planned="v0.8" /> is a middleware you write in Rust against the
 `rdock-plugin-api` crate and compile into your own ReverseDock binary. In the configuration it
 is a middleware like any other: `type: plugin`, the name your binary registered it under, and
 its own settings.
@@ -229,4 +229,4 @@ bodies. Its public types are `http`-crate types, `bytes` and the standard librar
 Pingora's, so a Pingora upgrade inside ReverseDock does not break plugins by itself. Pin
 `rdock` and `rdock-plugin-api` to the same tag.
 
-WebAssembly plugins, loaded at run time in a sandbox, are planned separately (F-EXT-03).
+WebAssembly plugins, loaded at run time in a sandbox, are a separate, experimental feature: see [WASM plugins](/docs/guides/wasm-plugins/).
