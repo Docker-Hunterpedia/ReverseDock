@@ -52,7 +52,8 @@ jobs:
           ref: ${{ env.CACHE_TESTS_REV }}
           path: cache-tests
           persist-credentials: false
-      # The suite requires Node.js 22.19.0 or greater (its package.json "engines").
+      # The suite asks for Node.js 22.19.0 or greater (its package.json "engines"), but on 22.19.0
+      # its command ended with exit status 13 and no results even against its own origin; 24 works.
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: "24"

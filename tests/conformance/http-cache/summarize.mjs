@@ -7,9 +7,10 @@
 // Format assumptions (read from the suite's test-engine/lib/results.mjs and cli.mjs on 2026-11-12,
 // never run here; only CI confirms them):
 //  1. The file is one JSON object: test id -> result, plus a reserved "_traces" key.
-//  2. A result is `true`, `false`, or an array `[value, detail]` where value is `true`, `false`
-//     or the string "Setup" (detail "retry" for a retried request). `false` with a detail naming
-//     "AbortError" is a harness failure; any other `false` is a failure.
+//  2. A result is `true`, or an array `[name, detail]` for a test that did not pass: "Setup"
+//     (detail "retry" for a retried request), "Assertion" for a failed expectation, or another
+//     error name such as "AbortError" for a request the harness could not complete (seen in the
+//     first CI run, 2026-11-12).
 //  3. The checkout's tests/index.mjs default-exports the list of suites, each `{ name, tests }`
 //     and each test `{ id, name, kind, depends_on }`; kind is "required" (also when unset),
 //     "optimal" or "check". The classification below mirrors determineTestResult(); when the
@@ -26,7 +27,7 @@ function cell (value) {
 }
 
 function normalise (raw) {
-  const value = Array.isArray(raw) ? raw[0] : raw
+  let value = Array.isArray(raw) ? raw[0] : raw
   const detail = Array.isArray(raw) ? raw[1] : undefined
   return { value, detail }
 }
@@ -41,8 +42,13 @@ function classify (test, results) {
   }
   const { value, detail } = normalise(raw)
   if (value === 'Setup') return detail === 'retry' ? 'retry' : 'setup_fail'
+  // A failed test is `[<error name>, <message>]`: "Assertion" for a failed expectation, anything
+  // else (for example "AbortError") for a request the harness could not complete.
+  if (typeof value === 'string') {
+    if (value !== 'Assertion') return 'harness_fail'
+    value = false
+  }
   if (value !== true && value !== false) return 'unknown'
-  if (value === false && /AbortError/.test(String(detail ?? ''))) return 'harness_fail'
   const kind = test.kind ?? 'required'
   if (kind === 'check') return value ? 'yes' : 'no'
   if (kind === 'optimal') return value ? 'pass' : 'optional_fail'
