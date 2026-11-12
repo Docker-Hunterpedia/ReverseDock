@@ -1,0 +1,334 @@
+---
+title: Cache responses
+description: Store responses your backends mark as cacheable, in memory or on disk, with RFC 9111 semantics, Vary, stale-if-error, request coalescing, tags and purges through the admin API.
+sidebar:
+  order: 23
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `cache` middleware <Status since="v0.8" /> keeps responses in a store and answers later
+requests from it, following HTTP caching ([RFC 9111](https://www.rfc-editor.org/rfc/rfc9111)).
+It is off unless a route lists it, and with nothing else configured it stores **only what the
+origin's own headers allow, for as long as they allow**.
+
+## Turn it on
+
+Declare a store under `caches`, then put a `cache` middleware that names it on a route:
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+caches:
+  pages: { type: memory, max_size: 256MiB }
+
+middlewares:
+  cache:
+    type: cache
+    store: pages
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [cache]
+
+services:
+  app:
+    backends: [{ address: "app:3000" }]
+```
+
+Your backend decides what is cached, with the usual headers:
+
+```http
+Cache-Control: public, max-age=300
+ETag: "v42"
+```
+
+Every answer of a caching route carries a `Cache-Status` header
+([RFC 9211](https://www.rfc-editor.org/rfc/rfc9211)) that says what happened:
+
+| `Cache-Status` | Meaning |
+|---|---|
+| `rdock; fwd=uri-miss; fwd-status=200; stored` | Not in the store; fetched and stored. |
+| `rdock; hit; ttl=297` | Answered from the store, fresh for 297 more seconds. `Age` says how old it is. |
+| `rdock; fwd=stale; fwd-status=304; ttl=300; stored` | It was stale; the origin confirmed it (`304`) and the stored copy was refreshed. |
+| `rdock; fwd=stale; fwd-status=200; stored` | It was stale and the origin sent a new one. |
+| `rdock; fwd=vary-miss; …` | Stored, but not for this request's `Vary` fields. |
+| `rdock; fwd=request; …` | The client asked for a fresh copy (`Cache-Control: no-cache`). |
+| `rdock; hit; ttl=-12; detail=stale-if-error` | The origin failed; a stale copy was served ([below](#stale-if-error)). |
+| `rdock; fwd=uri-miss; fwd-status=200; detail=no-store` | Fetched, not stored; `detail` says why. |
+| `rdock; fwd=method; detail=method` / `rdock; fwd=bypass; detail=…` | The cache was not used for this request. |
+| `rdock; …; collapsed` | The request waited for another request to fill the cache ([coalescing](#coalescing)). |
+
+The access log has a `cache_status` field (`hit`, `stale`, `revalidated`, `expired`, `miss`,
+`bypass`), and the [metrics](/docs/reference/metrics/#http-cache) count the same.
+
+## What is stored, and what never is
+
+A response is stored only when **all** of these hold:
+
+- The request is `GET` or `HEAD` (a `HEAD` is answered from the stored `GET`) and has no body.
+  RFC 9111 §3 allows only methods the cache understands; a body that the key does not see could
+  change the answer (a "fat GET").
+- The status is one of `200`, `203`, `204`, `300`, `301`, `308`, `404`, `410`. A `206` or `304`
+  is never stored as such: the cache asks the origin for the whole object and answers ranges and
+  conditional requests from it.
+- The origin gives it a lifetime: `s-maxage`, then `max-age`, then `Expires` minus `Date`
+  (RFC 9111 §4.2.1). There is **no default lifetime**: a response without one is not stored, so
+  a personalised page your backend forgot to mark is never shared. `no-cache` stores it with a
+  zero lifetime, to be revalidated on every use; that needs an `ETag` or `Last-Modified`.
+- It does not say `no-store` or `private`, and its `Vary` is not `*` (which can never match).
+- It sets no cookie (`Set-Cookie`). RFC 9111 has no rule for this; nginx, Varnish and Cloudflare
+  all refuse to cache such responses, because the cookie is usually a session.
+- The request did not carry `Authorization` to the origin, unless the response says `public`,
+  `s-maxage` or `must-revalidate` (RFC 9111 §3.5). A middleware that removes the credential
+  before forwarding (`basic_auth` with `remove_header: true`) means the origin never saw it.
+- The body is at most `max_object_size` (64 MiB by default) and fits in the store.
+
+`Proxy-Authenticate` and `Proxy-Authentication-Info`, and the fields a `private="…"` or
+`no-cache="…"` directive names, are left out of the stored copy.
+
+The age a response already had when it arrived (its own `Age` and `Date`) counts against its
+lifetime (RFC 9111 §4.2.3), so an object that aged in another cache is not kept too long.
+
+### Explicit opposites
+
+Each of those defaults can be turned around for a route, explicitly, with its risk:
+
+| Setting | Default | The opposite, and its risk |
+|---|---|---|
+| `default_ttl` | none | `{ "200": 5m, "404": 30s }` gives responses without a lifetime one. Risk: caching pages your backend did not mean to share. It never applies over `no-store`, `private` or `no-cache`. |
+| `heuristic_freshness` | `false` | `true` gives responses with `Last-Modified` 10 % of their age, at most a day (RFC 9111 §4.2.2). Risk: the origin did not ask for caching. |
+| `statuses` | the list above | Your own list, for example to add `302`. `206` and `304` are refused. |
+| `set_cookie` | `refuse` | `strip` stores such responses without `Set-Cookie` (the client that filled the cache still gets its cookie). Risk: a page that depends on the cookie is shared. |
+| `authorization` | `refuse` | `store` stores responses to requests with `Authorization` like any other. Risk: one credential's answer served to another. |
+| `request_directives` | `honour` | `ignore`: clients cannot force origin fetches with `no-cache` or `max-age=0`. `only-if-cached` is always honoured. |
+| `lock.enabled` | `true` | `false`: every miss goes to the origin, even for the same key at once. |
+| `tags.keep` | `false` | `true` passes the tag headers on to clients. |
+| `cache_status` | `true` | `false` hides `Cache-Status`. |
+
+`no-store`, `private`, `Vary: *`, methods other than `GET`/`HEAD` and requests with a body have
+no opposite: they are the origin's explicit instruction, or can never be answered correctly
+from a store. Change the origin's headers instead.
+
+### Request directives
+
+By default the client's `Cache-Control` request directives apply (RFC 9111 §5.2.1):
+`no-cache`, `max-age=0` and the deprecated `Pragma: no-cache` revalidate with the origin;
+`max-age=N` and `min-fresh=N` revalidate a copy that is too old or about to expire;
+`max-stale` accepts a stale copy unless the origin said `must-revalidate`; `only-if-cached`
+answers from the store or with `504 Gateway Timeout`, and never contacts the origin.
+
+## The key
+
+A stored response is selected by the store, the **route**, the scheme, the host (lower case,
+without the port), the path as it is forwarded (after normalisation and the route's rewrites),
+the query string and the method (`HEAD` shares `GET`'s). The components are length-framed, so
+no two different requests can produce the same key. Two routes that share a store never see
+each other's objects.
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  cache:
+    type: cache
+    store: pages
+    key:
+      query: { ignore: [utm_*, fbclid] }   # or as_sent (default), sorted, { only: [page] }
+      headers: [accept-language]           # request headers that select a response
+      consumer: false                      # one copy per authenticated user
+```
+
+`query` takes `as_sent` (the default), `sorted` (parameters sorted by name), `{ only: [...] }`
+or `{ ignore: [...] }`; a name ending in `*` is a prefix. Parameters left out of the key are
+**also removed from the request** sent to the origin, so the origin can never answer
+differently for something the key does not see.
+
+On a caching route, these request headers are removed before the request is forwarded, unless
+`key.headers` lists them: `X-Original-URL`, `X-Rewrite-URL`, `X-HTTP-Method-Override`,
+`X-HTTP-Method`, `X-Method-Override`, `X-Host`, `X-Forwarded-Server`. Some frameworks let them
+change the URL, method or host the request is for, which would store a response under a key
+that does not describe it. `X-Forwarded-*` headers are already rebuilt by rdock from the
+[trusted-proxy decision](/docs/guides/behind-a-proxy/).
+
+### Vary
+
+When a response has `Vary`, the cache keeps one variant per value of the named request
+headers (RFC 9111 §4.1). Values are compared after joining repeated field lines and trimming
+list items; `Accept`, `Accept-Encoding`, `Accept-Language` and `Accept-Charset` also without
+regard to case. A request without the header is its own variant. `Vary: *` is never stored.
+
+### Compression
+
+The store holds the origin's representation, before the route's response middlewares
+(`compress`, `headers`, `cors`) change it. With [`compress`](/docs/guides/compression/) on the
+route, one stored object serves gzip, zstd, Brotli and identity clients alike: each answer is
+compressed on the way out and carries `Vary: Accept-Encoding` for caches further down. If your
+origin compresses itself and sends `Vary: Accept-Encoding`, the variants are kept apart as
+above.
+
+## Authenticated routes
+
+A route that authenticates requests (`basic_auth`, `jwt`, `client_cert`, `forward_auth`) and
+caches its responses would serve one user's page to the next user. That combination is a
+validation error:
+
+```text
+error: routes.app.middlewares[1]: `cache` caches the responses of a route that authenticates with `auth`: one user's response could be served to another
+    hint: set `shared_across_users: true` on `cache` when the responses are the same for every user, or `key.consumer: true` to keep one copy per user (keyed on the user name)
+```
+
+Say which it is:
+
+- `shared_across_users: true` when every authenticated user gets the same responses (a
+  password-protected documentation site, for example).
+- `key.consumer: true` to keep one copy per user: keyed on the consumer when a middleware sets
+  one, else the `basic_auth` user name, else the `jwt` issuer and subject (`iss`, `sub`), else
+  the client certificate's subject.
+
+`forward_auth` asks an external service, so rdock does not learn who it let in and
+`key.consumer` cannot keep users apart: use `shared_across_users: true`, or add to
+`key.headers` a header the service sends back and `copy_headers` copies (`X-User`, for
+example). The position of `cache` in the route's list does not matter: the cache is looked up
+after every middleware that checks the request has run.
+
+Request middlewares still run on every hit: authentication, [IP filters](/docs/guides/ip-filtering/),
+[rate limits](/docs/guides/rate-limiting/) and `in_flight` apply before the cache is
+consulted, so a refused request is never answered from it. Middlewares that change the
+request for the backend (`upstream_request` phase) do not run on a hit; response middlewares
+do.
+
+## Invalidation
+
+A successful (`2xx` or `3xx`) `POST`, `PUT`, `PATCH` or `DELETE` on a caching route removes the
+stored responses for its URL, and for the `Location` and `Content-Location` it answered with
+when they point at the same host (RFC 9111 §4.4). Other hosts are never touched.
+
+## Purge and tags
+
+Responses can carry tags in `Cache-Tag` (comma-separated, as Cloudflare uses it) or
+`Surrogate-Key` (space-separated, as Fastly does). Tags are compared in lower case; the tag
+headers are removed before the client sees them unless `tags.keep: true`. `tags.headers`
+changes which headers are read.
+
+Purges go through the [admin API](/docs/guides/config-api/) (operator role), never through the
+data plane: there is no `PURGE` method. Each purge is audited and shares the rate limit of
+configuration writes, because purging everything sends every following request to your
+origins.
+
+```sh
+# One URL, every variant (scheme, host and path as clients use them; the port is ignored)
+curl -X POST http://127.0.0.1:2080/api/v1/cache/pages/purge \
+  -H "Authorization: Bearer $RDOCK_ADMIN_TOKEN" -H 'Content-Type: application/json' \
+  -d '{"url": "https://app.example.com/products/7"}'
+# {"store":"pages","purged":2}
+```
+
+The body selects exactly one of `url`, `prefix` (every URL that starts with it), `tag`, or
+`all: true`. A fill still in progress that the purge covers is discarded when it completes, so
+a purge never loses to a slow response. The same from the CLI on the host:
+
+```sh
+rdock cache list
+rdock cache purge pages --tag product-7
+rdock cache purge pages --prefix https://app.example.com/products/
+rdock cache purge pages --all
+```
+
+`GET /api/v1/cache` (viewer role) lists the stores with their objects, bytes, limits and
+counters.
+
+**A purge reaches one instance.** Every replica keeps its own cache; with several replicas,
+purge each one. A cluster-wide purge needs the shared control plane planned for v0.9.
+
+## Stale-if-error
+
+When the origin fails (it cannot be reached, it times out, or it answers `500`, `502`, `503`
+or `504`), a stale stored response is served instead if the origin allowed it with
+`stale-if-error=N` ([RFC 5861](https://www.rfc-editor.org/rfc/rfc5861#section-4)), for at
+most `N` seconds after it went stale, and at most the route's `stale_if_error` (one day by
+default; `0s` turns it off). `must-revalidate`, `proxy-revalidate`, `s-maxage` and `no-cache`
+forbid it (RFC 9111 §4.2.4).
+
+`stale-while-revalidate` is honoured as plain staleness: the request that finds the stale copy
+revalidates it in the foreground. Background refresh, which would re-run the whole pipeline for
+a request no client is waiting on, is <Status planned="a later version" />; setting
+`background_refresh: true` is refused until then.
+
+## Coalescing
+
+While one request fetches a key, others for the same key wait for its response instead of
+asking the origin too ("collapsed forwarding", RFC 9111 §4). Fifty simultaneous requests for a
+cold page make one origin request.
+
+- A waiter waits at most `lock.timeout` (5 s by default, at most 60 s). Then it goes to the
+  origin on its own without storing (`detail=lock-timeout`), and a fetch that has run that long
+  no longer holds new requests back: the next one becomes the writer.
+- If the fetch fails, or its response cannot be stored, the waiters are released at once and
+  each asks the origin itself. The origin is never asked once per waiter in turn.
+- Waiters get the object once its fill is complete; they do not read a fill in progress, so for
+  large or slow objects they may reach `lock.timeout` first.
+
+## Stores and sizing
+
+Stores are named under `caches` and live as long as the rdock process. Adding a store applies
+on reload. Changing or removing one takes effect after a restart: the reload reports
+`changing a cache store takes effect after a restart` and the running store keeps its settings
+and objects until then. The policy on the middleware (key, lifetimes, statuses…) reloads
+freely, and stored objects survive reloads.
+
+```yaml title="rdock.yaml (excerpt)"
+caches:
+  hot: { type: memory, max_size: 256MiB }
+  files:
+    type: disk
+    path: /var/cache/rdock/files   # default: <data dir>/cache/files
+    max_size: 20GiB
+    max_objects: 1000000
+```
+
+- **memory** keeps bodies as they arrived, in chunks, and evicts the least recently used objects
+  beyond `max_size` (bodies, headers and bookkeeping counted). Everything is lost on restart.
+- **disk** keeps one file per object, under two levels of hashed directories, and evicts the
+  least recently used beyond `max_size` or `max_objects`. Objects survive restarts. A file is
+  written under a temporary name and renamed when complete, so a partial object is never
+  visible. At start the store walks its directory, removes temporary files, drops damaged files
+  (counted in `rdock_cache_dropped_total`) and applies the limits; it serves once the walk is
+  done. Nothing is synced to disk, so after a power loss recent objects may be missing; the
+  start-up walk drops anything that does not check out. Bodies are written and read in bounded
+  chunks, never held in memory whole.
+
+The disk store's directory is created with mode `0700` and must belong to the user rdock runs
+as. Objects are stored in plain text, and **anyone who can write the directory can make rdock
+serve arbitrary content**. Do not put responses there that must not touch disk.
+
+Size `max_object_size` below the store's `max_size`; `rdock validate` warns when it is not.
+`max_objects` bounds inodes on the disk store.
+
+## What it does not do (yet)
+
+- Background refresh for `stale-while-revalidate` (above).
+- A `PURGE` method on the data plane: purges go through the admin API.
+- Heuristic freshness by default: it is opt-in (`heuristic_freshness`).
+- Partial reads for waiters: a waiting request reads an object once its fill completes.
+- `CDN-Cache-Control` (RFC 9213) and `immutable` (RFC 8246).
+- A memory tier in front of a disk store, and cluster-wide purges.
+- Mirrored requests skip the cache, so the [mirror](/docs/guides/backends/) sees every request
+  the service sees; a route that mirrors every request never uses its cache (`rdock validate`
+  warns).
+
+The cache is tested against the RFC rules it implements, section by section, and end to end
+(storing, revalidation, `Vary`, ranges, invalidation, `stale-if-error`, purges, coalescing,
+restarts of the disk store). **A run of an external RFC 9111 test suite (such as
+`http-tests/cache-tests`) against rdock has not been done yet**; it is a separate step.
+
+## Related
+
+- [Compress responses](/docs/guides/compression/)
+- [Logs and metrics](/docs/guides/logs-and-metrics/)
+- [Middleware settings](/docs/reference/configuration/middlewares/)

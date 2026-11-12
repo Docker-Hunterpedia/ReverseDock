@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 pub mod acme;
+pub mod cache;
 pub mod config;
 pub mod diagnostics;
 pub mod interpolation;

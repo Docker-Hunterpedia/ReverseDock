@@ -28,6 +28,7 @@ Commands:
   users        Manage dashboard users
   tokens       Manage API tokens
   backends     Show backends and drain them
+  cache        Show HTTP cache stores and purge them (this instance only)
   routes       Explain routing decisions
   schema       Print the JSON Schema of rdock.yaml
   version      Print version and build information
@@ -276,6 +277,23 @@ Commands:
   drain    Stop sending new requests to a backend; open ones finish
   undrain  Put a drained backend back in rotation
   help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock cache`
+
+```text
+Show HTTP cache stores and purge them (this instance only)
+
+Usage: rdock cache <COMMAND>
+
+Commands:
+  list   List the cache stores with their objects, bytes and counters
+  purge  Remove objects from a store of this instance: by URL, URL prefix, tag, or all
+  help   Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

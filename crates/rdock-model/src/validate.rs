@@ -62,6 +62,7 @@ impl Config {
         v.check_routes();
         v.check_services();
         v.check_middlewares();
+        v.check_caches();
         v.check_tcp();
         v.check_udp();
         v.check_certificates();
@@ -443,6 +444,7 @@ impl Validator<'_> {
                 self.check_reference(&p, "middleware", middleware, &self.config.middlewares);
             }
             self.check_terminal_position(&path, route);
+            self.check_route_cache(&path, route);
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
                 self.check_reference(
@@ -1044,6 +1046,7 @@ impl Validator<'_> {
                 }
                 Middleware::GrpcWeb(_) => {}
                 Middleware::HoldBody(h) => self.check_hold_body(&path, h),
+                Middleware::Cache(c) => self.check_cache(&path, c),
                 Middleware::Static(st) => self.check_static(&path, st),
                 Middleware::Jwt(j) => self.check_jwt(&path, j),
                 Middleware::ClientCert(c) => {
@@ -2434,6 +2437,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
     (!local).then_some(ip)
 }
 
+mod cache;
 mod static_files;
 mod tcp;
 #[cfg(test)]

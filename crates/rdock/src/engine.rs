@@ -1067,6 +1067,69 @@ impl rdock_admin::Control for Engine {
         Value::Array(services)
     }
 
+    async fn caches(&self) -> Value {
+        let stores: Vec<Value> = self
+            .plane
+            .caches()
+            .all()
+            .into_iter()
+            .map(|store| {
+                let s = store.stats();
+                serde_json::json!({
+                    "name": s.name, "kind": s.kind, "objects": s.objects, "bytes": s.bytes,
+                    "max_size": s.max_size, "max_objects": s.max_objects, "hits": s.hits,
+                    "misses": s.misses, "stored": s.stored, "evictions": s.evictions,
+                    "purged": s.purged, "dropped": s.dropped,
+                })
+            })
+            .collect();
+        Value::Array(stores)
+    }
+
+    async fn purge_cache(
+        &self,
+        store: String,
+        selector: rdock_admin::CachePurge,
+    ) -> rdock_admin::PurgeOutcome {
+        use rdock_admin::{CachePurge, PurgeOutcome};
+        use rdock_cache::policy::invalidate::normalize_url;
+        let Some(found) = self.plane.caches().get(&store) else {
+            return PurgeOutcome::NoStore;
+        };
+        let selector = match selector {
+            CachePurge::Url(url) => match normalize_url(&url) {
+                Some(url) => rdock_cache::Selector::Url(url),
+                None => {
+                    return PurgeOutcome::Invalid(format!(
+                        "`{url}` is not an absolute http or https URL"
+                    ));
+                }
+            },
+            CachePurge::Prefix(prefix) => match normalize_url(&prefix) {
+                // A bare `https://host` normalises to `https://host/`, which still covers
+                // the whole host.
+                Some(prefix) => rdock_cache::Selector::Prefix(prefix),
+                None => {
+                    return PurgeOutcome::Invalid(format!(
+                        "`{prefix}` is not an absolute http or https URL"
+                    ));
+                }
+            },
+            CachePurge::Tag(tag) if tag.trim().is_empty() => {
+                return PurgeOutcome::Invalid("the tag is empty".to_owned());
+            }
+            CachePurge::Tag(tag) => rdock_cache::Selector::Tag(tag.trim().to_ascii_lowercase()),
+            CachePurge::All => rdock_cache::Selector::All,
+        };
+        match found.purge(selector).await {
+            Ok(purged) => {
+                tracing::info!(store = %store, purged, "cache purged through the admin API");
+                PurgeOutcome::Purged(purged)
+            }
+            Err(e) => PurgeOutcome::Failed(e.to_string()),
+        }
+    }
+
     async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool {
         let runtime = self.plane.runtime();
         let Some(service) = runtime.services.get(&service) else {

@@ -123,6 +123,39 @@ export type PasswordChange = {
     new: string;
 };
 
+/**
+ * What a purge removes; set exactly one field.
+ */
+export type PurgeRequest = {
+    /**
+     * Everything in the store.
+     */
+    all?: boolean | null;
+    /**
+     * Every object whose URL starts with this absolute URL.
+     */
+    prefix?: string | null;
+    /**
+     * Every object with this tag (from `Cache-Tag` or `Surrogate-Key`).
+     */
+    tag?: string | null;
+    /**
+     * Every variant of this absolute URL (`https://app.example.com/a?b=1`).
+     */
+    url?: string | null;
+};
+
+/**
+ * The result of a purge.
+ */
+export type Purged = {
+    /**
+     * Objects removed. Fills in progress that the purge covers are discarded too.
+     */
+    purged: number;
+    store: string;
+};
+
 export type Reauth = {
     code?: string | null;
     password: string;
@@ -709,6 +742,11 @@ export type RdockAuditForward = {
 };
 
 /**
+ * What to do with responses to requests that carry `Authorization`.
+ */
+export type RdockAuthorizationRule = 'refuse' | 'store';
+
+/**
  * Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and
  * `managed_identity` is set.
  */
@@ -800,6 +838,35 @@ export type RdockByteSize = number | string;
 export type RdockCaRef = RdockKnownCa | RdockHttpUrl;
 
 /**
+ * A cache store: where cached responses live. Stores are created once per process; adding
+ * one applies on reload, changing or removing one takes effect after a restart.
+ */
+export type RdockCacheStore = {
+    /**
+     * Bytes kept, bodies and headers together.
+     */
+    max_size?: RdockByteSize;
+    type: 'memory';
+    [key: string]: unknown | RdockByteSize | 'memory' | undefined;
+} | {
+    /**
+     * Objects kept on disk (one file each).
+     */
+    max_objects?: number;
+    /**
+     * Bytes kept on disk (file sizes).
+     */
+    max_size?: RdockByteSize;
+    /**
+     * Directory of the store, absolute; `<data dir>/cache/<name>` when omitted. Created with
+     * mode 0700. Anyone who can write it can serve arbitrary content through the cache.
+     */
+    path?: string | null;
+    type: 'disk';
+    [key: string]: unknown | number | RdockByteSize | string | null | 'disk' | undefined;
+};
+
+/**
  * A certificate and private key provided as files. Changes to the files are picked up
  * automatically.
  */
@@ -889,6 +956,12 @@ export type RdockConfig = {
      */
     admin?: RdockAdmin;
     /**
+     * HTTP cache stores, used by `cache` middlewares.
+     */
+    caches?: {
+        [key: string]: RdockCacheStore;
+    };
+    /**
      * Certificates you provide yourself.
      */
     certificates?: {
@@ -968,6 +1041,8 @@ export type RdockConfig = {
      */
     version?: number | null;
     [key: string]: unknown | string | null | RdockAcmeSetting | null | RdockAdmin | {
+        [key: string]: RdockCacheStore;
+    } | {
         [key: string]: RdockCertificate;
     } | RdockDefaults | RdockLifecycle | {
         [key: string]: RdockListener;
@@ -2129,6 +2204,187 @@ export type RdockMiddleware = {
     timeout?: RdockDuration;
     type: 'hold_body';
     [key: string]: unknown | RdockByteSize | RdockDuration | 'hold_body' | undefined;
+} | {
+    /**
+     * Responses to requests that carry `Authorization` to the origin: `refuse` (default)
+     * stores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC
+     * 9111 §3.5); `store` stores them anyway. The risk of `store` is serving one
+     * credential's answer to another.
+     */
+    authorization?: RdockAuthorizationRule;
+    /**
+     * Refresh stale responses in the background (`stale-while-revalidate`). Not supported
+     * in this version: `stale-while-revalidate` is treated as plain staleness.
+     */
+    background_refresh?: boolean;
+    /**
+     * Requests that skip the cache entirely.
+     */
+    bypass?: {
+        /**
+         * Skip when the request has one of these cookies.
+         */
+        cookies?: Array<string>;
+        /**
+         * Skip when the request has one of these headers.
+         */
+        headers?: Array<string>;
+        [key: string]: unknown | Array<string> | Array<string> | undefined;
+    };
+    /**
+     * Add `Cache-Status` (RFC 9211) to responses.
+     */
+    cache_status?: boolean;
+    /**
+     * Lifetime by status (`"200": 5m`) for responses whose origin gives none (no
+     * `max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or
+     * `no-cache`. Empty by default: the risk is caching personalised pages the origin did
+     * not mark.
+     */
+    default_ttl?: {
+        [key: string]: RdockDuration;
+    };
+    /**
+     * Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at
+     * most a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.
+     */
+    heuristic_freshness?: boolean;
+    /**
+     * What, besides store, route, scheme, host, path and method, selects a stored response.
+     */
+    key?: {
+        /**
+         * Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,
+         * else the `jwt` issuer and subject, else the client certificate's subject.
+         */
+        consumer?: boolean;
+        /**
+         * Request headers whose values select a response (beyond the origin's `Vary`).
+         */
+        headers?: Array<string>;
+        /**
+         * How the query string enters the key.
+         */
+        query?: RdockQueryKey;
+        [key: string]: unknown | boolean | Array<string> | RdockQueryKey | undefined;
+    };
+    /**
+     * Request coalescing: one origin fetch per key at a time.
+     */
+    lock?: {
+        /**
+         * While one request fetches a key, others wait for its response instead of asking the
+         * origin too. Off, every miss goes to the origin.
+         */
+        enabled?: boolean;
+        /**
+         * Longest wait. After it the waiting request goes to the origin without storing, and
+         * a fetch running that long no longer holds others back.
+         */
+        timeout?: RdockDuration;
+        [key: string]: unknown | boolean | RdockDuration | undefined;
+    };
+    /**
+     * Largest response body stored; larger ones pass through uncached.
+     */
+    max_object_size?: RdockByteSize;
+    /**
+     * The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default,
+     * RFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches.
+     * `only-if-cached` is always honoured.
+     */
+    request_directives?: RdockRequestDirectives;
+    /**
+     * Responses that set a cookie: `refuse` (default) never stores them; `strip` stores
+     * them without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie.
+     */
+    set_cookie?: RdockSetCookie;
+    /**
+     * The route authenticates requests but its responses are the same for every user, so
+     * one stored copy may be served to all of them. Required (or `key.consumer`) when the
+     * route has an authenticating middleware; the risk is serving one user's page to
+     * another.
+     */
+    shared_across_users?: boolean;
+    /**
+     * Longest time a stale response is served when the origin fails, if the origin allowed
+     * it with `stale-if-error` (RFC 5861). `0s` turns it off.
+     */
+    stale_if_error?: RdockDuration;
+    /**
+     * Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300,
+     * 301, 308, 404, 410. 206 and 304 are never stored as such.
+     */
+    statuses?: Array<number> | null;
+    /**
+     * The store, a name under `caches`.
+     */
+    store: string;
+    /**
+     * Cache tags for purging groups of responses.
+     */
+    tags?: {
+        /**
+         * Response headers that carry tags (comma or space separated).
+         */
+        headers?: Array<string>;
+        /**
+         * Pass the tag headers on to clients; by default they are removed.
+         */
+        keep?: boolean;
+        [key: string]: unknown | Array<string> | boolean | undefined;
+    };
+    type: 'cache';
+    [key: string]: unknown | RdockAuthorizationRule | boolean | {
+        /**
+         * Skip when the request has one of these cookies.
+         */
+        cookies?: Array<string>;
+        /**
+         * Skip when the request has one of these headers.
+         */
+        headers?: Array<string>;
+        [key: string]: unknown | Array<string> | Array<string> | undefined;
+    } | {
+        [key: string]: RdockDuration;
+    } | {
+        /**
+         * Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,
+         * else the `jwt` issuer and subject, else the client certificate's subject.
+         */
+        consumer?: boolean;
+        /**
+         * Request headers whose values select a response (beyond the origin's `Vary`).
+         */
+        headers?: Array<string>;
+        /**
+         * How the query string enters the key.
+         */
+        query?: RdockQueryKey;
+        [key: string]: unknown | boolean | Array<string> | RdockQueryKey | undefined;
+    } | {
+        /**
+         * While one request fetches a key, others wait for its response instead of asking the
+         * origin too. Off, every miss goes to the origin.
+         */
+        enabled?: boolean;
+        /**
+         * Longest wait. After it the waiting request goes to the origin without storing, and
+         * a fetch running that long no longer holds others back.
+         */
+        timeout?: RdockDuration;
+        [key: string]: unknown | boolean | RdockDuration | undefined;
+    } | RdockByteSize | RdockRequestDirectives | RdockSetCookie | RdockDuration | Array<number> | null | string | {
+        /**
+         * Response headers that carry tags (comma or space separated).
+         */
+        headers?: Array<string>;
+        /**
+         * Pass the tag headers on to clients; by default they are removed.
+         */
+        keep?: boolean;
+        [key: string]: unknown | Array<string> | boolean | undefined;
+    } | 'cache' | undefined;
 };
 
 /**
@@ -2245,6 +2501,16 @@ export type RdockProxyProtocolIn = {
  */
 export type RdockProxyProtocolVersion = 'v1' | 'v2';
 
+/**
+ * How the query string enters the key. Parameters left out of the key are also removed
+ * from the request sent to the origin.
+ */
+export type RdockQueryKey = 'as_sent' | 'sorted' | {
+    only: Array<string>;
+} | {
+    ignore: Array<string>;
+};
+
 export type RdockRateLimitKey = string;
 
 /**
@@ -2267,6 +2533,11 @@ export type RdockRedirectPrefix = {
  * Redirect target schemes.
  */
 export type RdockRedirectScheme = 'http' | 'https';
+
+/**
+ * The client's request directives.
+ */
+export type RdockRequestDirectives = 'honour' | 'ignore';
 
 /**
  * A fixed answer of a service (`respond`): the status with ReverseDock's error page.
@@ -2574,6 +2845,11 @@ export type RdockService = {
  * A number of sessions (at least 1), or `unlimited`.
  */
 export type RdockSessionLimit = number | 'unlimited';
+
+/**
+ * What to do with responses that set a cookie.
+ */
+export type RdockSetCookie = 'refuse' | 'strip';
 
 /**
  * How the SMTP connection is protected.
@@ -3874,6 +4150,91 @@ export type UndrainResponses = {
 };
 
 export type UndrainResponse = UndrainResponses[keyof UndrainResponses];
+
+export type ListCachesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cache';
+};
+
+export type ListCachesErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListCachesError = ListCachesErrors[keyof ListCachesErrors];
+
+export type ListCachesResponses = {
+    /**
+     * `stores`: name, kind, objects, bytes, max_size, max_objects, hits, misses, stored, evictions, purged, dropped
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListCachesResponse = ListCachesResponses[keyof ListCachesResponses];
+
+export type PurgeCacheData = {
+    body: PurgeRequest;
+    path: {
+        /**
+         * Store name, under `caches`
+         */
+        store: string;
+    };
+    query?: never;
+    url: '/api/v1/cache/{store}/purge';
+};
+
+export type PurgeCacheErrors = {
+    /**
+     * Not exactly one selector, or not an absolute URL
+     */
+    400: ErrorBody;
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such store
+     */
+    404: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+    /**
+     * The store failed
+     */
+    500: ErrorBody;
+};
+
+export type PurgeCacheError = PurgeCacheErrors[keyof PurgeCacheErrors];
+
+export type PurgeCacheResponses = {
+    /**
+     * Purged
+     */
+    200: Purged;
+};
+
+export type PurgeCacheResponse = PurgeCacheResponses[keyof PurgeCacheResponses];
 
 export type CertificatesData = {
     body?: never;

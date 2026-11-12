@@ -40,7 +40,7 @@ Rules that the diagram encodes:
 
 1. **Everything flows one way:** providers → engine → immutable `RuntimeConfig` → data plane. The data plane never calls providers, the admin API, or disk on the request path.
 2. **One process, several services.** Pingora's `Server` hosts: one HTTP proxy service per listener group, L4 services, and background services (providers, ACME, health checks, metrics, admin). All share graceful shutdown/upgrade.
-3. **Optional parts are optional at runtime, not at compile time.** Docker, Swarm, Kubernetes and the dashboard are enabled in config; the default binary ships them all (Cargo feature table in [06 §2](06-repo-layout.md); `cache` and `http3` are opt-in builds).
+3. **Optional parts are optional at runtime, not at compile time.** Docker, Swarm, Kubernetes and the dashboard are enabled in config; the default binary ships them all (Cargo feature table in [06 §2](06-repo-layout.md); `http3` is an opt-in build, and the HTTP cache is in every build because pingora-cache is compiled in anyway, ADR-0030).
 
 ## 2. Crate map
 
@@ -58,7 +58,7 @@ rdock-observability  tracing setup · access log formatter + redaction · metric
 rdock-admin          v0.1: health, readiness, metrics, status, reload on its own listener · v0.5: axum API (/api/v1), OpenAPI (utoipa), auth (tokens, sessions, RBAC), SSE, embedded dashboard (rust-embed)
 rdock-cloudflare     IP-range sync · Cloudflare `DnsProvider` impl (depends on rdock-acme) · Access JWT validator · Origin CA helpers
 rdock-dns-providers  DNS-01 adapters on the `DnsSolver` trait (depends on rdock-acme): Route 53 (SigV4), Google Cloud DNS (RS256 service-account JWT), Azure DNS, DigitalOcean, Hetzner Cloud, deSEC, RFC 2136 with TSIG · shared REST client, OAuth token cache, backoff, zone discovery, per-zone record-set lock (ADR-0026)
-rdock-cache          (P2) HTTP cache on pingora-cache: memory + disk storage, purge, SWR/SIE
+rdock-cache          HTTP cache on pingora-cache (v0.8, §19): RFC 9111 policy, memory and disk stores, tags, purge, coalescing, stale-if-error
 rdock-plugins        (P2/P3) native plugin trait, WASM host (wasmtime), out-of-process agent client
 rdock-control        (P3) optional control plane: config rollout ACK/NACK, shared cert storage, distributed limits
 rdock-provider-file  · rdock-provider-docker · rdock-provider-swarm · rdock-provider-kubernetes · rdock-provider-api
@@ -251,13 +251,13 @@ sequenceDiagram
 | `upstream_peer` | Service lookup, split/canary pick, sticky lookup, balancer selection → `HttpPeer` with scheme, SNI, timeouts, mTLS, h2c |
 | `upstream_request_filter` | Host policy (`pass_host_header`; a Host-less HTTP/1.0 request gets the backend's). Pingora has already stripped request hop-by-hop headers. v0.8: middleware phase `upstream_request` in list order, once per attempt, with the chosen backend in the context; drops `Content-Length` when a held body may be replaced (ADR-0030) |
 | `upstream_response_filter` / `response_filter` | Strip response hop-by-hop headers (Pingora only cleans requests); HTTP/1.1 towards HTTP/1 clients; middleware phase `response` in reverse order; `X-Request-ID`; status-code retries (v0.4) |
-| `response_body_filter` | v0.8: middleware phase `response_body` in reverse order, before compression and the throttle (and for cached answers once the cache lands; `upstream_response_body_filter` is not used); streaming gzip of the `compress` middleware (Pingora's compression module is not used: it buffers event streams and ignores q-values); custom error page bodies |
+| `response_body_filter` | v0.8: middleware phase `response_body` in reverse order, before compression and the throttle (cached answers included: Pingora runs it on hits; `upstream_response_body_filter` is not used); streaming gzip of the `compress` middleware (Pingora's compression module is not used: it buffers event streams and ignores q-values); custom error page bodies |
 | `request_body_filter` | Body size accounting, also for chunked bodies (`max_body_bytes`). v0.8: the shared body holder (memory to 64 KiB, then an unlinked spool file) and, at the end of the stream, middleware phase `request_body` in list order; an answer aborts the upstream request (ADR-0030) |
 | `fail_to_connect` | v0.4: mark connect errors retryable (`e.set_retry(true)`) when the policy allows (idempotent method or `retry_non_idempotent`, attempts left, budget available) and record the failure for passive health; v0.1 counts the error and does not retry |
 | `error_while_proxy` | Resolve Pingora's "reused connection" retry state; never retry once the client saw a response; v0.4 adds the policy of ADR-0015 |
 | `fail_to_proxy` | Terminal: custom error page, `Retry-After`, error metrics; no retry here |
 | `logging` | Middleware phase `log` in reverse order (v0.8, read-only); access log line, metrics, OTel span end, dashboard ring buffer, audit of blocked requests |
-| `response_cache_filter` / cache hooks | Cache track (P2) |
+| `request_cache_filter`, `cache_key_callback`, `cache_miss`, `cache_hit_filter`, `proxy_upstream_filter`, `response_cache_filter`, `cache_vary_filter`, `should_serve_stale` | v0.8: the HTTP cache (§19), glue in `rdock-proxy/src/cache.rs` over `rdock-cache`; no `is_purge` (purges go through the admin API) |
 
 **Real client IP algorithm (B-NET-08/W-CF-02):** start from the TCP peer. If the peer is in `trusted_proxies`, walk `X-Forwarded-For` from right to left, skipping trusted addresses; the first untrusted one is the client. If the peer is a verified Cloudflare range and `client_ip_header: auto`, use `CF-Connecting-IP` instead. If the peer is untrusted, all forwarded headers are ignored and **overwritten** before reaching the upstream.
 
@@ -376,7 +376,7 @@ labels:
 
 - Separate `axum` server on `admin.listener` (default `127.0.0.1:2080`); exposing it on a proxy route requires an explicit route + middleware (e.g. `forward_auth`) — never implicit.
 - **Auth:** bootstrap token printed/written at first start (`$RDOCK_DATA_DIR/admin/bootstrap-token`); users with argon2id passwords (dashboard sessions: `SameSite=Strict` cookie + CSRF token); API tokens with scopes `read`, `write`, `admin`, optional expiry and IP allow-list; roles `viewer`, `operator`, `admin`. Every write is audit-logged (`who, when, what, diff hash, result`).
-- **Resources (`/api/v1`):** `config` (GET effective, PUT replace API snapshot, PATCH, `POST /config/validate`, `/config/apply`, `/config/history`, `/config/rollback/{id}`), `routes`, `services`, `middlewares`, `certificates` (`POST /certificates/{name}/renew`), `listeners`, `providers` (status + diagnostics), `backends` (health, drain/undrain), `logs/stream` (SSE), `events/stream` (SSE), `metrics/summary` (ring buffer), `cache/purge` (P2), `users`, `tokens`, `audit`. OpenAPI 3.1 served at `/api/openapi.json`.
+- **Resources (`/api/v1`):** `config` (GET effective, PUT replace API snapshot, PATCH, `POST /config/validate`, `/config/apply`, `/config/history`, `/config/rollback/{id}`), `routes`, `services`, `middlewares`, `certificates` (`POST /certificates/{name}/renew`), `listeners`, `providers` (status + diagnostics), `backends` (health, drain/undrain), `logs/stream` (SSE), `events/stream` (SSE), `metrics/summary` (ring buffer), `cache` and `cache/{store}/purge` (v0.8, §19), `users`, `tokens`, `audit`. OpenAPI 3.1 served at `/api/openapi.json`.
 - **Dashboard:** static SPA embedded with `rust-embed`, served at `/` of the admin listener, talks only to `/api/v1`, makes **no external requests** (fonts and icons bundled). See [design system](08-design-system.md).
 
 ## 14. Observability (`rdock-observability`)
@@ -423,10 +423,21 @@ labels:
 - Ingress first: a UDP socket on the same port as the TLS listener, QUIC handshake with the same cert index. Pingora's server `Session` is a closed H1/H2 type, so feeding h3 into `ProxyHttp` needs either a maintained `pingora-core` patch (what PR #514 did) or an h3 front-end forwarding over an internal h2c hop into the normal pipeline; the track starts with the hop (no fork) and measures its cost. `Alt-Svc: h3=":443"` injected by `rdock-proxy`. Upstream HTTP/3 is out of scope until Pingora provides a connector.
 - Ships as "experimental" until h3i/quiche interop tests and soak tests pass.
 
-## 19. Cache track (P2)
+## 19. HTTP cache (F-WEB-03, ADR-0030)
 
-- Built on `pingora-cache` pinned to the Pingora version in use; storage: `pingora-memory-cache` (memory tier) + our disk `Storage` impl (segmented files, size quota, LRU eviction, crash-safe index).
-- RFC 9111 semantics (`Cache-Control`, `Vary`, conditional revalidation), `stale-while-revalidate`, `stale-if-error`, request coalescing (Pingora cache lock), bypass rules (cookies/auth), per-route TTL overrides, `cache_status` in logs/metrics, purge API by URL and by tag (`Cache-Tag`).
+**Crates.** `rdock-cache` owns every use of `pingora::cache` (pingora-cache 0.9.1, which `pingora-proxy` already builds; the facade's `cache` feature only re-exports it): RFC 9111 policy as pure functions, the stores, the tag and URL index, the coalescing lock and the metrics handles. `rdock-proxy/src/cache.rs` is the hook glue; `rdock-model` has `caches.<name>` and the `cache` middleware; `rdock-admin` serves statistics and purges.
+
+**Where the cache runs.** Pingora 0.9.1 calls `request_filter` (every middleware's `request` phase), then the cache (`request_cache_filter` → `cache_key_callback` → lookup → `cache_vary_filter` → `cache_hit_filter`), and only on a miss `proxy_upstream_filter`, `upstream_peer` and `upstream_request_filter` (the `upstream_request` phase). `upstream_response_filter` runs before `response_cache_filter`, so the store holds the origin's response without hop-by-hop fields and before any response middleware; `response_filter`, `response_body_filter` and `logging` run on hits too. Consequences: authentication, IP filters and rate limits apply to every hit; `compress` encodes stored objects on the way out; the `cache` entry's position in a route's list does not matter, and it is a no-op middleware that carries the configuration compiled into `RouteRuntime.cache`.
+
+**Configuration and lifetime.** Stores are process-lifetime `&'static` objects (pingora-cache requires it), created once per name by a registry in the `DataPlane` and reused on reload; adding a store applies on reload, changing or removing one is a warning that takes effect after a restart while the old store keeps serving. Validation never opens a store. The middleware's policy reloads freely, and objects survive reloads.
+
+**Policy we add to Pingora's mechanism.** Storability (methods, request bodies, a status allow-list, `no-store`, `private`, `Vary: *`, `Set-Cookie`, `Authorization` per §3.5), no default lifetime, the origin's `Age` and `Date` through an epoch override (§4.2.3), the full `304` header update (Pingora merges five fields; we merge every field the `304` carries except framing, connection and cookie fields), request directives in `cache_hit_filter` (`ForceExpired`, `ForceFresh`, `ForceMiss` for `only-if-cached` → `504` from `proxy_upstream_filter`), normalised variance, invalidation after successful unsafe methods (§4.4) in `upstream_response_filter`, `stale-if-error` through `should_serve_stale` (never for `stale-while-revalidate`: background subrequests would re-run the pipeline; the setting is refused as planned), `Cache-Status` (RFC 9211) and `cache_status` in the access log. The key is length-framed: store, route, client scheme, lower-cased host, forwarded path, the query after `key.query`, method class, `key.headers`, `key.consumer`.
+
+**Coalescing.** pingora-cache's lock with one change: a writer that fails releases its waiters (`GiveUp`) instead of electing one of them to try again, so a failing origin is never asked once per waiter in turn. Waiters wait at most `lock.timeout`, which is also how long a writer holds the lock; no partial reads for waiters.
+
+**Stores.** Both index objects (LRU order, URL index, bounded tag index, fills in progress that a purge cancels before they commit). *Memory:* reference-counted body chunks under one mutex, LRU by size. *Disk:* one file per object at `ab/cd/<32 hex digits>` below a root opened with cap-std and created `0700`; the file is a 32-byte prefix (magic, version, lengths, CRC-32s), a header block (key, variance, URL, tags, pingora-cache's serialised `CacheMeta`) and the body; written under a temporary name in the same directory and renamed when complete; blocking I/O on Tokio's blocking pool in bounded chunks; a start-up walk rebuilds the index, removes temporary files, drops damaged files (counted) and enforces `max_size` and `max_objects`; a `304` rewrites the head into a new file. No `fsync`: a power loss may lose recent objects, never serve damaged ones. This replaces the earlier plan of `pingora-memory-cache` plus segmented files: `pingora-memory-cache` does not implement `Storage`, and a segmented log needs its own compaction and recovery.
+
+**Purge.** Only through the admin API (`POST /api/v1/cache/{store}/purge` by URL, prefix, tag or all; operator role, audited, rate-limited with configuration writes); no `PURGE` method on the data plane. A purge reaches one instance until the v0.9 control plane.
 
 ## 20. Failure modes (what happens when…)
 

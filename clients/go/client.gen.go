@@ -299,6 +299,28 @@ type PasswordChange struct {
 	New     string `json:"new"`
 }
 
+// PurgeRequest What a purge removes; set exactly one field.
+type PurgeRequest struct {
+	// All Everything in the store.
+	All *bool `json:"all,omitempty"`
+
+	// Prefix Every object whose URL starts with this absolute URL.
+	Prefix *string `json:"prefix,omitempty"`
+
+	// Tag Every object with this tag (from `Cache-Tag` or `Surrogate-Key`).
+	Tag *string `json:"tag,omitempty"`
+
+	// Url Every variant of this absolute URL (`https://app.example.com/a?b=1`).
+	Url *string `json:"url,omitempty"`
+}
+
+// Purged The result of a purge.
+type Purged struct {
+	// Purged Objects removed. Fills in progress that the purge covers are discarded too.
+	Purged int64  `json:"purged"`
+	Store  string `json:"store"`
+}
+
 // Reauth defines model for Reauth.
 type Reauth struct {
 	Code     *string `json:"code,omitempty"`
@@ -545,6 +567,9 @@ type DrainJSONRequestBody = BackendRef
 
 // UndrainJSONRequestBody defines body for Undrain for application/json ContentType.
 type UndrainJSONRequestBody = BackendRef
+
+// PurgeCacheJSONRequestBody defines body for PurgeCache for application/json ContentType.
+type PurgeCacheJSONRequestBody = PurgeRequest
 
 // PatchApiApplicationJSONPatchPlusJSONRequestBody defines body for PatchApi for application/json-patch+json ContentType.
 type PatchApiApplicationJSONPatchPlusJSONRequestBody = PatchApiApplicationJSONPatchPlusJSONBody
@@ -858,6 +883,31 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/backends/undrain (the `Undrain` operationId).
 	Undrain(ctx context.Context, body UndrainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListCaches Every cache store with its objects, bytes, limits and counters
+	//
+	// Every cache store with its objects, bytes, limits and counters.
+	//
+	// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+	ListCaches(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PurgeCacheWithBody Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCacheWithBody(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PurgeCache Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCache(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Certificates Configured certificates (key passwords masked) and the state of automatic ones
 	//
@@ -1678,6 +1728,61 @@ func (c *Client) UndrainWithBody(ctx context.Context, contentType string, body i
 // Corresponds with POST /api/v1/backends/undrain (the `Undrain` operationId).
 func (c *Client) Undrain(ctx context.Context, body UndrainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewUndrainRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListCaches Every cache store with its objects, bytes, limits and counters
+//
+// Every cache store with its objects, bytes, limits and counters.
+//
+// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+func (c *Client) ListCaches(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCachesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PurgeCacheWithBody Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *Client) PurgeCacheWithBody(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPurgeCacheRequestWithBody(c.Server, store, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PurgeCache Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *Client) PurgeCache(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPurgeCacheRequest(c.Server, store, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3137,6 +3242,80 @@ func NewUndrainRequestWithBody(server string, contentType string, body io.Reader
 	}
 
 	operationPath := fmt.Sprintf("/api/v1/backends/undrain")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewListCachesRequest constructs an http.Request for the ListCaches method
+func NewListCachesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cache")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPurgeCacheRequest calls the generic PurgeCache builder with application/json body
+func NewPurgeCacheRequest(server string, store string, body PurgeCacheJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPurgeCacheRequestWithBody(server, store, "application/json", bodyReader)
+}
+
+// NewPurgeCacheRequestWithBody constructs an http.Request for the PurgeCache method, with any body, and a specified content type
+func NewPurgeCacheRequestWithBody(server string, store string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "store", store, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cache/%s/purge", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -4910,6 +5089,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/backends/undrain (the `Undrain` operationId).
 	UndrainWithResponse(ctx context.Context, body UndrainJSONRequestBody, reqEditors ...RequestEditorFn) (*UndrainResponse, error)
 
+	// ListCachesWithResponse Every cache store with its objects, bytes, limits and counters
+	//
+	// Every cache store with its objects, bytes, limits and counters.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+	ListCachesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCachesResponse, error)
+
+	// PurgeCacheWithBodyWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCacheWithBodyWithResponse(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error)
+
+	// PurgeCacheWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCacheWithResponse(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error)
+
 	// CertificatesWithResponse Configured certificates (key passwords masked) and the state of automatic ones
 	//
 	// Configured certificates (key passwords masked) and the state of automatic ones.
@@ -6633,6 +6839,165 @@ func (r UndrainResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r UndrainResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListCachesResponse429Headers the declared response headers of an HTTP 429 response for ListCaches
+type ListCachesResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListCachesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListCachesResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCachesResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCachesResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCachesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListCachesResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCachesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCachesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCachesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCachesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PurgeCacheResponse429Headers the declared response headers of an HTTP 429 response for PurgeCache
+type PurgeCacheResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PurgeCacheResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Purged
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorBody
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ConfigBusy
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorBody
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PurgeCacheResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PurgeCacheResponse) GetJSON200() *Purged {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PurgeCacheResponse) GetJSON400() *ErrorBody {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PurgeCacheResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PurgeCacheResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PurgeCacheResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PurgeCacheResponse) GetJSON429() *ConfigBusy {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PurgeCacheResponse) GetJSON500() *ErrorBody {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PurgeCacheResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PurgeCacheResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PurgeCacheResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PurgeCacheResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9583,6 +9948,51 @@ func (c *ClientWithResponses) UndrainWithResponse(ctx context.Context, body Undr
 	return ParseUndrainResponse(rsp)
 }
 
+// ListCachesWithResponse Every cache store with its objects, bytes, limits and counters
+//
+// Every cache store with its objects, bytes, limits and counters.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+func (c *ClientWithResponses) ListCachesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCachesResponse, error) {
+	rsp, err := c.ListCaches(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCachesResponse(rsp)
+}
+
+// PurgeCacheWithBodyWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *ClientWithResponses) PurgeCacheWithBodyWithResponse(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error) {
+	rsp, err := c.PurgeCacheWithBody(ctx, store, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePurgeCacheResponse(rsp)
+}
+
+// PurgeCacheWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *ClientWithResponses) PurgeCacheWithResponse(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error) {
+	rsp, err := c.PurgeCache(ctx, store, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePurgeCacheResponse(rsp)
+}
+
 // CertificatesWithResponse Configured certificates (key passwords masked) and the state of automatic ones
 //
 // Configured certificates (key passwords masked) and the state of automatic ones.
@@ -11412,6 +11822,147 @@ func ParseUndrainResponse(rsp *http.Response) (*UndrainResponse, error) {
 	switch {
 	case rsp.StatusCode == 429:
 		var headers UndrainResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListCachesResponse parses an HTTP response from a ListCachesWithResponse call
+func ParseListCachesResponse(rsp *http.Response) (*ListCachesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCachesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListCachesResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePurgeCacheResponse parses an HTTP response from a PurgeCacheWithResponse call
+func ParsePurgeCacheResponse(rsp *http.Response) (*PurgeCacheResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PurgeCacheResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Purged
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ConfigBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PurgeCacheResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

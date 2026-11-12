@@ -4,6 +4,7 @@ mod account;
 pub mod audit;
 mod auth;
 mod bootstrap;
+mod cache;
 mod caller;
 mod config_api;
 mod dashboard;
@@ -30,6 +31,7 @@ use std::sync::Arc;
 
 use async_trait::async_trait;
 
+pub use cache::{CachePurge, PurgeOutcome};
 pub use openapi::json as openapi_json;
 pub use server::{Running, StartError, start};
 
@@ -74,6 +76,10 @@ pub trait Control: Send + Sync {
     /// with why it does or does not match, the winner, its middlewares and the backends it
     /// would consider. `Err` for an unknown listener or an invalid request.
     async fn explain(&self, request: serde_json::Value) -> Result<serde_json::Value, String>;
+    /// Every HTTP cache store: name, kind, objects, bytes, limits and counters.
+    async fn caches(&self) -> serde_json::Value;
+    /// Removes what `selector` covers from the store `store` of this instance.
+    async fn purge_cache(&self, store: String, selector: CachePurge) -> PurgeOutcome;
 }
 
 /// The outcome of a conditional write of the API provider's objects.

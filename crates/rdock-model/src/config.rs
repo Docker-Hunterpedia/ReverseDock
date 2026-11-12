@@ -41,6 +41,8 @@ pub struct Config {
     pub services: BTreeMap<String, Service>,
     /// Reusable request and response policies.
     pub middlewares: BTreeMap<String, Middleware>,
+    /// HTTP cache stores, used by `cache` middlewares.
+    pub caches: BTreeMap<String, crate::cache::CacheStore>,
     /// TCP routes (SNI routing, passthrough, plain TCP).
     pub tcp_routes: BTreeMap<String, TcpRoute>,
     /// TCP backend pools.

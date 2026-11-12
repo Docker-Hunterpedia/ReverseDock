@@ -119,6 +119,8 @@ impl Signals {
 fn data_plane(data_dir: &Path, metrics: Metrics) -> anyhow::Result<Arc<DataPlane>> {
     let plane = DataPlane::new(metrics, Runtime::empty()).with_sticky_key(sticky_key(data_dir)?);
     let spool = data_dir.join("spool");
+    // Disk cache stores without a `path` live under `<data dir>/cache/<name>` (F-WEB-03).
+    plane.set_cache_dir(data_dir.join("cache"));
     plane
         .open_spool(&spool)
         .with_context(|| format!("opening the spool directory {}", spool.display()))?;

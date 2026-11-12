@@ -79,6 +79,9 @@ enum Command {
     /// Show backends and drain them.
     #[command(subcommand)]
     Backends(admin_cli::BackendsCommand),
+    /// Show HTTP cache stores and purge them (this instance only).
+    #[command(subcommand)]
+    Cache(admin_cli::CacheCommand),
     /// Explain routing decisions.
     #[command(subcommand)]
     Routes(admin_cli::RoutesCommand),
@@ -236,6 +239,7 @@ fn main() -> ExitCode {
         Command::Users(command) => admin_cli::users(&command),
         Command::Tokens(command) => admin_cli::tokens(&command),
         Command::Backends(command) => admin_cli::backends(&command),
+        Command::Cache(command) => admin_cli::cache(&command),
         Command::Routes(command) => admin_cli::routes(&command),
         Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
         Command::Schema { openapi: true } => {

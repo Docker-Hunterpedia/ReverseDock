@@ -35,7 +35,7 @@ pub(crate) fn work_limiter() -> rdock_limits::RateLimiter {
 }
 
 /// Takes one unit of the configuration-work budget; when it is spent, how long to wait.
-fn over_budget(state: &State) -> Option<Duration> {
+pub(crate) fn over_budget(state: &State) -> Option<Duration> {
     match state.config_work.check(&(), std::time::Instant::now()) {
         rdock_limits::Decision::Allow => None,
         rdock_limits::Decision::Deny { retry_after } => Some(retry_after),

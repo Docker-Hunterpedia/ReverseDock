@@ -11,7 +11,7 @@ reversedock/
 ├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; semgrep (report only)
+│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; clients, dashboard; `terraform-provider` (v0.8: provider checks, CLI tests with Terraform and OpenTofu against a fake and a real rdock; not a required check); semgrep (report only)
 │   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
 │   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
 │   │   ├── conformance.yml         # (v0.2+) traefik-label suite
@@ -31,6 +31,7 @@ reversedock/
 │   ├── rdock-tls/                  # resolver, cert store, policies, local CA
 │   ├── rdock-acme/                 # ACME client, solvers, DNS providers, scheduler
 │   ├── rdock-balancer/             # LB policies, health, retries, breakers
+│   ├── rdock-cache/                # HTTP cache: RFC 9111 policy, memory and disk stores, purge, on pingora-cache (ADR-0030)
 │   ├── rdock-middleware/           # built-in middlewares
 │   ├── rdock-limits/               # rate/concurrency/size limits
 │   ├── rdock-observability/        # logs, metrics, traces, ring buffer
@@ -58,6 +59,8 @@ reversedock/
 │       ├── e2e/                    # Playwright
 │       ├── package.json · vite.config.ts · tsconfig.json · components.json
 │       └── dist/                   # build output (gitignored), embedded by rdock-admin
+├── clients/
+│   └── terraform/                  # (v0.8) Terraform/OpenTofu provider (Go module, replace to ../go): internal/provider, examples, generated docs, testdata/rdock.yaml; not published (ADR-0030)
 ├── schema/
 │   └── rdock.v1.json               # generated JSON Schema, committed; CI fails if stale
 ├── Dockerfile                      # build from source: static musl → distroless, non-root
@@ -67,7 +70,7 @@ reversedock/
 │   ├── helm/reversedock/           # chart (v0.7): templates, values.yaml, values.schema.json, ci/ value sets, README
 │   ├── kubernetes/                 # install.yaml (generated from the chart by scripts/render-kubernetes-manifests.sh), namespace.yaml, kustomization.yaml
 │   └── systemd/                    # rdock.service (Type=notify, DynamicUser, CAP_NET_BIND_SERVICE; no socket activation)
-├── examples/                       # runnable scenarios: config/, kubernetes/ (Gateway, HTTPRoute, GRPCRoute, TLSRoute, Ingress, cert-manager)
+├── examples/                       # runnable scenarios: config/, kubernetes/ (Gateway, HTTPRoute, GRPCRoute, TLSRoute, Ingress, cert-manager, secrets/), secrets/ (OpenBao Agent in Compose; examples that CI does not run)
 ├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/
 ├── tests/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
@@ -106,7 +109,7 @@ reversedock/
 | `swarm` | on | Swarm provider |
 | `kubernetes` | on | Gateway API / Ingress controller (`kube` 5 with rustls and ring, `k8s-openapi`; the Gateway API types are our own, not the `gateway-api` crate); a build without it warns when `providers.kubernetes` is set |
 | `dashboard` | on | embedded SPA in `rdock-admin` |
-| `cache` | off until v0.8 | HTTP cache on `pingora-cache` |
+| `cache` | none: always built | The HTTP cache (`rdock-cache`, v0.8) is in every build: `pingora-proxy` compiles `pingora-cache` anyway, so a feature would save no dependency ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
 | `http3` | off, experimental | QUIC ingress; requires the `boringssl` backend |
 | `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
 

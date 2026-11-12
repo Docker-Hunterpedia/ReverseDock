@@ -1,5 +1,6 @@
 //! CLI parity with the admin API (ADR-0024, F-MGMT-01): configuration history, diff and
-//! rollback, users, tokens, the audit log and backend drain, all through the admin socket
+//! rollback, users, tokens, the audit log, backend drain and cache purges, all through the
+//! admin socket
 //! (or the listener with `RDOCK_ADMIN_TOKEN`).
 
 use std::io::Read;
@@ -127,6 +128,35 @@ pub(crate) enum BackendsCommand {
     Drain(BackendRef),
     /// Put a drained backend back in rotation.
     Undrain(BackendRef),
+}
+
+#[derive(Subcommand)]
+pub(crate) enum CacheCommand {
+    /// List the cache stores with their objects, bytes and counters.
+    List(CtlArgs),
+    /// Remove objects from a store of this instance: by URL, URL prefix, tag, or all.
+    Purge(CachePurgeArgs),
+}
+
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("selector").required(true).args(["url", "prefix", "tag", "all"])))]
+pub(crate) struct CachePurgeArgs {
+    /// The store, as named under `caches`.
+    store: String,
+    /// Every variant of this absolute URL.
+    #[arg(long)]
+    url: Option<String>,
+    /// Every object whose URL starts with this absolute URL.
+    #[arg(long)]
+    prefix: Option<String>,
+    /// Every object with this tag.
+    #[arg(long)]
+    tag: Option<String>,
+    /// Everything in the store.
+    #[arg(long)]
+    all: bool,
+    #[command(flatten)]
+    ctl: CtlArgs,
 }
 
 #[derive(Args)]
@@ -433,6 +463,53 @@ pub(crate) fn backends(command: &BackendsCommand) -> anyhow::Result<ExitCode> {
         target.service,
         target.backend
     )])
+}
+
+pub(crate) fn cache(command: &CacheCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        CacheCommand::List(ctl) => {
+            let answer = expect(call(ctl, &Call::new("GET", "/api/v1/cache"))?, &[200])?;
+            let stores = answer.json()["stores"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            lines(stores.iter().map(|s| {
+                format!(
+                    "{:<16} {:<6} {} objects  {} bytes of {}  hits {}  misses {}  evictions {}  purged {}",
+                    text(&s["name"]),
+                    text(&s["kind"]),
+                    s["objects"],
+                    s["bytes"],
+                    s["max_size"],
+                    s["hits"],
+                    s["misses"],
+                    s["evictions"],
+                    s["purged"],
+                )
+            }))
+        }
+        CacheCommand::Purge(args) => {
+            let body = if args.all {
+                json!({ "all": true })
+            } else if let Some(url) = &args.url {
+                json!({ "url": url })
+            } else if let Some(prefix) = &args.prefix {
+                json!({ "prefix": prefix })
+            } else {
+                json!({ "tag": args.tag })
+            };
+            let path = format!("/api/v1/cache/{}/purge", segment(&args.store));
+            let answer = expect(
+                call(&args.ctl, &Call::new("POST", &path).json(&body))?,
+                &[200],
+            )?;
+            lines([format!(
+                "purged {} objects from {}",
+                answer.json()["purged"],
+                args.store
+            )])
+        }
+    }
 }
 
 pub(crate) fn audit_list(args: &AuditList) -> anyhow::Result<ExitCode> {

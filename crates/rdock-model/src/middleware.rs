@@ -61,9 +61,64 @@ pub enum Middleware {
     /// not shield backend workers from slow uploads; it refuses oversize bodies with `413`
     /// and lets body middlewares see the whole body.
     HoldBody(HoldBodyConfig),
+    /// Cache responses in a store named under `caches` (RFC 9111). Only what the origin's
+    /// headers allow is stored; see `docs/guides/caching`.
+    Cache(crate::cache::CacheConfig),
+}
+
+/// How an authenticating middleware identifies who it let in, for the cache rule
+/// (ADR-0030): a route that authenticates and caches must share responses explicitly or key
+/// them on this identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Identity {
+    /// The `basic_auth` user name.
+    User,
+    /// The `jwt` issuer and subject (`iss`, `sub`).
+    TokenSubject,
+    /// The verified client certificate's subject.
+    Certificate,
+    /// Decided by an external service; rdock knows only the headers it copies back.
+    External {
+        /// Headers the middleware copies from the service's answer.
+        headers: Vec<String>,
+    },
+}
+
+impl Identity {
+    /// Whether `key.consumer` can tell users apart for this middleware.
+    #[must_use]
+    pub fn keyable(&self) -> bool {
+        !matches!(self, Self::External { .. })
+    }
+
+    /// What `key.consumer` keys on, for diagnostics.
+    #[must_use]
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::User => "the user name",
+            Self::TokenSubject => "the token's issuer and subject",
+            Self::Certificate => "the certificate's subject",
+            Self::External { .. } => "nothing: rdock does not learn who the service let in",
+        }
+    }
 }
 
 impl Middleware {
+    /// The identity this middleware establishes, when it authenticates requests. New
+    /// authenticating middlewares add themselves here and the cache rule follows.
+    #[must_use]
+    pub fn authenticates(&self) -> Option<Identity> {
+        match self {
+            Self::BasicAuth(_) => Some(Identity::User),
+            Self::Jwt(_) => Some(Identity::TokenSubject),
+            Self::ClientCert(_) => Some(Identity::Certificate),
+            Self::ForwardAuth(f) => Some(Identity::External {
+                headers: f.copy_headers.clone(),
+            }),
+            _ => None,
+        }
+    }
+
     /// Whether this middleware answers every request itself, so a route whose chain ends with
     /// it needs no service: `static` without `pass_through`, and `maintenance` that is enabled
     /// for everyone.

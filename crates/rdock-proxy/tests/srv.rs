@@ -38,6 +38,7 @@ services:
             backends: &backends,
             sticky_key: b"test",
             live: &rdock_observability::live::Live::default(),
+            caches: None,
         },
     );
     let runtime = compiled.runtime.expect("compiles");

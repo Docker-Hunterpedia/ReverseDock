@@ -52,6 +52,8 @@ pub struct CompileEnv<'a> {
     pub sticky_key: &'a [u8],
     /// Live traffic rings by route and service, shared across generations (ADR-0024).
     pub live: &'a rdock_observability::live::Live,
+    /// The process's cache stores; `None` where no store may be opened (tests, tools).
+    pub caches: Option<&'a rdock_cache::Registry>,
 }
 
 /// The result of compilation.
@@ -73,6 +75,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let services = compile_services(config, env, &mut out);
     let tracer = tracer(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
+    let caches = resolve_caches(config, env, &mut out);
     let mut auto_tls = AutoTls {
         certs: &index,
         acme: config.effective_acme().is_some(),
@@ -87,6 +90,10 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &mut auto_tls,
         &listener_certificates,
         &env.live.routes,
+        &Caches {
+            stores: &caches,
+            required: env.mode == Mode::Run && env.caches.is_some(),
+        },
         &mut out,
     );
     crate::tcp::compile_tcp(config, env, &mut listeners, &mut auto_tls, &mut out);
@@ -730,6 +737,40 @@ fn wants_auto_tls(config: &Config, route: &Route) -> bool {
     }
 }
 
+/// The stores a configuration's routes may cache in.
+struct Caches<'a> {
+    stores: &'a HashMap<String, &'static rdock_cache::Store>,
+    /// A route naming a store that is not open is an error (a real start); otherwise
+    /// (validation, tools) the route compiles without its cache.
+    required: bool,
+}
+
+/// Opens or reuses the stores under `caches`. Validation never opens one; a changed or
+/// removed definition is a warning, because the running store stays until a restart.
+fn resolve_caches(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> HashMap<String, &'static rdock_cache::Store> {
+    let Some(registry) = env.caches.filter(|_| env.mode == Mode::Run) else {
+        return HashMap::new();
+    };
+    let resolved = registry.resolve(&config.caches);
+    for finding in &resolved.findings {
+        let path = path_key("caches", finding.store());
+        out.push(if finding.is_error() {
+            Diagnostic::error(path, finding.message())
+        } else {
+            Diagnostic::warning(path, finding.message())
+        });
+    }
+    resolved.stores
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the compiled parts of one configuration, each used by the routes"
+)]
 fn compile_listeners(
     config: &Config,
     services: &HashMap<String, Arc<ServiceRuntime>>,
@@ -737,6 +778,7 @@ fn compile_listeners(
     auto_tls: &mut AutoTls<'_>,
     scoped: &HashMap<String, Arc<CertIndex>>,
     rings: &rdock_observability::live::Rings,
+    caches: &Caches<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
     let effective = config.effective_listeners();
@@ -764,6 +806,7 @@ fn compile_listeners(
             middlewares,
             configs: &config.middlewares,
             live: rings.ring(name),
+            caches,
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
@@ -870,6 +913,43 @@ struct RouteContext<'a> {
     /// The middlewares' configurations, by the same keys.
     configs: &'a std::collections::BTreeMap<String, rdock_model::middleware::Middleware>,
     live: Arc<rdock_observability::live::Ring>,
+    caches: &'a Caches<'a>,
+}
+
+/// The route's cache policy from its `cache` middleware, if it has one.
+fn route_cache(
+    path: &str,
+    route: &Route,
+    context: &RouteContext<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Result<Option<Arc<rdock_cache::RoutePolicy>>, ()> {
+    let config = route
+        .middlewares
+        .iter()
+        .find_map(|r| match context.configs.get(key(r)) {
+            Some(rdock_model::middleware::Middleware::Cache(c)) => Some(c),
+            _ => None,
+        });
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let Some(store) = context.caches.stores.get(&config.store) else {
+        if context.caches.required {
+            out.push(Diagnostic::error(
+                format!("{path}.middlewares"),
+                format!("cache store `{}` is not available", config.store),
+            ));
+            return Err(());
+        }
+        return Ok(None);
+    };
+    match rdock_cache::RoutePolicy::compile(config, store) {
+        Ok(policy) => Ok(Some(Arc::new(policy))),
+        Err(message) => {
+            out.push(Diagnostic::error(format!("{path}.middlewares"), message));
+            Err(())
+        }
+    }
 }
 
 fn compile_route(
@@ -941,6 +1021,7 @@ fn compile_route(
         }
         None => None,
     };
+    let cache = route_cache(&path, route, context, out).ok()?;
     let chain = rdock_middleware::Chain::new(chain);
     Some(Arc::new(RouteRuntime {
         name: Arc::from(name),
@@ -954,6 +1035,7 @@ fn compile_route(
         timeouts: route.timeouts,
         mirror,
         live: context.live.clone(),
+        cache,
     }))
 }
 

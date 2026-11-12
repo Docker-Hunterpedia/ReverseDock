@@ -11,6 +11,7 @@ members = [
   "crates/rdock-tls",
   "crates/rdock-acme",
   "crates/rdock-balancer",
+  "crates/rdock-cache",
   "crates/rdock-middleware",
   "crates/rdock-limits",
   "crates/rdock-observability",
@@ -40,6 +41,7 @@ publish = false
 # Internal crates
 rdock-admin = { path = "crates/rdock-admin" }
 rdock-balancer = { path = "crates/rdock-balancer" }
+rdock-cache = { path = "crates/rdock-cache" }
 rdock-cloudflare = { path = "crates/rdock-cloudflare" }
 rdock-acme = { path = "crates/rdock-acme" }
 rdock-config = { path = "crates/rdock-config" }
@@ -82,7 +84,8 @@ url = "2.5.8"
 # versions). 0.9.1 replaces the zero-capacity `BufStream` that panicked on every accepted connection
 # with tokio >= 1.54 (tokio#8494, pingora#1059), so the `<1.54` cap is gone (checked 2026-11-11 with
 # the whole suite and `e2e_proxy::tokio_1_54_regression_*`).
-pingora = { version = "0.9.1", default-features = false, features = ["proxy", "rustls"] }
+# `cache` only re-exports pingora-cache, which pingora-proxy already builds (ADR-0030, F-WEB-03).
+pingora = { version = "0.9.1", default-features = false, features = ["proxy", "rustls", "cache"] }
 # tokio 1.54.1 (1.54.0 is yanked) declares rust-version 1.85, within our MSRV.
 tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 arc-swap = "1.9.3"

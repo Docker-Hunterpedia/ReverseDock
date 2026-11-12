@@ -3919,6 +3919,7 @@ dependencies = [
  "rdock-acme",
  "rdock-admin",
  "rdock-balancer",
+ "rdock-cache",
  "rdock-cloudflare",
  "rdock-config",
  "rdock-dns-providers",
@@ -4026,6 +4027,29 @@ dependencies = [
  "fastrand",
  "ring",
  "subtle",
+]
+
+[[package]]
+name = "rdock-cache"
+version = "0.6.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "cap-std",
+ "crc32fast",
+ "http",
+ "httpdate",
+ "percent-encoding",
+ "pingora",
+ "prometheus",
+ "proptest",
+ "rdock-model",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
 ]
 
 [[package]]
@@ -4298,6 +4322,7 @@ dependencies = [
  "pingora",
  "proxy-header",
  "rdock-balancer",
+ "rdock-cache",
  "rdock-config",
  "rdock-limits",
  "rdock-middleware",

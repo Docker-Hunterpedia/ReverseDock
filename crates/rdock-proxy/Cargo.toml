@@ -26,6 +26,7 @@ ipnet.workspace = true
 pingora.workspace = true
 proxy-header.workspace = true
 rdock-balancer.workspace = true
+rdock-cache.workspace = true
 rdock-config.workspace = true
 rdock-limits.workspace = true
 rdock-middleware.workspace = true

@@ -34,6 +34,19 @@ impl Gate<'_> {
 /// Reports every setting this version cannot honour.
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
+    for (name, middleware) in &config.middlewares {
+        // Background refresh re-runs the whole pipeline for a request no client waits on
+        // (ADR-0030); `stale-while-revalidate` is honoured as plain staleness instead.
+        if let rdock_model::middleware::Middleware::Cache(cache) = middleware
+            && cache.background_refresh
+        {
+            gate.unsupported(
+                format!("{}.background_refresh", path_key("middlewares", name)),
+                "background refresh of stale responses (`stale-while-revalidate`)",
+                "a later version",
+            );
+        }
+    }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
         // The PROXY protocol specification defines no framing for datagrams (ADR-0030).
@@ -74,6 +87,24 @@ mod tests {
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
         assert!(run.iter().any(|d| d.path == "listeners.dns.proxy_protocol"));
+    }
+
+    #[test]
+    fn background_refresh_is_planned() {
+        let yaml = "caches:\n  mem: { type: memory }\nmiddlewares:\n  c: { type: cache, store: mem, background_refresh: true }\nservices:\n  s:\n    backends: [{ address: \"s:1\" }]\n";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "middlewares.c.background_refresh");
+        assert_eq!(
+            run[0].message,
+            "background refresh of stale responses (`stale-while-revalidate`): not supported in this version (planned for a later version)"
+        );
+        assert!(run[0].is_error());
+        assert!(
+            diagnostics(yaml, Mode::Validate)
+                .iter()
+                .all(|d| !d.is_error())
+        );
     }
 
     #[test]

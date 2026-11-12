@@ -78,6 +78,8 @@ pub(crate) fn documented(guard: impl FnOnce(Api) -> Api) -> Api {
         .routes(routes!(resources::listeners))
         .routes(routes!(resources::metrics_summary))
         .routes(routes!(resources::explain))
+        .routes(routes!(crate::cache::stores))
+        .routes(routes!(crate::cache::purge))
         .routes(routes!(stream::logs))
         .routes(routes!(stream::events))
         .routes(routes!(resources::list))

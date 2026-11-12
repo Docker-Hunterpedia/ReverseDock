@@ -2145,6 +2145,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "prometheus"
+version = "0.14.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3ca5326d8d0b950a9acd87e6a3f94745394f62e4dae1b1ee22b2bc0c394af43a"
+dependencies = [
+ "cfg-if",
+ "fnv",
+ "lazy_static",
+ "memchr",
+ "parking_lot",
+ "thiserror 2.0.21",
+]
+
+[[package]]
 name = "proxy-header"
 version = "0.1.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2208,6 +2222,26 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
+name = "rdock-cache"
+version = "0.6.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "cap-std",
+ "crc32fast",
+ "http",
+ "httpdate",
+ "percent-encoding",
+ "pingora",
+ "prometheus",
+ "rdock-model",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "url",
+]
+
+[[package]]
 name = "rdock-config"
 version = "0.6.0-alpha.1"
 dependencies = [
@@ -2229,6 +2263,7 @@ dependencies = [
  "pingora-core",
  "pingora-http",
  "proxy-header",
+ "rdock-cache",
  "rdock-config",
  "rdock-middleware",
  "rdock-rules",

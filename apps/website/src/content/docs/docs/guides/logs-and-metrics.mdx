@@ -96,6 +96,7 @@ A JSON line, wrapped here for reading:
 | `user_agent`, `referer` | Request headers. `referer` is logged without its query string. |
 | `cf_ray` | The `CF-Ray` request header, which Cloudflare adds. |
 | `error` | The error that ended the request, if any. |
+| `cache_status` | What the [HTTP cache](/docs/guides/caching/) did, on caching routes <Status since="v0.8" />: `hit`, `stale`, `revalidated`, `expired`, `miss` or `bypass`. The text format appends it as `cache=`. |
 
 Fields without a value are left out.
 

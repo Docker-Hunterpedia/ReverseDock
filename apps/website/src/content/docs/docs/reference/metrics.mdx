@@ -193,6 +193,45 @@ it out. Labels: `service`, `backend`.
 Backend addresses come from your configuration and its DNS answers, so their number stays
 bounded by your pools.
 
+## HTTP cache
+
+<Status since="v0.8" /> Metrics of the [HTTP cache](/docs/guides/caching/). Store and route
+names come from the configuration.
+
+### `rdock_cache_requests_total`
+
+**Counter.** Requests on caching routes, counted when the response is finished. Labels: `store`,
+`route` and `status`: `hit` (answered from the store), `stale` (a stale copy served because the
+origin failed, `stale-if-error`), `revalidated` (the origin confirmed a stale copy with `304`),
+`expired` (a stale copy was replaced, or the client asked for a fresh one), `miss` and `bypass`
+(the cache was not used: another method, a request body, a `bypass` rule, a mirrored request, or
+an answer a middleware gave before the cache).
+
+### `rdock_cache_objects`
+
+**Gauge.** Objects in a store. Label: `store`.
+
+### `rdock_cache_bytes`
+
+**Gauge.** Bytes in a store: bodies, headers and bookkeeping (file sizes for a disk store).
+Label: `store`.
+
+### `rdock_cache_evictions_total`
+
+**Counter.** Objects removed to stay within a store's limits. Labels: `store` and `reason`:
+`size` (`max_size`) or `count` (`max_objects`, disk stores).
+
+### `rdock_cache_lock_waits_total`
+
+**Counter.** Requests that waited for another request to fill the cache (request coalescing).
+Label: `store`.
+
+### `rdock_cache_dropped_total`
+
+**Counter.** Disk-store objects removed by the start-up walk. Labels: `store` and `reason`:
+`corrupt` (a checksum, length or format that does not check out) or `partial` (a temporary file
+an interrupted fill left behind).
+
 ## Configuration
 
 ### `rdock_config_generation`

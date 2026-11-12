@@ -64,6 +64,14 @@
         "trust_forwarded_on_loopback": false
       }
     },
+    "caches": {
+      "description": "HTTP cache stores, used by `cache` middlewares.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/CacheStore"
+      },
+      "default": {}
+    },
     "certificates": {
       "description": "Certificates you provide yourself.",
       "type": "object",
@@ -1123,6 +1131,21 @@
         "syslog"
       ]
     },
+    "AuthorizationRule": {
+      "description": "What to do with responses to requests that carry `Authorization`.",
+      "oneOf": [
+        {
+          "description": "Store only `public`, `s-maxage` or `must-revalidate` responses (RFC 9111 §3.5).",
+          "type": "string",
+          "const": "refuse"
+        },
+        {
+          "description": "Store them like other responses.",
+          "type": "string",
+          "const": "store"
+        }
+      ]
+    },
     "AzureDnsProvider": {
       "description": "Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and\n`managed_identity` is set.",
       "type": "object",
@@ -1291,6 +1314,70 @@
         {
           "description": "Any RFC 8555 ACME directory.",
           "$ref": "#/$defs/HttpUrl"
+        }
+      ]
+    },
+    "CacheStore": {
+      "description": "A cache store: where cached responses live. Stores are created once per process; adding\none applies on reload, changing or removing one takes effect after a restart.",
+      "oneOf": [
+        {
+          "description": "Responses in memory, evicted least recently used first beyond `max_size`.",
+          "type": "object",
+          "properties": {
+            "max_size": {
+              "description": "Bytes kept, bodies and headers together.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "256MiB"
+            },
+            "type": {
+              "type": "string",
+              "const": "memory"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Responses on disk, one file per object, evicted least recently used first beyond\n`max_size` or `max_objects`. Objects survive restarts.",
+          "type": "object",
+          "properties": {
+            "max_objects": {
+              "description": "Objects kept on disk (one file each).",
+              "type": "integer",
+              "format": "uint64",
+              "default": 1000000,
+              "minimum": 0
+            },
+            "max_size": {
+              "description": "Bytes kept on disk (file sizes).",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1GiB"
+            },
+            "path": {
+              "description": "Directory of the store, absolute; `<data dir>/cache/<name>` when omitted. Created with\nmode 0700. Anyone who can write it can serve arbitrary content through the cache.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "disk"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -3943,6 +4030,215 @@
           "required": [
             "type"
           ]
+        },
+        {
+          "description": "Cache responses in a store named under `caches` (RFC 9111). Only what the origin's\nheaders allow is stored; see `docs/guides/caching`.",
+          "type": "object",
+          "properties": {
+            "authorization": {
+              "description": "Responses to requests that carry `Authorization` to the origin: `refuse` (default)\nstores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC\n9111 §3.5); `store` stores them anyway. The risk of `store` is serving one\ncredential's answer to another.",
+              "$ref": "#/$defs/AuthorizationRule",
+              "default": "refuse"
+            },
+            "background_refresh": {
+              "description": "Refresh stale responses in the background (`stale-while-revalidate`). Not supported\nin this version: `stale-while-revalidate` is treated as plain staleness.",
+              "type": "boolean",
+              "default": false
+            },
+            "bypass": {
+              "description": "Requests that skip the cache entirely.",
+              "type": "object",
+              "properties": {
+                "cookies": {
+                  "description": "Skip when the request has one of these cookies.",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "headers": {
+                  "description": "Skip when the request has one of these headers.",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "cookies": [],
+                "headers": []
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "cache_status": {
+              "description": "Add `Cache-Status` (RFC 9211) to responses.",
+              "type": "boolean",
+              "default": true
+            },
+            "default_ttl": {
+              "description": "Lifetime by status (`\"200\": 5m`) for responses whose origin gives none (no\n`max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or\n`no-cache`. Empty by default: the risk is caching personalised pages the origin did\nnot mark.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/Duration"
+              },
+              "default": {}
+            },
+            "heuristic_freshness": {
+              "description": "Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at\nmost a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.",
+              "type": "boolean",
+              "default": false
+            },
+            "key": {
+              "description": "What, besides store, route, scheme, host, path and method, selects a stored response.",
+              "type": "object",
+              "properties": {
+                "consumer": {
+                  "description": "Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,\nelse the `jwt` issuer and subject, else the client certificate's subject.",
+                  "type": "boolean",
+                  "default": false
+                },
+                "headers": {
+                  "description": "Request headers whose values select a response (beyond the origin's `Vary`).",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "query": {
+                  "description": "How the query string enters the key.",
+                  "$ref": "#/$defs/QueryKey",
+                  "default": "as_sent"
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "consumer": false,
+                "headers": [],
+                "query": "as_sent"
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "lock": {
+              "description": "Request coalescing: one origin fetch per key at a time.",
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "description": "While one request fetches a key, others wait for its response instead of asking the\norigin too. Off, every miss goes to the origin.",
+                  "type": "boolean",
+                  "default": true
+                },
+                "timeout": {
+                  "description": "Longest wait. After it the waiting request goes to the origin without storing, and\na fetch running that long no longer holds others back.",
+                  "$ref": "#/$defs/Duration",
+                  "default": "5s"
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "enabled": true,
+                "timeout": "5s"
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "max_object_size": {
+              "description": "Largest response body stored; larger ones pass through uncached.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "64MiB"
+            },
+            "request_directives": {
+              "description": "The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default,\nRFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches.\n`only-if-cached` is always honoured.",
+              "$ref": "#/$defs/RequestDirectives",
+              "default": "honour"
+            },
+            "set_cookie": {
+              "description": "Responses that set a cookie: `refuse` (default) never stores them; `strip` stores\nthem without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie.",
+              "$ref": "#/$defs/SetCookie",
+              "default": "refuse"
+            },
+            "shared_across_users": {
+              "description": "The route authenticates requests but its responses are the same for every user, so\none stored copy may be served to all of them. Required (or `key.consumer`) when the\nroute has an authenticating middleware; the risk is serving one user's page to\nanother.",
+              "type": "boolean",
+              "default": false
+            },
+            "stale_if_error": {
+              "description": "Longest time a stale response is served when the origin fails, if the origin allowed\nit with `stale-if-error` (RFC 5861). `0s` turns it off.",
+              "$ref": "#/$defs/Duration",
+              "default": "1d"
+            },
+            "statuses": {
+              "description": "Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300,\n301, 308, 404, 410. 206 and 304 are never stored as such.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "integer",
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0
+              }
+            },
+            "store": {
+              "description": "The store, a name under `caches`.",
+              "type": "string"
+            },
+            "tags": {
+              "description": "Cache tags for purging groups of responses.",
+              "type": "object",
+              "properties": {
+                "headers": {
+                  "description": "Response headers that carry tags (comma or space separated).",
+                  "type": "array",
+                  "default": [
+                    "cache-tag",
+                    "surrogate-key"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "keep": {
+                  "description": "Pass the tag headers on to clients; by default they are removed.",
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "headers": [
+                  "cache-tag",
+                  "surrogate-key"
+                ],
+                "keep": false
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "cache"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "store"
+          ]
         }
       ]
     },
@@ -4174,6 +4470,53 @@
         }
       ]
     },
+    "QueryKey": {
+      "description": "How the query string enters the key. Parameters left out of the key are also removed\nfrom the request sent to the origin.",
+      "oneOf": [
+        {
+          "description": "The query exactly as forwarded.",
+          "type": "string",
+          "const": "as_sent"
+        },
+        {
+          "description": "Parameters sorted by name.",
+          "type": "string",
+          "const": "sorted"
+        },
+        {
+          "description": "Only these parameters (`name` or `prefix*`).",
+          "type": "object",
+          "properties": {
+            "only": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "only"
+          ]
+        },
+        {
+          "description": "All but these parameters (`name` or `prefix*`).",
+          "type": "object",
+          "properties": {
+            "ignore": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ignore"
+          ]
+        }
+      ]
+    },
     "RateLimitKey": {
       "type": "string",
       "examples": [
@@ -4216,6 +4559,21 @@
           "description": "`https://`.",
           "type": "string",
           "const": "https"
+        }
+      ]
+    },
+    "RequestDirectives": {
+      "description": "The client's request directives.",
+      "oneOf": [
+        {
+          "description": "Apply them (RFC 9111 §5.2.1).",
+          "type": "string",
+          "const": "honour"
+        },
+        {
+          "description": "Ignore them, except `only-if-cached`.",
+          "type": "string",
+          "const": "ignore"
         }
       ]
     },
@@ -4847,6 +5205,21 @@
           "enum": [
             "unlimited"
           ]
+        }
+      ]
+    },
+    "SetCookie": {
+      "description": "What to do with responses that set a cookie.",
+      "oneOf": [
+        {
+          "description": "Never store them.",
+          "type": "string",
+          "const": "refuse"
+        },
+        {
+          "description": "Store them without `Set-Cookie`.",
+          "type": "string",
+          "const": "strip"
         }
       ]
     },

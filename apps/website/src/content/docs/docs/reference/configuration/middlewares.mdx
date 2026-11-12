@@ -2,7 +2,7 @@
 title: middlewares
 description: "Reusable request and response policies."
 sidebar:
-  order: 7
+  order: 8
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -724,3 +724,197 @@ Largest body held, at most 64MiB; a longer one is refused with `413`. The route'
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
 
 Longest time from the first body byte to the last; a slower upload is refused with `408`. The service's `timeouts.read` also runs while the backend waits for the body.
+
+## `type: cache`
+
+Cache responses in a store named under `caches` (RFC 9111). Only what the origin's headers allow is stored; see `docs/guides/caching`.
+
+### `middlewares.<name>.authorization`
+
+**Type:** `refuse` · `store` · **Default:** `refuse`
+
+Responses to requests that carry `Authorization` to the origin: `refuse` (default) stores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC 9111 §3.5); `store` stores them anyway. The risk of `store` is serving one credential's answer to another.
+
+- `refuse`: Store only `public`, `s-maxage` or `must-revalidate` responses (RFC 9111 §3.5).
+- `store`: Store them like other responses.
+
+### `middlewares.<name>.background_refresh`
+
+**Type:** `boolean` · **Default:** `false`
+
+Refresh stale responses in the background (`stale-while-revalidate`). Not supported in this version: `stale-while-revalidate` is treated as plain staleness.
+
+:::note[Planned for a later version]
+Background refresh of stale cached responses (stale-while-revalidate): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `middlewares.<name>.bypass`
+
+**Type:** object · **Default:** `{"cookies":[],"headers":[]}`
+
+Requests that skip the cache entirely.
+
+#### `middlewares.<name>.bypass.cookies`
+
+**Type:** list of `string`
+
+Skip when the request has one of these cookies.
+
+#### `middlewares.<name>.bypass.headers`
+
+**Type:** list of `string`
+
+Skip when the request has one of these headers.
+
+### `middlewares.<name>.cache_status`
+
+**Type:** `boolean` · **Default:** `true`
+
+Add `Cache-Status` (RFC 9211) to responses.
+
+### `middlewares.<name>.default_ttl`
+
+**Type:** map of names to [`Duration`](/docs/reference/configuration/#duration)
+
+Lifetime by status (`"200": 5m`) for responses whose origin gives none (no `max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or `no-cache`. Empty by default: the risk is caching personalised pages the origin did not mark.
+
+### `middlewares.<name>.heuristic_freshness`
+
+**Type:** `boolean` · **Default:** `false`
+
+Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at most a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.
+
+### `middlewares.<name>.key`
+
+**Type:** object · **Default:** `{"consumer":false,"headers":[],"query":"as_sent"}`
+
+What, besides store, route, scheme, host, path and method, selects a stored response.
+
+#### `middlewares.<name>.key.consumer`
+
+**Type:** `boolean` · **Default:** `false`
+
+Keep one copy per authenticated identity: the consumer, else the `basic_auth` user, else the `jwt` issuer and subject, else the client certificate's subject.
+
+#### `middlewares.<name>.key.headers`
+
+**Type:** list of `string`
+
+Request headers whose values select a response (beyond the origin's `Vary`).
+
+#### `middlewares.<name>.key.query`
+
+**Type:** `as_sent` · `sorted` · **Default:** `as_sent`
+
+How the query string enters the key.
+
+- `as_sent`: The query exactly as forwarded.
+- `sorted`: Parameters sorted by name.
+
+#### `type: undefined`
+
+The query exactly as forwarded.
+
+#### `type: undefined`
+
+Parameters sorted by name.
+
+#### `type: undefined`
+
+Only these parameters (`name` or `prefix*`).
+
+#### `middlewares.<name>.key.query.only`
+
+**Type:** list of `string` · **Required**
+
+#### `type: undefined`
+
+All but these parameters (`name` or `prefix*`).
+
+#### `middlewares.<name>.key.query.ignore`
+
+**Type:** list of `string` · **Required**
+
+### `middlewares.<name>.lock`
+
+**Type:** object · **Default:** `{"enabled":true,"timeout":"5s"}`
+
+Request coalescing: one origin fetch per key at a time.
+
+#### `middlewares.<name>.lock.enabled`
+
+**Type:** `boolean` · **Default:** `true`
+
+While one request fetches a key, others wait for its response instead of asking the origin too. Off, every miss goes to the origin.
+
+#### `middlewares.<name>.lock.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+Longest wait. After it the waiting request goes to the origin without storing, and a fetch running that long no longer holds others back.
+
+### `middlewares.<name>.max_object_size`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64MiB`
+
+Largest response body stored; larger ones pass through uncached.
+
+### `middlewares.<name>.request_directives`
+
+**Type:** `honour` · `ignore` · **Default:** `honour`
+
+The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default, RFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches. `only-if-cached` is always honoured.
+
+- `honour`: Apply them (RFC 9111 §5.2.1).
+- `ignore`: Ignore them, except `only-if-cached`.
+
+### `middlewares.<name>.set_cookie`
+
+**Type:** `refuse` · `strip` · **Default:** `refuse`
+
+Responses that set a cookie: `refuse` (default) never stores them; `strip` stores them without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie.
+
+- `refuse`: Never store them.
+- `strip`: Store them without `Set-Cookie`.
+
+### `middlewares.<name>.shared_across_users`
+
+**Type:** `boolean` · **Default:** `false`
+
+The route authenticates requests but its responses are the same for every user, so one stored copy may be served to all of them. Required (or `key.consumer`) when the route has an authenticating middleware; the risk is serving one user's page to another.
+
+### `middlewares.<name>.stale_if_error`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1d`
+
+Longest time a stale response is served when the origin fails, if the origin allowed it with `stale-if-error` (RFC 5861). `0s` turns it off.
+
+### `middlewares.<name>.statuses`
+
+**Type:** list of `integer`
+
+Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300, 301, 308, 404, 410. 206 and 304 are never stored as such.
+
+### `middlewares.<name>.store`
+
+**Type:** `string` · **Required**
+
+The store, a name under `caches`.
+
+### `middlewares.<name>.tags`
+
+**Type:** object · **Default:** `{"headers":["cache-tag","surrogate-key"],"keep":false}`
+
+Cache tags for purging groups of responses.
+
+#### `middlewares.<name>.tags.headers`
+
+**Type:** list of `string` · **Default:** `["cache-tag","surrogate-key"]`
+
+Response headers that carry tags (comma or space separated).
+
+#### `middlewares.<name>.tags.keep`
+
+**Type:** `boolean` · **Default:** `false`
+
+Pass the tag headers on to clients; by default they are removed.

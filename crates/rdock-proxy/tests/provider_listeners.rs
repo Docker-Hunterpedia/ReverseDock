@@ -96,6 +96,7 @@ services:
             backends: &rdock_balancer::Registry::default(),
             sticky_key: b"test",
             live: &rdock_observability::live::Live::default(),
+            caches: None,
         },
     );
     let errors: Vec<_> = compiled

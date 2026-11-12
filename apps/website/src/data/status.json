@@ -5,5 +5,12 @@
     "what": "PROXY protocol on UDP listeners",
     "value": true,
     "fixture": "listeners:\n  dns: { address: \":53\", protocol: udp, proxy_protocol: { trusted: [10.0.0.0/8] } }\nudp_routes:\n  dns: { listeners: [dns], service: dns }\nudp_services:\n  dns:\n    backends: [{ address: \"127.0.0.1:5353\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.background_refresh",
+    "planned": "a later version",
+    "what": "Background refresh of stale cached responses (stale-while-revalidate)",
+    "value": true,
+    "fixture": "caches:\n  mem: { type: memory }\nmiddlewares:\n  cache: { type: cache, store: mem, background_refresh: true }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [cache] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   }
 ]

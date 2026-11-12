@@ -63,6 +63,7 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
                         backends: &backends,
                         sticky_key: b"validate",
                         live: &rdock_observability::live::Live::default(),
+                        caches: None,
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);

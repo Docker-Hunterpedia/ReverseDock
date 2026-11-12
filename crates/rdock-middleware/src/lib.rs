@@ -376,6 +376,19 @@ impl Middleware for GrpcWeb {
     }
 }
 
+/// Marks a route as cached. The cache is not a middleware phase: the proxy looks responses up
+/// after every `request` phase and stores them before every `response` phase (ADR-0030), so
+/// this entry only carries the configuration the proxy compiles into the route's policy.
+#[derive(Debug)]
+struct CacheMarker;
+
+#[async_trait]
+impl Middleware for CacheMarker {
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::new(Phases::NONE)
+    }
+}
+
 /// Builds the middleware `name` from its configuration.
 pub fn build(
     name: &str,
@@ -406,6 +419,7 @@ pub fn build(
         // The proxy converts the protocol itself (it needs the trailers); see `rdock-proxy`.
         Config::GrpcWeb(_) => Arc::new(GrpcWeb),
         Config::HoldBody(c) => Arc::new(hold_body::HoldBody::new(c)),
+        Config::Cache(_) => Arc::new(CacheMarker),
     })
 }
 

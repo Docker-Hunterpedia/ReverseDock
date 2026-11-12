@@ -403,9 +403,20 @@ fn resource_operations(rdock: &Rdock, check: &mut Checker) {
         "/api/v1/metrics/summary",
         "/api/v1/logs/stream",
         "/api/v1/events/stream",
+        "/api/v1/cache",
     ] {
         check.call(rdock, ("GET", path, path), &[], "");
     }
+    check.call(
+        rdock,
+        (
+            "POST",
+            "/api/v1/cache/{store}/purge",
+            "/api/v1/cache/none/purge",
+        ),
+        &json_type,
+        r#"{"all":true}"#,
+    );
     check.call(
         rdock,
         (

@@ -153,6 +153,8 @@ pub struct RouteRuntime {
     pub grpc_web: bool,
     /// Request body limit of this route, overriding `security.limits.max_body_bytes`.
     pub max_body: Option<rdock_model::values::ByteSize>,
+    /// The route's cache policy, when its chain has a `cache` middleware (F-WEB-03).
+    pub cache: Option<Arc<rdock_cache::RoutePolicy>>,
 }
 
 /// Request mirroring of a route.

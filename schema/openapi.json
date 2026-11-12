@@ -350,6 +350,60 @@
         ],
         "type": "object"
       },
+      "PurgeRequest": {
+        "additionalProperties": false,
+        "description": "What a purge removes; set exactly one field.",
+        "properties": {
+          "all": {
+            "description": "Everything in the store.",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "prefix": {
+            "description": "Every object whose URL starts with this absolute URL.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "tag": {
+            "description": "Every object with this tag (from `Cache-Tag` or `Surrogate-Key`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "url": {
+            "description": "Every variant of this absolute URL (`https://app.example.com/a?b=1`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "Purged": {
+        "description": "The result of a purge.",
+        "properties": {
+          "purged": {
+            "description": "Objects removed. Fills in progress that the purge covers are discarded too.",
+            "format": "int64",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "store": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "store",
+          "purged"
+        ],
+        "type": "object"
+      },
       "Reauth": {
         "additionalProperties": false,
         "properties": {
@@ -1473,6 +1527,21 @@
         ],
         "type": "object"
       },
+      "rdock.AuthorizationRule": {
+        "description": "What to do with responses to requests that carry `Authorization`.",
+        "oneOf": [
+          {
+            "const": "refuse",
+            "description": "Store only `public`, `s-maxage` or `must-revalidate` responses (RFC 9111 §3.5).",
+            "type": "string"
+          },
+          {
+            "const": "store",
+            "description": "Store them like other responses.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.AzureDnsProvider": {
         "additionalProperties": false,
         "description": "Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and\n`managed_identity` is set.",
@@ -1643,6 +1712,70 @@
           }
         ],
         "description": "A certificate authority."
+      },
+      "rdock.CacheStore": {
+        "description": "A cache store: where cached responses live. Stores are created once per process; adding\none applies on reload, changing or removing one takes effect after a restart.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Responses in memory, evicted least recently used first beyond `max_size`.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "max_size": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "256MiB",
+                "description": "Bytes kept, bodies and headers together."
+              },
+              "type": {
+                "const": "memory",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Responses on disk, one file per object, evicted least recently used first beyond\n`max_size` or `max_objects`. Objects survive restarts.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "max_objects": {
+                "default": 1000000,
+                "description": "Objects kept on disk (one file each).",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_size": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "1GiB",
+                "description": "Bytes kept on disk (file sizes)."
+              },
+              "path": {
+                "default": null,
+                "description": "Directory of the store, absolute; `<data dir>/cache/<name>` when omitted. Created with\nmode 0700. Anyone who can write it can serve arbitrary content through the cache.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "type": {
+                "const": "disk",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          }
+        ]
       },
       "rdock.Certificate": {
         "additionalProperties": false,
@@ -1867,6 +2000,14 @@
               "trust_forwarded_on_loopback": false
             },
             "description": "Admin API and dashboard."
+          },
+          "caches": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/rdock.CacheStore"
+            },
+            "default": {},
+            "description": "HTTP cache stores, used by `cache` middlewares.",
+            "type": "object"
           },
           "certificates": {
             "additionalProperties": {
@@ -4520,6 +4661,215 @@
               "type"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Cache responses in a store named under `caches` (RFC 9111). Only what the origin's\nheaders allow is stored; see `docs/guides/caching`.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "authorization": {
+                "$ref": "#/components/schemas/rdock.AuthorizationRule",
+                "default": "refuse",
+                "description": "Responses to requests that carry `Authorization` to the origin: `refuse` (default)\nstores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC\n9111 §3.5); `store` stores them anyway. The risk of `store` is serving one\ncredential's answer to another."
+              },
+              "background_refresh": {
+                "default": false,
+                "description": "Refresh stale responses in the background (`stale-while-revalidate`). Not supported\nin this version: `stale-while-revalidate` is treated as plain staleness.",
+                "type": "boolean"
+              },
+              "bypass": {
+                "additionalProperties": false,
+                "default": {
+                  "cookies": [],
+                  "headers": []
+                },
+                "description": "Requests that skip the cache entirely.",
+                "patternProperties": {
+                  "^x-": {}
+                },
+                "properties": {
+                  "cookies": {
+                    "default": [],
+                    "description": "Skip when the request has one of these cookies.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "headers": {
+                    "default": [],
+                    "description": "Skip when the request has one of these headers.",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  }
+                },
+                "type": "object"
+              },
+              "cache_status": {
+                "default": true,
+                "description": "Add `Cache-Status` (RFC 9211) to responses.",
+                "type": "boolean"
+              },
+              "default_ttl": {
+                "additionalProperties": {
+                  "$ref": "#/components/schemas/rdock.Duration"
+                },
+                "default": {},
+                "description": "Lifetime by status (`\"200\": 5m`) for responses whose origin gives none (no\n`max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or\n`no-cache`. Empty by default: the risk is caching personalised pages the origin did\nnot mark.",
+                "type": "object"
+              },
+              "heuristic_freshness": {
+                "default": false,
+                "description": "Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at\nmost a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.",
+                "type": "boolean"
+              },
+              "key": {
+                "additionalProperties": false,
+                "default": {
+                  "consumer": false,
+                  "headers": [],
+                  "query": "as_sent"
+                },
+                "description": "What, besides store, route, scheme, host, path and method, selects a stored response.",
+                "patternProperties": {
+                  "^x-": {}
+                },
+                "properties": {
+                  "consumer": {
+                    "default": false,
+                    "description": "Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,\nelse the `jwt` issuer and subject, else the client certificate's subject.",
+                    "type": "boolean"
+                  },
+                  "headers": {
+                    "default": [],
+                    "description": "Request headers whose values select a response (beyond the origin's `Vary`).",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "query": {
+                    "$ref": "#/components/schemas/rdock.QueryKey",
+                    "default": "as_sent",
+                    "description": "How the query string enters the key."
+                  }
+                },
+                "type": "object"
+              },
+              "lock": {
+                "additionalProperties": false,
+                "default": {
+                  "enabled": true,
+                  "timeout": "5s"
+                },
+                "description": "Request coalescing: one origin fetch per key at a time.",
+                "patternProperties": {
+                  "^x-": {}
+                },
+                "properties": {
+                  "enabled": {
+                    "default": true,
+                    "description": "While one request fetches a key, others wait for its response instead of asking the\norigin too. Off, every miss goes to the origin.",
+                    "type": "boolean"
+                  },
+                  "timeout": {
+                    "$ref": "#/components/schemas/rdock.Duration",
+                    "default": "5s",
+                    "description": "Longest wait. After it the waiting request goes to the origin without storing, and\na fetch running that long no longer holds others back."
+                  }
+                },
+                "type": "object"
+              },
+              "max_object_size": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "64MiB",
+                "description": "Largest response body stored; larger ones pass through uncached."
+              },
+              "request_directives": {
+                "$ref": "#/components/schemas/rdock.RequestDirectives",
+                "default": "honour",
+                "description": "The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default,\nRFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches.\n`only-if-cached` is always honoured."
+              },
+              "set_cookie": {
+                "$ref": "#/components/schemas/rdock.SetCookie",
+                "default": "refuse",
+                "description": "Responses that set a cookie: `refuse` (default) never stores them; `strip` stores\nthem without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie."
+              },
+              "shared_across_users": {
+                "default": false,
+                "description": "The route authenticates requests but its responses are the same for every user, so\none stored copy may be served to all of them. Required (or `key.consumer`) when the\nroute has an authenticating middleware; the risk is serving one user's page to\nanother.",
+                "type": "boolean"
+              },
+              "stale_if_error": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "1d",
+                "description": "Longest time a stale response is served when the origin fails, if the origin allowed\nit with `stale-if-error` (RFC 5861). `0s` turns it off."
+              },
+              "statuses": {
+                "default": null,
+                "description": "Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300,\n301, 308, 404, 410. 206 and 304 are never stored as such.",
+                "items": {
+                  "format": "uint16",
+                  "maximum": 65535,
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": [
+                  "array",
+                  "null"
+                ]
+              },
+              "store": {
+                "description": "The store, a name under `caches`.",
+                "type": "string"
+              },
+              "tags": {
+                "additionalProperties": false,
+                "default": {
+                  "headers": [
+                    "cache-tag",
+                    "surrogate-key"
+                  ],
+                  "keep": false
+                },
+                "description": "Cache tags for purging groups of responses.",
+                "patternProperties": {
+                  "^x-": {}
+                },
+                "properties": {
+                  "headers": {
+                    "default": [
+                      "cache-tag",
+                      "surrogate-key"
+                    ],
+                    "description": "Response headers that carry tags (comma or space separated).",
+                    "items": {
+                      "type": "string"
+                    },
+                    "type": "array"
+                  },
+                  "keep": {
+                    "default": false,
+                    "description": "Pass the tag headers on to clients; by default they are removed.",
+                    "type": "boolean"
+                  }
+                },
+                "type": "object"
+              },
+              "type": {
+                "const": "cache",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "store"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -4751,6 +5101,53 @@
           }
         ]
       },
+      "rdock.QueryKey": {
+        "description": "How the query string enters the key. Parameters left out of the key are also removed\nfrom the request sent to the origin.",
+        "oneOf": [
+          {
+            "const": "as_sent",
+            "description": "The query exactly as forwarded.",
+            "type": "string"
+          },
+          {
+            "const": "sorted",
+            "description": "Parameters sorted by name.",
+            "type": "string"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Only these parameters (`name` or `prefix*`).",
+            "properties": {
+              "only": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "only"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "All but these parameters (`name` or `prefix*`).",
+            "properties": {
+              "ignore": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "ignore"
+            ],
+            "type": "object"
+          }
+        ]
+      },
       "rdock.RateLimitKey": {
         "examples": [
           "client_ip",
@@ -4792,6 +5189,21 @@
           {
             "const": "https",
             "description": "`https://`.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.RequestDirectives": {
+        "description": "The client's request directives.",
+        "oneOf": [
+          {
+            "const": "honour",
+            "description": "Apply them (RFC 9111 §5.2.1).",
+            "type": "string"
+          },
+          {
+            "const": "ignore",
+            "description": "Ignore them, except `only-if-cached`.",
             "type": "string"
           }
         ]
@@ -5423,6 +5835,21 @@
             "enum": [
               "unlimited"
             ],
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.SetCookie": {
+        "description": "What to do with responses that set a cookie.",
+        "oneOf": [
+          {
+            "const": "refuse",
+            "description": "Never store them.",
+            "type": "string"
+          },
+          {
+            "const": "strip",
+            "description": "Store them without `Set-Cookie`.",
             "type": "string"
           }
         ]
@@ -7404,6 +7831,135 @@
         "summary": "The backend takes new requests again (operator role)",
         "tags": [
           "backends"
+        ]
+      }
+    },
+    "/api/v1/cache": {
+      "get": {
+        "description": "Every cache store with its objects, bytes, limits and counters.",
+        "operationId": "list_caches",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`stores`: name, kind, objects, bytes, max_size, max_objects, hits, misses, stored, evictions, purged, dropped"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Every cache store with its objects, bytes, limits and counters",
+        "tags": [
+          "cache"
+        ]
+      }
+    },
+    "/api/v1/cache/{store}/purge": {
+      "post": {
+        "description": "Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.",
+        "operationId": "purge_cache",
+        "parameters": [
+          {
+            "description": "Store name, under `caches`",
+            "in": "path",
+            "name": "store",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/PurgeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Purged"
+                }
+              }
+            },
+            "description": "Purged"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not exactly one selector, or not an absolute URL"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "No such store"
+          },
+          "429": {
+            "$ref": "#/components/responses/ConfigBusy"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "The store failed"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)",
+        "tags": [
+          "cache"
         ]
       }
     },

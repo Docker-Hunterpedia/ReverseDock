@@ -81,6 +81,19 @@ pub struct Metrics {
     /// Mirrored copies by target service and outcome (`sent`, `failed`, `dropped`,
     /// `too_large`, `no_backend`).
     pub mirrors: IntCounterVec,
+    /// Requests on caching routes by store, route and outcome (`hit`, `stale`,
+    /// `revalidated`, `expired`, `miss`, `bypass`).
+    pub cache_requests: IntCounterVec,
+    /// Objects in each cache store.
+    pub cache_objects: IntGaugeVec,
+    /// Bytes in each cache store.
+    pub cache_bytes: IntGaugeVec,
+    /// Cache objects evicted by store and reason (`size`, `count`).
+    pub cache_evictions: IntCounterVec,
+    /// Requests that waited for another request to fill the cache, by store.
+    pub cache_lock_waits: IntCounterVec,
+    /// Disk cache objects dropped at start by store and reason (`corrupt`, `partial`).
+    pub cache_dropped: IntCounterVec,
 }
 
 /// Creates `metric` and registers it in `registry`.
@@ -307,7 +320,49 @@ impl Metrics {
             &["version", "commit"],
         )?;
         build_info.with_label_values(&[version, commit]).set(1);
+        let cache_requests = counters(
+            &registry,
+            "rdock_cache_requests_total",
+            "Requests on caching routes, by outcome.",
+            &["store", "route", "status"],
+        )?;
+        let cache_objects = gauges(
+            &registry,
+            "rdock_cache_objects",
+            "Objects in a cache store.",
+            &["store"],
+        )?;
+        let cache_bytes = gauges(
+            &registry,
+            "rdock_cache_bytes",
+            "Bytes in a cache store.",
+            &["store"],
+        )?;
+        let cache_evictions = counters(
+            &registry,
+            "rdock_cache_evictions_total",
+            "Cache objects evicted to stay within a store's limits.",
+            &["store", "reason"],
+        )?;
+        let cache_lock_waits = counters(
+            &registry,
+            "rdock_cache_lock_waits_total",
+            "Requests that waited for another request to fill the cache.",
+            &["store"],
+        )?;
+        let cache_dropped = counters(
+            &registry,
+            "rdock_cache_dropped_total",
+            "Disk cache objects dropped at start because they were damaged or incomplete.",
+            &["store", "reason"],
+        )?;
         Ok(Self {
+            cache_requests,
+            cache_objects,
+            cache_bytes,
+            cache_evictions,
+            cache_lock_waits,
+            cache_dropped,
             registry,
             feeds: crate::feed::Feeds::default(),
             alerts_sent,

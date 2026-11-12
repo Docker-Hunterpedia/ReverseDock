@@ -1482,3 +1482,212 @@ fn hold_body_needs_a_bounded_positive_size_and_timeout() {
         "greater than zero"
     ));
 }
+
+// -- HTTP cache (F-WEB-03) --------------------------------------------------------------------
+
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "built inline by every caller"
+)]
+fn cached(middlewares: Value, chain: Value) -> Value {
+    with(
+        app(),
+        json!({
+            "caches": { "mem": { "type": "memory" } },
+            "middlewares": middlewares,
+            "routes": { "app": { "middlewares": chain } }
+        }),
+    )
+}
+
+#[test]
+fn cache_middlewares_need_a_defined_store_and_sane_settings() {
+    let found = errors(cached(
+        json!({ "c": { "type": "cache", "store": "nope", "statuses": [206, 200, 99], "default_ttl": { "404": "1m", "x": "1m" }, "lock": { "timeout": "0s" }, "key": { "headers": ["bad header"], "query": { "only": [] } } } }),
+        json!(["c"]),
+    ));
+    assert!(
+        has(
+            &found,
+            "middlewares.c.store",
+            "cache store `nope` does not exist"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.statuses[0]", "never stored as such"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.statuses[2]",
+            "not a final status code"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.default_ttl.404",
+            "not one the route stores"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.default_ttl.x", "not a status code"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.lock.timeout", "above zero"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.key.headers[0]",
+            "not a valid header name"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.key.query", "at least one parameter"),
+        "{found:?}"
+    );
+    let ok = cached(
+        json!({ "c": { "type": "cache", "store": "mem" } }),
+        json!(["c"]),
+    );
+    assert_eq!(errors(ok), Vec::new());
+}
+
+#[test]
+fn disk_stores_need_absolute_separate_directories() {
+    let found = errors(with(
+        app(),
+        json!({ "caches": {
+            "a": { "type": "disk", "path": "relative/dir" },
+            "b": { "type": "disk", "path": "/var/cache/rdock" },
+            "c": { "type": "disk", "path": "/var/cache/rdock/inner" },
+            "d": { "type": "disk", "path": "/" },
+            "e": { "type": "disk", "path": "/var/../etc", "max_objects": 0 },
+            "f": { "type": "memory", "max_size": 0 }
+        } }),
+    ));
+    assert!(has(&found, "caches.a.path", "absolute path"), "{found:?}");
+    assert!(
+        has(&found, "caches.c.path", "overlaps store `b`"),
+        "{found:?}"
+    );
+    assert!(has(&found, "caches.d.path", "root directory"), "{found:?}");
+    assert!(has(&found, "caches.e.path", "`..`"), "{found:?}");
+    assert!(
+        has(&found, "caches.e.max_objects", "greater than zero"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "caches.f.max_size", "greater than zero"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn an_authenticated_route_caches_only_with_an_explicit_statement() {
+    const MESSAGE: &str = "`c` caches the responses of a route that authenticates with `auth`: one user's response could be served to another";
+    let auth = json!({ "type": "basic_auth", "users": ["alice:$2y$05$abcdefghijklmnopqrstuuJ8iS0V0zP5Y9n7wS8pB5yFq6YxwH8ZC"] });
+    let cache = |extra: Value| {
+        let mut c = json!({ "type": "cache", "store": "mem" });
+        merge(&mut c, extra);
+        c
+    };
+    // Position does not matter: the cache is looked up after every request phase.
+    for chain in [json!(["auth", "c"]), json!(["c", "auth"])] {
+        let found = errors(cached(
+            json!({ "auth": auth.clone(), "c": cache(json!({})) }),
+            chain.clone(),
+        ));
+        let index = usize::from(chain[0] != "c");
+        assert!(
+            has(&found, &format!("routes.app.middlewares[{index}]"), MESSAGE),
+            "{found:?}"
+        );
+    }
+    let diagnostics = validate(cached(
+        json!({ "auth": auth.clone(), "c": cache(json!({})) }),
+        json!(["auth", "c"]),
+    ));
+    let hint = diagnostics
+        .iter()
+        .find(|d| d.message == MESSAGE)
+        .and_then(|d| d.hint.clone())
+        .unwrap();
+    assert!(
+        hint.contains("`shared_across_users: true`") && hint.contains("keyed on the user name"),
+        "{hint}"
+    );
+    for extra in [
+        json!({ "shared_across_users": true }),
+        json!({ "key": { "consumer": true } }),
+    ] {
+        let found = errors(cached(
+            json!({ "auth": auth.clone(), "c": cache(extra.clone()) }),
+            json!(["auth", "c"]),
+        ));
+        assert_eq!(found, Vec::new(), "{extra}");
+    }
+    // forward_auth: rdock does not learn the identity; only a header it copies can key it.
+    let fa = json!({ "type": "forward_auth", "address": "http://auth:9091/verify", "copy_headers": ["X-User"] });
+    let found = errors(cached(
+        json!({ "auth": fa.clone(), "c": cache(json!({ "key": { "consumer": true } })) }),
+        json!(["auth", "c"]),
+    ));
+    assert!(
+        has(&found, "routes.app.middlewares[1]", MESSAGE),
+        "{found:?}"
+    );
+    let found = errors(cached(
+        json!({ "auth": fa, "c": cache(json!({ "key": { "headers": ["x-user"] } })) }),
+        json!(["auth", "c"]),
+    ));
+    assert_eq!(found, Vec::new());
+    // jwt and client_cert authenticate too.
+    let jwt = json!({ "type": "jwt", "jwks_url": "https://idp.example.com/jwks", "issuer": "https://idp.example.com", "audiences": ["app"] });
+    let found = errors(cached(
+        json!({ "auth": jwt, "c": cache(json!({})) }),
+        json!(["auth", "c"]),
+    ));
+    assert!(
+        has(&found, "routes.app.middlewares[1]", MESSAGE),
+        "{found:?}"
+    );
+    // A second cache middleware is refused.
+    let found = errors(cached(
+        json!({ "c": cache(json!({})), "c2": cache(json!({})) }),
+        json!(["c", "c2"]),
+    ));
+    assert!(
+        has(
+            &found,
+            "routes.app.middlewares[1]",
+            "second `cache` middleware"
+        ),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_fully_mirrored_cached_route_is_warned_about() {
+    let mut config = cached(
+        json!({ "c": { "type": "cache", "store": "mem" } }),
+        json!(["c"]),
+    );
+    merge(
+        &mut config,
+        json!({ "routes": { "app": { "mirror": { "service": "copy", "percent": 100 } } }, "services": { "copy": { "backends": [{ "address": "copy:1" }] } } }),
+    );
+    let found = warnings(config);
+    assert!(
+        has(&found, "routes.app.mirror.percent", "never used"),
+        "{found:?}"
+    );
+}

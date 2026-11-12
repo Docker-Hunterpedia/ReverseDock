@@ -14,6 +14,7 @@ pub mod client;
 pub mod dns_contract;
 pub mod fake_api;
 pub mod haproxy;
+pub mod origin;
 pub mod pebble;
 pub mod postgres;
 pub mod proxy_protocol;

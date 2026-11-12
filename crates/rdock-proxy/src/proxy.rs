@@ -16,6 +16,9 @@ use pingora::proxy::{FailToProxy, ProxyHttp, Session};
 use pingora::upstreams::peer::HttpPeer;
 use pingora::{Error, ErrorSource, ErrorType};
 use rdock_balancer::{Ejection, RetryPermit};
+use rdock_cache::pingora_types::{
+    CacheKey, CacheMeta, ForcedFreshness, HashBinary, HitHandler, NoCacheReason, RespCacheable,
+};
 use rdock_middleware::{
     Answered, Body, BodyHolder, Chain, Context as MwContext, HoldError, LogSummary, Released,
     Reply, Upstream,
@@ -344,6 +347,8 @@ pub struct RequestCtx {
     /// rdock refused the request while proxying (an answer above, or a held body that was too
     /// large or too slow): not the backend's fault, and never retried.
     refused: bool,
+    /// The HTTP cache state, on routes with a `cache` middleware.
+    cache: Option<crate::cache::CacheCtx>,
 }
 
 /// A held request body: being collected, or released to the backend (kept for a retry, which
@@ -480,6 +485,9 @@ impl RdockProxy {
         }
         if let (Some(cx), Some((chain, upto))) = (ctx.mw.as_mut(), chain) {
             chain.response(upto, &mut resp, cx).await;
+        }
+        if let Some(cc) = ctx.cache.as_mut() {
+            crate::cache::decorate(session, &mut resp, cc);
         }
         let body = ctx
             .mw
@@ -719,6 +727,7 @@ impl RdockProxy {
             referer: header("referer").map(|r| r.split('?').next().unwrap_or_default().to_owned()),
             cf_ray: header("cf-ray"),
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
+            cache_status: ctx.cache.as_ref().and_then(|c| c.label).map(str::to_owned),
         }
     }
 }
@@ -762,6 +771,7 @@ impl ProxyHttp for RdockProxy {
             hold: None,
             answer: None,
             refused: false,
+            cache: None,
         }
     }
 
@@ -900,6 +910,15 @@ impl ProxyHttp for RdockProxy {
             trace.route(session.req_header().method.as_str(), &route.name, client_ip);
         }
         start_route(session, ctx, &route)?;
+        if let Some(policy) = &route.cache {
+            let url = crate::cache::public_url(
+                ctx.tls,
+                &ctx.host,
+                &normalized.forwarded,
+                session.req_header().uri.query(),
+            );
+            ctx.cache = Some(crate::cache::CacheCtx::new(policy.clone(), url));
+        }
         ctx.route = Some(route.clone());
         self.run_request_phase(session, ctx, &route, client_ip)
             .await
@@ -933,6 +952,118 @@ impl ProxyHttp for RdockProxy {
             copy.push(chunk);
         }
         Ok(())
+    }
+
+    fn request_cache_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut RequestCtx,
+    ) -> pingora::Result<()> {
+        let mirrored = ctx.mirror.is_some();
+        if let Some(cc) = ctx.cache.as_mut() {
+            crate::cache::enable(session, cc, mirrored);
+        }
+        Ok(())
+    }
+
+    fn cache_key_callback(
+        &self,
+        session: &Session,
+        ctx: &mut RequestCtx,
+    ) -> pingora::Result<CacheKey> {
+        let (Some(route), Some(cc)) = (ctx.route.as_ref(), ctx.cache.as_ref()) else {
+            return Err(Error::explain(
+                ErrorType::InternalError,
+                "cache enabled without a policy",
+            ));
+        };
+        let consumer = cc
+            .policy
+            .key_consumer
+            .then(|| crate::cache::identity(ctx.mw.as_ref()).key());
+        Ok(crate::cache::cache_key(
+            session,
+            cc,
+            &route.name,
+            ctx.tls,
+            &ctx.host,
+            consumer.as_deref(),
+        ))
+    }
+
+    fn cache_miss(&self, session: &mut Session, ctx: &mut RequestCtx) {
+        session.cache.cache_miss();
+        if let Some(cc) = ctx.cache.as_mut() {
+            crate::cache::note_miss(session, cc);
+        }
+    }
+
+    async fn cache_hit_filter(
+        &self,
+        session: &mut Session,
+        meta: &CacheMeta,
+        _hit_handler: &mut HitHandler,
+        is_fresh: bool,
+        ctx: &mut RequestCtx,
+    ) -> pingora::Result<Option<ForcedFreshness>> {
+        Ok(ctx
+            .cache
+            .as_mut()
+            .and_then(|cc| crate::cache::hit_filter(session.req_header(), meta, is_fresh, cc)))
+    }
+
+    async fn proxy_upstream_filter(
+        &self,
+        session: &mut Session,
+        ctx: &mut RequestCtx,
+    ) -> pingora::Result<bool> {
+        let only_if_cached = ctx.cache.as_mut().is_some_and(|cc| {
+            let refuse = cc.only_if_cached();
+            cc.only_if_cached_miss |= refuse;
+            refuse
+        });
+        if !only_if_cached {
+            return Ok(true);
+        }
+        // RFC 9111 §5.2.1.7: nothing usable is stored, and the client forbids the origin.
+        let route = ctx.route.clone();
+        let chain = route
+            .as_ref()
+            .map(|r| (&r.middlewares, r.middlewares.len()));
+        self.reply(session, ctx, Reply::status(504), chain).await?;
+        Ok(false)
+    }
+
+    fn response_cache_filter(
+        &self,
+        session: &Session,
+        resp: &ResponseHeader,
+        ctx: &mut RequestCtx,
+    ) -> pingora::Result<RespCacheable> {
+        Ok(match ctx.cache.as_mut() {
+            Some(cc) => crate::cache::response_cacheable(session, resp, cc),
+            None => RespCacheable::Uncacheable(NoCacheReason::Custom("no cache policy")),
+        })
+    }
+
+    fn cache_vary_filter(
+        &self,
+        meta: &CacheMeta,
+        _ctx: &mut RequestCtx,
+        req: &RequestHeader,
+    ) -> Option<HashBinary> {
+        crate::cache::variance(meta, req)
+    }
+
+    fn should_serve_stale(
+        &self,
+        _session: &mut Session,
+        ctx: &mut RequestCtx,
+        error: Option<&Error>,
+    ) -> bool {
+        ctx.cache
+            .as_mut()
+            .is_some_and(|cc| crate::cache::serve_stale(error, cc))
     }
 
     async fn upstream_peer(
@@ -1064,6 +1195,9 @@ impl ProxyHttp for RdockProxy {
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
         strip_response_hop_by_hop(upstream_response);
+        if let Some(cc) = ctx.cache.as_mut() {
+            crate::cache::upstream_response(session, upstream_response, cc).await;
+        }
         let status = upstream_response.status.as_u16();
         if let Some(trace) = ctx.trace.as_mut() {
             trace.response(status);
@@ -1127,6 +1261,13 @@ impl ProxyHttp for RdockProxy {
         }
         if let Some(cookie) = ctx.set_cookie.take() {
             upstream_response.append_header(http::header::SET_COOKIE, cookie)?;
+        }
+        if let Some(cc) = ctx.cache.as_mut() {
+            crate::cache::decorate(session, upstream_response, cc);
+            if crate::cache::from_store(session) {
+                // A stored response's ID belongs to the request that filled the cache.
+                upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
+            }
         }
         if !upstream_response.headers.contains_key("x-request-id") {
             upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
@@ -1328,6 +1469,9 @@ impl ProxyHttp for RdockProxy {
                 let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
                 let _ = resp.insert_header(http::header::CACHE_CONTROL, "no-store");
                 let _ = resp.insert_header("x-request-id", &*ctx.request_id);
+                if let Some(cc) = ctx.cache.as_mut() {
+                    crate::cache::decorate(session, &mut resp, cc);
+                }
                 if code == 503 || code == 429 {
                     let _ = resp.insert_header(http::header::RETRY_AFTER, "5");
                 }
@@ -1379,6 +1523,9 @@ impl ProxyHttp for RdockProxy {
                 error: ctx.error.clone().or_else(|| e.map(ToString::to_string)),
             };
             route.middlewares.log(&summary, cx);
+        }
+        if let Some(cc) = ctx.cache.as_mut() {
+            crate::cache::observe(session, cc, route_name);
         }
         self.shared.metrics.observe_request(
             (&self.listener, route_name, service_name),

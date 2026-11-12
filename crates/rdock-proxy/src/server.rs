@@ -93,6 +93,7 @@ pub struct DataPlane {
     checkers: crate::health::Checkers,
     sticky_key: Vec<u8>,
     live: Arc<rdock_observability::live::Live>,
+    caches: rdock_cache::Registry,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -109,6 +110,14 @@ impl DataPlane {
     pub fn new(metrics: Metrics, empty: Runtime) -> Self {
         let resolver = Arc::new(SniResolver::new(CertIndex::default()));
         let client = Arc::new(HttpClient::default());
+        let caches = rdock_cache::Registry::new(Some(rdock_cache::CacheMetrics {
+            requests: metrics.cache_requests.clone(),
+            objects: metrics.cache_objects.clone(),
+            bytes: metrics.cache_bytes.clone(),
+            evictions: metrics.cache_evictions.clone(),
+            lock_waits: metrics.cache_lock_waits.clone(),
+            dropped: metrics.cache_dropped.clone(),
+        }));
         Self {
             shared: Arc::new(Shared {
                 runtime: ArcSwap::from_pointee(empty),
@@ -126,6 +135,7 @@ impl DataPlane {
             checkers: crate::health::Checkers::default(),
             sticky_key: random_key(),
             live: Arc::default(),
+            caches,
             state: Mutex::new(State {
                 running: BTreeMap::new(),
             }),
@@ -144,6 +154,17 @@ impl DataPlane {
         // A second call keeps the first spool.
         let _ = self.shared.spool.set(Arc::new(spool));
         Ok(())
+    }
+
+    /// Puts disk cache stores without a `path` under `dir` (`<data dir>/cache/<name>`).
+    pub fn set_cache_dir(&self, dir: std::path::PathBuf) {
+        self.caches.set_default_dir(dir);
+    }
+
+    /// The process's cache stores, for the admin API (stats and purges).
+    #[must_use]
+    pub fn caches(&self) -> &rdock_cache::Registry {
+        &self.caches
     }
 
     /// The spool for held request bodies, once [`Self::open_spool`] has run.
@@ -204,6 +225,7 @@ impl DataPlane {
                 backends: &self.backends,
                 sticky_key: &self.sticky_key,
                 live: &self.live,
+                caches: Some(&self.caches),
             },
         )
     }

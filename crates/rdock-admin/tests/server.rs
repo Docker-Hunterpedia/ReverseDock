@@ -106,6 +106,20 @@ impl Control for Fake {
     async fn renew_certificate(&self, name: String) -> bool {
         name == "example.com"
     }
+    async fn caches(&self) -> serde_json::Value {
+        serde_json::json!([{ "name": "mem", "kind": "memory", "objects": 1 }])
+    }
+    async fn purge_cache(
+        &self,
+        store: String,
+        selector: rdock_admin::CachePurge,
+    ) -> rdock_admin::PurgeOutcome {
+        match (store.as_str(), selector) {
+            ("mem", rdock_admin::CachePurge::All) => rdock_admin::PurgeOutcome::Purged(1),
+            ("mem", _) => rdock_admin::PurgeOutcome::Invalid("bad url".into()),
+            _ => rdock_admin::PurgeOutcome::NoStore,
+        }
+    }
     async fn explain(&self, request: serde_json::Value) -> Result<serde_json::Value, String> {
         if request["host"].is_null() {
             return Err("missing field `host`".into());
