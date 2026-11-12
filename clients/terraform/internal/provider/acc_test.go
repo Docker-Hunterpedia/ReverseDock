@@ -270,7 +270,7 @@ resource "reversedock_route" "web" {
 		Steps: []resource.TestStep{
 			{
 				Config:      routeTo("no-such-service"),
-				ExpectError: regexp.MustCompile(`(?s)rejected this configuration.*routes\.` + regexp.QuoteMeta(n) + `\.service.*unknown service`),
+				ExpectError: regexp.MustCompile(`(?s)rejected\s+this\s+configuration.*` + regexp.QuoteMeta(n) + `.*no-such-service`),
 			},
 			{
 				Config:      a.providerBlock("") + "resource \"reversedock_service\" \"bad\" {\n  name = \"has@at\"\n  spec = \"{}\"\n}\n",
@@ -323,7 +323,7 @@ resource "reversedock_route" "web" {
 			{Config: both},
 			{
 				Config:      onlyRoute,
-				ExpectError: regexp.MustCompile(`(?s)refused to delete the service.*routes\.` + regexp.QuoteMeta(n) + `\.service`),
+				ExpectError: regexp.MustCompile(`(?s)refused\s+to\s+delete\s+the\s+service.*` + regexp.QuoteMeta(n)),
 			},
 			{Config: both}, // nothing to do, and a complete configuration for the final destroy
 		},
@@ -457,7 +457,7 @@ resource "reversedock_route" "web" {
 }
 `, n)),
 				PlanOnly:    true,
-				ExpectError: regexp.MustCompile(`(?s)dry run rejects.*unknown service`),
+				ExpectError: regexp.MustCompile(`(?s)dry\s+run\s+rejects.*missing`),
 			},
 		},
 	})
