@@ -86,6 +86,8 @@ A UDP source address can be forged, so every listener caps its sessions even whe
 
 Each takes a number or `unlimited`. A datagram that would open a session over a cap is dropped and counted (`session_limit`, `client_limit`), never answered; datagrams of open sessions still pass. A resolver that forwards many parallel queries from one address may need a higher `max_per_client`.
 
+Behind a load balancer or NAT that replaces the source address, every client looks like one address, and `max_per_client` then caps all of them together: raise it or set it to `unlimited` and rely on `max`. Listeners that a Kubernetes Gateway creates do this on their own, because datagrams reach them through the Gateway's Service.
+
 Amplification is a property of the backend's protocol (DNS `ANY`, NTP `monlist`, memcached), not of the relay: expose such services only to the clients that need them, with `ip_allow` or a `ClientIP` rule.
 
 ## Services

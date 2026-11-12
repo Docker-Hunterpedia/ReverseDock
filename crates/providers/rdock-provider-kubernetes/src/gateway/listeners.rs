@@ -45,7 +45,10 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use rdock_model::config::{Certificate, Listener as ModelListener, ListenerProtocol, ListenerTls};
+use rdock_model::config::{
+    Certificate, Listener as ModelListener, ListenerProtocol, ListenerTls, SessionLimit,
+    UdpSessions,
+};
 use rdock_model::values::ListenAddress;
 
 use super::conditions::{condition, reasons, types};
@@ -775,6 +778,13 @@ fn open_udp_port(cx: &mut Context<'_>, index: usize, port: u16, target: Option<u
     let name = internal_udp_listener_name(&key, port);
     let mut model = ModelListener::new(ListenAddress::any(target));
     model.protocol = Some(ListenerProtocol::Udp);
+    // Datagrams reach a Gateway through its Service: the address rdock sees is the load
+    // balancer's or the node's, not the client's, so a cap per client address would cap the
+    // whole Gateway at a handful of sessions. The listener-wide cap stays.
+    model.sessions = Some(UdpSessions {
+        max_per_client: SessionLimit::Unlimited,
+        ..UdpSessions::default()
+    });
     cx.out.fragment.listeners.insert(name.clone(), model);
     for i in ready {
         let l = &mut cx.gateways[index].listeners[i];

@@ -268,3 +268,28 @@ fn tcp_and_udp_listeners_share_a_port_with_two_internal_ports() {
     assert!(r.has_listener(gw, 53));
     assert_eq!(r.datagram(gw, 53), deployments(&["udp-echo"]));
 }
+
+/// Behind a Service every datagram arrives from the load balancer's or the node's address, so
+/// a Gateway's UDP listener must not cap sessions per client address (the upstream weighted
+/// routing test opens one socket per probe and stalled at the default of 64).
+#[test]
+fn gateway_udp_listeners_do_not_cap_sessions_per_client_address() {
+    let mut cluster = Cluster::upstream(&["udproute-simple"]);
+    let r = Router::new(&mut cluster);
+    let udp: Vec<_> = r
+        .translation
+        .fragment
+        .listeners
+        .values()
+        .filter(|l| l.protocol == Some(rdock_model::config::ListenerProtocol::Udp))
+        .collect();
+    assert!(!udp.is_empty(), "the fixture has a UDP listener");
+    for listener in udp {
+        let sessions = listener.sessions.as_ref().expect("sessions are set");
+        assert_eq!(
+            sessions.max_per_client,
+            rdock_model::config::SessionLimit::Unlimited
+        );
+        assert_ne!(sessions.max, rdock_model::config::SessionLimit::Unlimited);
+    }
+}
