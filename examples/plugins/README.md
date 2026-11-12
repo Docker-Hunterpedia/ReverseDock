@@ -10,8 +10,9 @@ The plugin SDK (F-EXT-02, F-EXT-05; [ADR-0030](../../docs/decisions/0030-v0-8-ca
 | [`ip-blocklist/`](ip-blocklist/README.md) | Refuses client addresses from a list of networks with `403`. Configuration errors with paths, per-request state, a `log` phase. |
 | [`custom-rdock/`](custom-rdock/README.md) | The binary that registers both, with an end-to-end test that starts it and sends real requests. |
 | [`template/`](template/README.md) | A minimal plugin, its binary and its tests, to copy. |
+| [`wasm-header/`](wasm-header/README.md) | **Experimental.** A sandboxed WASM plugin (a `no_std` Rust component for `wasm32-wasip2`), loaded from a signed file by an `rdock` built with `--features wasm`. Not a workspace member; built and tested in the `wasm` CI job. |
 
-All four are members of this repository's Cargo workspace, so `cargo test --workspace` (the `rust` CI job) builds and tests them. Their manifests use path dependencies; outside this repository use git dependencies pinned to a tag, because the crates are not published on crates.io:
+The first four are members of this repository's Cargo workspace, so `cargo test --workspace` (the `rust` CI job) builds and tests them. Their manifests use path dependencies; outside this repository use git dependencies pinned to a tag, because the crates are not published on crates.io:
 
 ```toml
 [dependencies]

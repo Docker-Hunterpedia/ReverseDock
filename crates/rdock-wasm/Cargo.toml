@@ -1,0 +1,37 @@
+[package]
+name = "rdock-wasm"
+description = "Sandboxed WASM plugins for ReverseDock (experimental): minisign verification and, behind the `wasm` feature, the wasmtime host"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[features]
+# The wasmtime host (ADR-0030). Off by default: without it the crate holds only the signature
+# and digest checks, and no wasmtime crate is built.
+wasm = ["dep:wasmtime"]
+# Signing helpers for tests in other crates.
+testing = []
+
+[dependencies]
+base64.workspace = true
+# BLAKE2b-512 for minisign's prehashed signatures (`ED`); the version argon2 already brings in.
+blake2 = "0.11.0"
+http.workspace = true
+rdock-plugin-api.workspace = true
+ring.workspace = true
+thiserror.workspace = true
+tracing.workspace = true
+# wasmtime 36 is the LTS line (supported for 24 months) whose MSRV (1.86) fits the workspace's
+# 1.89; later LTS lines need Rust 1.95 (ADR-0030). No WASI, no pooling, no parallel compilation.
+wasmtime = { version = "36.0.20", optional = true, default-features = false, features = ["std", "runtime", "cranelift", "component-model", "wat"] }
+
+[dev-dependencies]
+tempfile.workspace = true
+
+[lints]
+workspace = true

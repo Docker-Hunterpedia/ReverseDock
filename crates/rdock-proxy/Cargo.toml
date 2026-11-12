@@ -47,6 +47,10 @@ url.workspace = true
 uuid.workspace = true
 x509-parser.workspace = true
 
+[features]
+# Sandboxed WASM plugins on wasmtime (experimental, ADR-0030).
+wasm = ["rdock-middleware/wasm"]
+
 [dev-dependencies]
 http-body-util.workspace = true
 jsonschema.workspace = true

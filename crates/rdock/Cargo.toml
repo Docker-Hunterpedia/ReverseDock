@@ -35,6 +35,9 @@ docker = ["dep:rdock-provider-docker"]
 swarm = ["dep:rdock-provider-swarm", "dep:rdock-provider-docker"]
 # The Kubernetes provider: Gateway API controller and Ingress translation (kube, ADR-0029).
 kubernetes = ["dep:rdock-provider-kubernetes"]
+# Sandboxed WASM plugins on wasmtime (experimental, ADR-0030). Off by default: without it a
+# configuration with `type: wasm` is refused with a diagnostic.
+wasm = ["rdock-proxy/wasm", "rdock-middleware/wasm"]
 # Faults for the admin isolation test (benchmarks/isolation, H-ENG-04); never in release builds.
 fault-injection = ["rdock-admin/fault-injection"]
 
@@ -61,6 +64,7 @@ rdock-provider-docker = { workspace = true, optional = true }
 rdock-provider-swarm = { workspace = true, optional = true }
 rdock-provider-kubernetes = { workspace = true, optional = true }
 rdock-proxy.workspace = true
+rdock-wasm.workspace = true
 rdock-cache.workspace = true
 sd-notify.workspace = true
 mimalloc = { workspace = true, optional = true }
@@ -87,6 +91,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 jsonschema.workspace = true
 rdock-testkit.workspace = true
+rdock-wasm = { workspace = true, features = ["testing"] }
 ring.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true

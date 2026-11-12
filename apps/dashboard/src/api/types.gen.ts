@@ -2708,6 +2708,66 @@ export type RdockMiddleware = {
     } | string | 'plugin' | undefined;
 } | {
     /**
+     * UNSAFE: run the module without a signature (the `sha256` pin still applies). A
+     * signature that is present must still verify. Logged as a warning at every load.
+     */
+    allow_unsigned?: boolean;
+    /**
+     * Host interfaces the plugin may import besides its `config`. A component that imports
+     * one not listed here, or anything else (WASI included), is refused when it is loaded.
+     */
+    capabilities?: Array<RdockWasmCapability>;
+    /**
+     * The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.
+     */
+    config?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.
+     */
+    fuel?: number;
+    /**
+     * The largest linear memory the plugin may have.
+     */
+    memory?: RdockByteSize;
+    /**
+     * What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny`
+     * answers `500` (in the response phase, the response is replaced by a `500`), `allow`
+     * passes the request or response on unchanged. Both are counted and logged.
+     */
+    on_error?: RdockAgentOnError;
+    /**
+     * The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration
+     * is loaded; a reload reads it again.
+     */
+    path: string;
+    /**
+     * The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it
+     * fixes which file runs, so a changed file is refused until the pin is updated.
+     */
+    sha256: string;
+    /**
+     * The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>`
+     * writes).
+     */
+    signature?: string | null;
+    /**
+     * Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The
+     * call runs on a proxy worker thread, so keep it short.
+     */
+    timeout?: RdockDuration;
+    /**
+     * Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file
+     * (`RWQ…`).
+     */
+    trusted_keys?: Array<string>;
+    type: 'wasm';
+    [key: string]: unknown | boolean | Array<RdockWasmCapability> | {
+        [key: string]: unknown;
+    } | number | RdockByteSize | RdockAgentOnError | string | string | null | RdockDuration | Array<string> | 'wasm' | undefined;
+} | {
+    /**
      * The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless
      * the network between rdock and the agent is private.
      */
@@ -4389,6 +4449,11 @@ export type RdockVaultSettings = {
      */
     timeout?: RdockDuration;
 };
+
+/**
+ * A host interface a WASM plugin may be granted.
+ */
+export type RdockWasmCapability = 'log' | 'clock' | 'random';
 
 /**
  * An HTTPS endpoint that receives JSON events.

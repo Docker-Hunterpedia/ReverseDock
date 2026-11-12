@@ -5378,6 +5378,89 @@
           },
           {
             "additionalProperties": false,
+            "description": "A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world\n`rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with\nminisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "allow_unsigned": {
+                "default": false,
+                "description": "UNSAFE: run the module without a signature (the `sha256` pin still applies). A\nsignature that is present must still verify. Logged as a warning at every load.",
+                "type": "boolean"
+              },
+              "capabilities": {
+                "default": [],
+                "description": "Host interfaces the plugin may import besides its `config`. A component that imports\none not listed here, or anything else (WASI included), is refused when it is loaded.",
+                "items": {
+                  "$ref": "#/components/schemas/rdock.WasmCapability"
+                },
+                "type": "array"
+              },
+              "config": {
+                "additionalProperties": true,
+                "default": {},
+                "description": "The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.",
+                "type": "object"
+              },
+              "fuel": {
+                "default": 10000000,
+                "description": "Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.",
+                "format": "uint64",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "memory": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "16MiB",
+                "description": "The largest linear memory the plugin may have."
+              },
+              "on_error": {
+                "$ref": "#/components/schemas/rdock.AgentOnError",
+                "default": "deny",
+                "description": "What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny`\nanswers `500` (in the response phase, the response is replaced by a `500`), `allow`\npasses the request or response on unchanged. Both are counted and logged."
+              },
+              "path": {
+                "description": "The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration\nis loaded; a reload reads it again.",
+                "type": "string"
+              },
+              "sha256": {
+                "description": "The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it\nfixes which file runs, so a changed file is refused until the pin is updated.",
+                "type": "string"
+              },
+              "signature": {
+                "description": "The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>`\nwrites).",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "timeout": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "50ms",
+                "description": "Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The\ncall runs on a proxy worker thread, so keep it short."
+              },
+              "trusted_keys": {
+                "default": [],
+                "description": "Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file\n(`RWQ…`).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "type": {
+                "const": "wasm",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "path",
+              "sha256"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
             "description": "Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,\nwith its body up to `max_body` (ADR-0030). Fails closed by default.",
             "patternProperties": {
               "^x-": {}
@@ -8457,6 +8540,26 @@
           "auth"
         ],
         "type": "object"
+      },
+      "rdock.WasmCapability": {
+        "description": "A host interface a WASM plugin may be granted.",
+        "oneOf": [
+          {
+            "const": "log",
+            "description": "`rdock:plugin/log`: write lines to rdock's log (32 per request, 1 KiB each).",
+            "type": "string"
+          },
+          {
+            "const": "clock",
+            "description": "`rdock:plugin/clock`: read the wall clock.",
+            "type": "string"
+          },
+          {
+            "const": "random",
+            "description": "`rdock:plugin/random`: read random bits from the operating system.",
+            "type": "string"
+          }
+        ]
       },
       "rdock.Webhook": {
         "additionalProperties": false,

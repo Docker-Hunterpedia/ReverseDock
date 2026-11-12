@@ -175,7 +175,7 @@ fn state(cx: &mut Context, wanted: bool) -> Option<&mut api::State> {
     cx.state_mut::<api::State>()
 }
 
-fn request_view(req: &RequestHeader) -> api::RequestHead {
+pub(crate) fn request_view(req: &RequestHeader) -> api::RequestHead {
     api::RequestHead::from_parts(
         req.method.clone(),
         req.uri.clone(),
@@ -185,7 +185,7 @@ fn request_view(req: &RequestHeader) -> api::RequestHead {
 }
 
 /// Writes a plugin's changes to the request head back.
-fn apply_request(view: &api::RequestHead, req: &mut RequestHeader) {
+pub(crate) fn apply_request(view: &api::RequestHead, req: &mut RequestHeader) {
     if !view.is_changed() {
         return;
     }
@@ -205,7 +205,7 @@ fn apply_request(view: &api::RequestHead, req: &mut RequestHeader) {
 }
 
 /// Writes a plugin's changes to the response head back.
-fn apply_response(view: &api::ResponseHead, resp: &mut ResponseHeader) {
+pub(crate) fn apply_response(view: &api::ResponseHead, resp: &mut ResponseHeader) {
     if !view.is_changed() {
         return;
     }
@@ -243,7 +243,7 @@ fn header_changes(
 }
 
 /// A plugin's answer as a reply; framing headers are the proxy's to compute.
-fn reply(response: api::Response) -> Reply {
+pub(crate) fn reply(response: api::Response) -> Reply {
     let (status, headers, body) = response.into_parts();
     let mut out = Vec::with_capacity(headers.len());
     let mut last: Option<HeaderName> = None;

@@ -353,8 +353,10 @@ fn schema() -> anyhow::Result<()> {
 fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
     let names: Vec<&str> = plugins.names().collect();
     let api = rdock_plugin_api::API_VERSION;
+    // The WASM host ABI, when this build includes it (`wasm` feature, experimental).
+    let wasm_abi = rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION);
     if json {
-        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names });
+        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi });
         print(&format!("{info}\n"))
     } else {
         let plugins = if names.is_empty() {
@@ -362,8 +364,12 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
         } else {
             names.join(", ")
         };
+        let wasm = wasm_abi.map_or_else(
+            || "not in this build".to_owned(),
+            |abi| format!("ABI {abi} (experimental)"),
+        );
         print(&format!(
-            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\n"
+            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\n"
         ))
     }
 }

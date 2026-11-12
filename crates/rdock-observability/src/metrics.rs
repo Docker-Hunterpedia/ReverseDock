@@ -83,6 +83,9 @@ pub struct Metrics {
     pub mirrors: IntCounterVec,
     /// Panics caught in native plugin hooks, by plugin name (ADR-0030).
     pub plugin_panics: IntCounterVec,
+    /// Failed calls into WASM plugins by middleware and reason (`fuel`, `timeout`, `memory`,
+    /// `trap`, `invalid`) (ADR-0030).
+    pub wasm_failures: IntCounterVec,
     /// Agent calls by middleware and result (`allow`, `deny`, `error`, `timeout`,
     /// `breaker_open`, `skipped`, `oversize`).
     pub agent_requests: IntCounterVec,
@@ -361,6 +364,12 @@ impl Metrics {
             "Panics caught in native plugin hooks; each answered its request with 500.",
             &["plugin"],
         )?;
+        let wasm_failures = counters(
+            &registry,
+            "rdock_wasm_failures_total",
+            "Failed calls into WASM plugins; each followed the middleware's on_error.",
+            &["middleware", "reason"],
+        )?;
         let agent_requests = counters(
             &registry,
             "rdock_agent_requests_total",
@@ -538,6 +547,7 @@ impl Metrics {
             upstream_duration,
             mirrors,
             plugin_panics,
+            wasm_failures,
             agent_requests,
             agent_duration,
             agent_breaker_open,

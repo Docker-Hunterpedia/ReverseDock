@@ -199,4 +199,27 @@ fn the_stock_binary_registers_no_plugins_and_says_so() {
     let info: serde_json::Value = serde_json::from_slice(&version.stdout).unwrap();
     assert_eq!(info["plugins"], serde_json::json!([]));
     assert_eq!(info["plugin_api"], "0.1.0");
+    let wasm_abi = if cfg!(feature = "wasm") {
+        serde_json::json!("0.1.0")
+    } else {
+        serde_json::Value::Null
+    };
+    assert_eq!(info["wasm_abi"], wasm_abi);
+}
+
+#[cfg(not(feature = "wasm"))]
+#[test]
+fn wasm_plugins_need_a_build_with_the_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("rdock.yaml");
+    std::fs::write(
+        &file,
+        "middlewares:\n  w: { type: wasm, path: /plugins/p.wasm, sha256: \"0000000000000000000000000000000000000000000000000000000000000000\", trusted_keys: [\"RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\"] }\n",
+    )
+    .unwrap();
+    let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
+    assert!(
+        text.contains("warning: middlewares.w: WASM plugins (`type: wasm`): this build does not include WASM plugins; build with --features wasm"),
+        "{text}"
+    );
 }

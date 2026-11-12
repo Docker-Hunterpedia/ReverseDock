@@ -2933,6 +2933,7 @@ dependencies = [
  "rdock-observability",
  "rdock-plugin-api",
  "rdock-rules",
+ "rdock-wasm",
  "regex",
  "ring",
  "rustls",
@@ -3030,6 +3031,19 @@ dependencies = [
  "thiserror 2.0.21",
  "tokio",
  "x509-parser 0.18.1",
+]
+
+[[package]]
+name = "rdock-wasm"
+version = "0.6.0-alpha.1"
+dependencies = [
+ "base64 0.23.1",
+ "blake2 0.11.0",
+ "http",
+ "rdock-plugin-api",
+ "ring",
+ "thiserror 2.0.21",
+ "tracing",
 ]
 
 [[package]]

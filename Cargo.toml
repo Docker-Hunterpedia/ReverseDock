@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 # Fuzz targets live in their own workspace (nightly, cargo-fuzz, libFuzzer's licence).
-exclude = ["tests/fuzz"]
+exclude = ["tests/fuzz", "examples/plugins/wasm-header"]
 members = [
   "crates/rdock",
   "crates/rdock-model",
@@ -14,6 +14,7 @@ members = [
   "crates/rdock-cache",
   "crates/rdock-middleware",
   "crates/rdock-plugin-api",
+  "crates/rdock-wasm",
   "crates/rdock-limits",
   "crates/rdock-observability",
   "crates/rdock-admin",
@@ -60,6 +61,7 @@ rdock-migrate = { path = "crates/rdock-migrate" }
 rdock-model = { path = "crates/rdock-model" }
 rdock-observability = { path = "crates/rdock-observability" }
 rdock-plugin-api = { path = "crates/rdock-plugin-api" }
+rdock-wasm = { path = "crates/rdock-wasm" }
 rdock-provider-docker = { path = "crates/providers/rdock-provider-docker" }
 rdock-provider-file = { path = "crates/providers/rdock-provider-file" }
 rdock-provider-kubernetes = { path = "crates/providers/rdock-provider-kubernetes" }

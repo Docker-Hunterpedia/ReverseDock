@@ -1,5 +1,5 @@
 # Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker,
-# clients. semgrep and waf-example report only.
+# clients. semgrep, waf-example and wasm report only.
 name: ci
 
 on:
@@ -146,6 +146,30 @@ jobs:
           tool: just
       - name: Check with the minimum supported Rust version
         run: just msrv
+
+  # WASM plugins (experimental, cargo feature `wasm`, ADR-0030): not required, and kept out of
+  # the `rust` job so the default build and its time are unaffected.
+  wasm:
+    name: wasm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: wasm
+          workspaces: |
+            .
+            examples/plugins/wasm-header
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just
+      - name: Clippy, the example guest, WASM tests and MSRV with the feature
+        run: just wasm
 
   deny:
     name: deny

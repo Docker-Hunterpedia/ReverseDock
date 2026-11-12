@@ -42,6 +42,8 @@ rdock-model.workspace = true
 rdock-observability.workspace = true
 rdock-plugin-api.workspace = true
 rdock-rules.workspace = true
+# WASM plugins (ADR-0030): the signature checks always, the wasmtime host with `wasm`.
+rdock-wasm.workspace = true
 regex.workspace = true
 # CA bundles and client certificates for subrequests (agents) and services, checked before
 # Pingora sees them.
@@ -55,7 +57,12 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 
+[features]
+# Sandboxed WASM plugins on wasmtime (experimental, off by default).
+wasm = ["rdock-wasm/wasm"]
+
 [dev-dependencies]
+rdock-wasm = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 
 [lints]

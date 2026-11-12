@@ -5,7 +5,8 @@
 
 use super::Validator;
 use crate::diagnostics::{Diagnostic, path_index};
-use crate::middleware::{AgentConfig, HoldBodyConfig, PluginConfig};
+use crate::middleware::{AgentConfig, HoldBodyConfig, PluginConfig, WasmConfig};
+use crate::values::ByteSize;
 use crate::values::is_token;
 
 /// Whether a plugin name has the form registries accept (`rdock_plugin_api::Registry`).
@@ -26,6 +27,66 @@ impl Validator<'_> {
                     plugin.name
                 ),
             );
+        }
+    }
+
+    pub(super) fn check_wasm(&mut self, path: &str, wasm: &WasmConfig) {
+        if wasm.path.as_os_str().is_empty() {
+            self.error(format!("{path}.path"), "the component file is required");
+        }
+        if wasm.sha256.len() != 64 || !wasm.sha256.bytes().all(|b| b.is_ascii_hexdigit()) {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.sha256"),
+                    "must be the file's SHA-256 digest: 64 hex digits",
+                )
+                .with_hint("`sha256sum <file>` prints it"),
+            );
+        }
+        if wasm.allow_unsigned {
+            self.push(
+                Diagnostic::warning(
+                    format!("{path}.allow_unsigned"),
+                    "unsigned WASM modules are accepted: nothing proves who built this file, only that it matches its `sha256` pin",
+                )
+                .with_hint("sign the module with `minisign -S -m <file>` and list the public key in `trusted_keys`"),
+            );
+        } else if wasm.trusted_keys.is_empty() {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.trusted_keys"),
+                    "a WASM module must be signed by a trusted key: list at least one minisign public key",
+                )
+                .with_hint("the base64 line of the publisher's `.pub` file (`RWQ…`); `allow_unsigned: true` skips the check (unsafe)"),
+            );
+        }
+        self.check_not_zero(&format!("{path}.fuel"), wasm.fuel == 0);
+        self.check_not_zero(&format!("{path}.timeout"), wasm.timeout.is_zero());
+        if wasm.timeout > WasmConfig::MAX_TIMEOUT {
+            self.error(
+                format!("{path}.timeout"),
+                format!(
+                    "at most {}: a call blocks a proxy worker thread while it runs",
+                    WasmConfig::MAX_TIMEOUT
+                ),
+            );
+        }
+        if wasm.memory < ByteSize::kib(64) || wasm.memory > WasmConfig::MAX_MEMORY {
+            self.error(
+                format!("{path}.memory"),
+                format!(
+                    "between 64KiB (one WebAssembly page) and {}",
+                    WasmConfig::MAX_MEMORY
+                ),
+            );
+        }
+        for (i, capability) in wasm.capabilities.iter().enumerate() {
+            if wasm.capabilities[..i].contains(capability) {
+                self.warning(
+                    path_index(&format!("{path}.capabilities"), i),
+                    "listed twice",
+                );
+            }
         }
     }
 

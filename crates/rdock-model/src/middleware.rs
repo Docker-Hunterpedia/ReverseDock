@@ -67,6 +67,10 @@ pub enum Middleware {
     /// A native plugin compiled into this binary and registered under `name` (ADR-0030). The
     /// stock `rdock` binary registers none; see `docs/guides/plugins`.
     Plugin(PluginConfig),
+    /// A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world
+    /// `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with
+    /// minisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
+    Wasm(WasmConfig),
     /// Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,
     /// with its body up to `max_body` (ADR-0030). Fails closed by default.
     Agent(AgentConfig),
@@ -646,6 +650,90 @@ pub struct PluginConfig {
     /// visible in the configuration API.
     #[serde(default)]
     pub config: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A sandboxed WebAssembly plugin (`type: wasm`, F-EXT-03, ADR-0030). EXPERIMENTAL: the
+/// host ABI is `0.x` and may change in any release.
+///
+/// The file is checked before it is compiled: its SHA-256 must equal `sha256`, and its
+/// minisign signature (`signature`, by default `<path>.minisig`) must be made by one of
+/// `trusted_keys`. Each request runs in a fresh instance with `fuel`, `timeout` and `memory`
+/// as limits and no access to files, the network, environment variables or clocks beyond
+/// the granted `capabilities`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct WasmConfig {
+    /// The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration
+    /// is loaded; a reload reads it again.
+    pub path: PathBuf,
+    /// The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it
+    /// fixes which file runs, so a changed file is refused until the pin is updated.
+    pub sha256: String,
+    /// The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>`
+    /// writes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<PathBuf>,
+    /// Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file
+    /// (`RWQ…`).
+    #[serde(default)]
+    pub trusted_keys: Vec<String>,
+    /// UNSAFE: run the module without a signature (the `sha256` pin still applies). A
+    /// signature that is present must still verify. Logged as a warning at every load.
+    #[serde(default)]
+    pub allow_unsigned: bool,
+    /// Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.
+    #[serde(default = "WasmConfig::default_fuel")]
+    pub fuel: u64,
+    /// Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The
+    /// call runs on a proxy worker thread, so keep it short.
+    #[serde(default = "WasmConfig::default_timeout")]
+    pub timeout: Duration,
+    /// The largest linear memory the plugin may have.
+    #[serde(default = "WasmConfig::default_memory")]
+    pub memory: ByteSize,
+    /// Host interfaces the plugin may import besides its `config`. A component that imports
+    /// one not listed here, or anything else (WASI included), is refused when it is loaded.
+    #[serde(default)]
+    pub capabilities: Vec<WasmCapability>,
+    /// What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny`
+    /// answers `500` (in the response phase, the response is replaced by a `500`), `allow`
+    /// passes the request or response on unchanged. Both are counted and logged.
+    #[serde(default)]
+    pub on_error: AgentOnError,
+    /// The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.
+    #[serde(default)]
+    pub config: serde_json::Map<String, serde_json::Value>,
+}
+
+impl WasmConfig {
+    /// The largest `memory`.
+    pub const MAX_MEMORY: ByteSize = ByteSize::mib(1024);
+    /// The longest `timeout`.
+    pub const MAX_TIMEOUT: Duration = Duration::from_secs(10);
+
+    const fn default_fuel() -> u64 {
+        10_000_000
+    }
+
+    const fn default_timeout() -> Duration {
+        Duration::from_millis(50)
+    }
+
+    const fn default_memory() -> ByteSize {
+        ByteSize::mib(16)
+    }
+}
+
+/// A host interface a WASM plugin may be granted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WasmCapability {
+    /// `rdock:plugin/log`: write lines to rdock's log (32 per request, 1 KiB each).
+    Log,
+    /// `rdock:plugin/clock`: read the wall clock.
+    Clock,
+    /// `rdock:plugin/random`: read random bits from the operating system.
+    Random,
 }
 
 /// An out-of-process agent (`type: agent`).

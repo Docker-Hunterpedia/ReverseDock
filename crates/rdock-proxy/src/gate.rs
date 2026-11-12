@@ -29,12 +29,33 @@ impl Gate<'_> {
         };
         self.out.push(diagnostic);
     }
+
+    /// A setting that needs a cargo feature this build was compiled without.
+    fn not_built(&mut self, path: impl Into<String>, what: &str, message: &str) {
+        let message = format!("{what}: {message}");
+        let diagnostic = match self.mode {
+            Mode::Validate => Diagnostic::warning(path, message)
+                .with_hint("`rdock run` refuses this configuration in this build"),
+            Mode::Run => Diagnostic::error(path, message),
+        };
+        self.out.push(diagnostic);
+    }
 }
 
 /// Reports every setting this version cannot honour.
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
     for (name, middleware) in &config.middlewares {
+        // WASM plugins are behind the `wasm` cargo feature (experimental, ADR-0030).
+        if matches!(middleware, rdock_model::middleware::Middleware::Wasm(_))
+            && !rdock_middleware::wasm::ENABLED
+        {
+            gate.not_built(
+                path_key("middlewares", name),
+                "WASM plugins (`type: wasm`)",
+                rdock_middleware::wasm::DISABLED_MESSAGE,
+            );
+        }
         // gRPC and SPOP agent transports are planned (ADR-0030); `rdock` and `forward` exist.
         if let rdock_model::middleware::Middleware::Agent(agent) = middleware {
             use rdock_model::middleware::AgentProtocol;
@@ -108,6 +129,28 @@ mod tests {
         let run = diagnostics(yaml, Mode::Run);
         assert!(run.iter().all(Diagnostic::is_error));
         assert!(run.iter().any(|d| d.path == "listeners.dns.proxy_protocol"));
+    }
+
+    #[test]
+    fn wasm_needs_the_feature() {
+        let yaml = "middlewares:\n  w: { type: wasm, path: /p.wasm, sha256: \"0000000000000000000000000000000000000000000000000000000000000000\", allow_unsigned: true }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        if rdock_middleware::wasm::ENABLED {
+            assert!(run.is_empty(), "{run:?}");
+            return;
+        }
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "middlewares.w");
+        assert!(run[0].is_error());
+        assert_eq!(
+            run[0].message,
+            "WASM plugins (`type: wasm`): this build does not include WASM plugins; build with --features wasm"
+        );
+        assert!(
+            diagnostics(yaml, Mode::Validate)
+                .iter()
+                .all(|d| !d.is_error())
+        );
     }
 
     #[test]

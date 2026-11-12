@@ -1922,3 +1922,49 @@ fn vault_settings_are_checked() {
         "{found:?}"
     );
 }
+
+#[test]
+fn wasm_plugins_are_checked() {
+    let pin = "a".repeat(64);
+    let config = json!({ "middlewares": {
+        "bad": {
+            "type": "wasm", "path": "", "sha256": "abc",
+            "fuel": 0, "timeout": "11s", "memory": "1KiB",
+            "capabilities": ["log", "log"]
+        },
+        "unsigned": { "type": "wasm", "path": "/p.wasm", "sha256": pin, "allow_unsigned": true },
+        "ok": {
+            "type": "wasm", "path": "/p.wasm", "sha256": pin,
+            "trusted_keys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"],
+            "capabilities": ["clock", "random"], "on_error": "allow", "config": { "x": 1 }
+        }
+    }});
+    let errors = errors(config.clone());
+    for (path, fragment) in [
+        ("middlewares.bad.path", "required"),
+        ("middlewares.bad.sha256", "64 hex digits"),
+        ("middlewares.bad.trusted_keys", "signed by a trusted key"),
+        ("middlewares.bad.fuel", ""),
+        ("middlewares.bad.timeout", "at most 10s"),
+        ("middlewares.bad.memory", "between 64KiB"),
+    ] {
+        assert!(has(&errors, path, fragment), "{path}: {errors:?}");
+    }
+    assert!(
+        !errors
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.ok") || p.starts_with("middlewares.unsigned")),
+        "{errors:?}"
+    );
+    let warnings = warnings(config);
+    assert!(has(
+        &warnings,
+        "middlewares.unsigned.allow_unsigned",
+        "unsigned"
+    ));
+    assert!(has(
+        &warnings,
+        "middlewares.bad.capabilities[1]",
+        "listed twice"
+    ));
+}

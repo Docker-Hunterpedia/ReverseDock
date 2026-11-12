@@ -307,8 +307,8 @@ stayed in use (Vault is then degraded in `rdock status`). No labels.
 
 ## Plugins and agents
 
-<Status since="v0.8" /> Metrics of [native plugins](/docs/guides/plugins/) and
-[agents](/docs/guides/agents/). Plugin and middleware names come from the binary and the
+<Status since="v0.8" /> Metrics of [native plugins](/docs/guides/plugins/),
+[WASM plugins](/docs/guides/wasm-plugins/) and [agents](/docs/guides/agents/). Plugin and middleware names come from the binary and the
 configuration.
 
 ### `rdock_plugin_panics_total`
@@ -316,6 +316,14 @@ configuration.
 **Counter.** Panics caught in a native plugin's hooks. Each answered its request with `500` (a
 panic in `response_body` lets the chunk pass unchanged, one in `log` only counts). Label:
 `plugin` (the registered name).
+
+### `rdock_wasm_failures_total`
+
+**Counter.** Failed calls into [WASM plugins](/docs/guides/wasm-plugins/) (experimental; zero in
+builds without the `wasm` feature). Each followed the middleware's `on_error`. Labels:
+`middleware` (its name) and `reason`: `fuel` (ran out of fuel), `timeout` (past its deadline),
+`memory` (grew past its limit), `trap` (the plugin crashed, or its instance could not be
+created) and `invalid` (an edit or reply rdock refuses, such as setting `content-length`).
 
 ### `rdock_agent_requests_total`
 

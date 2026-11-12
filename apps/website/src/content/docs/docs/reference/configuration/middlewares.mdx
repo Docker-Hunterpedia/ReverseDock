@@ -980,6 +980,79 @@ The plugin's own settings, checked by the plugin when the configuration is valid
 
 The name the plugin is registered under in this binary.
 
+## `type: wasm`
+
+A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with minisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
+
+### `middlewares.<name>.allow_unsigned`
+
+**Type:** `boolean` · **Default:** `false`
+
+UNSAFE: run the module without a signature (the `sha256` pin still applies). A signature that is present must still verify. Logged as a warning at every load.
+
+### `middlewares.<name>.capabilities`
+
+**Type:** list of `log` · `clock` · `random`
+
+Host interfaces the plugin may import besides its `config`. A component that imports one not listed here, or anything else (WASI included), is refused when it is loaded.
+
+### `middlewares.<name>.config`
+
+**Type:** `object`
+
+The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.
+
+### `middlewares.<name>.fuel`
+
+**Type:** `integer` · **Default:** `10000000`
+
+Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.
+
+### `middlewares.<name>.memory`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `16MiB`
+
+The largest linear memory the plugin may have.
+
+### `middlewares.<name>.on_error`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny` answers `500` (in the response phase, the response is replaced by a `500`), `allow` passes the request or response on unchanged. Both are counted and logged.
+
+- `deny`: Refuse the request (fail closed).
+- `allow`: Let the request through unchecked (fail open); counted and logged.
+
+### `middlewares.<name>.path`
+
+**Type:** `string` · **Required**
+
+The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration is loaded; a reload reads it again.
+
+### `middlewares.<name>.sha256`
+
+**Type:** `string` · **Required**
+
+The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it fixes which file runs, so a changed file is refused until the pin is updated.
+
+### `middlewares.<name>.signature`
+
+**Type:** `string`
+
+The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>` writes).
+
+### `middlewares.<name>.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `50ms`
+
+Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The call runs on a proxy worker thread, so keep it short.
+
+### `middlewares.<name>.trusted_keys`
+
+**Type:** list of `string`
+
+Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file (`RWQ…`).
+
 ## `type: agent`
 
 Ask an out-of-process agent (a WAF, a policy service) whether to allow a request, with its body up to `max_body` (ADR-0030). Fails closed by default.

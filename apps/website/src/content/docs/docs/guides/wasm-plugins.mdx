@@ -1,0 +1,342 @@
+---
+title: WASM plugins (experimental)
+description: Run sandboxed WebAssembly components as middlewares, pinned by SHA-256 and signed with minisign, with fuel, deadline and memory limits. Experimental, behind a build feature.
+sidebar:
+  order: 26
+  badge:
+    text: Experimental
+    variant: caution
+---
+
+import Status from '../../../../components/Status.astro';
+
+A WASM plugin <Status since="v0.8" /> is a WebAssembly component that runs as a middleware in a
+sandbox: it sees the request and response heads it is given and nothing else. Use it for logic
+you want to load from a file and change without rebuilding ReverseDock, from a publisher whose
+signature you check.
+
+:::caution[Experimental]
+WASM plugins are experimental. They are only in builds made with the cargo feature `wasm`; the
+stock binary and the release images do not include them. The host ABI (the WIT package
+`rdock:plugin@0.1.0`) is versioned `0.x` and may change in any release, without a deprecation
+period. The configuration keys may change too. Nothing here is covered by the 1.0 stability
+promise.
+:::
+
+## What the sandbox gives and withholds
+
+| A WASM plugin can | A WASM plugin cannot |
+|---|---|
+| Read the request head (method, path, query, headers) and the request's facts (client address, route, request ID, TLS, consumer) | Read or change request or response bodies (not in ABI 0.1) |
+| Set, append and remove request headers; change the path and the query | Change `Content-Length`, `Transfer-Encoding`, `Host`, `Connection` and the other headers that frame or route a message: such an edit is a failed call |
+| Answer instead of the backend, with any status from 200 to 599, headers and a body | Open files or connections, read environment variables or the clock: it gets no WASI at all |
+| Change the response status and headers | Keep anything from one request to the next: each request gets a fresh instance |
+| Write log lines, read the wall clock or random bits, when its `capabilities` grant them | Run past its fuel, its deadline or its memory limit |
+
+Compared with a [native plugin](/docs/guides/plugins/), which runs with the proxy's privileges,
+a WASM plugin is contained: a loop, a crash or a memory leak ends that call, not the process.
+Compared with an [agent](/docs/guides/agents/), it runs in the proxy, with no network hop, but
+it can only work on heads.
+
+## Build ReverseDock with WASM plugins
+
+```sh
+cargo build --release --locked -p rdock --features wasm
+./target/release/rdock version
+```
+
+`rdock version` then says `WASM plugins: ABI 0.1.0 (experimental)`. The feature adds
+[wasmtime](https://wasmtime.dev/) 36, the long-term-support line whose minimum Rust version
+(1.86) fits ReverseDock's 1.89 (crates.io, read 2026-11-12: 36.0.20 published 2026-10-29;
+the [release process](https://docs.wasmtime.dev/stability-release.html) supports every twelfth
+release for 24 months). It makes a release binary roughly 13 MB larger (the measurement
+behind [ADR-0030](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0030-v0-8-cache-extensibility-gateway.md)). A build without the feature
+refuses a configuration with `type: wasm`: `rdock run` stops with
+`this build does not include WASM plugins; build with --features wasm`, and `rdock validate`
+reports the same as a warning.
+
+## Configure
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [header]
+middlewares:
+  header:
+    type: wasm
+    path: /etc/rdock/plugins/header.wasm
+    sha256: "3f6c0b1d6d8e4f0a9b2c7d5e1f3a4b6c8d0e2f4a6b8c0d2e4f6a8b0c2d4e6f8a"
+    trusted_keys:
+      - "RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"
+```
+
+| Key | Default | Meaning |
+|---|---|---|
+| `path` | required | The component file (`.wasm`; WebAssembly text `.wat` is accepted too). Read when the configuration loads and at every reload. |
+| `sha256` | required | The file's SHA-256 digest (`sha256sum header.wasm`). A changed file is refused until the pin is updated. |
+| `signature` | `<path>.minisig` | The minisign signature file. |
+| `trusted_keys` | required unless `allow_unsigned` | Minisign public keys whose signatures are accepted: the base64 line of a `minisign.pub` file. |
+| `allow_unsigned` | `false` | **Unsafe.** Run the file without a signature; the `sha256` pin still applies and a signature that is present must still verify. `rdock validate` warns, and every load logs a warning. |
+| `fuel` | `10000000` | Fuel per call, about one unit per WebAssembly instruction (roughly 4 ms of work). |
+| `timeout` | `50ms` | Wall-clock time per call, the backstop to fuel (resolution about 1 ms; at most `10s`). |
+| `memory` | `16MiB` | The largest linear memory (64 KiB to 1 GiB). |
+| `capabilities` | `[]` | Host interfaces the plugin may import: `log`, `clock`, `random`. |
+| `on_error` | `deny` | What a failed call does: `deny` answers `500` (in the response phase the backend's response is replaced by a `500`), `allow` passes the request or response on unchanged. |
+| `config` | `{}` | Settings for the plugin, handed to it as JSON text through `rdock:plugin/config`. |
+
+When the configuration loads, ReverseDock reads the file, checks its size (at most 32 MiB), its
+digest and its signature, **and only then** compiles it. Compilation checks the component
+against the `filter` world: it must export `on-request` and `on-response` with the world's
+types and import nothing but the granted capabilities and `config`; a component that imports a
+WASI interface or anything else is refused, with the names of the imports. A trial
+instantiation checks that its initial memory fits `memory`. Every failure is a diagnostic under
+`middlewares.<name>`, so `rdock validate` and a [reload](/docs/guides/reloads/) report it, and a
+refused reload keeps the loaded module serving.
+
+### Limits and failures
+
+Each request gets a fresh instance: created for `on-request`, kept for that request's
+`on-response`, then dropped. Every call gets fresh `fuel` and a fresh deadline. A call fails when
+it runs out of fuel, passes its deadline, grows its memory past `memory`, traps, or returns an
+edit or reply ReverseDock refuses. A failure is logged with the middleware's name, counted in
+[`rdock_wasm_failures_total`](/docs/reference/metrics/#rdock_wasm_failures_total) and follows
+`on_error`. Fail closed (`deny`) is the default, as for [agents](/docs/guides/agents/).
+
+Keep two costs in mind. A call runs on one of the proxy's worker threads and holds it until it
+returns, at most `timeout`. An instance holds its memory while its request is in flight, so
+`memory` times the requests in flight on the route is the worst case.
+
+## Sign a module with minisign
+
+ReverseDock verifies [minisign](https://jedisct1.github.io/minisign/) signatures (read
+2026-11-12) with Ed25519 from `ring`. It accepts the signature algorithms `ED` (Ed25519 over the
+file's BLAKE2b-512 digest, what `minisign -S` writes) and `Ed` (the legacy Ed25519 over the
+whole file, `minisign -S -l`), and refuses any other. The trusted comment is covered by the
+global signature and checked too.
+
+The publisher creates a key pair once and signs every release:
+
+```sh
+minisign -G -p minisign.pub -s minisign.key     # once; keep minisign.key secret
+minisign -S -s minisign.key -m header.wasm      # writes header.wasm.minisig
+sha256sum header.wasm                           # the value for `sha256`
+```
+
+The operator copies `header.wasm` and `header.wasm.minisig` next to each other, puts the
+second line of `minisign.pub` (it starts with `RW`) in `trusted_keys`, and the digest in
+`sha256`. To roll out a new version, the publisher signs it and the operator updates `sha256`;
+`trusted_keys` changes only when the publisher's key does. Several keys may be trusted at once,
+for a key rotation.
+
+The digest pin decides *which* file runs; the signature says *who* released it. Prefer both.
+`allow_unsigned: true` is meant for your own builds on your own machine.
+
+## Write a plugin in Rust
+
+The repository's
+[`examples/plugins/wasm-header`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/examples/plugins/wasm-header)
+is a complete plugin: it answers `403` for `/blocked`, adds `x-wasm: yes` to other requests,
+and `x-wasm-response` and `x-wasm-request-id` to responses. Its CI job builds it, signs it and
+runs it through the real proxy.
+
+```rust title="src/lib.rs (excerpt)"
+#![no_std]
+extern crate alloc;
+
+wit_bindgen::generate!({ path: "wit", world: "filter" });
+
+use alloc::{string::ToString, vec, vec::Vec};
+use rdock::plugin::types::{Header, RequestEdit};
+
+struct Plugin;
+
+impl Guest for Plugin {
+    fn on_request(_facts: Facts, request: Request) -> RequestAction {
+        let _ = request;
+        RequestAction::Continue(vec![RequestEdit::SetHeader(Header {
+            name: "x-wasm".to_string(),
+            value: b"yes".to_vec(),
+        })])
+    }
+
+    fn on_response(_facts: Facts, _response: Response) -> Vec<ResponseEdit> {
+        Vec::new()
+    }
+}
+
+export!(Plugin);
+```
+
+- Build for `wasm32-wasip2` (`rustup target add wasm32-wasip2`, then
+  `cargo build --release --target wasm32-wasip2`): its linker produces a component directly.
+- Make the crate `no_std`. Rust's standard library on that target imports WASI (standard
+  streams, clocks, environment), which ReverseDock refuses. The example brings a small bump
+  allocator, a panic handler and `cabi_realloc`; copy them.
+- Use `wit-bindgen` 0.46 with `default-features = false, features = ["macros"]`, and copy the
+  WIT file below into the crate's `wit/` directory.
+
+Any toolchain that produces a component for the `filter` world without WASI imports works the
+same way.
+
+## ABI reference: `rdock:plugin@0.1.0`
+
+The world as ReverseDock implements it. The source is `crates/rdock-wasm/wit/filter.wit`; this
+copy is checked against it in the test suite.
+
+```wit
+// The host ABI of ReverseDock's WASM plugins (ADR-0030). EXPERIMENTAL: the package carries a
+// 0.x version and may change in any release.
+//
+// A plugin is a WebAssembly component that targets the `filter` world. It mirrors the native
+// `Plugin` trait's head phases: `on-request` sees the request head before routing to a
+// backend, `on-response` sees the response head before it leaves. Bodies are not visible in
+// 0.1. Every request gets a fresh instance, kept for that request's response phase and then
+// dropped, so nothing a plugin stores survives from one request to the next.
+//
+// Imports are capabilities the host links only when the middleware's `capabilities` grant
+// them (`config` is always available). A component that imports anything else, any WASI
+// interface included, is refused when the configuration is loaded.
+package rdock:plugin@0.1.0;
+
+/// Types shared by the hooks.
+interface types {
+    /// A header field. Names arrive in lower case; values are bytes (usually ASCII text).
+    record header {
+        name: string,
+        value: list<u8>,
+    }
+
+    /// What the proxy knows about the request.
+    record facts {
+        /// The client's address as the proxy determined it (trusted proxies applied).
+        client-ip: string,
+        /// The name of the matched route.
+        route: string,
+        /// The request ID (`X-Request-Id`).
+        request-id: string,
+        /// Whether the client connection uses TLS.
+        tls: bool,
+        /// The consumer an earlier middleware authenticated, if any.
+        consumer: option<string>,
+    }
+
+    /// The request head.
+    record request {
+        method: string,
+        /// The path, percent-encoded as received.
+        path: string,
+        /// The query without `?`, if there is one.
+        query: option<string>,
+        headers: list<header>,
+    }
+
+    /// A change to the request head. Framing and forwarding headers (`content-length`,
+    /// `transfer-encoding`, `host`, hop-by-hop headers) cannot be changed; an edit that tries
+    /// is an error and the middleware's `on_error` applies.
+    variant request-edit {
+        set-header(header),
+        append-header(header),
+        remove-header(string),
+        set-path(string),
+        set-query(option<string>),
+    }
+
+    /// A response the plugin sends instead of passing the request on.
+    record reply {
+        status: u16,
+        headers: list<header>,
+        body: list<u8>,
+    }
+
+    /// The outcome of `on-request`.
+    variant request-action {
+        /// Pass the request on, after these edits (in order).
+        %continue(list<request-edit>),
+        /// Answer the client; the request goes no further.
+        respond(reply),
+    }
+
+    /// The response head.
+    record response {
+        status: u16,
+        headers: list<header>,
+    }
+
+    /// A change to the response head. Framing headers cannot be changed.
+    variant response-edit {
+        set-header(header),
+        append-header(header),
+        remove-header(string),
+        set-status(u16),
+    }
+}
+
+/// Log lines, written to rdock's log with the middleware's name (capability `log`).
+interface log {
+    enum level {
+        error,
+        warn,
+        info,
+        debug,
+        trace,
+    }
+
+    /// Writes one line. Lines longer than 1 KiB are cut.
+    write: func(level: level, message: string);
+}
+
+/// The wall clock (capability `clock`).
+interface clock {
+    /// Milliseconds since the Unix epoch.
+    now-ms: func() -> u64;
+}
+
+/// Randomness from the operating system's generator (capability `random`).
+interface random {
+    /// 64 random bits.
+    next-u64: func() -> u64;
+}
+
+/// The plugin's own settings (always available).
+interface config {
+    /// The middleware's `config` map, as JSON text.
+    get: func() -> string;
+}
+
+/// What a ReverseDock filter plugin imports and exports.
+world filter {
+    import log;
+    import clock;
+    import random;
+    import config;
+
+    use types.{facts, request, request-action, response, response-edit};
+
+    /// Called with the request head; decides whether the request continues.
+    export on-request: func(facts: facts, request: request) -> request-action;
+
+    /// Called with the response head (the backend's, or a reply from a middleware after this
+    /// one); returns edits to apply in order.
+    export on-response: func(facts: facts, response: response) -> list<response-edit>;
+}
+```
+
+Details the WIT does not say:
+
+- Edits apply in order to a copy of the head; if one is refused, none is applied and the call
+  counts as failed (`reason="invalid"`).
+- A reply's framing headers are dropped; ReverseDock computes them. An empty body sends no
+  body.
+- `log` keeps at most 32 lines per request; later lines are dropped.
+- The component may have one linear memory and at most 32 core instances and tables. Its
+  stack is limited to 512 KiB.
+- `on-request` runs in the route's middleware order on the way in, `on-response` in reverse
+  order on the way out, like every middleware; `on-response` also sees a reply sent by a
+  middleware after this one on the route.
+
+## Not in this version
+
+Bodies, `upstream_request` and `log` phases, outbound HTTP from a plugin, loading modules from
+a URL or an OCI registry, and Sigstore signatures. Native plugins and agents cover bodies today.

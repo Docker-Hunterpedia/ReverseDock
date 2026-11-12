@@ -46,6 +46,7 @@ mod redirect;
 mod static_files;
 mod transform;
 mod validate;
+pub mod wasm;
 
 pub use api_key::IDENTITY_HEADERS as CONSUMER_HEADERS;
 pub use chain::{Answered, Chain, Flags, Released};
@@ -552,6 +553,7 @@ pub fn build(
             env.plugins,
             env.metrics,
         )?),
+        Config::Wasm(c) => Arc::new(wasm::WasmMiddleware::build(name, c, env.metrics)?),
         Config::Agent(c) => Arc::new(agent::Agent::new(name, c, env)?),
         Config::CloudflareAccess(c) => {
             Arc::new(jwt::Jwt::cloudflare_access(name, c, env.client.clone())?)
