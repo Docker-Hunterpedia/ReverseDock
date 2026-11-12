@@ -252,7 +252,8 @@ struct StatusArgs {
 /// `2` before anything else happens.
 #[must_use]
 pub fn run(registry: Registry) -> ExitCode {
-    run_with_args(registry, std::env::args_os())
+    // clap reads the process's arguments itself.
+    run_parsed(registry, Cli::try_parse)
 }
 
 /// Like [`run`], with explicit arguments (the first is the program name), e.g. for tests.
@@ -262,11 +263,16 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
+    run_parsed(registry, || Cli::try_parse_from(args))
+}
+
+/// Checks the registry, parses the command line with `parse` and runs the command.
+fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Error>) -> ExitCode {
     if let Err(err) = registry.check() {
         eprintln!("error: the plugin registry is invalid: {err}");
         return ExitCode::from(2);
     }
-    let cli = match Cli::try_parse_from(args) {
+    let cli = match parse() {
         Ok(cli) => cli,
         Err(err) => {
             // `--help` and `--version` print and succeed; usage errors exit 2.
