@@ -474,7 +474,7 @@ impl Agent {
     fn count(&self, result: &str) {
         if let Some(m) = &self.metrics {
             m.agent_requests
-                .with_label_values(&[&self.name, result])
+                .with_label_values(&[&*self.name, result])
                 .inc();
         }
     }
@@ -482,7 +482,7 @@ impl Agent {
     fn count_ignored(&self, reason: &str, by: u64) {
         if let (Some(m), true) = (&self.metrics, by > 0) {
             m.agent_ignored_headers
-                .with_label_values(&[&self.name, reason])
+                .with_label_values(&[&*self.name, reason])
                 .inc_by(by);
         }
     }
