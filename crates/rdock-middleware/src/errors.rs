@@ -170,6 +170,7 @@ mod tests {
             metrics: None,
             consumers: Arc::default(),
             quotas: None,
+            route_hosts: Arc::default(),
             service: &lookup,
             client,
         };
@@ -211,6 +212,7 @@ mod tests {
             metrics: None,
             consumers: Arc::default(),
             quotas: None,
+            route_hosts: Arc::default(),
             service: &lookup,
             client: Arc::new(HttpClient::default()),
         };

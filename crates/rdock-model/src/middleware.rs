@@ -86,6 +86,9 @@ pub enum Middleware {
     /// Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)
     /// (F-GW-04).
     Transform(crate::transform::TransformConfig),
+    /// OpenID Connect login for browsers: authorization code flow with PKCE, a stateless
+    /// encrypted session cookie, claims to headers and to the consumer (F-GW-01).
+    Oidc(Box<crate::oidc::OidcConfig>),
 }
 
 /// Cloudflare Access application tokens (`type: cloudflare_access`, W-CF-06, ADR-0030).
@@ -169,6 +172,8 @@ impl CloudflareAccessConfig {
             },
             claims_to_headers: self.claims_to_headers.clone(),
             forward_token: true,
+            consumer_claim: None,
+            groups_claim: None,
         })
     }
 }
@@ -206,7 +211,7 @@ pub enum Identity {
     /// The verified client certificate's subject.
     Certificate,
     /// The consumer the middleware attributes the request to (`api_key`,
-    /// `cloudflare_access`).
+    /// `cloudflare_access`, `oidc`, `jwt` with `consumer_claim`).
     Consumer,
     /// Decided by an external service; rdock knows only the headers it copies back.
     External {
@@ -242,9 +247,10 @@ impl Middleware {
     pub fn authenticates(&self) -> Option<Identity> {
         match self {
             Self::BasicAuth(_) => Some(Identity::User),
+            Self::Jwt(j) if j.consumer_claim.is_some() => Some(Identity::Consumer),
             Self::Jwt(_) => Some(Identity::TokenSubject),
             Self::ClientCert(_) => Some(Identity::Certificate),
-            Self::CloudflareAccess(_) | Self::ApiKey(_) => Some(Identity::Consumer),
+            Self::CloudflareAccess(_) | Self::ApiKey(_) | Self::Oidc(_) => Some(Identity::Consumer),
             Self::ForwardAuth(f) => Some(Identity::External {
                 headers: f.copy_headers.clone(),
             }),
@@ -301,6 +307,14 @@ pub struct JwtConfig {
     /// Keep the token in the request to the backend.
     #[serde(default = "crate::defaults::yes")]
     pub forward_token: bool,
+    /// A claim that becomes the request's consumer (for `rate_limit` and `quota` with
+    /// `key: consumer`, the cache key and the access log), e.g. `sub` or `email`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_claim: Option<String>,
+    /// The claim listing the consumer's groups (a string or an array of strings), with
+    /// `consumer_claim`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groups_claim: Option<String>,
 }
 
 fn default_jwt_algorithms() -> Vec<JwtAlgorithm> {

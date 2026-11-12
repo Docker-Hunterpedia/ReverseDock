@@ -614,6 +614,7 @@ fn build_middlewares(
         metrics: env.metrics,
         consumers,
         quotas: env.quotas,
+        route_hosts: Arc::new(route_hosts(config)),
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
@@ -647,6 +648,27 @@ fn build_middlewares(
         }
     }
     built
+}
+
+/// The `Host` names of the routes that use each middleware (`oidc` builds its redirect URI
+/// only from these).
+fn route_hosts(config: &Config) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for route in config.routes.values() {
+        let Some((expr, _)) = route_expr(route) else {
+            continue;
+        };
+        let hosts = expr.positive_hosts();
+        for reference in &route.middlewares {
+            let entry = out.entry(key(reference).to_owned()).or_default();
+            for host in &hosts {
+                if *host != "*" && !entry.iter().any(|h| h == host) {
+                    entry.push((*host).to_owned());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A `static` middleware from Docker or Swarm labels may serve only a directory inside that

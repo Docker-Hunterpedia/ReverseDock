@@ -293,3 +293,17 @@ fn key_sets_skip_what_they_cannot_use() {
     assert!(parse_set("{}", &[JwtAlgorithm::Rs256]).is_err());
     assert!(parse_set("[1,2]", &[JwtAlgorithm::Rs256]).is_err());
 }
+
+#[test]
+fn a_claim_names_the_consumer_and_another_its_groups() {
+    let claims =
+        json!({ "sub": "user-1", "email": "a@example.com", "roles": ["admin", "staff"], "n": 7 });
+    let claims = claims.as_object().unwrap();
+    let consumer = super::claim_consumer(claims, "email", Some("roles")).unwrap();
+    assert_eq!(&*consumer.name, "a@example.com");
+    assert_eq!(consumer.groups.len(), 2);
+    let numeric = super::claim_consumer(claims, "n", None).unwrap();
+    assert_eq!(&*numeric.name, "7");
+    assert!(numeric.groups.is_empty());
+    assert!(super::claim_consumer(claims, "missing", None).is_none());
+}

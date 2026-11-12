@@ -307,6 +307,19 @@ mod tests {
     }
 
     #[test]
+    fn oidc_cookie_seeds() {
+        for input in [
+            &b"v1.AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"[..],
+            b"__Host-rdock_oidc_0=v1.AA; __Host-rdock_oidc_1=BB; __Host-rdock_oidc_2=",
+            b"__Host-rdock_oidc=v1.; __Host-rdock_oidc=v1.",
+            b"=;=;;=\"\"",
+            b"\xff\x00v1.",
+        ] {
+            super::oidc_cookie(input);
+        }
+    }
+
+    #[test]
     fn json_patch_seeds() {
         for input in [
             "/a~1b/~0c/0",
@@ -345,4 +358,10 @@ pub fn jwt_verify(data: &[u8]) {
     if let Ok(text) = std::str::from_utf8(data) {
         rdock_middleware::fuzz_jwt(text);
     }
+}
+
+/// Opens arbitrary bytes as an `oidc` session cookie header and as a sealed value; only
+/// refusals are expected (no key is known to the fuzzer).
+pub fn oidc_cookie(data: &[u8]) {
+    rdock_middleware::fuzz_oidc_cookie(data);
 }

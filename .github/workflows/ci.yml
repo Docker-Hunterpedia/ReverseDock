@@ -400,6 +400,72 @@ jobs:
         if: failure()
         run: docker logs openbao 2>&1 | grep -v -i -e 'root token' -e 'unseal key' | tail -n 100
 
+  oidc-dex:
+    name: oidc-dex
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install htpasswd (bcrypt for Dex's static password)
+        run: sudo apt-get install -y --no-install-recommends apache2-utils
+      # Started by a step, like `openbao`: the client secret and the user's password are
+      # generated in this job, for a Dex on loopback that ends with the job, and never printed.
+      - name: Start Dex v2.46.1 (static client, static password user, memory storage)
+        run: |
+          secret="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          password="$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          hash="$(htpasswd -nbBC 10 "" "$password" | tr -d ':\n')"
+          # Go's bcrypt reads `$2a$`; htpasswd writes the same hash as `$2y$`.
+          hash="\$2a${hash#\$2y}"
+          mkdir -p "$RUNNER_TEMP/dex"
+          cat > "$RUNNER_TEMP/dex/config.yaml" <<EOF
+          issuer: http://127.0.0.1:5556/dex
+          storage:
+            type: memory
+          web:
+            http: 127.0.0.1:5556
+          oauth2:
+            skipApprovalScreen: true
+          enablePasswordDB: true
+          staticClients:
+            - id: rdock-ci
+              name: rdock CI
+              secret: ${secret}
+              redirectURIs: ["https://app.test/_rdock/oidc/callback"]
+          staticPasswords:
+            - email: ci@example.com
+              hash: "${hash}"
+              username: ci
+              userID: 6d5c6b0e-7f4a-4e57-9a43-3c2b6f1d2e10
+          EOF
+          chmod 644 "$RUNNER_TEMP/dex/config.yaml"
+          docker run -d --name dex --network host -v "$RUNNER_TEMP/dex:/etc/dex/cfg:ro" \
+            ghcr.io/dexidp/dex@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab \
+            dex serve /etc/dex/cfg/config.yaml > /dev/null
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5556/dex/.well-known/openid-configuration > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5556/dex/.well-known/openid-configuration > /dev/null
+          {
+            echo "RDOCK_DEX_CLIENT_SECRET=$secret"
+            echo "RDOCK_DEX_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+      - name: "oidc against a real Dex (e2e_oidc.rs, ignored elsewhere)"
+        run: cargo test --locked -p rdock --test e2e_oidc -- --ignored --nocapture
+        env:
+          RDOCK_DEX_ISSUER: http://127.0.0.1:5556/dex
+          RDOCK_DEX_CLIENT_ID: rdock-ci
+          RDOCK_DEX_USER: ci@example.com
+      - name: Dex log
+        if: failure()
+        run: docker logs dex 2>&1 | tail -n 100
+
   semgrep:
     name: semgrep
     runs-on: ubuntu-24.04

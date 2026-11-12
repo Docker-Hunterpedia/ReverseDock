@@ -50,16 +50,22 @@ pub enum ProblemKind {
     ServiceUnavailable,
     /// 503: the route is in maintenance.
     Maintenance,
+    /// 401: an OIDC login could not be completed (the provider refused it, the login
+    /// expired or its answer did not verify).
+    LoginFailed,
+    /// 503: the OpenID Connect provider cannot be reached, so no new login can start.
+    IdentityProviderUnavailable,
     /// 504: the backend, an agent or the cache lock did not answer in time.
     GatewayTimeout,
 }
 
 impl ProblemKind {
     /// Every kind, for the reference page and the tests.
-    pub const ALL: [Self; 20] = [
+    pub const ALL: [Self; 22] = [
         Self::BadRequest,
         Self::ValidationFailed,
         Self::Unauthenticated,
+        Self::LoginFailed,
         Self::Forbidden,
         Self::NotFound,
         Self::MethodNotAllowed,
@@ -76,6 +82,7 @@ impl ProblemKind {
         Self::BadGateway,
         Self::ServiceUnavailable,
         Self::Maintenance,
+        Self::IdentityProviderUnavailable,
         Self::GatewayTimeout,
     ];
 
@@ -108,7 +115,7 @@ impl ProblemKind {
     pub fn status(self) -> u16 {
         match self {
             Self::BadRequest | Self::ValidationFailed => 400,
-            Self::Unauthenticated => 401,
+            Self::Unauthenticated | Self::LoginFailed => 401,
             Self::Forbidden => 403,
             Self::NotFound => 404,
             Self::MethodNotAllowed => 405,
@@ -122,7 +129,7 @@ impl ProblemKind {
             Self::HeadersTooLarge => 431,
             Self::InternalError => 500,
             Self::BadGateway => 502,
-            Self::ServiceUnavailable | Self::Maintenance => 503,
+            Self::ServiceUnavailable | Self::Maintenance | Self::IdentityProviderUnavailable => 503,
             Self::GatewayTimeout => 504,
         }
     }
@@ -150,6 +157,8 @@ impl ProblemKind {
             Self::BadGateway => "bad-gateway",
             Self::ServiceUnavailable => "service-unavailable",
             Self::Maintenance => "maintenance",
+            Self::LoginFailed => "login-failed",
+            Self::IdentityProviderUnavailable => "identity-provider-unavailable",
             Self::GatewayTimeout => "gateway-timeout",
         }
     }
@@ -183,6 +192,8 @@ impl ProblemKind {
             Self::BadGateway => "Bad gateway",
             Self::ServiceUnavailable => "Service unavailable",
             Self::Maintenance => "Down for maintenance",
+            Self::LoginFailed => "Login failed",
+            Self::IdentityProviderUnavailable => "Identity provider unavailable",
             Self::GatewayTimeout => "Gateway timeout",
         }
     }
@@ -219,6 +230,12 @@ impl ProblemKind {
             Self::BadGateway => "The upstream service could not be reached or answered badly.",
             Self::ServiceUnavailable => "The service cannot take the request now.",
             Self::Maintenance => "The service is down for maintenance.",
+            Self::LoginFailed => {
+                "The login could not be completed. Open the page again to start a new login."
+            }
+            Self::IdentityProviderUnavailable => {
+                "The identity provider cannot be reached, so a new login cannot start. Try again later."
+            }
             Self::GatewayTimeout => "The upstream service did not answer in time.",
         }
     }
@@ -240,6 +257,8 @@ mod tests {
                     | ProblemKind::Maintenance
                     | ProblemKind::ValidationFailed
                     | ProblemKind::PatchFailed
+                    | ProblemKind::LoginFailed
+                    | ProblemKind::IdentityProviderUnavailable
             ) {
                 assert_eq!(ProblemKind::for_status(kind.status()), Some(kind));
             }

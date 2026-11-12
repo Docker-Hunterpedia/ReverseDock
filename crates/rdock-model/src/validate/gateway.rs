@@ -194,7 +194,7 @@ impl Validator<'_> {
                     ),
                 )
                 .with_hint(
-                    "put an `api_key` or `cloudflare_access` middleware earlier in the list",
+                    "put an `api_key`, `oidc`, `cloudflare_access` or `jwt` (with `consumer_claim`) middleware earlier in the list",
                 ),
             );
         }

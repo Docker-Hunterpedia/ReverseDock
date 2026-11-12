@@ -35,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [h1_framing, rules_parser, config_loader, jwt_verify, proxy_header, clienthello, disk_cache_header, json_patch]
+        target: [h1_framing, rules_parser, config_loader, jwt_verify, proxy_header, clienthello, disk_cache_header, json_patch, oidc_cookie]
     env:
       SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'pull_request' && '120') || '600' }}
     steps:

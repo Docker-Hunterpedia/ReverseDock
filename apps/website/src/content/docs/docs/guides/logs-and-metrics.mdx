@@ -92,7 +92,7 @@ A JSON line, wrapped here for reading:
 | `listener`, `route`, `service`, `upstream` | Where the request went. `route` and `service` are missing when no route matched; `upstream` is the backend address. |
 | `tls_version`, `tls_cipher`, `sni` | TLS details, on TLS listeners. |
 | `user` | The user authenticated by a middleware such as `basic_auth`. |
-| `consumer` | The consumer an authenticating middleware attributed the request to <Status since="v0.8" />. No v0.8 middleware sets it yet; API keys and OIDC will. |
+| `consumer` | The consumer an authenticating middleware attributed the request to <Status since="v0.8" />. Set by `api_key`, `oidc`, `cloudflare_access` and `jwt` with `consumer_claim`. |
 | `user_agent`, `referer` | Request headers. `referer` is logged without its query string. |
 | `cf_ray` | The `CF-Ray` request header, which Cloudflare adds. |
 | `error` | The error that ended the request, if any. |

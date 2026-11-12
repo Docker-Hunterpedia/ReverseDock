@@ -29,8 +29,9 @@ use super::{Alert, State};
 const TIMEOUT: Duration = Duration::from_secs(5);
 const ATTEMPTS: u32 = 3;
 
-/// Whether an address is one a public alert service never has.
-pub(crate) fn private(ip: IpAddr) -> bool {
+/// Whether an address is one a public service never has: private, loopback, link-local,
+/// unspecified, broadcast, shared (100.64.0.0/10) or unique-local.
+pub fn private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_private()

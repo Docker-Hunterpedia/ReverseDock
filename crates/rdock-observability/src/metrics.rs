@@ -122,6 +122,14 @@ pub struct Metrics {
     pub transform_skipped: IntCounterVec,
     /// Failed reads of `${vault:…}` references after the first (the last value stays in use).
     pub vault_refresh_failures: prometheus::IntCounter,
+    /// OIDC logins by middleware and result (`success`, `denied`, `failed`,
+    /// `provider_error`, `unavailable`).
+    pub oidc_logins: IntCounterVec,
+    /// OIDC session refreshes by middleware and result (`success`, `failed`).
+    pub oidc_refreshes: IntCounterVec,
+    /// Failed requests to OIDC providers by middleware and operation (`discovery`, `jwks`,
+    /// `token`, `refresh`).
+    pub oidc_provider_errors: IntCounterVec,
 }
 
 /// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
@@ -464,7 +472,28 @@ impl Metrics {
                 "Failed refreshes of Vault references; the last values stay in use.",
             ),
         )?;
+        let oidc_logins = counters(
+            &registry,
+            "rdock_oidc_logins_total",
+            "OIDC logins completed or refused, by middleware and result.",
+            &["middleware", "result"],
+        )?;
+        let oidc_refreshes = counters(
+            &registry,
+            "rdock_oidc_refreshes_total",
+            "OIDC session refreshes, by middleware and result.",
+            &["middleware", "result"],
+        )?;
+        let oidc_provider_errors = counters(
+            &registry,
+            "rdock_oidc_provider_errors_total",
+            "Failed requests to OIDC providers, by middleware and operation.",
+            &["middleware", "operation"],
+        )?;
         Ok(Self {
+            oidc_logins,
+            oidc_refreshes,
+            oidc_provider_errors,
             validation_requests,
             transform_skipped,
             vault_refresh_failures,

@@ -551,11 +551,23 @@ Accepted `aud` values (one must match); `[any]` accepts every audience.
 
 Request headers set from claims (`claim: header`). Client-sent copies are removed first.
 
+### `middlewares.<name>.consumer_claim`
+
+**Type:** `string`
+
+A claim that becomes the request's consumer (for `rate_limit` and `quota` with `key: consumer`, the cache key and the access log), e.g. `sub` or `email`.
+
 ### `middlewares.<name>.forward_token`
 
 **Type:** `boolean` · **Default:** `true`
 
 Keep the token in the request to the backend.
+
+### `middlewares.<name>.groups_claim`
+
+**Type:** `string`
+
+The claim listing the consumer's groups (a string or an array of strings), with `consumer_claim`.
 
 ### `middlewares.<name>.hmac_secret`
 
@@ -1425,3 +1437,216 @@ Remove headers.
 **Type:** map of names to `string`
 
 Replace headers.
+
+## `type: oidc`
+
+OpenID Connect login for browsers: authorization code flow with PKCE, a stateless encrypted session cookie, claims to headers and to the consumer (F-GW-01).
+
+### `middlewares.<name>.algorithms`
+
+**Type:** list of `RS256` · `RS384` · `RS512` · `PS256` · `PS384` · `PS512` · `ES256` · `ES384` · `EdDSA` · `HS256` · `HS384` · `HS512` · **Default:** `["RS256","RS384","RS512","PS256","PS384","PS512","ES256","ES384","EdDSA"]`
+
+ID-token algorithms accepted: those the provider advertises in `id_token_signing_alg_values_supported` and that are listed here. HS256/384/512 use the client secret as key and are accepted only when listed explicitly.
+
+### `middlewares.<name>.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow the provider's endpoints to resolve to private, loopback or link-local addresses (an in-cluster Keycloak or Dex). Off by default.
+
+### `middlewares.<name>.allowed`
+
+**Type:** object · **Default:** `{"domains":[],"emails":[],"groups":[],"unverified_emails":false}`
+
+Who may log in. Everyone the provider authenticates when all lists are empty; otherwise a user matching any one entry.
+
+#### `middlewares.<name>.allowed.domains`
+
+**Type:** list of `string`
+
+E-mail domains (the part after `@` of the verified `email` claim).
+
+#### `middlewares.<name>.allowed.emails`
+
+**Type:** list of `string`
+
+E-mail addresses (the verified `email` claim), compared without case.
+
+#### `middlewares.<name>.allowed.groups`
+
+**Type:** list of `string`
+
+Groups from `groups_claim`.
+
+#### `middlewares.<name>.allowed.unverified_emails`
+
+**Type:** `boolean` · **Default:** `false`
+
+Also match `emails` and `domains` against an `email` claim that comes without `email_verified` (some providers never send it). Off: only `email_verified: true` counts.
+
+### `middlewares.<name>.claims_to_headers`
+
+**Type:** map of names to `string`
+
+Request headers set from ID-token claims (`claim: header`). Client-sent copies are always removed first.
+
+### `middlewares.<name>.client_id`
+
+**Type:** `string` · **Required**
+
+The client ID registered at the provider.
+
+### `middlewares.<name>.client_secret`
+
+**Type:** `string`
+
+The client secret, as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Without it rdock is a public client and relies on PKCE alone.
+
+### `middlewares.<name>.consumer_claim`
+
+**Type:** `string` · **Default:** `email`
+
+The claim that becomes the request's consumer (rate limits, quotas, the cache key, the access log). `sub` is used when the token lacks it.
+
+### `middlewares.<name>.forward_access_token`
+
+**Type:** `boolean` · **Default:** `false`
+
+Pass the access token to the backend in `X-Forwarded-Access-Token`. It is then kept in the session cookie, which grows.
+
+### `middlewares.<name>.groups_claim`
+
+**Type:** `string` · **Default:** `groups`
+
+The claim that lists the user's groups (a string or an array of strings).
+
+### `middlewares.<name>.issuer`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+The provider's issuer URL; its configuration is read from `<issuer>/.well-known/openid-configuration`. `https://` (or a loopback address).
+
+### `middlewares.<name>.leeway`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
+
+Clock skew allowed for `exp`, `iat` and `nbf`.
+
+### `middlewares.<name>.logout_path`
+
+**Type:** `string` · **Default:** `/_rdock/oidc/logout`
+
+Path that ends the session; the provider's `end_session_endpoint` is called when it advertises one (RP-initiated logout).
+
+### `middlewares.<name>.post_logout_path`
+
+**Type:** `string` · **Default:** `/`
+
+Where the browser lands after logging out (a path on the same host).
+
+### `middlewares.<name>.redirect_path`
+
+**Type:** `string` · **Default:** `/_rdock/oidc/callback`
+
+Path of the callback the provider redirects back to. The route must match it.
+
+### `middlewares.<name>.redirect_url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl)
+
+The full redirect URI registered at the provider, when it cannot be built from the request (a route without a `Host` rule, a port the browser does not see). Its path replaces `redirect_path`.
+
+### `middlewares.<name>.scopes`
+
+**Type:** list of `string` · **Default:** `["openid","email","profile"]`
+
+Scopes requested; must include `openid`. Add `offline_access` where the provider needs it for refresh tokens.
+
+### `middlewares.<name>.session`
+
+**Type:** object · **Required**
+
+The session cookie.
+
+#### `middlewares.<name>.session.allow_insecure_cookies`
+
+**Type:** `boolean` · **Default:** `false`
+
+Explicit opt-in for `secure: false` (local development without TLS).
+
+#### `middlewares.<name>.session.cookie_name`
+
+**Type:** `string` · **Default:** `rdock_oidc`
+
+Name of the cookie, without prefix. `__Host-` is prepended when `secure` is on and no `domain` is set, `__Secure-` when `secure` is on with a `domain`.
+
+#### `middlewares.<name>.session.domain`
+
+**Type:** `string`
+
+Share the cookie with subdomains of this domain. Host-only (and `__Host-`) when unset.
+
+#### `middlewares.<name>.session.key`
+
+**Type:** `string`
+
+The key that encrypts the cookie (at least 32 bytes), as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Every replica needs the same key. Use `keys` to rotate.
+
+#### `middlewares.<name>.session.key_file`
+
+**Type:** `string`
+
+A file holding the key (read on every reload), instead of `key`.
+
+#### `middlewares.<name>.session.keys`
+
+**Type:** list of `string`
+
+Keys for rotation: the first encrypts, all decrypt. References, as `key`.
+
+#### `middlewares.<name>.session.refresh`
+
+**Type:** `boolean` · **Default:** `true`
+
+Use the refresh token, when the provider issues one, to renew the session before the tokens expire; a failed refresh means a new login.
+
+#### `middlewares.<name>.session.same_site`
+
+**Type:** `lax` · `strict` · `none` · **Default:** `lax`
+
+The cookie's `SameSite` attribute.
+
+- `lax`: Sent on same-site requests and top-level navigations from other sites.
+- `strict`: Sent only on same-site requests. Refused: the browser would not send it on the redirect back from the provider, and the login would loop.
+- `none`: Sent on every request (needs `secure`).
+
+#### `middlewares.<name>.session.secure`
+
+**Type:** `boolean` · **Default:** `true`
+
+Send the cookie over HTTPS only. Turning it off is refused unless every route using the middleware is plain HTTP and `allow_insecure_cookies` is set.
+
+#### `middlewares.<name>.session.ttl`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `8h`
+
+Longest session, from login. Without a refresh token the session also ends when the ID token expires.
+
+### `middlewares.<name>.token_endpoint_auth`
+
+**Type:** `client_secret_basic` · `client_secret_post` · **Default:** `client_secret_basic`
+
+How the client authenticates at the token endpoint when it has a secret.
+
+- `client_secret_basic`: HTTP Basic with the client ID and secret.
+- `client_secret_post`: The client ID and secret in the form body.
+
+### `middlewares.<name>.unauthenticated`
+
+**Type:** `auto` · `redirect` · `deny` · **Default:** `auto`
+
+Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD` asking for `text/html`) to the login and answers `401` to everything else, so API and XHR clients never get a redirect; `redirect` always redirects `GET` and `HEAD`; `deny` always answers `401`.
+
+- `auto`: Redirect page navigations to the login; `401` for everything else.
+- `redirect`: Redirect every `GET` and `HEAD` to the login; `401` for other methods.
+- `deny`: Always `401`.

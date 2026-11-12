@@ -449,6 +449,7 @@ impl Validator<'_> {
             self.check_terminal_position(&path, route);
             self.check_route_cache(&path, route);
             self.check_route_consumer_keys(&path, route);
+            self.check_route_oidc(&path, route, expr.as_ref());
             self.check_route_validation(&path, route);
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
@@ -1006,6 +1007,7 @@ impl Validator<'_> {
     }
 
     fn check_middlewares(&mut self) {
+        self.check_oidc_cookie_names();
         for (name, middleware) in &self.config.middlewares {
             let path = path_key("middlewares", name);
             self.check_name("middlewares", name);
@@ -1064,6 +1066,7 @@ impl Validator<'_> {
                 Middleware::Quota(q) => self.check_quota(&path, q),
                 Middleware::Validate(v) => self.check_validate(&path, v),
                 Middleware::Transform(t) => self.check_transform(&path, t),
+                Middleware::Oidc(o) => self.check_oidc(&path, o),
                 Middleware::ClientCert(c) => {
                     for (i, pattern) in c.allow.iter().enumerate() {
                         if pattern.trim().is_empty() {
@@ -1224,6 +1227,19 @@ impl Validator<'_> {
                     format!("`{header}` is not a header name"),
                 );
             }
+        }
+        if jwt
+            .consumer_claim
+            .as_deref()
+            .is_some_and(|c| c.trim().is_empty())
+        {
+            self.error(format!("{path}.consumer_claim"), "name a claim");
+        }
+        if jwt.groups_claim.is_some() && jwt.consumer_claim.is_none() {
+            self.warning(
+                format!("{path}.groups_claim"),
+                "unused without `consumer_claim`",
+            );
         }
     }
 
@@ -2510,6 +2526,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 mod cache;
 mod extensions;
 mod gateway;
+mod oidc;
 mod shaping;
 mod static_files;
 mod tcp;

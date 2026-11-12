@@ -15,8 +15,12 @@ answer different questions:
 - **`quota`** is an allowance: N requests per hour, day or month, aligned to the calendar in
   UTC, kept across reloads and restarts.
 
-Both need a middleware that sets the consumer **earlier in the route's list** (`api_key` or
-`cloudflare_access`); `rdock validate` refuses a route where none does.
+Both need a middleware that sets the consumer **earlier in the route's list** (`api_key`,
+[`oidc`](/docs/guides/oidc-login/), `cloudflare_access`, or `jwt` with
+[`consumer_claim`](/docs/guides/jwt/#consumers-from-tokens)); `rdock validate` refuses a route
+where none does. After an OIDC login the consumer is the user's `email` claim (or another
+`consumer_claim`), and its groups come from the token's `groups` claim plus those of a
+`consumers.<name>` entry with the same name, so group overrides work for logged-in users too.
 
 ## A quota per consumer
 
@@ -124,5 +128,6 @@ The admin API has `GET /api/v1/quota`, `GET /api/v1/quota/{consumer}` (viewer) a
 ## Related
 
 - [API keys and consumers](/docs/guides/api-keys/)
+- [OIDC login](/docs/guides/oidc-login/)
 - [Rate limiting](/docs/guides/rate-limiting/)
 - [Usage metering](/docs/guides/usage-metering/), to see who used what

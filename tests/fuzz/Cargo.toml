@@ -85,4 +85,11 @@ test = false
 doc = false
 bench = false
 
+[[bin]]
+name = "oidc_cookie"
+path = "fuzz_targets/oidc_cookie.rs"
+test = false
+doc = false
+bench = false
+
 [workspace]

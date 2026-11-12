@@ -7,9 +7,10 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-A **consumer** <Status since="v0.8" /> is a client of your API: a partner, an app, a team. The
-`api_key` middleware checks the key a request carries, and the request then belongs to that
-consumer: [rate limits and quotas](/docs/guides/quotas/) can count per consumer, the access log
+A **consumer** <Status since="v0.8" /> is a client of your API: a partner, an app, a team, or a
+user who logged in. The `api_key` middleware checks the key a request carries, and the request
+then belongs to that consumer (an [OIDC login](/docs/guides/oidc-login/), a
+[JWT claim](/docs/guides/jwt/#consumers-from-tokens) or Cloudflare Access set it the same way): [rate limits and quotas](/docs/guides/quotas/) can count per consumer, the access log
 and [usage metering](/docs/guides/usage-metering/) name it, and the backend learns who called.
 
 ## The key format
@@ -154,3 +155,4 @@ gets the same answers.
 - [Rate limits and quotas per consumer](/docs/guides/quotas/)
 - [Usage metering](/docs/guides/usage-metering/)
 - [Cloudflare Access](/docs/guides/cloudflare/#cloudflare-access), which also sets the consumer
+- [OIDC login](/docs/guides/oidc-login/) and [JWT](/docs/guides/jwt/#consumers-from-tokens) (`consumer_claim`), which set it from the user's identity

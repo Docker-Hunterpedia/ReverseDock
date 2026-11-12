@@ -1188,7 +1188,8 @@ export type RdockConfig = {
 /**
  * A consumer: an API client or user that requests are attributed to (`consumers.<name>`).
  *
- * An authenticating middleware (`api_key`, `cloudflare_access`) sets the request's consumer;
+ * An authenticating middleware (`api_key`, `oidc`, `cloudflare_access`, `jwt` with
+ * `consumer_claim`) sets the request's consumer;
  * rate limits and quotas can count per consumer, and the access log, metrics, metering and the
  * cache key see its name.
  */
@@ -2363,9 +2364,19 @@ export type RdockMiddleware = {
         [key: string]: string;
     };
     /**
+     * A claim that becomes the request's consumer (for `rate_limit` and `quota` with
+     * `key: consumer`, the cache key and the access log), e.g. `sub` or `email`.
+     */
+    consumer_claim?: string | null;
+    /**
      * Keep the token in the request to the backend.
      */
     forward_token?: boolean;
+    /**
+     * The claim listing the consumer's groups (a string or an array of strings), with
+     * `consumer_claim`.
+     */
+    groups_claim?: string | null;
     /**
      * Shared secret for HS256/HS384/HS512 tokens, as a `${file:…}` or `${env:…}` reference.
      */
@@ -2393,7 +2404,7 @@ export type RdockMiddleware = {
     type: 'jwt';
     [key: string]: unknown | Array<RdockJwtAlgorithm> | Array<string> | {
         [key: string]: string;
-    } | boolean | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
+    } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
 } | {
     /**
      * Names a certificate must have one of: its common name or a DNS, URI or email SAN.
@@ -2933,6 +2944,102 @@ export type RdockMiddleware = {
      */
     response?: RdockTransformSide;
     type: 'transform';
+} | {
+    /**
+     * ID-token algorithms accepted: those the provider advertises in
+     * `id_token_signing_alg_values_supported` and that are listed here. HS256/384/512 use
+     * the client secret as key and are accepted only when listed explicitly.
+     */
+    algorithms?: Array<RdockJwtAlgorithm>;
+    /**
+     * Allow the provider's endpoints to resolve to private, loopback or link-local
+     * addresses (an in-cluster Keycloak or Dex). Off by default.
+     */
+    allow_private_targets?: boolean;
+    /**
+     * Who may log in. Everyone the provider authenticates when all lists are empty;
+     * otherwise a user matching any one entry.
+     */
+    allowed?: RdockOidcAllowed;
+    /**
+     * Request headers set from ID-token claims (`claim: header`). Client-sent copies are
+     * always removed first.
+     */
+    claims_to_headers?: {
+        [key: string]: string;
+    };
+    /**
+     * The client ID registered at the provider.
+     */
+    client_id: string;
+    /**
+     * The client secret, as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Without it
+     * rdock is a public client and relies on PKCE alone.
+     */
+    client_secret?: string | null;
+    /**
+     * The claim that becomes the request's consumer (rate limits, quotas, the cache key,
+     * the access log). `sub` is used when the token lacks it.
+     */
+    consumer_claim?: string;
+    /**
+     * Pass the access token to the backend in `X-Forwarded-Access-Token`. It is then kept
+     * in the session cookie, which grows.
+     */
+    forward_access_token?: boolean;
+    /**
+     * The claim that lists the user's groups (a string or an array of strings).
+     */
+    groups_claim?: string;
+    /**
+     * The provider's issuer URL; its configuration is read from
+     * `<issuer>/.well-known/openid-configuration`. `https://` (or a loopback address).
+     */
+    issuer: RdockHttpUrl;
+    /**
+     * Clock skew allowed for `exp`, `iat` and `nbf`.
+     */
+    leeway?: RdockDuration;
+    /**
+     * Path that ends the session; the provider's `end_session_endpoint` is called when it
+     * advertises one (RP-initiated logout).
+     */
+    logout_path?: string;
+    /**
+     * Where the browser lands after logging out (a path on the same host).
+     */
+    post_logout_path?: string;
+    /**
+     * Path of the callback the provider redirects back to. The route must match it.
+     */
+    redirect_path?: string;
+    /**
+     * The full redirect URI registered at the provider, when it cannot be built from the
+     * request (a route without a `Host` rule, a port the browser does not see). Its path
+     * replaces `redirect_path`.
+     */
+    redirect_url?: RdockHttpUrl | null;
+    /**
+     * Scopes requested; must include `openid`. Add `offline_access` where the provider needs
+     * it for refresh tokens.
+     */
+    scopes?: Array<string>;
+    /**
+     * The session cookie.
+     */
+    session: RdockOidcSession;
+    /**
+     * How the client authenticates at the token endpoint when it has a secret.
+     */
+    token_endpoint_auth?: RdockTokenEndpointAuth;
+    type: 'oidc';
+    /**
+     * Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD`
+     * asking for `text/html`) to the login and answers `401` to everything else, so API
+     * and XHR clients never get a redirect; `redirect` always redirects `GET` and `HEAD`;
+     * `deny` always answers `401`.
+     */
+    unauthenticated?: RdockUnauthenticated;
 };
 
 /**
@@ -2976,6 +3083,86 @@ export type RdockObservability = {
      */
     tracing?: RdockTracing | null;
     [key: string]: unknown | RdockAccessLog | RdockAlerts | RdockMetering | null | RdockMetrics | RdockTracing | null | undefined;
+};
+
+/**
+ * Who may log in.
+ */
+export type RdockOidcAllowed = {
+    /**
+     * E-mail domains (the part after `@` of the verified `email` claim).
+     */
+    domains?: Array<string>;
+    /**
+     * E-mail addresses (the verified `email` claim), compared without case.
+     */
+    emails?: Array<string>;
+    /**
+     * Groups from `groups_claim`.
+     */
+    groups?: Array<string>;
+    /**
+     * Also match `emails` and `domains` against an `email` claim that comes without
+     * `email_verified` (some providers never send it). Off: only `email_verified: true`
+     * counts.
+     */
+    unverified_emails?: boolean;
+};
+
+/**
+ * The `SameSite` attribute of the session cookie.
+ */
+export type RdockOidcSameSite = 'lax' | 'strict' | 'none';
+
+/**
+ * The session cookie of `oidc`.
+ */
+export type RdockOidcSession = {
+    /**
+     * Explicit opt-in for `secure: false` (local development without TLS).
+     */
+    allow_insecure_cookies?: boolean;
+    /**
+     * Name of the cookie, without prefix. `__Host-` is prepended when `secure` is on and no
+     * `domain` is set, `__Secure-` when `secure` is on with a `domain`.
+     */
+    cookie_name?: string;
+    /**
+     * Share the cookie with subdomains of this domain. Host-only (and `__Host-`) when unset.
+     */
+    domain?: string | null;
+    /**
+     * The key that encrypts the cookie (at least 32 bytes), as a `${file:…}`, `${env:…}` or
+     * `${vault:…}` reference. Every replica needs the same key. Use `keys` to rotate.
+     */
+    key?: string | null;
+    /**
+     * A file holding the key (read on every reload), instead of `key`.
+     */
+    key_file?: string | null;
+    /**
+     * Keys for rotation: the first encrypts, all decrypt. References, as `key`.
+     */
+    keys?: Array<string>;
+    /**
+     * Use the refresh token, when the provider issues one, to renew the session before the
+     * tokens expire; a failed refresh means a new login.
+     */
+    refresh?: boolean;
+    /**
+     * The cookie's `SameSite` attribute.
+     */
+    same_site?: RdockOidcSameSite;
+    /**
+     * Send the cookie over HTTPS only. Turning it off is refused unless every route using
+     * the middleware is plain HTTP and `allow_insecure_cookies` is set.
+     */
+    secure?: boolean;
+    /**
+     * Longest session, from login. Without a refresh token the session also ends when the
+     * ID token expires.
+     */
+    ttl?: RdockDuration;
 };
 
 /**
@@ -3840,6 +4027,11 @@ export type RdockTlsMode = 'auto' | 'off';
 export type RdockTlsPolicy = 'modern' | 'intermediate';
 
 /**
+ * Token endpoint client authentication (OpenID Connect Core §9).
+ */
+export type RdockTokenEndpointAuth = 'client_secret_basic' | 'client_secret_post';
+
+/**
  * Where a JWT is read from. The first one present wins: header, cookie, query parameter.
  */
 export type RdockTokenSource = {
@@ -4101,6 +4293,11 @@ export type RdockUdpTimeouts = {
     idle?: RdockDuration;
     [key: string]: unknown | RdockDuration | undefined;
 };
+
+/**
+ * What `oidc` does with a request that has no valid session.
+ */
+export type RdockUnauthenticated = 'auto' | 'redirect' | 'deny';
 
 /**
  * What `validate` does with requests outside the OpenAPI document.

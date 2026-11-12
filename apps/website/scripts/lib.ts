@@ -29,7 +29,8 @@ export function scratch() {
   execFileSync('openssl', ['req', '-new', '-x509', '-key', key, '-out', cert, '-days', '30', '-subj', '/CN=example.com',
     '-addext', 'subjectAltName=DNS:example.com,DNS:*.example.com'], { stdio: 'ignore' });
   const secret = join(dir, 'secret');
-  writeFileSync(secret, 'not-a-real-secret\n');
+  // At least 32 bytes: some secrets (an OIDC session key, an HMAC key) have a minimum length.
+  writeFileSync(secret, 'not-a-real-secret-not-a-real-secret-0123456789\n');
   const users = join(dir, 'users.htpasswd');
   writeFileSync(users, `${hash('alice', 'example-password')}\n`);
   const www = join(dir, 'www');

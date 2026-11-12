@@ -11,7 +11,8 @@ use crate::values::{Duration, HttpUrl};
 
 /// A consumer: an API client or user that requests are attributed to (`consumers.<name>`).
 ///
-/// An authenticating middleware (`api_key`, `cloudflare_access`) sets the request's consumer;
+/// An authenticating middleware (`api_key`, `oidc`, `cloudflare_access`, `jwt` with
+/// `consumer_claim`) sets the request's consumer;
 /// rate limits and quotas can count per consumer, and the access log, metrics, metering and the
 /// cache key see its name.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]

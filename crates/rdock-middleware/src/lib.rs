@@ -33,6 +33,9 @@ mod jwt;
 pub use jwt::fuzz_verify as fuzz_jwt;
 mod limits;
 mod maintenance;
+mod oidc;
+#[doc(hidden)]
+pub use oidc::cookie::fuzz_decode as fuzz_oidc_cookie;
 mod paths;
 pub mod phase;
 mod plugin;
@@ -425,6 +428,9 @@ pub struct BuildEnv<'a> {
     /// Quota counters that outlive the configuration; `None` when validating (a throw-away
     /// registry is used then).
     pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
+    /// The `Host` names of the routes using each middleware, by middleware name: the hosts
+    /// `oidc` may build its redirect URI from.
+    pub route_hosts: Arc<std::collections::HashMap<String, Vec<String>>>,
 }
 
 /// One problem found while building a middleware, at a path inside it (`name`,
@@ -553,6 +559,7 @@ pub fn build(
         Config::ApiKey(c) => Arc::new(api_key::ApiKey::new(name, c, env.consumers.clone())?),
         Config::Validate(c) => Arc::new(validate::Validate::new(name, c, env.metrics)?),
         Config::Transform(c) => Arc::new(transform::Transform::new(name, c, env.metrics)?),
+        Config::Oidc(c) => Arc::new(oidc::Oidc::new(name, c, env)?),
         Config::Quota(c) => match env.quotas {
             Some(registry) => Arc::new(quota::Quota::new(name, c, registry)),
             None => Arc::new(quota::Quota::new(

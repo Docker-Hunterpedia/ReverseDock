@@ -727,8 +727,9 @@ pub enum RateLimitKey {
     Cookie(String),
     /// A claim of the token verified by an earlier `jwt` middleware, e.g. `sub`.
     Claim(String),
-    /// The consumer set by an earlier authenticating middleware (`api_key`,
-    /// `cloudflare_access`); requests without one are counted per client IP.
+    /// The consumer set by an earlier authenticating middleware (`api_key`, `oidc`,
+    /// `cloudflare_access`, `jwt` with `consumer_claim`); requests without one are counted
+    /// per client IP.
     Consumer,
 }
 

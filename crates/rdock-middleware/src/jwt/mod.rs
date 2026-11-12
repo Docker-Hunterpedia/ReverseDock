@@ -5,8 +5,8 @@
 //! algorithm only, `none` does not exist, `iss` and `aud` are checked unless the configuration
 //! says `any`, `exp` is required, and `jku`/`x5u` headers are never followed.
 
-mod keys;
-mod token;
+pub(crate) mod keys;
+pub(crate) mod token;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -51,6 +51,9 @@ pub(crate) struct Jwt {
     /// `cloudflare_access`: the consumer is the token's `email`, or a service token's
     /// `common_name`.
     access: bool,
+    /// The claim that names the consumer, and the one that lists its groups.
+    consumer_claim: Option<String>,
+    groups_claim: Option<String>,
 }
 
 /// The group a Cloudflare Access service token's consumer is in.
@@ -144,6 +147,8 @@ impl Jwt {
             local,
             remote,
             access: false,
+            consumer_claim: config.consumer_claim.clone(),
+            groups_claim: config.groups_claim.clone(),
         })
     }
 
@@ -366,8 +371,35 @@ fn access_consumer(claims: &serde_json::Map<String, Value>) -> Option<crate::Con
     text("email").map(crate::Consumer::named)
 }
 
+/// The consumer named by `claim` (a non-empty string, or a number), with the groups listed in
+/// `groups` (a string or an array of strings).
+fn claim_consumer(
+    claims: &serde_json::Map<String, Value>,
+    claim: &str,
+    groups: Option<&str>,
+) -> Option<crate::Consumer> {
+    let name = match claims.get(claim)? {
+        Value::String(s) if !s.trim().is_empty() => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    let groups: Vec<Arc<str>> = match groups.and_then(|g| claims.get(g)) {
+        Some(Value::String(s)) => vec![Arc::from(s.as_str())],
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(Arc::from)
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some(crate::Consumer {
+        name: Arc::from(name.as_str()),
+        groups: Arc::from(groups),
+    })
+}
+
 /// A claim as header text: strings as they are, other values as JSON, arrays joined by `,`.
-fn claim_text(value: &Value) -> String {
+pub(crate) fn claim_text(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Array(items) => items.iter().map(claim_text).collect::<Vec<_>>().join(","),
@@ -430,6 +462,14 @@ impl Middleware for Jwt {
         if self.access {
             let Some(consumer) = access_consumer(&claims) else {
                 tracing::debug!(middleware = %self.name, "Access token without email or common_name");
+                return unauthorized(Some("invalid_token"));
+            };
+            cx.user = Some(consumer.name.to_string());
+            cx.consumer = Some(consumer);
+        } else if let Some(claim) = &self.consumer_claim {
+            let Some(consumer) = claim_consumer(&claims, claim, self.groups_claim.as_deref())
+            else {
+                tracing::debug!(middleware = %self.name, claim = %claim, "JWT without the consumer claim");
                 return unauthorized(Some("invalid_token"));
             };
             cx.user = Some(consumer.name.to_string());

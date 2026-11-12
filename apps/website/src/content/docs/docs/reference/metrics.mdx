@@ -240,8 +240,8 @@ an interrupted fill left behind).
 ### `rdock_consumer_requests_total`
 
 **Counter.** Finished requests that have a consumer. Labels: `consumer`, `route` and
-`status_class` (`2xx`…). Consumer names come from the configuration or from Cloudflare Access
-identities, so the label is capped: the first 1,000 distinct consumers seen get their own series,
+`status_class` (`2xx`…). Consumer names come from the configuration or from identities
+(Cloudflare Access, OIDC logins, JWT claims), so the label is capped: the first 1,000 distinct consumers seen get their own series,
 later ones are counted under `consumer="_other"`. Per-consumer numbers beyond that belong in
 usage metering.
 
@@ -255,6 +255,29 @@ accepted the batch) or `failed` (dropped after the last attempt or a refusal).
 **Counter.** Metering events dropped, by `sink` and `reason`: `queue_full` (the sink's queue was
 full when the request finished) or `undeliverable` (the batch failed every attempt or was
 refused).
+
+## OIDC login
+
+<Status since="v0.8" /> Metrics of [`oidc`](/docs/guides/oidc-login/). Middleware names come from
+the configuration.
+
+### `rdock_oidc_logins_total`
+
+**Counter.** Logins finished at the callback, or refused before reaching the provider. Labels:
+`middleware` and `result`: `success`, `denied` (refused by `allowed`), `failed` (a wrong or
+expired state, an ID token that failed a check, a session too large for the cookies),
+`provider_error` (the provider answered `error=` or the token request failed) or `unavailable`
+(the provider's configuration could not be read, `503`).
+
+### `rdock_oidc_refreshes_total`
+
+**Counter.** Session refreshes with the refresh token. Labels: `middleware` and `result`:
+`success` or `failed` (the request then needs a new login).
+
+### `rdock_oidc_provider_errors_total`
+
+**Counter.** Failed requests to the OpenID provider. Labels: `middleware` and `operation`:
+`discovery`, `jwks`, `token` (code exchange) or `refresh`.
 
 ## Validation, transformation and secrets
 

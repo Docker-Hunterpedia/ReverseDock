@@ -67,13 +67,19 @@ Sent by: [`validate`](/docs/guides/request-validation/) <Status since="v0.8" />.
 
 **401 — Authentication required.** The request carries no valid credential for this route.
 
-Sent by: `api_key`, `jwt`, `cloudflare_access`, `basic_auth` (the answer keeps its `WWW-Authenticate` challenge).
+Sent by: `api_key`, `jwt`, `cloudflare_access`, `basic_auth` (the answer keeps its `WWW-Authenticate` challenge), `oidc` for requests without a session that are not page navigations.
+
+### `login-failed`
+
+**401 — Login failed.** The login could not be completed. Open the page again to start a new login.
+
+Sent by: `oidc` at its callback: the provider refused the login (its `error` code is logged, its `error_description` is never shown), the login took longer than 10 minutes or its state cookie is missing or does not match, the token request failed, or the ID token failed a check.
 
 ### `forbidden`
 
 **403 — Forbidden.** The request is not allowed on this route.
 
-Sent by: `ip_allow`/`ip_deny`, `client_cert`, a consumer outside `api_key.groups`.
+Sent by: `ip_allow`/`ip_deny`, `client_cert`, a consumer outside `api_key.groups`, an `oidc` user outside `allowed`.
 
 ### `not-found`
 
@@ -164,6 +170,12 @@ Sent by: No healthy backend, an agent's open breaker. Has `retry_after` (5 s).
 **503 — Down for maintenance.** The service is down for maintenance.
 
 Sent by: `maintenance` without a `file` (with one, the file is sent). Has `retry_after` when `retry_after` is set.
+
+### `identity-provider-unavailable`
+
+**503 — Identity provider unavailable.** The identity provider cannot be reached, so a new login cannot start. Try again later.
+
+Sent by: `oidc` when a login should start (or finish) and the provider's configuration and keys cannot be read; existing sessions keep working. Has `Retry-After: 30`.
 
 ### `gateway-timeout`
 

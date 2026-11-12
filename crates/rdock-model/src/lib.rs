@@ -8,6 +8,7 @@ pub mod gateway;
 pub mod interpolation;
 pub mod json_patch;
 pub mod middleware;
+pub mod oidc;
 pub mod providers;
 pub mod route;
 mod schema;
