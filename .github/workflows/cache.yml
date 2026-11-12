@@ -96,6 +96,16 @@ jobs:
           echo "::error::rdock did not become ready"
           cat "$RUNNER_TEMP/out/rdock.log"
           exit 1
+      # A control: the suite against its own origin, no proxy. If this ends without results
+      # too, the harness is at fault, not rdock.
+      - name: Control run against the origin (no cache)
+        working-directory: cache-tests
+        run: |
+          rc=0
+          timeout 15m npm run --silent cli --base=http://127.0.0.1:8000 \
+            > "$RUNNER_TEMP/out/control.json" 2> "$RUNNER_TEMP/out/control.err" || rc=$?
+          echo "control run: exit status $rc, $(wc -c < "$RUNNER_TEMP/out/control.json") bytes of results"
+          tail -n 20 "$RUNNER_TEMP/out/control.err" || true
       # The suite's exit status is captured, not propagated: a failing test is information.
       - name: Run the suite against rdock
         working-directory: cache-tests
