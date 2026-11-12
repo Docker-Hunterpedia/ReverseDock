@@ -101,11 +101,16 @@ jobs:
         working-directory: cache-tests
         run: |
           rc=0
-          timeout 30m npm run --silent cli --base=http://127.0.0.1:8002/ \
+          timeout 30m npm run --silent cli --base=http://127.0.0.1:8002 \
             > "$RUNNER_TEMP/out/results.json" 2> "$RUNNER_TEMP/out/cli.err" || rc=$?
           echo "$rc" > "$RUNNER_TEMP/out/cli.exit"
           echo "The suite's command exited with status $rc (informational)."
-          tail -n 20 "$RUNNER_TEMP/out/cli.err" || true
+          tail -n 40 "$RUNNER_TEMP/out/cli.err" || true
+          # A run without results did no work; that is a broken harness, not a failing test.
+          if ! node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "$RUNNER_TEMP/out/results.json"; then
+            echo "::error::the suite produced no results"
+            exit 1
+          fi
       - name: Summarise
         run: |
           node "$HARNESS/summarize.mjs" "$RUNNER_TEMP/out/results.json" cache-tests \
