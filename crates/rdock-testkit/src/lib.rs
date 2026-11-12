@@ -30,8 +30,8 @@ pub mod udp;
 /// connection in between. These come from below that range (it starts at 32768 on Linux and
 /// 49152 on macOS).
 ///
-/// A port is claimed across processes with a file created exclusively in the temporary
-/// directory, named after the port and holding the claimant's process id. Blocks per process
+/// A port is claimed across processes with a file created exclusively in the workspace's
+/// `target/test-ports` directory, named after the port and holding the claimant's process id. Blocks per process
 /// id alone are not enough: with more than a thousand test processes in a run two live ones
 /// share a block, both find the same port free, and both hand it out (two proxies on one
 /// port, or a container whose published port "is already allocated"). A claim whose process
@@ -41,7 +41,9 @@ pub fn free_port() -> u16 {
     const FIRST_PORT: u32 = 10_000;
     const PORTS: u32 = 20_000;
     static GIVEN: AtomicU32 = AtomicU32::new(0);
-    let claims = std::env::temp_dir().join("rdock-testkit-ports");
+    // In the workspace's own build directory, not the shared temporary directory: a fixed
+    // name there could be planted by another user.
+    let claims = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../target/test-ports");
     let _ = std::fs::create_dir_all(&claims);
     // Spread processes over the range so they rarely contend for the same claim.
     let start = std::process::id().wrapping_mul(2_654_435_761) % PORTS;
@@ -75,7 +77,7 @@ fn claim(path: &std::path::Path) -> bool {
                     return false;
                 }
             }
-            // No usable temporary directory: fall back to the bind check alone.
+            // The directory cannot be written: fall back to the bind check alone.
             Err(_) => return true,
         }
     }
