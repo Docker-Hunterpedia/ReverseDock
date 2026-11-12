@@ -27,7 +27,7 @@ function cell (value) {
 }
 
 function normalise (raw) {
-  let value = Array.isArray(raw) ? raw[0] : raw
+  const value = Array.isArray(raw) ? raw[0] : raw
   const detail = Array.isArray(raw) ? raw[1] : undefined
   return { value, detail }
 }
@@ -40,7 +40,7 @@ function classify (test, results) {
   for (const dep of test.depends_on ?? []) {
     if (normalise(results[dep]).value !== true) return 'dependency_fail'
   }
-  const { value, detail } = normalise(raw)
+  let { value, detail } = normalise(raw) // eslint-disable-line prefer-const
   if (value === 'Setup') return detail === 'retry' ? 'retry' : 'setup_fail'
   // A failed test is `[<error name>, <message>]`: "Assertion" for a failed expectation, anything
   // else (for example "AbortError") for a request the harness could not complete.
