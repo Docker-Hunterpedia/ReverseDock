@@ -138,6 +138,7 @@ impl ForwardAuth {
             status,
             headers: out,
             body: Some(body.into()),
+            problem: None,
         }
     }
 }

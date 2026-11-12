@@ -359,6 +359,14 @@ enum Hold {
     Released(Bytes),
 }
 
+/// How rdock's own answers are rendered for this request: the route's `errors.format`, or
+/// `defaults.errors.format` before a route is chosen.
+fn error_format(ctx: &RequestCtx) -> rdock_model::config::ErrorFormat {
+    ctx.route
+        .as_ref()
+        .map_or(ctx.runtime.errors, |route| route.errors)
+}
+
 // `pingora::Result` carries errors boxed.
 #[allow(clippy::unnecessary_box_returns)]
 fn status_error(status: u16, why: &'static str) -> Box<Error> {
@@ -395,6 +403,7 @@ impl RdockProxy {
                 ),
             ],
             body: Some(Body::Bytes(body)),
+            problem: None,
         };
         if listener.tls.is_none()
             && let Some(answer) = self.http01_answer(req)
@@ -462,7 +471,24 @@ impl RdockProxy {
         reply: Reply,
         chain: Option<(&Chain, usize)>,
     ) -> pingora::Result<()> {
+        let mut reply = reply;
+        if reply.problem.is_some()
+            && reply.status >= 400
+            && error_format(ctx) != rdock_model::config::ErrorFormat::Html
+            && reply.body.as_ref().is_some_and(|b| b.as_bytes().is_some())
+        {
+            // A middleware's plain stand-in for the standard page.
+            reply.body = None;
+            reply
+                .headers
+                .retain(|(name, _)| *name != http::header::CONTENT_TYPE);
+        }
         let mut resp = ResponseHeader::build(reply.status, Some(reply.headers.len() + 4))?;
+        let retry_after = reply
+            .headers
+            .iter()
+            .find(|(n, _)| *n == http::header::RETRY_AFTER)
+            .and_then(|(_, v)| v.to_str().ok()?.trim().parse::<u64>().ok());
         for (name, value) in reply.headers {
             resp.append_header(name, value)?;
         }
@@ -474,10 +500,20 @@ impl RdockProxy {
                 .headers
                 .get(http::header::ACCEPT)
                 .and_then(|v| v.to_str().ok());
-            let (content_type, body) = errorpage::render(reply.status, &ctx.request_id, accept);
-            resp.insert_header(http::header::CONTENT_TYPE, content_type)?;
+            let page = errorpage::render(&errorpage::ErrorInfo {
+                status: reply.status,
+                request_id: &ctx.request_id,
+                accept,
+                format: error_format(ctx),
+                kind: reply.problem,
+                retry_after,
+            });
+            resp.insert_header(http::header::CONTENT_TYPE, page.content_type)?;
             resp.insert_header(http::header::CACHE_CONTROL, "no-store")?;
-            Body::Bytes(body)
+            if let Some(language) = page.language {
+                resp.insert_header(http::header::CONTENT_LANGUAGE, language)?;
+            }
+            Body::Bytes(page.body)
         };
         // RFC 9110 §8.6: a 304 must not carry a Content-Length other than the full one.
         if !matches!(reply.status, 204 | 304) {
@@ -724,6 +760,11 @@ impl RdockProxy {
                 .as_ref()
                 .and_then(|cx| cx.consumer.as_ref())
                 .map(|c| c.name.to_string()),
+            key_id: ctx
+                .mw
+                .as_ref()
+                .and_then(|cx| cx.key_id.as_ref())
+                .map(ToString::to_string),
             user_agent: header("user-agent"),
             referer: header("referer").map(|r| r.split('?').next().unwrap_or_default().to_owned()),
             cf_ray: header("cf-ray"),
@@ -1464,17 +1505,37 @@ impl ProxyHttp for RdockProxy {
             if let (Some(route), Some(cx)) = (&ctx.route, &ctx.mw) {
                 page = route.middlewares.error_page(code, cx).await;
             }
-            let (content_type, body) =
-                page.unwrap_or_else(|| errorpage::render(code, &ctx.request_id, accept.as_deref()));
-            if let Ok(mut resp) = ResponseHeader::build(code, Some(4)) {
+            let retry_after = matches!(code, 503 | 429).then_some(5);
+            let page = page.map_or_else(
+                || {
+                    errorpage::render(&errorpage::ErrorInfo {
+                        status: code,
+                        request_id: &ctx.request_id,
+                        accept: accept.as_deref(),
+                        format: error_format(ctx),
+                        kind: None,
+                        retry_after,
+                    })
+                },
+                |(content_type, body)| errorpage::Page {
+                    content_type,
+                    body,
+                    language: None,
+                },
+            );
+            let (content_type, body) = (page.content_type, page.body);
+            if let Ok(mut resp) = ResponseHeader::build(code, Some(5)) {
                 let _ = resp.insert_header(http::header::CONTENT_TYPE, content_type);
+                if let Some(language) = page.language {
+                    let _ = resp.insert_header(http::header::CONTENT_LANGUAGE, language);
+                }
                 let _ = resp.insert_header(http::header::CACHE_CONTROL, "no-store");
                 let _ = resp.insert_header("x-request-id", &*ctx.request_id);
                 if let Some(cc) = ctx.cache.as_mut() {
                     crate::cache::decorate(session, &mut resp, cc);
                 }
-                if code == 503 || code == 429 {
-                    let _ = resp.insert_header(http::header::RETRY_AFTER, "5");
+                if let Some(seconds) = retry_after {
+                    let _ = resp.insert_header(http::header::RETRY_AFTER, seconds.to_string());
                 }
                 let _ = resp.set_content_length(body.len());
                 if let Err(err) = session
@@ -1534,6 +1595,37 @@ impl ProxyHttp for RdockProxy {
             status,
             elapsed.as_secs_f64(),
         );
+        if let Some(consumer) = ctx.mw.as_ref().and_then(|cx| cx.consumer.as_ref()) {
+            self.shared
+                .metrics
+                .observe_consumer(&consumer.name, route_name, status);
+        }
+        if let Some(meter) = &ctx.runtime.metering {
+            let cx = ctx.mw.as_ref();
+            let consumer = cx.and_then(|cx| cx.consumer.as_ref());
+            if consumer.is_some() || meter.all_requests() {
+                // Only a queue push: the sinks' tasks do the sending (ADR-0030).
+                meter.record(&rdock_observability::metering::MeterEvent {
+                    id: uuid::Uuid::now_v7().to_string(),
+                    time: std::time::SystemTime::now(),
+                    consumer: consumer.map(|c| c.name.to_string()),
+                    groups: consumer
+                        .map(|c| c.groups.iter().map(ToString::to_string).collect())
+                        .unwrap_or_default(),
+                    key_id: cx
+                        .and_then(|cx| cx.key_id.as_ref())
+                        .map(ToString::to_string),
+                    route: route_name.to_owned(),
+                    service: service_name.to_owned(),
+                    method: session.req_header().method.to_string(),
+                    status,
+                    bytes_in: session.body_bytes_read() as u64,
+                    bytes_out: session.body_bytes_sent() as u64,
+                    duration_ms: elapsed.as_secs_f64() * 1000.0,
+                    cache_status: ctx.cache.as_ref().and_then(|c| c.label).map(str::to_owned),
+                });
+            }
+        }
         let sample = rdock_observability::live::Sample {
             status,
             elapsed,

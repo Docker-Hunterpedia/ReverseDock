@@ -110,6 +110,7 @@ impl Middleware for Cors {
             status: 204,
             headers,
             body: Some(Bytes::new().into()),
+            problem: None,
         })
     }
 

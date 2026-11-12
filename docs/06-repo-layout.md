@@ -34,7 +34,8 @@ reversedock/
 │   ├── rdock-cache/                # HTTP cache: RFC 9111 policy, memory and disk stores, purge, on pingora-cache (ADR-0030)
 │   ├── rdock-middleware/           # built-in middlewares; the plugin adapter and `agent` (v0.8)
 │   ├── rdock-plugin-api/           # (v0.8) the only crate a native plugin depends on: Plugin trait, http-typed heads, Factory, Registry, testing harness; own 0.x version line (ADR-0030)
-│   ├── rdock-limits/               # rate/concurrency/size limits
+│   ├── rdock-limits/               # rate/concurrency/size limits; per-consumer quotas with persisted counters (v0.8)
+│   ├── rdock-credentials/          # (v0.8) credential formats shared by admin and data plane: rdk_pat_ tokens, rdk_ API keys, SHA-256, constant-time compare (ADR-0030)
 │   ├── rdock-observability/        # logs, metrics, traces, ring buffer
 │   ├── rdock-admin/                # axum API + OpenAPI + embedded dashboard
 │   ├── rdock-cloudflare/           # IP sync, DNS-01, Access JWT, Origin CA

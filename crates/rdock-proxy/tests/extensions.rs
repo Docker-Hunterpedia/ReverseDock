@@ -60,6 +60,7 @@ impl Harness {
                 caches: None,
                 plugins: &plugins,
                 metrics: Some(&metrics),
+                quotas: None,
             },
         );
         let errors: Vec<_> = compiled

@@ -51,6 +51,11 @@ pub struct Fragment {
     /// itself. Listeners and routes of the same fragment name them by their bare name.
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub certificates: BTreeMap<String, Certificate>,
+    /// Consumers and their API keys (the `api` provider only, ADR-0030). They keep their bare
+    /// names: a consumer is an identity, not a routing object. One the file also defines gets
+    /// these keys added; its groups stay the file's unless the file lists none.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub consumers: BTreeMap<String, rdock_model::gateway::Consumer>,
 }
 
 /// A provider's complete view: never a diff (ADR-0009).
@@ -364,7 +369,30 @@ fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) 
             .insert(format!("{name}@{provider}"), middleware);
     }
     add_l4(config, provider, fragment, &own_listener);
+    if provider == CONSUMER_PROVIDER {
+        add_consumers(config, fragment);
+    }
     dropped
+}
+
+/// The only provider that may contribute consumers: keys are minted through the admin API.
+pub const CONSUMER_PROVIDER: &str = "api";
+
+/// Adds the fragment's consumers and keys (see [`Fragment::consumers`]).
+fn add_consumers(config: &mut Config, fragment: &Fragment) {
+    for (name, consumer) in &fragment.consumers {
+        match config.consumers.get_mut(name) {
+            Some(existing) => {
+                existing.keys.extend(consumer.keys.iter().cloned());
+                if existing.groups.is_empty() {
+                    existing.groups.clone_from(&consumer.groups);
+                }
+            }
+            None => {
+                config.consumers.insert(name.clone(), consumer.clone());
+            }
+        }
+    }
 }
 
 /// Adds `fragment`'s TCP and UDP routes and services, like [`add`] does the HTTP objects.

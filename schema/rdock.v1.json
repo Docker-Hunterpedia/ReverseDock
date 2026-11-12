@@ -80,6 +80,13 @@
       },
       "default": {}
     },
+    "consumers": {
+      "description": "API clients and users that requests are attributed to, with their API keys (stored\nhashed). The `api` provider may add consumers and keys (`rdock consumers`).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Consumer"
+      }
+    },
     "defaults": {
       "description": "Defaults applied to routes that do not set a value.",
       "$ref": "#/$defs/Defaults",
@@ -1163,6 +1170,54 @@
         "^x-": {}
       }
     },
+    "Anonymous": {
+      "description": "What an authenticating middleware does with a request that carries no credential.",
+      "oneOf": [
+        {
+          "description": "Answer `401`.",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Continue without a consumer.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
+    "ApiKeyEntry": {
+      "description": "One API key of a consumer: `rdk_<id>_<secret><checksum>` is the key, and only `id` and the\nSHA-256 of the secret are stored.",
+      "type": "object",
+      "properties": {
+        "expires": {
+          "description": "When the key stops working: an RFC 3339 time, e.g. `2027-01-01T00:00:00Z`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "description": "SHA-256 of the key's secret (the 32 characters after the ID's `_`, without the\n6-character checksum), as 64 lower-case hex digits. `rdock keys hash` prints it.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The key's public ID: the 12 characters after `rdk_`.",
+          "type": "string"
+        },
+        "note": {
+          "description": "What the key is for.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "hash"
+      ]
+    },
     "Argon2Cost": {
       "description": "Argon2id parameters. The default is the OWASP minimum, m=19456 KiB, t=2, p=1 (Password\nStorage Cheat Sheet, checked 2026-10-31).",
       "type": "object",
@@ -1190,6 +1245,22 @@
         }
       },
       "additionalProperties": false
+    },
+    "Audience": {
+      "description": "One value or a list of values.",
+      "anyOf": [
+        {
+          "description": "One value.",
+          "type": "string"
+        },
+        {
+          "description": "Several values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
     },
     "AuditForward": {
       "description": "Where audit records are forwarded.",
@@ -1626,6 +1697,34 @@
         }
       ]
     },
+    "Consumer": {
+      "description": "A consumer: an API client or user that requests are attributed to (`consumers.<name>`).\n\nAn authenticating middleware (`api_key`, `cloudflare_access`) sets the request's consumer;\nrate limits and quotas can count per consumer, and the access log, metrics, metering and the\ncache key see its name.",
+      "type": "object",
+      "properties": {
+        "groups": {
+          "description": "Groups, in order of precedence: per-group limit overrides use the first listed group\nthat has one, and `api_key.groups` admits a consumer in any of them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keys": {
+          "description": "API keys, stored as their ID and the SHA-256 of their secret; never the key itself.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApiKeyEntry"
+          }
+        },
+        "keys_file": {
+          "description": "A file of `id:sha256[:expires]` lines (blank lines and `#` comments ignored), read on\nevery reload and watched like the configuration file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "Defaults": {
       "description": "Defaults applied to routes.",
       "type": "object",
@@ -1637,6 +1736,10 @@
             "null"
           ],
           "default": null
+        },
+        "errors": {
+          "description": "How answers rdock produces itself (404 without a route, 401/403/429 from middlewares,\n502/503/504) are rendered, for routes that do not set `errors`.",
+          "$ref": "#/$defs/ErrorSettings"
         },
         "listeners": {
           "description": "Listeners used by routes that do not name any.",
@@ -2039,6 +2142,26 @@
         "tcp://socket-proxy:2375"
       ]
     },
+    "ErrorFormat": {
+      "description": "The format of rdock's own error answers.",
+      "oneOf": [
+        {
+          "description": "HTML, or the pre-v0.8 JSON object for clients that ask for JSON.",
+          "type": "string",
+          "const": "html"
+        },
+        {
+          "description": "RFC 9457 problem details unless the client asks for HTML only.",
+          "type": "string",
+          "const": "problem"
+        },
+        {
+          "description": "RFC 9457 problem details for clients that prefer JSON, HTML otherwise.",
+          "type": "string",
+          "const": "auto"
+        }
+      ]
+    },
     "ErrorRateRule": {
       "description": "A 5xx-share threshold.",
       "type": "object",
@@ -2067,6 +2190,21 @@
       "required": [
         "percent"
       ]
+    },
+    "ErrorSettings": {
+      "description": "How rdock renders the answers it produces itself (F-GW-04, ADR-0030). Pages of an `errors`\nmiddleware and a `maintenance` file take precedence where they apply.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "`html`: an HTML page, or a small JSON object for clients that ask for JSON and not\nHTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for\nevery client that accepts JSON, which includes `*/*` and a missing `Accept`; HTML only\nfor clients that ask for HTML and no JSON type (browsers). `auto`: problem details for\nclients that ask for JSON and not HTML, HTML otherwise.",
+          "$ref": "#/$defs/ErrorFormat",
+          "default": "html"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "ExternalAccountBinding": {
       "description": "External account binding credentials.",
@@ -2752,6 +2890,21 @@
         "^x-": {}
       }
     },
+    "LimitHeaders": {
+      "description": "Rate-limit response headers.",
+      "oneOf": [
+        {
+          "description": "None (`Retry-After` is always sent with `429`).",
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "description": "`RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.",
+          "type": "string",
+          "const": "draft"
+        }
+      ]
+    },
     "Limits": {
       "description": "Request size limits. Requests over a limit are answered with 431, 414 or 413.",
       "type": "object",
@@ -3055,6 +3208,130 @@
           "description": "Conditions that must all hold; lists inside one condition are alternatives.",
           "$ref": "#/$defs/StructuredMatch"
         }
+      ]
+    },
+    "Metering": {
+      "description": "Usage metering (`observability.metering`, F-GW-05): one event per request that has a\nconsumer, sent in batches to a webhook (`CloudEvents` 1.0) and/or an OTLP logs endpoint.\n\nEvents wait in a bounded in-memory queue; when it is full the newest are dropped and\ncounted. Delivery is at least once (a retried batch carries the same event IDs). There is\nno disk spool: events still queued are lost on a crash. Per instance; not billing-grade.",
+      "type": "object",
+      "properties": {
+        "all_requests": {
+          "description": "Also meter requests without a consumer.",
+          "type": "boolean",
+          "default": false
+        },
+        "flush_interval": {
+          "description": "Longest an event waits before its batch is sent.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        },
+        "max_batch": {
+          "description": "Events per request to a sink, at most.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 500,
+          "minimum": 0
+        },
+        "otlp": {
+          "description": "OTLP/HTTP logs (JSON encoding).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeteringOtlp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queue": {
+          "description": "Events waiting per sink, at most; more are dropped and counted.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 10000,
+          "minimum": 0
+        },
+        "webhook": {
+          "description": "`CloudEvents` over HTTP.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeteringWebhook"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "MeteringOtlp": {
+      "description": "The OTLP logs sink.",
+      "type": "object",
+      "properties": {
+        "allow_private_targets": {
+          "description": "Allow a collector on a private, loopback or link-local address (the usual case).",
+          "type": "boolean",
+          "default": true
+        },
+        "endpoint": {
+          "description": "The collector's base URL (`/v1/logs` is added) or the full logs URL.",
+          "$ref": "#/$defs/HttpUrl"
+        },
+        "token": {
+          "description": "A bearer token as a `${file:…}` or `${env:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint"
+      ]
+    },
+    "MeteringWebhook": {
+      "description": "The `CloudEvents` webhook sink.",
+      "type": "object",
+      "properties": {
+        "allow_private_targets": {
+          "description": "Allow a receiver on a private, loopback or link-local address.",
+          "type": "boolean",
+          "default": false
+        },
+        "secret": {
+          "description": "A Standard Webhooks signing secret (`whsec_…`) as a `${file:…}` or `${env:…}`\nreference: requests carry `webhook-id`, `webhook-timestamp` and `webhook-signature`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The events' `source`; `rdock/<host name>` when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "description": "A bearer token as a `${file:…}` or `${env:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The events' `type`.",
+          "type": "string",
+          "default": "dev.reversedock.request.v1"
+        },
+        "url": {
+          "description": "Where batches are posted (`application/cloudevents-batch+json`).",
+          "$ref": "#/$defs/HttpUrl"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
       ]
     },
     "Metrics": {
@@ -3507,10 +3784,22 @@
               "default": null,
               "minimum": 0
             },
+            "headers": {
+              "description": "`draft` adds `RateLimit-Policy` and `RateLimit` to responses\n(`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.",
+              "$ref": "#/$defs/LimitHeaders",
+              "default": "off"
+            },
             "key": {
               "description": "What to count by.",
               "$ref": "#/$defs/RateLimitKey",
               "default": "client_ip"
+            },
+            "overrides": {
+              "description": "Group → limit for consumers in that group, with `key: consumer`. The first of the\nconsumer's groups (in its `groups` order) that has an override wins.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/RateOverride"
+              }
             },
             "period": {
               "description": "Period of `average`.",
@@ -4438,6 +4727,161 @@
             "type",
             "address"
           ]
+        },
+        {
+          "description": "Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset\nover `jwt` with the team's keys, issuer and RS256, the token from the\n`Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.",
+          "type": "object",
+          "properties": {
+            "audience": {
+              "description": "The Application Audience (AUD) tag of the Access application, or several. Required:\nwithout it a token of any application of the same team would pass.",
+              "$ref": "#/$defs/Audience"
+            },
+            "certs_url": {
+              "description": "Where the keys are fetched from instead of the team's certs URL: for tests, or an\negress proxy that mirrors it. `https://` (or a loopback address).",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HttpUrl"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "claims_to_headers": {
+              "description": "Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email,\ncommon_name: X-Auth-Service-Token }`. Client-sent copies are removed first.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "team": {
+              "description": "The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "cloudflare_access"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "team",
+            "audience"
+          ]
+        },
+        {
+          "description": "Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or\n`X-API-Key`; sets the request's consumer (F-GW-01).",
+          "type": "object",
+          "properties": {
+            "anonymous": {
+              "description": "Requests without a key: `deny` answers `401`; `allow` lets them through without a\nconsumer (an invalid key is still refused).",
+              "$ref": "#/$defs/Anonymous",
+              "default": "deny"
+            },
+            "forward_credential": {
+              "description": "Keep the key in the request to the backend. Off by default: the backend gets the\nconsumer in `X-Consumer-Name`, `X-Consumer-Groups` and `X-Credential-Id` instead.",
+              "type": "boolean",
+              "default": false
+            },
+            "groups": {
+              "description": "Only consumers in one of these groups are let in; others get `403`. Any consumer when\nempty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "headers": {
+              "description": "Request headers the key is read from, in order; the first present wins. A key in\n`Authorization` must follow `Bearer `.",
+              "type": "array",
+              "default": [
+                "Authorization",
+                "X-API-Key"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "query": {
+              "description": "A query parameter the key is also read from, after the headers. Off unless named: keys\nin URLs end up in other systems' logs.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "realm": {
+              "description": "The realm of the `WWW-Authenticate` challenge.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "api_key"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Requests per consumer per calendar window (hour, day, month), persisted across\nrestarts; `429` when used up (F-GW-02).",
+          "type": "object",
+          "properties": {
+            "flush_interval": {
+              "description": "How often counters are written to disk.",
+              "$ref": "#/$defs/Duration",
+              "default": "10s"
+            },
+            "headers": {
+              "description": "`draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of\n`draft-ietf-httpapi-ratelimit-headers-11`. Off by default while the draft changes.",
+              "$ref": "#/$defs/LimitHeaders",
+              "default": "off"
+            },
+            "key": {
+              "description": "What to count by; only `consumer` (the default) is accepted. Requests without a\nconsumer are counted per client IP.",
+              "$ref": "#/$defs/RateLimitKey",
+              "default": "consumer"
+            },
+            "limit": {
+              "description": "Requests allowed per window.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "overrides": {
+              "description": "Group → limit, for consumers in that group (the first of the consumer's groups that has\none wins).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "quota"
+            },
+            "window": {
+              "description": "The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).",
+              "$ref": "#/$defs/QuotaWindow"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "limit",
+            "window"
+          ]
         }
       ]
     },
@@ -4496,6 +4940,17 @@
             },
             "webhook": null
           }
+        },
+        "metering": {
+          "description": "Usage events per request with a consumer, for analytics and showback (F-GW-05).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Metering"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "metrics": {
           "description": "Metrics.",
@@ -4716,13 +5171,71 @@
         }
       ]
     },
+    "QuotaWindow": {
+      "description": "A quota's calendar window, in UTC.",
+      "oneOf": [
+        {
+          "description": "From the start of each hour.",
+          "type": "string",
+          "const": "hour"
+        },
+        {
+          "description": "From 00:00 UTC.",
+          "type": "string",
+          "const": "day"
+        },
+        {
+          "description": "From 00:00 UTC on the 1st.",
+          "type": "string",
+          "const": "month"
+        }
+      ]
+    },
     "RateLimitKey": {
       "type": "string",
       "examples": [
         "client_ip",
         "header:X-Api-Key"
       ],
-      "pattern": "^(client_ip|route|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+      "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+    },
+    "RateOverride": {
+      "description": "A limit for the consumers of one group.",
+      "type": "object",
+      "properties": {
+        "average": {
+          "description": "Requests allowed per `period` on average.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "burst": {
+          "description": "Largest burst; defaults to `average`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "period": {
+          "description": "Period of `average`; defaults to the middleware's.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "average"
+      ]
     },
     "RedirectPrefix": {
       "description": "A path prefix replaced by another (`redirect.prefix`).",
@@ -4934,6 +5447,17 @@
           "description": "Set to `false` to keep the route defined but inactive.",
           "type": "boolean",
           "default": true
+        },
+        "errors": {
+          "description": "How rdock renders its own error answers on this route, instead of `defaults.errors`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "listeners": {
           "description": "Listeners the route is attached to. Defaults to `defaults.listeners`.",

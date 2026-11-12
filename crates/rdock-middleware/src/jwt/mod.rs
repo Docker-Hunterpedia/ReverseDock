@@ -48,7 +48,13 @@ pub(crate) struct Jwt {
     forward_token: bool,
     local: Vec<Key>,
     remote: Option<Arc<Remote>>,
+    /// `cloudflare_access`: the consumer is the token's `email`, or a service token's
+    /// `common_name`.
+    access: bool,
 }
+
+/// The group a Cloudflare Access service token's consumer is in.
+pub(crate) const SERVICE_TOKEN_GROUP: &str = "service-token";
 
 /// Keys fetched from `jwks_url`.
 #[derive(Debug)]
@@ -137,7 +143,29 @@ impl Jwt {
             forward_token: config.forward_token,
             local,
             remote,
+            access: false,
         })
+    }
+
+    /// The `cloudflare_access` preset (W-CF-06): `jwt` with the team's certs URL, issuer,
+    /// RS256 and the Access header, then cookie, and the consumer set from the identity.
+    pub(crate) fn cloudflare_access(
+        name: &str,
+        config: &rdock_model::middleware::CloudflareAccessConfig,
+        client: Arc<HttpClient>,
+    ) -> Result<Self, BuildError> {
+        if !config.team_is_valid() {
+            return Err(BuildError::Invalid(format!(
+                "middleware `{name}`: `{}` is not a Cloudflare Zero Trust team name",
+                config.team
+            )));
+        }
+        let jwt = config.to_jwt().ok_or_else(|| {
+            BuildError::Invalid(format!("middleware `{name}`: the certs URL is invalid"))
+        })?;
+        let mut this = Self::new(name, &jwt, client)?;
+        this.access = true;
+        Ok(this)
     }
 
     /// The token and, for header tokens, the header it came from.
@@ -318,6 +346,26 @@ fn unauthorized(error: Option<&str>) -> Flow {
     Flow::Reply(reply)
 }
 
+/// The consumer of a Cloudflare Access token: a user's `email`, or for a service token (whose
+/// `sub` is empty) its `common_name`, the Client ID, in the group [`SERVICE_TOKEN_GROUP`].
+fn access_consumer(claims: &serde_json::Map<String, Value>) -> Option<crate::Consumer> {
+    let text = |name: &str| {
+        claims
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+    };
+    if text("sub").is_none()
+        && let Some(common_name) = text("common_name")
+    {
+        return Some(crate::Consumer {
+            name: Arc::from(common_name),
+            groups: Arc::from([Arc::from(SERVICE_TOKEN_GROUP)]),
+        });
+    }
+    text("email").map(crate::Consumer::named)
+}
+
 /// A claim as header text: strings as they are, other values as JSON, arrays joined by `,`.
 fn claim_text(value: &Value) -> String {
     match value {
@@ -379,7 +427,14 @@ impl Middleware for Jwt {
         {
             req.remove_header(&header);
         }
-        if cx.user.is_none() {
+        if self.access {
+            let Some(consumer) = access_consumer(&claims) else {
+                tracing::debug!(middleware = %self.name, "Access token without email or common_name");
+                return unauthorized(Some("invalid_token"));
+            };
+            cx.user = Some(consumer.name.to_string());
+            cx.consumer = Some(consumer);
+        } else if cx.user.is_none() {
             cx.user = claims.get("sub").and_then(Value::as_str).map(str::to_owned);
         }
         cx.claims = Some(Arc::new(claims));

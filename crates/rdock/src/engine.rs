@@ -1008,6 +1008,9 @@ fn referenced_files(config_path: &Path, config: &Config) -> BTreeSet<PathBuf> {
             _ => {}
         }
     }
+    for consumer in config.consumers.values() {
+        files.extend(consumer.keys_file.clone());
+    }
     files
 }
 
@@ -1246,6 +1249,43 @@ impl rdock_admin::Control for Engine {
             }
             Err(e) => PurgeOutcome::Failed(e.to_string()),
         }
+    }
+
+    async fn quotas(&self, consumer: Option<String>) -> Value {
+        let quotas: Vec<Value> = self
+            .plane
+            .quotas()
+            .counters()
+            .into_iter()
+            .map(|(name, counter)| {
+                let (start, end) = counter.bounds();
+                let usage: Vec<_> = match &consumer {
+                    Some(c) => counter.usage(c).into_iter().collect(),
+                    None => counter.all(),
+                };
+                serde_json::json!({
+                    "middleware": name,
+                    "window": counter.window(),
+                    "window_start": start,
+                    "window_end": end,
+                    "usage": usage,
+                })
+            })
+            .collect();
+        serde_json::json!({ "quotas": quotas })
+    }
+
+    async fn reset_quota(&self, consumer: String, middleware: Option<String>) -> usize {
+        let reset = self
+            .plane
+            .quotas()
+            .counters()
+            .into_iter()
+            .filter(|(name, _)| middleware.as_deref().is_none_or(|m| m == name))
+            .filter(|(_, counter)| counter.reset(&consumer))
+            .count();
+        tracing::info!(consumer = %consumer, reset, "quota counts reset through the admin API");
+        reset
     }
 
     async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool {

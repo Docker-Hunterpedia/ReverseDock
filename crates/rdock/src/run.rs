@@ -130,6 +130,7 @@ fn data_plane(
     let spool = data_dir.join("spool");
     // Disk cache stores without a `path` live under `<data dir>/cache/<name>` (F-WEB-03).
     plane.set_cache_dir(data_dir.join("cache"));
+    plane.set_quota_dir(data_dir.join("quota"));
     plane
         .open_spool(&spool)
         .with_context(|| format!("opening the spool directory {}", spool.display()))?;

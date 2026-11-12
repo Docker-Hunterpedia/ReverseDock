@@ -63,6 +63,8 @@ impl Config {
         v.check_services();
         v.check_middlewares();
         v.check_caches();
+        v.check_consumers();
+        v.check_metering();
         v.check_tcp();
         v.check_udp();
         v.check_certificates();
@@ -445,6 +447,7 @@ impl Validator<'_> {
             }
             self.check_terminal_position(&path, route);
             self.check_route_cache(&path, route);
+            self.check_route_consumer_keys(&path, route);
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
                 self.check_reference(
@@ -1028,7 +1031,10 @@ impl Validator<'_> {
                         );
                     }
                 }
-                Middleware::RateLimit(r) => self.check_rate_limit(&path, r),
+                Middleware::RateLimit(r) => {
+                    self.check_rate_limit(&path, r);
+                    self.check_rate_limit_overrides(&path, r);
+                }
                 Middleware::Cors(c) => self.check_cors(&path, c),
                 Middleware::Compress(c) => {
                     if c.algorithms.is_empty() {
@@ -1051,6 +1057,9 @@ impl Validator<'_> {
                 Middleware::Agent(a) => self.check_agent(&path, a),
                 Middleware::Static(st) => self.check_static(&path, st),
                 Middleware::Jwt(j) => self.check_jwt(&path, j),
+                Middleware::CloudflareAccess(c) => self.check_cloudflare_access(&path, c),
+                Middleware::ApiKey(a) => self.check_api_key(&path, a),
+                Middleware::Quota(q) => self.check_quota(&path, q),
                 Middleware::ClientCert(c) => {
                     for (i, pattern) in c.allow.iter().enumerate() {
                         if pattern.trim().is_empty() {
@@ -1083,6 +1092,61 @@ impl Validator<'_> {
                         self.error(format!("{path}.rate"), "must be above zero");
                     }
                 }
+            }
+        }
+    }
+
+    fn check_cloudflare_access(
+        &mut self,
+        path: &str,
+        access: &crate::middleware::CloudflareAccessConfig,
+    ) {
+        if !access.team_is_valid() {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.team"),
+                    format!(
+                        "`{}` is not a Cloudflare Zero Trust team name or team domain",
+                        access.team
+                    ),
+                )
+                .with_hint(
+                    "the name before `.cloudflareaccess.com` (letters, digits and `-`), e.g. `acme` or `acme.cloudflareaccess.com`",
+                ),
+            );
+        }
+        let audiences = access.audience.list();
+        if audiences.is_empty() {
+            self.push(
+                Diagnostic::error(
+                    format!("{path}.audience"),
+                    "list the Application Audience (AUD) tag of the Access application",
+                )
+                .with_hint("Zero Trust → Access controls → Applications → the application → Additional settings"),
+            );
+        }
+        for (i, aud) in audiences.iter().enumerate() {
+            if aud.trim().is_empty() || aud == "any" {
+                self.error(
+                    path_index(&format!("{path}.audience"), i),
+                    "an AUD tag is required: without it a token of any Access application of the team would pass",
+                );
+            }
+        }
+        if let Some(url) = &access.certs_url
+            && !url.is_https_or_loopback()
+        {
+            self.error(
+                format!("{path}.certs_url"),
+                "keys must be fetched over https",
+            );
+        }
+        for (claim, header) in &access.claims_to_headers {
+            if !is_token(header) {
+                self.error(
+                    format!("{path}.claims_to_headers.{claim}"),
+                    format!("`{header}` is not a header name"),
+                );
             }
         }
     }
@@ -2441,6 +2505,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 
 mod cache;
 mod extensions;
+mod gateway;
 mod static_files;
 mod tcp;
 #[cfg(test)]

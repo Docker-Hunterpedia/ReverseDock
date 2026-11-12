@@ -7,6 +7,7 @@ mod bootstrap;
 mod cache;
 mod caller;
 mod config_api;
+mod consumers;
 mod dashboard;
 #[cfg(feature = "fault-injection")]
 pub mod fault;
@@ -80,6 +81,18 @@ pub trait Control: Send + Sync {
     async fn caches(&self) -> serde_json::Value;
     /// Removes what `selector` covers from the store `store` of this instance.
     async fn purge_cache(&self, store: String, selector: CachePurge) -> PurgeOutcome;
+    /// Quota use on this instance: every `quota` middleware with its window and the keys it
+    /// counted, only `consumer`'s when given.
+    async fn quotas(&self, consumer: Option<String>) -> serde_json::Value {
+        let _ = consumer;
+        serde_json::json!({ "quotas": [] })
+    }
+    /// Forgets `consumer`'s counts in every quota, or in `middleware` only; returns how many
+    /// counts were removed.
+    async fn reset_quota(&self, consumer: String, middleware: Option<String>) -> usize {
+        let _ = (consumer, middleware);
+        0
+    }
 }
 
 /// The outcome of a conditional write of the API provider's objects.
@@ -211,9 +224,5 @@ struct State {
 
 /// Lower-case hexadecimal.
 fn hex(bytes: &[u8]) -> String {
-    use std::fmt::Write;
-    bytes.iter().fold(String::new(), |mut out, b| {
-        let _ = write!(out, "{b:02x}");
-        out
-    })
+    rdock_credentials::hex(bytes)
 }

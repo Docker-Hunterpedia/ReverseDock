@@ -78,6 +78,7 @@ impl Middleware for RefuseEvil {
                     HeaderValue::from_static("text/plain"),
                 )],
                 body: Some(Body::Bytes(Bytes::from("refused ".repeat(256)))),
+                problem: None,
             })
         } else {
             BodyVerdict::Continue
@@ -223,6 +224,7 @@ impl Harness {
                 caches: None,
                 plugins: &rdock_plugin_api::Registry::new(),
                 metrics: None,
+                quotas: None,
             },
         );
         let errors: Vec<_> = compiled

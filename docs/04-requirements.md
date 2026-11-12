@@ -198,11 +198,11 @@ Tracked as W-SWM-01…03 below.
 - [ ] F-EXT-05 Plugin SDK, examples, signature verification for distributed plugins
 
 ### F-GW · API gateway features (P2)
-- [ ] F-GW-01 API-key validation (hashed keys, external store) and OIDC login/policies (plain JWT validation is M-SEC-01)
-- [ ] F-GW-02 Per-consumer rate limits and quotas
+- [ ] F-GW-01 API-key validation (hashed keys, external store) and OIDC login/policies (plain JWT validation is M-SEC-01). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the API-key half: `consumers`, `api_key` with `rdk_` keys stored as ID and SHA-256 (inline, keys file, admin API); the external store (RFC 7662) and OIDC login are open.
+- [ ] F-GW-02 Per-consumer rate limits and quotas. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `rate_limit.key: consumer` with group overrides, the `quota` middleware with persisted per-instance counters; the box is ticked by the release PR.
 - [ ] F-GW-03 Request validation against OpenAPI/JSON Schema
-- [ ] F-GW-04 Consistent JSON error envelope; request/response transformation
-- [ ] F-GW-05 Usage metering events export (OTLP/webhook) — no billing in core
+- [ ] F-GW-04 Consistent JSON error envelope; request/response transformation. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the envelope half (`errors.format`, RFC 9457 problem details); body transformation is open.
+- [ ] F-GW-05 Usage metering events export (OTLP/webhook) — no billing in core. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `observability.metering` (CloudEvents webhook, OTLP logs, bounded queue, at least once); the box is ticked by the release PR.
 
 ### F-WEB · Web server and legacy compatibility
 - [x] F-WEB-01 Static files: MIME, ranges, conditional requests, cache headers, SPA fallback, precompressed assets (P1)
@@ -237,7 +237,7 @@ Tracked as W-SWM-01…03 below.
 - [ ] W-CF-04 Origin CA certificates and Full (strict) guidance
 - [x] W-CF-08 Authenticated Origin Pulls: client-certificate verification against Cloudflare's origin-pull CA (needs M-TLS-01)
 - [ ] W-CF-05 Cloudflare Tunnel: documented deployment with `cloudflared` sidecar, no inbound ports
-- [ ] W-CF-06 Cloudflare Access JWT validation middleware (P2)
+- [ ] W-CF-06 Cloudflare Access JWT validation middleware (P2). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `type: cloudflare_access`, a preset over `jwt`; the box is ticked by the release PR.
 - [x] W-CF-07 Compatible with Cloudflare Load Balancer origin pools (health endpoints, PROXY-less)
 
 ### W-DKR · Docker and Compose (P0, highest priority)

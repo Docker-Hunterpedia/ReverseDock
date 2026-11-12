@@ -70,6 +70,122 @@ pub enum Middleware {
     /// Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,
     /// with its body up to `max_body` (ADR-0030). Fails closed by default.
     Agent(AgentConfig),
+    /// Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset
+    /// over `jwt` with the team's keys, issuer and RS256, the token from the
+    /// `Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.
+    CloudflareAccess(CloudflareAccessConfig),
+    /// Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or
+    /// `X-API-Key`; sets the request's consumer (F-GW-01).
+    ApiKey(crate::gateway::ApiKeyConfig),
+    /// Requests per consumer per calendar window (hour, day, month), persisted across
+    /// restarts; `429` when used up (F-GW-02).
+    Quota(crate::gateway::QuotaConfig),
+}
+
+/// Cloudflare Access application tokens (`type: cloudflare_access`, W-CF-06, ADR-0030).
+///
+/// The keys come from `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` (refreshed
+/// every 10 minutes and at once on an unknown key ID, well inside the 7 days a rotated key
+/// stays valid), the issuer must be `https://<team>.cloudflareaccess.com`, the algorithm RS256.
+/// The request's consumer becomes the user's `email`, or for a service token (empty `sub`) its
+/// `common_name` in the group `service-token`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct CloudflareAccessConfig {
+    /// The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
+    pub team: String,
+    /// The Application Audience (AUD) tag of the Access application, or several. Required:
+    /// without it a token of any application of the same team would pass.
+    pub audience: Audience,
+    /// Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email,
+    /// common_name: X-Auth-Service-Token }`. Client-sent copies are removed first.
+    #[serde(default)]
+    pub claims_to_headers: BTreeMap<String, String>,
+    /// Where the keys are fetched from instead of the team's certs URL: for tests, or an
+    /// egress proxy that mirrors it. `https://` (or a loopback address).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certs_url: Option<HttpUrl>,
+}
+
+impl CloudflareAccessConfig {
+    /// The team name: `team` without the `.cloudflareaccess.com` suffix, lower-cased.
+    #[must_use]
+    pub fn team_name(&self) -> String {
+        let team = self.team.trim().to_ascii_lowercase();
+        team.strip_suffix(".cloudflareaccess.com")
+            .map_or_else(|| team.clone(), str::to_owned)
+    }
+
+    /// Whether `team` is a valid team name or team domain.
+    #[must_use]
+    pub fn team_is_valid(&self) -> bool {
+        let name = self.team_name();
+        !name.is_empty()
+            && name.len() <= 63
+            && !name.starts_with('-')
+            && !name.ends_with('-')
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }
+
+    /// The issuer of the team's tokens, `https://<team>.cloudflareaccess.com`.
+    #[must_use]
+    pub fn issuer(&self) -> String {
+        format!("https://{}.cloudflareaccess.com", self.team_name())
+    }
+
+    /// The URL of the team's signing keys.
+    #[must_use]
+    pub fn certs(&self) -> String {
+        self.certs_url.as_ref().map_or_else(
+            || format!("{}/cdn-cgi/access/certs", self.issuer()),
+            |url| url.as_url().to_string(),
+        )
+    }
+
+    /// The `jwt` settings this preset stands for.
+    #[must_use]
+    pub fn to_jwt(&self) -> Option<JwtConfig> {
+        let jwks_url = self.certs().parse().ok()?;
+        Some(JwtConfig {
+            jwks_url: Some(jwks_url),
+            jwks_file: None,
+            hmac_secret: None,
+            issuer: self.issuer(),
+            audiences: self.audience.list().to_vec(),
+            algorithms: vec![JwtAlgorithm::Rs256],
+            leeway: sixty_seconds(),
+            token: TokenSource {
+                header: Some("Cf-Access-Jwt-Assertion".to_owned()),
+                cookie: Some("CF_Authorization".to_owned()),
+                query: None,
+            },
+            claims_to_headers: self.claims_to_headers.clone(),
+            forward_token: true,
+        })
+    }
+}
+
+/// One value or a list of values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Audience {
+    /// One value.
+    One(String),
+    /// Several values.
+    Many(Vec<String>),
+}
+
+impl Audience {
+    /// The values.
+    #[must_use]
+    pub fn list(&self) -> &[String] {
+        match self {
+            Self::One(one) => std::slice::from_ref(one),
+            Self::Many(many) => many,
+        }
+    }
 }
 
 /// How an authenticating middleware identifies who it let in, for the cache rule
@@ -83,6 +199,9 @@ pub enum Identity {
     TokenSubject,
     /// The verified client certificate's subject.
     Certificate,
+    /// The consumer the middleware attributes the request to (`api_key`,
+    /// `cloudflare_access`).
+    Consumer,
     /// Decided by an external service; rdock knows only the headers it copies back.
     External {
         /// Headers the middleware copies from the service's answer.
@@ -104,6 +223,7 @@ impl Identity {
             Self::User => "the user name",
             Self::TokenSubject => "the token's issuer and subject",
             Self::Certificate => "the certificate's subject",
+            Self::Consumer => "the consumer name",
             Self::External { .. } => "nothing: rdock does not learn who the service let in",
         }
     }
@@ -118,6 +238,7 @@ impl Middleware {
             Self::BasicAuth(_) => Some(Identity::User),
             Self::Jwt(_) => Some(Identity::TokenSubject),
             Self::ClientCert(_) => Some(Identity::Certificate),
+            Self::CloudflareAccess(_) | Self::ApiKey(_) => Some(Identity::Consumer),
             Self::ForwardAuth(f) => Some(Identity::External {
                 headers: f.copy_headers.clone(),
             }),
@@ -712,6 +833,14 @@ pub struct RateLimitConfig {
     /// Period of `average`.
     #[serde(default = "one_second")]
     pub period: Duration,
+    /// Group → limit for consumers in that group, with `key: consumer`. The first of the
+    /// consumer's groups (in its `groups` order) that has an override wins.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: BTreeMap<String, crate::gateway::RateOverride>,
+    /// `draft` adds `RateLimit-Policy` and `RateLimit` to responses
+    /// (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
+    #[serde(default)]
+    pub headers: crate::gateway::LimitHeaders,
 }
 
 const fn one_second() -> Duration {

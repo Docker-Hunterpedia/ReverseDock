@@ -4,6 +4,7 @@ pub mod acme;
 pub mod cache;
 pub mod config;
 pub mod diagnostics;
+pub mod gateway;
 pub mod interpolation;
 pub mod middleware;
 pub mod providers;

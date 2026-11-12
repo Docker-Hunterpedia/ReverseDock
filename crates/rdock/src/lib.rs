@@ -106,6 +106,12 @@ enum Command {
     /// Show HTTP cache stores and purge them (this instance only).
     #[command(subcommand)]
     Cache(admin_cli::CacheCommand),
+    /// Manage consumers (API clients) and their quota counters.
+    #[command(subcommand)]
+    Consumers(admin_cli::ConsumersCommand),
+    /// Mint, revoke and hash consumers' API keys.
+    #[command(subcommand)]
+    Keys(admin_cli::KeysCommand),
     /// Explain routing decisions.
     #[command(subcommand)]
     Routes(admin_cli::RoutesCommand),
@@ -301,6 +307,8 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Tokens(command) => admin_cli::tokens(&command),
         Command::Backends(command) => admin_cli::backends(&command),
         Command::Cache(command) => admin_cli::cache(&command),
+        Command::Consumers(command) => admin_cli::consumers(&command),
+        Command::Keys(command) => admin_cli::keys(&command),
         Command::Routes(command) => admin_cli::routes(&command),
         Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
         Command::Schema { openapi: true } => {

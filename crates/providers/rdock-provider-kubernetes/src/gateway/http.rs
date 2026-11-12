@@ -1385,6 +1385,7 @@ fn emit(
                         timeouts: plan.timeouts,
                         mirror: plan.mirror.clone(),
                         max_body: None,
+                        errors: None,
                         enabled: true,
                     },
                 );

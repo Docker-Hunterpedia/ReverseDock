@@ -136,14 +136,23 @@ async fn a_miss_is_stored_and_hits_carry_a_growing_age() {
     let age: u64 = third.header("age").unwrap().parse().unwrap();
     assert!(age >= 1, "Age grows: {age}");
     assert_eq!(origin.count("/a"), 1);
-    // The access log and the metrics say what happened.
-    tokio::time::sleep(Duration::from_millis(200)).await;
-    let log = rdock.access_log();
-    let statuses: Vec<_> = log
+    // The access log and the metrics say what happened. The miss's line is written when
+    // its request ends, which is after the cache fill and can be after the client has the
+    // response (and even after the hits' lines): wait for all three, in any order.
+    let mut log = rdock.access_log();
+    let started = std::time::Instant::now();
+    while log.iter().filter(|l| l["cache_status"].is_string()).count() < 3
+        && started.elapsed() < Duration::from_secs(5)
+    {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        log = rdock.access_log();
+    }
+    let mut statuses: Vec<_> = log
         .iter()
         .filter_map(|l| l["cache_status"].as_str())
         .collect();
-    assert_eq!(statuses, ["miss", "hit", "hit"], "{log:?}");
+    statuses.sort_unstable();
+    assert_eq!(statuses, ["hit", "hit", "miss"], "{log:?}");
     let (_, metrics) = rdock.get_admin("/metrics").unwrap();
     assert!(
         metrics

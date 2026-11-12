@@ -2,6 +2,7 @@
 
 mod bandwidth;
 mod concurrency;
+pub mod quota;
 
 pub use bandwidth::ByteLimiter;
 pub use concurrency::{Admitted, ConcurrencyLimiter, Refused};
@@ -63,6 +64,16 @@ impl RateLimiter {
 
     /// Takes a token for `key` at time `now`.
     pub fn check<K: Hash + ?Sized>(&self, key: &K, now: Instant) -> Decision {
+        self.check_remaining(key, now).0
+    }
+
+    /// Like [`Self::check`], and also returns the whole tokens left and the time until the
+    /// bucket is full again (for `RateLimit` response headers).
+    pub fn check_remaining<K: Hash + ?Sized>(
+        &self,
+        key: &K,
+        now: Instant,
+    ) -> (Decision, u64, Duration) {
         let hash = self.hasher.hash_one(key);
         let index = usize::try_from(hash % SHARDS as u64).unwrap_or(0);
         // A poisoned shard only means another thread panicked while holding it; the buckets are
@@ -80,7 +91,7 @@ impl RateLimiter {
         let elapsed = now.saturating_duration_since(bucket.updated).as_secs_f64();
         bucket.tokens = (bucket.tokens + elapsed * self.rate).min(self.burst);
         bucket.updated = now;
-        if bucket.tokens >= 1.0 {
+        let decision = if bucket.tokens >= 1.0 {
             bucket.tokens -= 1.0;
             Decision::Allow
         } else {
@@ -88,7 +99,29 @@ impl RateLimiter {
             Decision::Deny {
                 retry_after: Duration::from_secs_f64(wait),
             }
-        }
+        };
+        let left = bucket.tokens.max(0.0);
+        let full = Duration::from_secs_f64((self.burst - left).max(0.0) / self.rate);
+        // Whole tokens: a fraction is not a request.
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "non-negative and at most `burst`, a u32"
+        )]
+        let whole = left.floor() as u64;
+        (decision, whole, full)
+    }
+
+    /// The bucket size, for `RateLimit-Policy`.
+    #[must_use]
+    pub fn burst(&self) -> u64 {
+        #[allow(
+            clippy::cast_possible_truncation,
+            clippy::cast_sign_loss,
+            reason = "made from a u32"
+        )]
+        let burst = self.burst as u64;
+        burst
     }
 
     /// Drops buckets that have refilled completely; if none did, drops the least recently used.

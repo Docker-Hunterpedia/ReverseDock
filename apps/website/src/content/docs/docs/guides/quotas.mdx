@@ -1,0 +1,128 @@
+---
+title: Quotas and per-consumer limits
+description: Give each API consumer a rate limit and an hourly, daily or monthly quota, with group overrides, Retry-After, the draft RateLimit headers and counters that survive a restart.
+sidebar:
+  order: 27
+---
+
+import Status from '../../../../components/Status.astro';
+
+Two middlewares limit [consumers](/docs/guides/api-keys/) <Status since="v0.8" />, and they
+answer different questions:
+
+- **`rate_limit` with `key: consumer`** protects the backend: a token bucket per consumer, in
+  seconds or minutes, reset by a reload or a restart.
+- **`quota`** is an allowance: N requests per hour, day or month, aligned to the calendar in
+  UTC, kept across reloads and restarts.
+
+Both need a middleware that sets the consumer **earlier in the route's list** (`api_key` or
+`cloudflare_access`); `rdock validate` refuses a route where none does.
+
+## A quota per consumer
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+consumers:
+  acme:
+    groups: [gold]
+    keys:
+      - id: f3Kq9ZpL2mXa
+        hash: 990d89c9bc536e6b9eb4aadd1ce4e5f890417af575b3551d412f6579a1dbb186
+
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [keys, per-second, monthly]
+
+middlewares:
+  keys:
+    type: api_key
+  per-second:
+    type: rate_limit
+    key: consumer
+    average: 10
+    burst: 20
+    overrides:
+      gold: { average: 100, burst: 200 }
+  monthly:
+    type: quota
+    limit: 10000
+    window: month
+    overrides:
+      gold: 1000000
+    headers: draft
+
+services:
+  api:
+    backends: [{ address: "api:8080" }]
+```
+
+| `quota` setting | Default | Meaning |
+|---|---|---|
+| `limit` | required | Requests per window. |
+| `window` | required | `hour` (from :00), `day` (from 00:00 UTC) or `month` (from 00:00 UTC on the 1st). |
+| `overrides` | none | Group → limit. The **first of the consumer's groups**, in its `groups` order, that has an override wins. |
+| `headers` | `off` | `draft` adds `RateLimit-Policy` and `RateLimit` (below). |
+| `flush_interval` | `10s` | How often counters are written to disk. |
+| `key` | `consumer` | Only `consumer` is accepted. |
+
+`rate_limit` takes the same `overrides` (each with `average`, and optionally `burst` and
+`period`, defaulting to the middleware's) and the same `headers` setting, with `key: consumer`
+only.
+
+## What a refused request gets
+
+`429 Too Many Requests` with `Retry-After`: for a quota, the seconds until the window ends; for
+a rate limit, until the next token. With [problem details](/docs/guides/error-pages-and-maintenance/#problem-details-for-apis)
+the type is [`quota-exceeded`](/docs/reference/problems/#quota-exceeded) or
+[`rate-limited`](/docs/reference/problems/#rate-limited), and `retry_after` repeats the header.
+
+A request the quota counted stays counted even if a later middleware refuses it.
+
+## The draft `RateLimit` headers
+
+With `headers: draft`, responses carry the two fields of
+[`draft-ietf-httpapi-ratelimit-headers-11`](https://datatracker.ietf.org/doc/draft-ietf-httpapi-ratelimit-headers/)
+(2026-05-23, checked 2026-11-11), structured-field lists named after the middleware:
+
+```http
+RateLimit-Policy: "monthly";q=10000;w=2592000
+RateLimit: "monthly";r=9873;t=1209600
+```
+
+`q` is the quota and `w` the window in seconds (for `rate_limit`: `average` and `period`); `r`
+is what remains and `t` the seconds until it is restored (for `rate_limit`: until the bucket is
+full again). The draft is not an RFC and has changed shape between revisions, so the headers are
+off by default; `Retry-After` takes precedence, as the draft says. The older
+`RateLimit-Limit`/`-Remaining`/`-Reset` trio is not sent.
+
+## How exact the counts are
+
+- **Per instance.** Each ReverseDock process counts on its own: three replicas allow up to three
+  times the quota. Shared counters are planned for v0.9.
+- **Exact on one instance**, also under concurrent requests.
+- **Approximate across restarts.** Counters are written to `<data dir>/quota/` every
+  `flush_interval` and at shutdown, and read back at start while their window lasts. A crash
+  loses what was counted since the last write. Quotas are an allowance, not a billing record.
+- **Reloads keep counts**, unless the middleware's `window` changes. Requests without a consumer
+  (with `anonymous: allow`) are counted per client IP. At most 100,000 keys per quota; more share
+  one counter.
+
+## Read and reset counters
+
+```sh
+rdock consumers quota acme          # used / limit in each quota, this instance
+rdock consumers reset-quota acme    # audited; or --middleware monthly
+```
+
+The admin API has `GET /api/v1/quota`, `GET /api/v1/quota/{consumer}` (viewer) and
+`DELETE /api/v1/quota/{consumer}` (operator, audited).
+
+## Related
+
+- [API keys and consumers](/docs/guides/api-keys/)
+- [Rate limiting](/docs/guides/rate-limiting/)
+- [Usage metering](/docs/guides/usage-metering/), to see who used what

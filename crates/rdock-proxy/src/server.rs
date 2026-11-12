@@ -103,6 +103,7 @@ pub struct DataPlane {
     sticky_key: Vec<u8>,
     live: Arc<rdock_observability::live::Live>,
     caches: rdock_cache::Registry,
+    quotas: Arc<rdock_limits::quota::QuotaRegistry>,
     plugins: Arc<rdock_plugin_api::Registry>,
     state: Mutex<State>,
     generation: AtomicU64,
@@ -146,6 +147,7 @@ impl DataPlane {
             sticky_key: random_key(),
             live: Arc::default(),
             caches,
+            quotas: Arc::default(),
             plugins: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
@@ -171,6 +173,31 @@ impl DataPlane {
     /// Puts disk cache stores without a `path` under `dir` (`<data dir>/cache/<name>`).
     pub fn set_cache_dir(&self, dir: std::path::PathBuf) {
         self.caches.set_default_dir(dir);
+    }
+
+    /// Writes quota counters under `dir` (`<data dir>/quota`) and starts writing changed
+    /// counters every second whose `flush_interval` has passed. Call once, inside the runtime.
+    pub fn set_quota_dir(&self, dir: std::path::PathBuf) {
+        self.quotas.set_dir(dir);
+        let quotas = Arc::downgrade(&self.quotas);
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(quotas) = quotas.upgrade() else {
+                    return;
+                };
+                // File writes stay off the request threads' runtime workers.
+                let _ = tokio::task::spawn_blocking(move || quotas.flush_due()).await;
+            }
+        });
+    }
+
+    /// The quota counters, for the admin API (read and reset).
+    #[must_use]
+    pub fn quotas(&self) -> &Arc<rdock_limits::quota::QuotaRegistry> {
+        &self.quotas
     }
 
     /// The process's cache stores, for the admin API (stats and purges).
@@ -247,6 +274,7 @@ impl DataPlane {
                 caches: Some(&self.caches),
                 plugins: &self.plugins,
                 metrics: Some(&self.shared.metrics),
+                quotas: Some(&self.quotas),
             },
         )
     }
@@ -495,6 +523,9 @@ impl DataPlane {
             tasks.spawn(listener.finished());
         }
         while tasks.join_next().await.is_some() {}
+        // Requests are over: what the quotas counted is final for this run.
+        let quotas = self.quotas.clone();
+        let _ = tokio::task::spawn_blocking(move || quotas.flush_all()).await;
     }
 
     /// Listeners currently serving.

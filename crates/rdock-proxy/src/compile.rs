@@ -58,6 +58,8 @@ pub struct CompileEnv<'a> {
     pub plugins: &'a rdock_plugin_api::Registry,
     /// Where plugins and agents count; `None` when validating.
     pub metrics: Option<&'a rdock_observability::Metrics>,
+    /// Quota counters that outlive a configuration; `None` when validating.
+    pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
 }
 
 /// The result of compilation.
@@ -104,6 +106,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, &mut out);
     let cert_requests = auto_tls.requests.into_iter().collect();
     let local_cert_names = auto_tls.local.into_iter().collect();
+    let metering = start_metering(config, env, &mut out);
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
         generation: env.generation,
         listeners,
@@ -124,10 +127,31 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
             .collect(),
         udp_pools,
         tracer,
+        errors: config.defaults.errors.format,
+        metering,
     });
     Compiled {
         runtime,
         diagnostics: out,
+    }
+}
+
+/// The metering sinks of `observability.metering`, started when the configuration is applied
+/// (never when it is only validated).
+fn start_metering(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Option<Arc<rdock_observability::metering::Meter>> {
+    let settings = config.observability.metering.as_ref()?;
+    let metrics = env.metrics.filter(|_| env.mode == Mode::Run)?;
+    tokio::runtime::Handle::try_current().ok()?;
+    match rdock_observability::metering::Meter::start(settings, metrics.clone()) {
+        Ok(meter) => Some(Arc::new(meter)),
+        Err(message) => {
+            out.push(Diagnostic::error("observability.metering", message));
+            None
+        }
     }
 }
 
@@ -574,11 +598,22 @@ fn build_middlewares(
             client: client.clone(),
         }))
     };
+    let consumers = match rdock_middleware::ConsumerIndex::build(&config.consumers) {
+        Ok(index) => Arc::new(index),
+        Err(issues) => {
+            for issue in issues {
+                out.push(Diagnostic::error(issue.path, issue.message));
+            }
+            Arc::default()
+        }
+    };
     let build_env = BuildEnv {
         service: &lookup,
         client: env.client.clone(),
         plugins: env.plugins,
         metrics: env.metrics,
+        consumers,
+        quotas: env.quotas,
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
@@ -766,6 +801,7 @@ fn compile_listeners(
             configs: &config.middlewares,
             live: rings.ring(name),
             caches,
+            errors: config.defaults.errors.format,
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
@@ -873,6 +909,8 @@ struct RouteContext<'a> {
     configs: &'a std::collections::BTreeMap<String, rdock_model::middleware::Middleware>,
     live: Arc<rdock_observability::live::Ring>,
     caches: &'a Caches<'a>,
+    /// `defaults.errors.format`.
+    errors: rdock_model::config::ErrorFormat,
 }
 
 /// The route's cache policy from its `cache` middleware, if it has one.
@@ -995,6 +1033,7 @@ fn compile_route(
         mirror,
         live: context.live.clone(),
         cache,
+        errors: route.errors.map_or(context.errors, |e| e.format),
     }))
 }
 

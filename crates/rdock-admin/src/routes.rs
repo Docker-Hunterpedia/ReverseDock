@@ -80,6 +80,19 @@ pub(crate) fn documented(guard: impl FnOnce(Api) -> Api) -> Api {
         .routes(routes!(resources::explain))
         .routes(routes!(crate::cache::stores))
         .routes(routes!(crate::cache::purge))
+        .routes(routes!(crate::consumers::list))
+        .routes(routes!(
+            crate::consumers::get,
+            crate::consumers::put,
+            crate::consumers::delete
+        ))
+        .routes(routes!(crate::consumers::create_key))
+        .routes(routes!(crate::consumers::revoke_key))
+        .routes(routes!(crate::consumers::quotas))
+        .routes(routes!(
+            crate::consumers::quota,
+            crate::consumers::reset_quota
+        ))
         .routes(routes!(stream::logs))
         .routes(routes!(stream::events))
         .routes(routes!(resources::list))

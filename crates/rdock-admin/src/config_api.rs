@@ -242,7 +242,7 @@ fn merge_patch(target: &mut Value, patch: &Value) {
     }
 }
 
-fn with_etag(mut response: Response, etag: &str) -> Response {
+pub(crate) fn with_etag(mut response: Response, etag: &str) -> Response {
     if let Ok(value) = HeaderValue::from_str(etag) {
         response.headers_mut().insert(header::ETAG, value);
     }
@@ -288,6 +288,27 @@ pub(crate) async fn write(
     if_match: String,
     action: &'static str,
 ) -> Response {
+    write_as(
+        state,
+        caller,
+        candidate,
+        if_match,
+        (action, None),
+        |report, etag| with_etag(axum::Json(report).into_response(), etag),
+    )
+    .await
+}
+
+/// [`write`] with the audited resource and the answer to an applied write chosen by the
+/// caller (the reload report and the new `ETag` are passed to `applied`).
+pub(crate) async fn write_as(
+    state: &State,
+    caller: &Caller,
+    candidate: Value,
+    if_match: String,
+    (action, resource): (&'static str, Option<String>),
+    applied: impl FnOnce(Value, &str) -> Response,
+) -> Response {
     if let Some(wait) = over_budget(state) {
         return crate::auth::too_many(wait);
     }
@@ -311,14 +332,16 @@ pub(crate) async fn write(
         ApiWrite::Applied { report, etag } => {
             state.audit.record(Event {
                 config: Some((before, hash_of(&etag))),
+                resource,
                 ..caller.event(action)
             });
-            with_etag(axum::Json(report).into_response(), &etag)
+            with_etag(applied(report, &etag), &etag)
         }
         ApiWrite::Rejected { report } => {
             state.audit.record(Event {
                 outcome: Outcome::Failed,
                 reason: Some("the configuration was rejected".into()),
+                resource,
                 ..caller.event(action)
             });
             (StatusCode::UNPROCESSABLE_ENTITY, axum::Json(report)).into_response()

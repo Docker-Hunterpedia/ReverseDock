@@ -106,7 +106,21 @@ pub struct Metrics {
     pub cache_lock_waits: IntCounterVec,
     /// Disk cache objects dropped at start by store and reason (`corrupt`, `partial`).
     pub cache_dropped: IntCounterVec,
+    /// Requests with a consumer, by consumer, route and status class (F-GW-01). At most
+    /// `MAX_CONSUMER_LABELS` consumers get their own series; the rest share `_other`.
+    pub consumer_requests: IntCounterVec,
+    consumers_seen: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Metering events delivered or given up, by sink and result (`sent`, `failed`).
+    pub metering_events: IntCounterVec,
+    /// Metering events dropped by sink and reason (`queue_full`, `undeliverable`).
+    pub metering_dropped: IntCounterVec,
 }
+
+/// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
+/// are counted under `OTHER_CONSUMERS`, so a large consumer base cannot blow up the metrics.
+pub const MAX_CONSUMER_LABELS: usize = 1000;
+/// The `consumer` label of consumers past [`MAX_CONSUMER_LABELS`].
+pub const OTHER_CONSUMERS: &str = "_other";
 
 /// Creates `metric` and registers it in `registry`.
 fn registered<M: prometheus::core::Collector + Clone + 'static>(
@@ -405,7 +419,29 @@ impl Metrics {
             "Disk cache objects dropped at start because they were damaged or incomplete.",
             &["store", "reason"],
         )?;
+        let consumer_requests = counters(
+            &registry,
+            "rdock_consumer_requests_total",
+            "Requests attributed to a consumer, by consumer, route and status class.",
+            &["consumer", "route", "status_class"],
+        )?;
+        let metering_events = counters(
+            &registry,
+            "rdock_metering_events_total",
+            "Usage metering events by sink and result (sent, failed).",
+            &["sink", "result"],
+        )?;
+        let metering_dropped = counters(
+            &registry,
+            "rdock_metering_dropped_total",
+            "Usage metering events dropped, by sink and reason (queue_full, undeliverable).",
+            &["sink", "reason"],
+        )?;
         Ok(Self {
+            consumer_requests,
+            consumers_seen: std::sync::Arc::default(),
+            metering_events,
+            metering_dropped,
             cache_requests,
             cache_objects,
             cache_bytes,
@@ -470,6 +506,27 @@ impl Metrics {
         self.duration
             .with_label_values(&[listener, route])
             .observe(seconds);
+    }
+
+    /// Counts one finished request of `consumer` on `route`.
+    pub fn observe_consumer(&self, consumer: &str, route: &str, status: u16) {
+        let label = {
+            let mut seen = self
+                .consumers_seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if seen.contains(consumer) {
+                consumer
+            } else if seen.len() < MAX_CONSUMER_LABELS {
+                seen.insert(consumer.to_owned());
+                consumer
+            } else {
+                OTHER_CONSUMERS
+            }
+        };
+        self.consumer_requests
+            .with_label_values(&[label, route, status_class(status)])
+            .inc();
     }
 
     /// The Prometheus text exposition of every metric.

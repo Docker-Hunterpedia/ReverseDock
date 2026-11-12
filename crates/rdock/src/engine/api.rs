@@ -25,7 +25,7 @@ use crate::zero_config::{self, Source};
 /// The provider name and the suffix of its objects.
 pub(crate) const PROVIDER: &str = "api";
 
-/// What clients send: only these three sections, unknown keys refused.
+/// What clients send: only these sections, unknown keys refused.
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Document {
@@ -35,17 +35,25 @@ struct Document {
     services: BTreeMap<String, Service>,
     #[serde(default)]
     middlewares: BTreeMap<String, Middleware>,
+    /// Consumers and keys (ADR-0030): hashes only, minted by `POST /api/v1/consumers/…/keys`.
+    #[serde(default)]
+    consumers: BTreeMap<String, rdock_model::gateway::Consumer>,
 }
 
 /// The API provider's fragment as clients read it: exactly the sections [`parse`] accepts, so
 /// what `GET /api/v1/config/api` returns can be sent back unchanged. The fragment's other
 /// sections belong to other providers and are always empty here.
 pub(crate) fn document(fragment: &Fragment) -> Value {
-    serde_json::json!({
+    let mut document = serde_json::json!({
         "routes": fragment.routes,
         "services": fragment.services,
         "middlewares": fragment.middlewares,
-    })
+    });
+    // Present only once used, so documents of earlier versions read back unchanged.
+    if !fragment.consumers.is_empty() {
+        document["consumers"] = serde_json::json!(fragment.consumers);
+    }
+    document
 }
 
 /// A client's document as a fragment, or why it is not one.
@@ -57,15 +65,27 @@ pub(crate) fn parse(candidate: Value) -> Result<Fragment, String> {
         .keys()
         .chain(document.services.keys())
         .chain(document.middlewares.keys());
-    if let Some(bad) = names.into_iter().find(|n| n.contains('@')) {
+    if let Some(bad) = names
+        .into_iter()
+        .chain(document.consumers.keys())
+        .find(|n| n.contains('@'))
+    {
         return Err(format!(
             "`{bad}`: names in the API configuration cannot contain `@`"
         ));
+    }
+    for (name, consumer) in &document.consumers {
+        if consumer.keys_file.is_some() {
+            return Err(format!(
+                "consumers.{name}.keys_file: a keys file belongs in the configuration file"
+            ));
+        }
     }
     Ok(Fragment {
         routes: document.routes,
         services: document.services,
         middlewares: document.middlewares,
+        consumers: document.consumers,
         ..Fragment::default()
     })
 }

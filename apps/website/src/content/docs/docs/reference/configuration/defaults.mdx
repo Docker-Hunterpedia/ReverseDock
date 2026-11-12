@@ -2,7 +2,7 @@
 title: defaults
 description: "Defaults applied to routes that do not set a value."
 sidebar:
-  order: 5
+  order: 6
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -16,6 +16,22 @@ Defaults applied to routes that do not set a value.
 **Type:** `string`
 
 Certificate (a key of `certificates`) served when no other certificate matches the requested name, or when the client sends no name (SNI).
+
+## `defaults.errors`
+
+**Type:** object
+
+How answers rdock produces itself (404 without a route, 401/403/429 from middlewares, 502/503/504) are rendered, for routes that do not set `errors`.
+
+### `defaults.errors.format`
+
+**Type:** `html` · `problem` · `auto` · **Default:** `html`
+
+`html`: an HTML page, or a small JSON object for clients that ask for JSON and not HTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for every client that accepts JSON, which includes `*/*` and a missing `Accept`; HTML only for clients that ask for HTML and no JSON type (browsers). `auto`: problem details for clients that ask for JSON and not HTML, HTML otherwise.
+
+- `html`: HTML, or the pre-v0.8 JSON object for clients that ask for JSON.
+- `problem`: RFC 9457 problem details unless the client asks for HTML only.
+- `auto`: RFC 9457 problem details for clients that prefer JSON, HTML otherwise.
 
 ## `defaults.listeners`
 

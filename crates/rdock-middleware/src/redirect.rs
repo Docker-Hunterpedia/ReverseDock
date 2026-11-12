@@ -252,6 +252,7 @@ impl Middleware for Redirect {
                 .unwrap_or_else(|| status(self.permanent, &req.method)),
             headers: vec![(http::header::LOCATION, value)],
             body: Some(Bytes::new().into()),
+            problem: None,
         })
     }
 }

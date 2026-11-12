@@ -56,6 +56,10 @@ impl Middleware for Maintenance {
                 HeaderValue::from_static("text/html; charset=utf-8"),
             );
             reply.body = Some(page.clone().into());
+        } else {
+            // The standard page says "maintenance" (a 503 only; other statuses keep their
+            // kind). A configured page always wins.
+            reply.problem = Some(crate::ProblemKind::Maintenance);
         }
         Flow::Reply(reply)
     }

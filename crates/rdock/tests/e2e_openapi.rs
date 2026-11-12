@@ -395,6 +395,7 @@ fn config_operations(rdock: &Rdock, check: &mut Checker, backend: &str) {
 
 fn resource_operations(rdock: &Rdock, check: &mut Checker) {
     let json_type = [("Content-Type", "application/json")];
+    consumer_operations(rdock, check);
     for path in [
         "/api/v1/certificates",
         "/api/v1/backends",
@@ -444,5 +445,94 @@ fn resource_operations(rdock: &Rdock, check: &mut Checker) {
         ("POST", "/api/v1/routes/explain", "/api/v1/routes/explain"),
         &json_type,
         r#"{"url":"http://file.test/"}"#,
+    );
+}
+
+/// Consumers, keys and quota counters (ADR-0030).
+fn consumer_operations(rdock: &Rdock, check: &mut Checker) {
+    let json_type = ("Content-Type", "application/json");
+    let etag = |check: &mut Checker| {
+        check
+            .call(
+                rdock,
+                ("GET", "/api/v1/consumers", "/api/v1/consumers"),
+                &[],
+                "",
+            )
+            .header("etag")
+            .unwrap()
+            .to_owned()
+    };
+    let tag = etag(check);
+    check.call(
+        rdock,
+        (
+            "PUT",
+            "/api/v1/consumers/{name}",
+            "/api/v1/consumers/openapi",
+        ),
+        &[json_type, ("If-Match", &tag)],
+        r#"{"groups":["gold"]}"#,
+    );
+    check.call(
+        rdock,
+        (
+            "GET",
+            "/api/v1/consumers/{name}",
+            "/api/v1/consumers/openapi",
+        ),
+        &[],
+        "",
+    );
+    let tag = etag(check);
+    let minted = check.call(
+        rdock,
+        (
+            "POST",
+            "/api/v1/consumers/{name}/keys",
+            "/api/v1/consumers/openapi/keys",
+        ),
+        &[json_type, ("If-Match", &tag)],
+        r#"{"expires_in_days":1}"#,
+    );
+    let id = minted.json()["id"].as_str().unwrap_or_default().to_owned();
+    let tag = etag(check);
+    check.call(
+        rdock,
+        (
+            "DELETE",
+            "/api/v1/consumers/{name}/keys/{id}",
+            &format!("/api/v1/consumers/openapi/keys/{id}"),
+        ),
+        &[("If-Match", &tag)],
+        "",
+    );
+    let tag = etag(check);
+    check.call(
+        rdock,
+        (
+            "DELETE",
+            "/api/v1/consumers/{name}",
+            "/api/v1/consumers/openapi",
+        ),
+        &[("If-Match", &tag)],
+        "",
+    );
+    check.call(rdock, ("GET", "/api/v1/quota", "/api/v1/quota"), &[], "");
+    check.call(
+        rdock,
+        ("GET", "/api/v1/quota/{consumer}", "/api/v1/quota/openapi"),
+        &[],
+        "",
+    );
+    check.call(
+        rdock,
+        (
+            "DELETE",
+            "/api/v1/quota/{consumer}",
+            "/api/v1/quota/openapi",
+        ),
+        &[],
+        "",
     );
 }

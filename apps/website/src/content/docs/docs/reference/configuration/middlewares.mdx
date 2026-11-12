@@ -2,7 +2,7 @@
 title: middlewares
 description: "Reusable request and response policies."
 sidebar:
-  order: 8
+  order: 9
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -310,11 +310,44 @@ Requests allowed per `period` on average.
 
 Largest burst; defaults to `average`.
 
+### `middlewares.<name>.headers`
+
+**Type:** `off` · `draft` · **Default:** `off`
+
+`draft` adds `RateLimit-Policy` and `RateLimit` to responses (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
+
+- `off`: None (`Retry-After` is always sent with `429`).
+- `draft`: `RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.
+
 ### `middlewares.<name>.key`
 
 **Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `client_ip`
 
 What to count by.
+
+### `middlewares.<name>.overrides`
+
+**Type:** map of names to object
+
+Group → limit for consumers in that group, with `key: consumer`. The first of the consumer's groups (in its `groups` order) that has an override wins.
+
+#### `middlewares.<name>.overrides.<name>.average`
+
+**Type:** `integer` · **Required**
+
+Requests allowed per `period` on average.
+
+#### `middlewares.<name>.overrides.<name>.burst`
+
+**Type:** `integer`
+
+Largest burst; defaults to `average`.
+
+#### `middlewares.<name>.overrides.<name>.period`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+Period of `average`; defaults to the middleware's.
 
 ### `middlewares.<name>.period`
 
@@ -1062,3 +1095,121 @@ SNI and verification name, when it differs from the backend host.
 **Type:** `boolean` · **Default:** `true`
 
 Verify the backend certificate and host name.
+
+## `type: cloudflare_access`
+
+Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset over `jwt` with the team's keys, issuer and RS256, the token from the `Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.
+
+### `middlewares.<name>.audience`
+
+**Type:** [`Audience`](/docs/reference/configuration/#audience) · **Required**
+
+The Application Audience (AUD) tag of the Access application, or several. Required: without it a token of any application of the same team would pass.
+
+### `middlewares.<name>.certs_url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl)
+
+Where the keys are fetched from instead of the team's certs URL: for tests, or an egress proxy that mirrors it. `https://` (or a loopback address).
+
+### `middlewares.<name>.claims_to_headers`
+
+**Type:** map of names to `string`
+
+Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email, common_name: X-Auth-Service-Token }`. Client-sent copies are removed first.
+
+### `middlewares.<name>.team`
+
+**Type:** `string` · **Required**
+
+The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
+
+## `type: api_key`
+
+Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or `X-API-Key`; sets the request's consumer (F-GW-01).
+
+### `middlewares.<name>.anonymous`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+Requests without a key: `deny` answers `401`; `allow` lets them through without a consumer (an invalid key is still refused).
+
+- `deny`: Answer `401`.
+- `allow`: Continue without a consumer.
+
+### `middlewares.<name>.forward_credential`
+
+**Type:** `boolean` · **Default:** `false`
+
+Keep the key in the request to the backend. Off by default: the backend gets the consumer in `X-Consumer-Name`, `X-Consumer-Groups` and `X-Credential-Id` instead.
+
+### `middlewares.<name>.groups`
+
+**Type:** list of `string`
+
+Only consumers in one of these groups are let in; others get `403`. Any consumer when empty.
+
+### `middlewares.<name>.headers`
+
+**Type:** list of `string` · **Default:** `["Authorization","X-API-Key"]`
+
+Request headers the key is read from, in order; the first present wins. A key in `Authorization` must follow `Bearer `.
+
+### `middlewares.<name>.query`
+
+**Type:** `string`
+
+A query parameter the key is also read from, after the headers. Off unless named: keys in URLs end up in other systems' logs.
+
+### `middlewares.<name>.realm`
+
+**Type:** `string`
+
+The realm of the `WWW-Authenticate` challenge.
+
+## `type: quota`
+
+Requests per consumer per calendar window (hour, day, month), persisted across restarts; `429` when used up (F-GW-02).
+
+### `middlewares.<name>.flush_interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
+
+How often counters are written to disk.
+
+### `middlewares.<name>.headers`
+
+**Type:** `off` · `draft` · **Default:** `off`
+
+`draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of `draft-ietf-httpapi-ratelimit-headers-11`. Off by default while the draft changes.
+
+- `off`: None (`Retry-After` is always sent with `429`).
+- `draft`: `RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.
+
+### `middlewares.<name>.key`
+
+**Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `consumer`
+
+What to count by; only `consumer` (the default) is accepted. Requests without a consumer are counted per client IP.
+
+### `middlewares.<name>.limit`
+
+**Type:** `integer` · **Required**
+
+Requests allowed per window.
+
+### `middlewares.<name>.overrides`
+
+**Type:** map of names to `integer`
+
+Group → limit, for consumers in that group (the first of the consumer's groups that has one wins).
+
+### `middlewares.<name>.window`
+
+**Type:** `hour` · `day` · `month` · **Required**
+
+The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
+
+- `hour`: From the start of each hour.
+- `day`: From 00:00 UTC.
+- `month`: From 00:00 UTC on the 1st.

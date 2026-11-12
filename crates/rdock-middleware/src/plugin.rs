@@ -261,6 +261,7 @@ fn reply(response: api::Response) -> Reply {
         status: status.as_u16(),
         headers: out,
         body: body.map(Body::Bytes),
+        problem: None,
     }
 }
 
@@ -272,6 +273,7 @@ fn internal_error() -> Reply {
             HeaderValue::from_static("text/plain; charset=utf-8"),
         )],
         body: Some(Body::Bytes(Bytes::from_static(PANIC_BODY))),
+        problem: None,
     }
 }
 

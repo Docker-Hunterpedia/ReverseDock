@@ -50,9 +50,12 @@ impl Control for Fake {
         )
     }
     async fn effective_config(&self) -> serde_json::Value {
+        // Consumers keep their bare names when merged (ADR-0030).
+        let consumers = self.api.lock().unwrap().0["consumers"].clone();
         serde_json::json!({
             "routes": { "web": {}, "app@docker": {} },
-            "services": { "web": { "sticky": { "cookie": { "secret": "plain" } } } }
+            "services": { "web": { "sticky": { "cookie": { "secret": "plain" } } } },
+            "consumers": consumers
         })
     }
     async fn api_config(&self) -> (serde_json::Value, String) {
@@ -1516,4 +1519,156 @@ async fn streams_are_limited_per_identity_and_end_for_revoked_tokens() {
         "a revoked token's EventSource stops reconnecting: {head}"
     );
     admin.stop().await;
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn operators_mint_and_revoke_keys_viewers_list_without_hashes() {
+    let admin = Admin::start(None, Vec::new());
+    let operator = api_token(&admin, "operator");
+    let viewer = api_token(&admin, "viewer");
+    let auth = |token: &str| format!("Bearer {token}");
+    let etag = |reply: &client::Reply| reply.header("etag").unwrap().to_owned();
+
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &operator)).await;
+    let tag = etag(&reply);
+    let put = |path: &str, body: &serde_json::Value, token: &str, tag: &str| {
+        with(
+            request("PUT", "127.0.0.1", path, body.to_string()),
+            &[
+                ("content-type", "application/json"),
+                ("authorization", &auth(token)),
+                ("if-match", tag),
+            ],
+        )
+    };
+    let groups = serde_json::json!({ "groups": ["gold"] });
+    let reply = client::http1(
+        admin.address,
+        put("/api/v1/consumers/acme", &groups, &viewer, &tag),
+    )
+    .await;
+    assert_eq!(reply.status, 403, "viewers do not manage consumers");
+    let reply = client::http1(
+        admin.address,
+        put("/api/v1/consumers/acme", &groups, &operator, &tag),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let tag = etag(&reply);
+
+    let mint = json_post(
+        "/api/v1/consumers/acme/keys",
+        &serde_json::json!({ "note": "ci", "expires_in_days": 7 }),
+        &[("authorization", &auth(&operator)), ("if-match", &tag)],
+    );
+    let reply = client::http1(admin.address, mint).await;
+    assert_eq!(reply.status, 201, "{}", reply.text());
+    let minted = json_body(&reply);
+    let key = minted["key"].as_str().unwrap().to_owned();
+    let id = minted["id"].as_str().unwrap().to_owned();
+    let (_, secret) = rdock_credentials::API_KEY.parse(&key).unwrap();
+    let tag = etag(&reply);
+
+    // The document holds the ID and the hash only.
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &operator)).await;
+    let document = reply.text();
+    assert!(
+        !document.contains(secret) && !document.contains(&key),
+        "{document}"
+    );
+    let stored = &json_body(&reply)["consumers"]["acme"]["keys"][0];
+    assert_eq!(stored["id"], id.as_str());
+    assert_eq!(stored["hash"], rdock_credentials::hash_secret(secret));
+
+    // Viewers list without hashes; operators see them.
+    let reply = client::http1(admin.address, bearer_get("/api/v1/consumers", &viewer)).await;
+    assert_eq!(reply.status, 200);
+    let listed = json_body(&reply);
+    assert_eq!(listed["consumers"][0]["keys"][0]["id"], id.as_str());
+    assert!(
+        listed["consumers"][0]["keys"][0].get("hash").is_none(),
+        "{listed}"
+    );
+    let reply = client::http1(
+        admin.address,
+        bearer_get("/api/v1/consumers/acme", &operator),
+    )
+    .await;
+    assert!(json_body(&reply)["keys"][0]["hash"].is_string());
+
+    // Revocation is a conditional write too.
+    let revoke = |token: &str, tag: &str| {
+        with(
+            request(
+                "DELETE",
+                "127.0.0.1",
+                &format!("/api/v1/consumers/acme/keys/{id}"),
+                String::new(),
+            ),
+            &[("authorization", &auth(token)), ("if-match", tag)],
+        )
+    };
+    assert_eq!(
+        client::http1(admin.address, revoke(&operator, "\"stale\""))
+            .await
+            .status,
+        412
+    );
+    let reply = client::http1(admin.address, revoke(&operator, &tag)).await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+
+    // Quota counters: viewers read, operators reset (audited).
+    let reply = client::http1(admin.address, bearer_get("/api/v1/quota", &viewer)).await;
+    assert_eq!(reply.status, 200);
+    let reset = |token: &str| {
+        with(
+            request("DELETE", "127.0.0.1", "/api/v1/quota/acme", String::new()),
+            &[("authorization", &auth(token))],
+        )
+    };
+    assert_eq!(
+        client::http1(admin.address, reset(&viewer)).await.status,
+        403
+    );
+    assert_eq!(
+        client::http1(admin.address, reset(&operator)).await.status,
+        200
+    );
+
+    // The audit log names the key by ID, never by value.
+    let admin_token = api_token(&admin, "admin");
+    let reply = client::http1(admin.address, bearer_get("/api/v1/audit", &admin_token)).await;
+    let audit = reply.text();
+    for action in [
+        "consumer.update",
+        "consumer.key.create",
+        "consumer.key.revoke",
+        "quota.reset",
+    ] {
+        assert!(audit.contains(action), "{action} missing: {audit}");
+    }
+    assert!(audit.contains(&format!("acme/{id}")));
+    assert!(!audit.contains(secret) && !audit.contains(&key));
+    let dir = admin.stop().await;
+    let mut on_disk = String::new();
+    for entry in walk(dir.path()) {
+        on_disk.push_str(&String::from_utf8_lossy(&std::fs::read(entry).unwrap()));
+    }
+    assert!(
+        !on_disk.contains(secret),
+        "a clear-text key reached the admin's files"
+    );
+}
+
+fn walk(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
+    let mut out = Vec::new();
+    for entry in std::fs::read_dir(dir).unwrap().flatten() {
+        let path = entry.path();
+        if path.is_dir() {
+            out.extend(walk(&path));
+        } else if path.is_file() {
+            out.push(path);
+        }
+    }
+    out
 }

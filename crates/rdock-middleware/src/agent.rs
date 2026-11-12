@@ -376,6 +376,7 @@ fn parse_verdict(
                 status,
                 headers,
                 body: doc.body.map(|b| Body::Bytes(Bytes::from(b))),
+                problem: None,
             }))
         }
     }
@@ -602,6 +603,7 @@ impl Agent {
                     status,
                     headers,
                     body: Some(Body::Bytes(fetched.body)),
+                    problem: None,
                 }))
             }
             _ => {
@@ -920,7 +922,8 @@ mod tests {
             Verdict::Deny(Reply {
                 status: 403,
                 headers: vec![],
-                body: None
+                body: None,
+                problem: None,
             })
         );
         for bad in [

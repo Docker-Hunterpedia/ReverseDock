@@ -467,6 +467,7 @@ fn add_route(b: &mut Builder<'_>, ing: &Ing<'_>, new: NewRoute) {
             timeouts: rdock_model::route::RouteTimeouts::default(),
             mirror: None,
             max_body: ing.annotations.max_body,
+            errors: None,
             enabled: true,
         },
     );

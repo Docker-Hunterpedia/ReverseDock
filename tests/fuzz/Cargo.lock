@@ -2671,6 +2671,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-credentials"
+version = "0.6.0-alpha.1"
+dependencies = [
+ "crc32fast",
+ "ring",
+ "subtle",
+]
+
+[[package]]
 name = "rdock-fuzz"
 version = "0.0.0"
 dependencies = [
@@ -2692,7 +2701,10 @@ dependencies = [
 name = "rdock-limits"
 version = "0.6.0-alpha.1"
 dependencies = [
+ "serde",
+ "serde_json",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -2717,6 +2729,7 @@ dependencies = [
  "percent-encoding",
  "pingora",
  "rdock-config",
+ "rdock-credentials",
  "rdock-limits",
  "rdock-model",
  "rdock-observability",
@@ -2743,6 +2756,7 @@ name = "rdock-model"
 version = "0.6.0-alpha.1"
 dependencies = [
  "ipnet",
+ "rdock-credentials",
  "rdock-rules",
  "regex",
  "schemars",

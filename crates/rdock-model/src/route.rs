@@ -42,6 +42,9 @@ pub struct Route {
     /// Request body size for this route, instead of `security.limits.max_body_bytes`.
     #[serde(default)]
     pub max_body: Option<crate::values::ByteSize>,
+    /// How rdock renders its own error answers on this route, instead of `defaults.errors`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub errors: Option<crate::config::ErrorSettings>,
     /// Set to `false` to keep the route defined but inactive.
     #[serde(default = "crate::defaults::yes")]
     pub enabled: bool,

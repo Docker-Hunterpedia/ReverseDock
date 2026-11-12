@@ -2,7 +2,7 @@
 title: routes
 description: "HTTP routes: which requests go to which service, through which middlewares."
 sidebar:
-  order: 11
+  order: 12
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -16,6 +16,22 @@ HTTP routes: which requests go to which service, through which middlewares.
 **Type:** `boolean` · **Default:** `true`
 
 Set to `false` to keep the route defined but inactive.
+
+## `routes.<name>.errors`
+
+**Type:** object
+
+How rdock renders its own error answers on this route, instead of `defaults.errors`.
+
+### `routes.<name>.errors.format`
+
+**Type:** `html` · `problem` · `auto` · **Default:** `html`
+
+`html`: an HTML page, or a small JSON object for clients that ask for JSON and not HTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for every client that accepts JSON, which includes `*/*` and a missing `Accept`; HTML only for clients that ask for HTML and no JSON type (browsers). `auto`: problem details for clients that ask for JSON and not HTML, HTML otherwise.
+
+- `html`: HTML, or the pre-v0.8 JSON object for clients that ask for JSON.
+- `problem`: RFC 9457 problem details unless the client asks for HTML only.
+- `auto`: RFC 9457 problem details for clients that prefer JSON, HTML otherwise.
 
 ## `routes.<name>.listeners`
 

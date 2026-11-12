@@ -49,6 +49,10 @@ pub struct Runtime {
     pub udp_pools: BTreeMap<String, Arc<ServiceRuntime>>,
     /// OpenTelemetry tracer, when `observability.tracing` is set.
     pub tracer: Option<Arc<rdock_observability::Tracer>>,
+    /// How rdock's own error answers are rendered outside routes (`defaults.errors.format`).
+    pub errors: rdock_model::config::ErrorFormat,
+    /// Usage metering (`observability.metering`), when configured.
+    pub metering: Option<Arc<rdock_observability::metering::Meter>>,
 }
 
 impl Runtime {
@@ -73,6 +77,8 @@ impl Runtime {
             services: BTreeMap::new(),
             udp_pools: BTreeMap::new(),
             tracer: None,
+            errors: rdock_model::config::ErrorFormat::Html,
+            metering: None,
         }
     }
 }
@@ -155,6 +161,8 @@ pub struct RouteRuntime {
     pub max_body: Option<rdock_model::values::ByteSize>,
     /// The route's cache policy, when its chain has a `cache` middleware (F-WEB-03).
     pub cache: Option<Arc<rdock_cache::RoutePolicy>>,
+    /// How rdock's own error answers are rendered on this route (F-GW-04).
+    pub errors: rdock_model::config::ErrorFormat,
 }
 
 /// Request mirroring of a route.

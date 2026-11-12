@@ -232,6 +232,30 @@ Label: `store`.
 `corrupt` (a checksum, length or format that does not check out) or `partial` (a temporary file
 an interrupted fill left behind).
 
+## Consumers and metering
+
+<Status since="v0.8" /> Metrics of [consumers](/docs/guides/api-keys/) and
+[usage metering](/docs/guides/usage-metering/).
+
+### `rdock_consumer_requests_total`
+
+**Counter.** Finished requests that have a consumer. Labels: `consumer`, `route` and
+`status_class` (`2xx`…). Consumer names come from the configuration or from Cloudflare Access
+identities, so the label is capped: the first 1,000 distinct consumers seen get their own series,
+later ones are counted under `consumer="_other"`. Per-consumer numbers beyond that belong in
+usage metering.
+
+### `rdock_metering_events_total`
+
+**Counter.** Metering events by `sink` (`webhook`, `otlp`) and `result`: `sent` (the receiver
+accepted the batch) or `failed` (dropped after the last attempt or a refusal).
+
+### `rdock_metering_dropped_total`
+
+**Counter.** Metering events dropped, by `sink` and `reason`: `queue_full` (the sink's queue was
+full when the request finished) or `undeliverable` (the batch failed every attempt or was
+refused).
+
 ## Plugins and agents
 
 <Status since="v0.8" /> Metrics of [native plugins](/docs/guides/plugins/) and

@@ -712,7 +712,8 @@ schema!(Endpoint, "Endpoint", {
 // ---------------------------------------------------------------------------------------------
 // RateLimitKey
 
-/// What a limit counts by: `client_ip`, `route`, `header:<Name>` or `cookie:<name>`.
+/// What a limit counts by: `client_ip`, `route`, `consumer`, `header:<Name>`,
+/// `cookie:<name>` or `claim:<name>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum RateLimitKey {
     /// The client IP after trusted-proxy resolution.
@@ -726,6 +727,9 @@ pub enum RateLimitKey {
     Cookie(String),
     /// A claim of the token verified by an earlier `jwt` middleware, e.g. `sub`.
     Claim(String),
+    /// The consumer set by an earlier authenticating middleware (`api_key`,
+    /// `cloudflare_access`); requests without one are counted per client IP.
+    Consumer,
 }
 
 impl FromStr for RateLimitKey {
@@ -735,12 +739,13 @@ impl FromStr for RateLimitKey {
         match s {
             "client_ip" => Ok(Self::ClientIp),
             "route" => Ok(Self::Route),
+            "consumer" => Ok(Self::Consumer),
             _ => match s.split_once(':') {
                 Some(("header", name)) if is_token(name) => Ok(Self::Header(name.to_owned())),
                 Some(("cookie", name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
                 Some(("claim", name)) if is_token(name) => Ok(Self::Claim(name.to_owned())),
                 _ => Err(ValueError::new(format!(
-                    "invalid key `{s}`: use `client_ip`, `route`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
                 ))),
             },
         }
@@ -755,17 +760,18 @@ impl fmt::Display for RateLimitKey {
             Self::Header(name) => write!(f, "header:{name}"),
             Self::Cookie(name) => write!(f, "cookie:{name}"),
             Self::Claim(name) => write!(f, "claim:{name}"),
+            Self::Consumer => f.write_str("consumer"),
         }
     }
 }
 
 string_serde!(
     RateLimitKey,
-    "`client_ip`, `route`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+    "`client_ip`, `route`, `consumer`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
 );
 schema!(RateLimitKey, "RateLimitKey", {
     "type": "string",
-    "pattern": "^(client_ip|route|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
     "examples": ["client_ip", "header:X-Api-Key"]
 });
 

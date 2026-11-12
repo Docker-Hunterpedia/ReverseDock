@@ -5,6 +5,7 @@ pub mod alerts;
 pub mod feed;
 pub mod live;
 mod logging;
+pub mod metering;
 mod metrics;
 pub mod otel;
 

@@ -20,6 +20,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`admin`](/docs/reference/configuration/admin/): Admin API and dashboard.
 - [`caches`](/docs/reference/configuration/caches/): HTTP cache stores, used by `cache` middlewares.
 - [`certificates`](/docs/reference/configuration/certificates/): Certificates you provide yourself.
+- [`consumers`](/docs/reference/configuration/consumers/): API clients and users that requests are attributed to, with their API keys (stored
 - [`defaults`](/docs/reference/configuration/defaults/): Defaults applied to routes that do not set a value.
 - [`lifecycle`](/docs/reference/configuration/lifecycle/): Start-up and shutdown behaviour.
 - [`listeners`](/docs/reference/configuration/listeners/): Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)
@@ -40,6 +41,10 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 ### AcmeSetting
 
 The `acme` section: `false` turns automatic certificates off, `true` or settings keep them on.
+
+### Audience
+
+One value or a list of values.
 
 ### BackendAddress
 

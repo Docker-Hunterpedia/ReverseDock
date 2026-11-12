@@ -18,12 +18,15 @@ const MODEL: &str = "rdock.";
 const PUBLIC: [&str; 4] = ["/healthz", "/readyz", "/api/v1/setup", "/api/v1/auth/login"];
 
 /// Operations that take from the shared configuration-work budget (`config_api::over_budget`).
-const CONFIG_WORK: [&str; 5] = [
+const CONFIG_WORK: [&str; 8] = [
     "/api/v1/config/api",
     "/api/v1/config/validate",
     "/api/v1/config/rollback",
     "/api/v1/config/import",
     "/api/v1/cache/{store}/purge",
+    "/api/v1/consumers/{name}",
+    "/api/v1/consumers/{name}/keys",
+    "/api/v1/consumers/{name}/keys/{id}",
 ];
 
 /// A refusal or failure.
@@ -180,8 +183,9 @@ fn add_security(document: &mut Value) {
             }
             // Session-only operations share one gate that also checks the login stage.
             let stage_gated = operation["security"] == json!([{ "session": [] }]);
-            let config_work =
-                CONFIG_WORK.contains(&path.as_str()) && operation["operationId"] != "get_api";
+            let config_work = CONFIG_WORK.contains(&path.as_str())
+                && operation["operationId"] != "get_api"
+                && operation["operationId"] != "get_consumer";
             let responses = &mut operation["responses"];
             if stage_gated && responses.get("409").is_none() {
                 responses["409"] = json!({ "$ref": "#/components/responses/WrongStage" });

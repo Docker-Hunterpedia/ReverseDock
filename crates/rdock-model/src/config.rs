@@ -43,6 +43,10 @@ pub struct Config {
     pub middlewares: BTreeMap<String, Middleware>,
     /// HTTP cache stores, used by `cache` middlewares.
     pub caches: BTreeMap<String, crate::cache::CacheStore>,
+    /// API clients and users that requests are attributed to, with their API keys (stored
+    /// hashed). The `api` provider may add consumers and keys (`rdock consumers`).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub consumers: BTreeMap<String, crate::gateway::Consumer>,
     /// TCP routes (SNI routing, passthrough, plain TCP).
     pub tcp_routes: BTreeMap<String, TcpRoute>,
     /// TCP backend pools.
@@ -138,6 +142,10 @@ pub struct Defaults {
     /// Certificate (a key of `certificates`) served when no other certificate matches the
     /// requested name, or when the client sends no name (SNI).
     pub certificate: Option<String>,
+    /// How answers rdock produces itself (404 without a route, 401/403/429 from middlewares,
+    /// 502/503/504) are rendered, for routes that do not set `errors`.
+    #[serde(skip_serializing_if = "ErrorSettings::is_default")]
+    pub errors: ErrorSettings,
 }
 
 impl Default for Defaults {
@@ -147,8 +155,43 @@ impl Default for Defaults {
             redirect_http_to_https: true,
             tls: TlsMode::Auto,
             certificate: None,
+            errors: ErrorSettings::default(),
         }
     }
+}
+
+/// How rdock renders the answers it produces itself (F-GW-04, ADR-0030). Pages of an `errors`
+/// middleware and a `maintenance` file take precedence where they apply.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ErrorSettings {
+    /// `html`: an HTML page, or a small JSON object for clients that ask for JSON and not
+    /// HTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for
+    /// every client that accepts JSON, which includes `*/*` and a missing `Accept`; HTML only
+    /// for clients that ask for HTML and no JSON type (browsers). `auto`: problem details for
+    /// clients that ask for JSON and not HTML, HTML otherwise.
+    pub format: ErrorFormat,
+}
+
+impl ErrorSettings {
+    /// Whether these are the defaults.
+    #[must_use]
+    pub fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+/// The format of rdock's own error answers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum ErrorFormat {
+    /// HTML, or the pre-v0.8 JSON object for clients that ask for JSON.
+    #[default]
+    Html,
+    /// RFC 9457 problem details unless the client asks for HTML only.
+    Problem,
+    /// RFC 9457 problem details for clients that prefer JSON, HTML otherwise.
+    Auto,
 }
 
 /// A socket ReverseDock accepts connections on.

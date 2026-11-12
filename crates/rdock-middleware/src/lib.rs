@@ -13,11 +13,13 @@ use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_model::middleware::Middleware as Config;
 
 mod agent;
+mod api_key;
 mod auth;
 pub mod chain;
 pub mod client;
 mod client_cert;
 mod compress;
+pub mod consumers;
 mod cors;
 mod errors;
 mod forward_auth;
@@ -34,17 +36,22 @@ mod maintenance;
 mod paths;
 pub mod phase;
 mod plugin;
+pub mod problem;
+mod quota;
 mod ratelimit;
 mod redirect;
 mod static_files;
 
+pub use api_key::IDENTITY_HEADERS as CONSUMER_HEADERS;
 pub use chain::{Answered, Chain, Flags, Released};
 pub use client::{ClientTls, FetchError, Fetched, HttpClient};
 pub use client_cert::{ClientIdentity, IDENTITY_HEADERS};
 pub use compress::Encoder;
+pub use consumers::ConsumerIndex;
 pub use held::{BodyHolder, HeldBody, HoldError, Spool};
 pub use limits::Throttle;
 pub use phase::{BodyHold, BodyVerdict, Capabilities, Consumer, LogSummary, Phases, Upstream};
+pub use problem::ProblemKind;
 pub use static_files::FileBody;
 
 /// What middlewares know about a request and share between its phases.
@@ -80,6 +87,8 @@ pub struct Context {
     pub throttle: Option<Throttle>,
     /// The consumer the request is attributed to, set by an authenticating middleware.
     pub consumer: Option<Consumer>,
+    /// The public ID of the API key that authenticated the request (`api_key`).
+    pub key_id: Option<Arc<str>>,
     /// The backend of the current attempt: set before `upstream_request`, kept for `log`.
     pub upstream: Option<Upstream>,
     /// Whether the request has a body: set by the proxy before the `request` phase (a declared
@@ -120,6 +129,7 @@ impl Context {
             admitted: Vec::new(),
             throttle: None,
             consumer: None,
+            key_id: None,
             upstream: None,
             has_body: false,
             waived: 0,
@@ -142,6 +152,7 @@ impl fmt::Debug for Context {
             .field("authority", &self.authority)
             .field("user", &self.user)
             .field("consumer", &self.consumer)
+            .field("key_id", &self.key_id)
             .field("upstream", &self.upstream)
             .field("compression", &self.compression.is_some())
             .field("state_slots", &self.state.len())
@@ -232,6 +243,11 @@ pub struct Reply {
     pub headers: Vec<(HeaderName, HeaderValue)>,
     /// Body; `None` means the proxy's standard error page for `status`.
     pub body: Option<Body>,
+    /// The kind of the standard page (its problem type), when `status` alone does not say it
+    /// (`429` from a quota, `503` from maintenance). With a `body`, it marks that body as the
+    /// middleware's plain stand-in for the standard page: routes whose `errors.format` is not
+    /// `html` get the rendered page instead (`basic_auth`'s text).
+    pub problem: Option<ProblemKind>,
 }
 
 /// The body of a [`Reply`].
@@ -283,6 +299,16 @@ impl Reply {
             status,
             headers: Vec::new(),
             body: None,
+            problem: None,
+        }
+    }
+
+    /// A reply with the standard page of `kind`.
+    #[must_use]
+    pub fn problem(kind: ProblemKind) -> Self {
+        Self {
+            problem: Some(kind),
+            ..Self::status(kind.status())
         }
     }
 
@@ -378,6 +404,11 @@ pub struct BuildEnv<'a> {
     pub plugins: &'a rdock_plugin_api::Registry,
     /// Where plugins and agents count (panics, agent calls); `None` when validating.
     pub metrics: Option<&'a rdock_observability::Metrics>,
+    /// The configuration's consumers and their keys, for `api_key`.
+    pub consumers: Arc<ConsumerIndex>,
+    /// Quota counters that outlive the configuration; `None` when validating (a throw-away
+    /// registry is used then).
+    pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
 }
 
 /// One problem found while building a middleware, at a path inside it (`name`,
@@ -500,6 +531,18 @@ pub fn build(
             env.metrics,
         )?),
         Config::Agent(c) => Arc::new(agent::Agent::new(name, c, env)?),
+        Config::CloudflareAccess(c) => {
+            Arc::new(jwt::Jwt::cloudflare_access(name, c, env.client.clone())?)
+        }
+        Config::ApiKey(c) => Arc::new(api_key::ApiKey::new(name, c, env.consumers.clone())?),
+        Config::Quota(c) => match env.quotas {
+            Some(registry) => Arc::new(quota::Quota::new(name, c, registry)),
+            None => Arc::new(quota::Quota::new(
+                name,
+                c,
+                &rdock_limits::quota::QuotaRegistry::default(),
+            )),
+        },
     })
 }
 

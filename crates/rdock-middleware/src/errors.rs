@@ -168,6 +168,8 @@ mod tests {
         let env = BuildEnv {
             plugins: &plugins,
             metrics: None,
+            consumers: Arc::default(),
+            quotas: None,
             service: &lookup,
             client,
         };
@@ -207,6 +209,8 @@ mod tests {
         let env = BuildEnv {
             plugins: &plugins,
             metrics: None,
+            consumers: Arc::default(),
+            quotas: None,
             service: &lookup,
             client: Arc::new(HttpClient::default()),
         };

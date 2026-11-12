@@ -46,6 +46,16 @@ export type Code = {
 };
 
 /**
+ * A consumer as the API defines it.
+ */
+export type ConsumerSpec = {
+    /**
+     * Groups, in order of precedence.
+     */
+    groups?: Array<string>;
+};
+
+/**
  * A new token: the value is shown only in this answer.
  */
 export type CreatedToken = TokenView & {
@@ -96,6 +106,24 @@ export type Listed = {
     id: string;
     idle_seconds: number;
     user: string;
+};
+
+/**
+ * A key to mint.
+ */
+export type NewKey = {
+    /**
+     * When the key expires, RFC 3339.
+     */
+    expires?: string | null;
+    /**
+     * Days until the key expires (1–3650); never when neither this nor `expires` is set.
+     */
+    expires_in_days?: number | null;
+    /**
+     * What the key is for.
+     */
+    note?: string | null;
 };
 
 export type NewUser = {
@@ -739,6 +767,35 @@ export type RdockAlerts = {
 };
 
 /**
+ * What an authenticating middleware does with a request that carries no credential.
+ */
+export type RdockAnonymous = 'deny' | 'allow';
+
+/**
+ * One API key of a consumer: `rdk_<id>_<secret><checksum>` is the key, and only `id` and the
+ * SHA-256 of the secret are stored.
+ */
+export type RdockApiKeyEntry = {
+    /**
+     * When the key stops working: an RFC 3339 time, e.g. `2027-01-01T00:00:00Z`.
+     */
+    expires?: string | null;
+    /**
+     * SHA-256 of the key's secret (the 32 characters after the ID's `_`, without the
+     * 6-character checksum), as 64 lower-case hex digits. `rdock keys hash` prints it.
+     */
+    hash: string;
+    /**
+     * The key's public ID: the 12 characters after `rdk_`.
+     */
+    id: string;
+    /**
+     * What the key is for.
+     */
+    note?: string | null;
+};
+
+/**
  * Argon2id parameters. The default is the OWASP minimum, m=19456 KiB, t=2, p=1 (Password
  * Storage Cheat Sheet, checked 2026-10-31).
  */
@@ -756,6 +813,11 @@ export type RdockArgon2Cost = {
      */
     parallelism?: number;
 };
+
+/**
+ * One value or a list of values.
+ */
+export type RdockAudience = string | Array<string>;
 
 /**
  * Where audit records are forwarded.
@@ -1004,6 +1066,13 @@ export type RdockConfig = {
         [key: string]: RdockCertificate;
     };
     /**
+     * API clients and users that requests are attributed to, with their API keys (stored
+     * hashed). The `api` provider may add consumers and keys (`rdock consumers`).
+     */
+    consumers?: {
+        [key: string]: RdockConsumer;
+    };
+    /**
      * Defaults applied to routes that do not set a value.
      */
     defaults?: RdockDefaults;
@@ -1080,6 +1149,8 @@ export type RdockConfig = {
         [key: string]: RdockCacheStore;
     } | {
         [key: string]: RdockCertificate;
+    } | {
+        [key: string]: RdockConsumer;
     } | RdockDefaults | RdockLifecycle | {
         [key: string]: RdockListener;
     } | {
@@ -1100,6 +1171,30 @@ export type RdockConfig = {
 };
 
 /**
+ * A consumer: an API client or user that requests are attributed to (`consumers.<name>`).
+ *
+ * An authenticating middleware (`api_key`, `cloudflare_access`) sets the request's consumer;
+ * rate limits and quotas can count per consumer, and the access log, metrics, metering and the
+ * cache key see its name.
+ */
+export type RdockConsumer = {
+    /**
+     * Groups, in order of precedence: per-group limit overrides use the first listed group
+     * that has one, and `api_key.groups` admits a consumer in any of them.
+     */
+    groups?: Array<string>;
+    /**
+     * API keys, stored as their ID and the SHA-256 of their secret; never the key itself.
+     */
+    keys?: Array<RdockApiKeyEntry>;
+    /**
+     * A file of `id:sha256[:expires]` lines (blank lines and `#` comments ignored), read on
+     * every reload and watched like the configuration file.
+     */
+    keys_file?: string | null;
+};
+
+/**
  * Defaults applied to routes.
  */
 export type RdockDefaults = {
@@ -1108,6 +1203,11 @@ export type RdockDefaults = {
      * requested name, or when the client sends no name (SNI).
      */
     certificate?: string | null;
+    /**
+     * How answers rdock produces itself (404 without a route, 401/403/429 from middlewares,
+     * 502/503/504) are rendered, for routes that do not set `errors`.
+     */
+    errors?: RdockErrorSettings;
     /**
      * Listeners used by routes that do not name any.
      */
@@ -1120,7 +1220,7 @@ export type RdockDefaults = {
      * TLS for routes that do not set `tls`: `auto` (automatic certificates) or `off`.
      */
     tls?: RdockTlsMode;
-    [key: string]: unknown | string | null | Array<string> | boolean | RdockTlsMode | undefined;
+    [key: string]: unknown | string | null | RdockErrorSettings | Array<string> | boolean | RdockTlsMode | undefined;
 };
 
 /**
@@ -1249,6 +1349,11 @@ export type RdockDuration = string;
 export type RdockEndpoint = string;
 
 /**
+ * The format of rdock's own error answers.
+ */
+export type RdockErrorFormat = 'html' | 'problem' | 'auto';
+
+/**
  * A 5xx-share threshold.
  */
 export type RdockErrorRateRule = {
@@ -1264,6 +1369,22 @@ export type RdockErrorRateRule = {
      * Window (1m–15m).
      */
     window?: RdockDuration;
+};
+
+/**
+ * How rdock renders the answers it produces itself (F-GW-04, ADR-0030). Pages of an `errors`
+ * middleware and a `maintenance` file take precedence where they apply.
+ */
+export type RdockErrorSettings = {
+    /**
+     * `html`: an HTML page, or a small JSON object for clients that ask for JSON and not
+     * HTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for
+     * every client that accepts JSON, which includes `**` and a missing `Accept`; HTML only
+     * for clients that ask for HTML and no JSON type (browsers). `auto`: problem details for
+     * clients that ask for JSON and not HTML, HTML otherwise.
+     */
+    format?: RdockErrorFormat;
+    [key: string]: unknown | RdockErrorFormat | undefined;
 };
 
 /**
@@ -1622,6 +1743,11 @@ export type RdockLifecycle = {
 };
 
 /**
+ * Rate-limit response headers.
+ */
+export type RdockLimitHeaders = 'off' | 'draft';
+
+/**
  * Request size limits. Requests over a limit are answered with 431, 414 or 413.
  */
 export type RdockLimits = {
@@ -1777,6 +1903,90 @@ export type RdockLogFormat = 'json' | 'text' | 'off';
  * How a route selects requests.
  */
 export type RdockMatchSpec = string | RdockStructuredMatch;
+
+/**
+ * Usage metering (`observability.metering`, F-GW-05): one event per request that has a
+ * consumer, sent in batches to a webhook (`CloudEvents` 1.0) and/or an OTLP logs endpoint.
+ *
+ * Events wait in a bounded in-memory queue; when it is full the newest are dropped and
+ * counted. Delivery is at least once (a retried batch carries the same event IDs). There is
+ * no disk spool: events still queued are lost on a crash. Per instance; not billing-grade.
+ */
+export type RdockMetering = {
+    /**
+     * Also meter requests without a consumer.
+     */
+    all_requests?: boolean;
+    /**
+     * Longest an event waits before its batch is sent.
+     */
+    flush_interval?: RdockDuration;
+    /**
+     * Events per request to a sink, at most.
+     */
+    max_batch?: number;
+    /**
+     * OTLP/HTTP logs (JSON encoding).
+     */
+    otlp?: RdockMeteringOtlp | null;
+    /**
+     * Events waiting per sink, at most; more are dropped and counted.
+     */
+    queue?: number;
+    /**
+     * `CloudEvents` over HTTP.
+     */
+    webhook?: RdockMeteringWebhook | null;
+};
+
+/**
+ * The OTLP logs sink.
+ */
+export type RdockMeteringOtlp = {
+    /**
+     * Allow a collector on a private, loopback or link-local address (the usual case).
+     */
+    allow_private_targets?: boolean;
+    /**
+     * The collector's base URL (`/v1/logs` is added) or the full logs URL.
+     */
+    endpoint: RdockHttpUrl;
+    /**
+     * A bearer token as a `${file:…}` or `${env:…}` reference.
+     */
+    token?: string | null;
+};
+
+/**
+ * The `CloudEvents` webhook sink.
+ */
+export type RdockMeteringWebhook = {
+    /**
+     * Allow a receiver on a private, loopback or link-local address.
+     */
+    allow_private_targets?: boolean;
+    /**
+     * A Standard Webhooks signing secret (`whsec_…`) as a `${file:…}` or `${env:…}`
+     * reference: requests carry `webhook-id`, `webhook-timestamp` and `webhook-signature`.
+     */
+    secret?: string | null;
+    /**
+     * The events' `source`; `rdock/<host name>` when unset.
+     */
+    source?: string | null;
+    /**
+     * A bearer token as a `${file:…}` or `${env:…}` reference.
+     */
+    token?: string | null;
+    /**
+     * The events' `type`.
+     */
+    type?: string;
+    /**
+     * Where batches are posted (`application/cloudevents-batch+json`).
+     */
+    url: RdockHttpUrl;
+};
 
 /**
  * Metrics settings.
@@ -1963,15 +2173,29 @@ export type RdockMiddleware = {
      */
     burst?: number | null;
     /**
+     * `draft` adds `RateLimit-Policy` and `RateLimit` to responses
+     * (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
+     */
+    headers?: RdockLimitHeaders;
+    /**
      * What to count by.
      */
     key?: RdockRateLimitKey;
+    /**
+     * Group → limit for consumers in that group, with `key: consumer`. The first of the
+     * consumer's groups (in its `groups` order) that has an override wins.
+     */
+    overrides?: {
+        [key: string]: RdockRateOverride;
+    };
     /**
      * Period of `average`.
      */
     period?: RdockDuration;
     type: 'rate_limit';
-    [key: string]: unknown | number | number | null | RdockRateLimitKey | RdockDuration | 'rate_limit' | undefined;
+    [key: string]: unknown | number | number | null | RdockLimitHeaders | RdockRateLimitKey | {
+        [key: string]: RdockRateOverride;
+    } | RdockDuration | 'rate_limit' | undefined;
 } | {
     /**
      * Requests in flight allowed per key.
@@ -2493,6 +2717,94 @@ export type RdockMiddleware = {
     tls?: RdockUpstreamTls | null;
     type: 'agent';
     [key: string]: unknown | RdockHttpUrl | RdockAgentBreaker | RdockByteSize | RdockAgentOnError | RdockAgentOversize | RdockAgentProtocol | Array<string> | Array<string> | RdockDuration | RdockUpstreamTls | null | 'agent' | undefined;
+} | {
+    /**
+     * The Application Audience (AUD) tag of the Access application, or several. Required:
+     * without it a token of any application of the same team would pass.
+     */
+    audience: RdockAudience;
+    /**
+     * Where the keys are fetched from instead of the team's certs URL: for tests, or an
+     * egress proxy that mirrors it. `https://` (or a loopback address).
+     */
+    certs_url?: RdockHttpUrl | null;
+    /**
+     * Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email,
+     * common_name: X-Auth-Service-Token }`. Client-sent copies are removed first.
+     */
+    claims_to_headers?: {
+        [key: string]: string;
+    };
+    /**
+     * The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
+     */
+    team: string;
+    type: 'cloudflare_access';
+    [key: string]: unknown | RdockAudience | RdockHttpUrl | null | {
+        [key: string]: string;
+    } | string | 'cloudflare_access' | undefined;
+} | {
+    /**
+     * Requests without a key: `deny` answers `401`; `allow` lets them through without a
+     * consumer (an invalid key is still refused).
+     */
+    anonymous?: RdockAnonymous;
+    /**
+     * Keep the key in the request to the backend. Off by default: the backend gets the
+     * consumer in `X-Consumer-Name`, `X-Consumer-Groups` and `X-Credential-Id` instead.
+     */
+    forward_credential?: boolean;
+    /**
+     * Only consumers in one of these groups are let in; others get `403`. Any consumer when
+     * empty.
+     */
+    groups?: Array<string>;
+    /**
+     * Request headers the key is read from, in order; the first present wins. A key in
+     * `Authorization` must follow `Bearer `.
+     */
+    headers?: Array<string>;
+    /**
+     * A query parameter the key is also read from, after the headers. Off unless named: keys
+     * in URLs end up in other systems' logs.
+     */
+    query?: string | null;
+    /**
+     * The realm of the `WWW-Authenticate` challenge.
+     */
+    realm?: string | null;
+    type: 'api_key';
+} | {
+    /**
+     * How often counters are written to disk.
+     */
+    flush_interval?: RdockDuration;
+    /**
+     * `draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of
+     * `draft-ietf-httpapi-ratelimit-headers-11`. Off by default while the draft changes.
+     */
+    headers?: RdockLimitHeaders;
+    /**
+     * What to count by; only `consumer` (the default) is accepted. Requests without a
+     * consumer are counted per client IP.
+     */
+    key?: RdockRateLimitKey;
+    /**
+     * Requests allowed per window.
+     */
+    limit: number;
+    /**
+     * Group → limit, for consumers in that group (the first of the consumer's groups that has
+     * one wins).
+     */
+    overrides?: {
+        [key: string]: number;
+    };
+    type: 'quota';
+    /**
+     * The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
+     */
+    window: RdockQuotaWindow;
 };
 
 /**
@@ -2524,6 +2836,10 @@ export type RdockObservability = {
      */
     alerts?: RdockAlerts;
     /**
+     * Usage events per request with a consumer, for analytics and showback (F-GW-05).
+     */
+    metering?: RdockMetering | null;
+    /**
      * Metrics.
      */
     metrics?: RdockMetrics;
@@ -2531,7 +2847,7 @@ export type RdockObservability = {
      * Distributed tracing.
      */
     tracing?: RdockTracing | null;
-    [key: string]: unknown | RdockAccessLog | RdockAlerts | RdockMetrics | RdockTracing | null | undefined;
+    [key: string]: unknown | RdockAccessLog | RdockAlerts | RdockMetering | null | RdockMetrics | RdockTracing | null | undefined;
 };
 
 /**
@@ -2619,7 +2935,30 @@ export type RdockQueryKey = 'as_sent' | 'sorted' | {
     ignore: Array<string>;
 };
 
+/**
+ * A quota's calendar window, in UTC.
+ */
+export type RdockQuotaWindow = 'hour' | 'day' | 'month';
+
 export type RdockRateLimitKey = string;
+
+/**
+ * A limit for the consumers of one group.
+ */
+export type RdockRateOverride = {
+    /**
+     * Requests allowed per `period` on average.
+     */
+    average: number;
+    /**
+     * Largest burst; defaults to `average`.
+     */
+    burst?: number | null;
+    /**
+     * Period of `average`; defaults to the middleware's.
+     */
+    period?: RdockDuration | null;
+};
 
 /**
  * A path prefix replaced by another (`redirect.prefix`).
@@ -2734,6 +3073,10 @@ export type RdockRoute = {
      */
     enabled?: boolean;
     /**
+     * How rdock renders its own error answers on this route, instead of `defaults.errors`.
+     */
+    errors?: RdockErrorSettings | null;
+    /**
      * Listeners the route is attached to. Defaults to `defaults.listeners`.
      */
     listeners?: Array<string> | null;
@@ -2771,7 +3114,7 @@ export type RdockRoute = {
      * TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
      */
     tls?: RdockRouteTls | null;
-    [key: string]: unknown | boolean | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
+    [key: string]: unknown | boolean | RdockErrorSettings | null | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
 };
 
 /**
@@ -4883,6 +5226,313 @@ export type ValidateResponses = {
 
 export type ValidateResponse = ValidateResponses[keyof ValidateResponses];
 
+export type ListConsumersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/consumers';
+};
+
+export type ListConsumersErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListConsumersError = ListConsumersErrors[keyof ListConsumersErrors];
+
+export type ListConsumersResponses = {
+    /**
+     * `consumers`: name, groups, keys (id, expires, note, owner, hash for operators), owner
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListConsumersResponse = ListConsumersResponses[keyof ListConsumersResponses];
+
+export type DeleteConsumerData = {
+    body?: never;
+    headers: {
+        /**
+         * The current `ETag`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}';
+};
+
+export type DeleteConsumerErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such API consumer
+     */
+    404: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type DeleteConsumerError = DeleteConsumerErrors[keyof DeleteConsumerErrors];
+
+export type DeleteConsumerResponses = {
+    /**
+     * Applied; the reload report
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type DeleteConsumerResponse = DeleteConsumerResponses[keyof DeleteConsumerResponses];
+
+export type GetConsumerData = {
+    body?: never;
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}';
+};
+
+export type GetConsumerErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such consumer
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type GetConsumerError = GetConsumerErrors[keyof GetConsumerErrors];
+
+export type GetConsumerResponses = {
+    /**
+     * The consumer
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type GetConsumerResponse = GetConsumerResponses[keyof GetConsumerResponses];
+
+export type PutConsumerData = {
+    body: ConsumerSpec;
+    headers: {
+        /**
+         * The `ETag` from `GET /api/v1/config/api` or `GET /api/v1/consumers`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}';
+};
+
+export type PutConsumerErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The consumer belongs to the configuration file
+     */
+    403: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * Rejected
+     */
+    422: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type PutConsumerError = PutConsumerErrors[keyof PutConsumerErrors];
+
+export type PutConsumerResponses = {
+    /**
+     * Applied; the reload report
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type PutConsumerResponse = PutConsumerResponses[keyof PutConsumerResponses];
+
+export type CreateConsumerKeyData = {
+    body: NewKey;
+    headers: {
+        /**
+         * The current `ETag`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}/keys';
+};
+
+export type CreateConsumerKeyErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such consumer
+     */
+    404: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * Rejected
+     */
+    422: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type CreateConsumerKeyError = CreateConsumerKeyErrors[keyof CreateConsumerKeyErrors];
+
+export type CreateConsumerKeyResponses = {
+    /**
+     * `key` (shown once), `id`, `expires`, `report`
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type CreateConsumerKeyResponse = CreateConsumerKeyResponses[keyof CreateConsumerKeyResponses];
+
+export type RevokeConsumerKeyData = {
+    body?: never;
+    headers: {
+        /**
+         * The current `ETag`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+        /**
+         * Key ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}/keys/{id}';
+};
+
+export type RevokeConsumerKeyErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The key belongs to the configuration file
+     */
+    403: ErrorBody;
+    /**
+     * No such key
+     */
+    404: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type RevokeConsumerKeyError = RevokeConsumerKeyErrors[keyof RevokeConsumerKeyErrors];
+
+export type RevokeConsumerKeyResponses = {
+    /**
+     * Applied; the reload report
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type RevokeConsumerKeyResponse = RevokeConsumerKeyResponses[keyof RevokeConsumerKeyResponses];
+
 export type EventsData = {
     body?: never;
     headers?: {
@@ -5128,6 +5778,126 @@ export type ProvidersResponses = {
 };
 
 export type ProvidersResponse = ProvidersResponses[keyof ProvidersResponses];
+
+export type ListQuotasData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/quota';
+};
+
+export type ListQuotasErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListQuotasError = ListQuotasErrors[keyof ListQuotasErrors];
+
+export type ListQuotasResponses = {
+    /**
+     * `quotas`: middleware, window, window_start, window_end, usage (key, used, limit)
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListQuotasResponse = ListQuotasResponses[keyof ListQuotasResponses];
+
+export type ResetQuotaData = {
+    body?: never;
+    path: {
+        /**
+         * Consumer name
+         */
+        consumer: string;
+    };
+    query?: {
+        /**
+         * Only this `quota` middleware's counters.
+         */
+        middleware?: string;
+    };
+    url: '/api/v1/quota/{consumer}';
+};
+
+export type ResetQuotaErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ResetQuotaError = ResetQuotaErrors[keyof ResetQuotaErrors];
+
+export type ResetQuotaResponses = {
+    /**
+     * `reset`: how many counters were removed
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ResetQuotaResponse = ResetQuotaResponses[keyof ResetQuotaResponses];
+
+export type GetQuotaData = {
+    body?: never;
+    path: {
+        /**
+         * Consumer name
+         */
+        consumer: string;
+    };
+    query?: never;
+    url: '/api/v1/quota/{consumer}';
+};
+
+export type GetQuotaErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type GetQuotaError = GetQuotaErrors[keyof GetQuotaErrors];
+
+export type GetQuotaResponses = {
+    /**
+     * `quotas` with this consumer's use only
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type GetQuotaResponse = GetQuotaResponses[keyof GetQuotaResponses];
 
 export type ExplainData = {
     body: {

@@ -3950,6 +3950,7 @@ dependencies = [
  "rdock-cache",
  "rdock-cloudflare",
  "rdock-config",
+ "rdock-credentials",
  "rdock-dns-providers",
  "rdock-middleware",
  "rdock-migrate",
@@ -4017,7 +4018,6 @@ dependencies = [
  "axum",
  "base64 0.23.1",
  "bytes",
- "crc32fast",
  "futures-util",
  "http",
  "http-body-util",
@@ -4026,6 +4026,7 @@ dependencies = [
  "ipnet",
  "json-patch",
  "rdock-config",
+ "rdock-credentials",
  "rdock-limits",
  "rdock-model",
  "rdock-observability",
@@ -4122,6 +4123,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-credentials"
+version = "0.6.0-alpha.1"
+dependencies = [
+ "crc32fast",
+ "ring",
+ "subtle",
+]
+
+[[package]]
 name = "rdock-dns-providers"
 version = "0.6.0-alpha.1"
 dependencies = [
@@ -4155,7 +4165,11 @@ dependencies = [
 name = "rdock-limits"
 version = "0.6.0-alpha.1"
 dependencies = [
+ "serde",
+ "serde_json",
+ "tempfile",
  "tokio",
+ "tracing",
 ]
 
 [[package]]
@@ -4180,6 +4194,7 @@ dependencies = [
  "percent-encoding",
  "pingora",
  "rdock-config",
+ "rdock-credentials",
  "rdock-limits",
  "rdock-model",
  "rdock-observability",
@@ -4219,6 +4234,7 @@ name = "rdock-model"
 version = "0.6.0-alpha.1"
 dependencies = [
  "ipnet",
+ "rdock-credentials",
  "rdock-rules",
  "regex",
  "schemars",
@@ -4421,6 +4437,7 @@ dependencies = [
 name = "rdock-testkit"
 version = "0.6.0-alpha.1"
 dependencies = [
+ "base64 0.23.1",
  "bytes",
  "futures-util",
  "h2",
@@ -4432,6 +4449,7 @@ dependencies = [
  "proxy-header",
  "rcgen",
  "rdock-acme",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde_json",

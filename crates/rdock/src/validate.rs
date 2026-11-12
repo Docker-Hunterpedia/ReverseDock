@@ -66,6 +66,7 @@ pub(crate) fn diagnostics(file: &Path, plugins: &Registry) -> Vec<Diagnostic> {
                         caches: None,
                         plugins,
                         metrics: None,
+                        quotas: None,
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);
