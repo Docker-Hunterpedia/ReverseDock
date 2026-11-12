@@ -40,6 +40,7 @@ const SECRETS: &[&[&str]] = &[
     &["observability", "metering", "webhook", "secret"],
     &["observability", "metering", "webhook", "token"],
     &["observability", "metering", "otlp", "token"],
+    &["secrets", "vault", "auth", "token"],
 ];
 
 /// Locations taken literally.

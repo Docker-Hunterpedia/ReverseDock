@@ -926,6 +926,17 @@ export type RdockBackend = {
 export type RdockBackendAddress = string;
 
 /**
+ * Body changes of `transform`.
+ */
+export type RdockBodyTransform = {
+    /**
+     * A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and
+     * `test` with JSON Pointers (RFC 6901), applied in order, all or nothing.
+     */
+    patch?: Array<RdockPatchOp>;
+};
+
+/**
  * Size in bytes, optionally with a unit (KB = 1000, KiB = 1024).
  */
 export type RdockByteSize = number | string;
@@ -1108,6 +1119,10 @@ export type RdockConfig = {
         [key: string]: RdockRoute;
     };
     /**
+     * External secret stores that secret fields can reference (`${vault:…}`).
+     */
+    secrets?: RdockSecrets;
+    /**
      * Client IP trust and request limits.
      */
     security?: RdockSecurity;
@@ -1157,7 +1172,7 @@ export type RdockConfig = {
         [key: string]: RdockMiddleware;
     } | RdockObservability | RdockProviders | {
         [key: string]: RdockRoute;
-    } | RdockSecurity | {
+    } | RdockSecrets | RdockSecurity | {
         [key: string]: RdockService;
     } | {
         [key: string]: RdockTcpRoute;
@@ -1565,6 +1580,24 @@ export type RdockJwtAlgorithm = 'RS256' | 'RS384' | 'RS512' | 'PS256' | 'PS384' 
  * Certificate authorities known by name.
  */
 export type RdockKnownCa = 'letsencrypt' | 'zerossl' | 'buypass' | 'google';
+
+/**
+ * Kubernetes login settings.
+ */
+export type RdockKubernetesAuth = {
+    /**
+     * Where the Kubernetes auth method is mounted.
+     */
+    mount?: string;
+    /**
+     * The Vault role to log in as.
+     */
+    role: string;
+    /**
+     * The service-account token, read at every login.
+     */
+    token_file?: string;
+};
 
 /**
  * Gateway API settings of the Kubernetes provider.
@@ -2805,6 +2838,101 @@ export type RdockMiddleware = {
      * The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
      */
     window: RdockQuotaWindow;
+} | {
+    /**
+     * With `openapi`: a prefix the document's paths are relative to (`/api` when the
+     * document's server URL is `https://example.com/api`). Requests outside it are unknown
+     * operations.
+     */
+    base_path?: string | null;
+    /**
+     * A schema for the JSON request body. A body with another content type is answered
+     * `415`, a body that is not JSON `400`, a body over `max_body` `413`.
+     */
+    body?: unknown;
+    /**
+     * With `body`: a request without a body is refused. Off by default, as OpenAPI's
+     * `requestBody.required`.
+     */
+    body_required?: boolean;
+    /**
+     * A schema for the object of request cookies. Converted like `query`.
+     */
+    cookies?: unknown;
+    /**
+     * Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12
+     * treats it as an annotation unless asked; rdock asks by default.
+     */
+    formats?: boolean;
+    /**
+     * A schema for the object of request headers, keyed by lower-case name. Converted like
+     * `query`.
+     */
+    headers?: unknown;
+    /**
+     * Largest body checked, at most 64MiB; the body is held until it is complete. The
+     * route's `max_body` applies when it is smaller.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * Most errors listed in an answer (1 to 100).
+     */
+    max_errors?: number;
+    /**
+     * `enforce` (the default) refuses invalid requests; `report` only logs and counts them,
+     * to try a schema on live traffic.
+     */
+    mode?: RdockValidationMode;
+    /**
+     * An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to
+     * its operations by method and path template; each operation's parameters and its
+     * `application/json` request body are checked.
+     */
+    openapi?: string | null;
+    /**
+     * Path parameters: a regular expression for the path with named groups, and a schema for
+     * the object of the groups' values.
+     */
+    path?: RdockPathParameters | null;
+    /**
+     * A schema for the object of query parameters (`{ name: value }`; a repeated name gives
+     * an array). Values are strings, converted to the `type` the schema declares for the
+     * property (`integer`, `number`, `boolean`, `array`).
+     */
+    query?: unknown;
+    type: 'validate';
+    /**
+     * With `openapi`: requests that match no operation of the document. `deny` (the
+     * default) answers `404` or `405`; `allow` lets them through unchecked.
+     */
+    unknown_operations?: RdockUnknownOperations;
+} | {
+    /**
+     * Largest body patched, request or response, at most 64MiB (default 1MiB). A larger
+     * request body is refused with `413`; a larger response body passes unchanged.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * A request patch that cannot be applied (a `test` operation fails, a location is
+     * missing): `reject` (the default) answers `422`; `pass` forwards the body unchanged.
+     * A response patch that fails always leaves the body unchanged (the status is sent).
+     */
+    on_error?: RdockOnPatchError;
+    /**
+     * A request body that is not JSON when `request.body.patch` is set: `pass` (the
+     * default) forwards it unchanged; `reject` answers `415` (wrong content type) or `400`
+     * (not valid JSON).
+     */
+    on_non_json?: RdockOnNonJson;
+    /**
+     * Changes to the request sent to the backend.
+     */
+    request?: RdockTransformSide;
+    /**
+     * Changes to the response sent to the client.
+     */
+    response?: RdockTransformSide;
+    type: 'transform';
 };
 
 /**
@@ -2851,6 +2979,16 @@ export type RdockObservability = {
 };
 
 /**
+ * What `transform` does with a request body that is not JSON.
+ */
+export type RdockOnNonJson = 'pass' | 'reject';
+
+/**
+ * What `transform` does when a request patch cannot be applied.
+ */
+export type RdockOnPatchError = 'reject' | 'pass';
+
+/**
  * Ejection of backends that keep failing.
  */
 export type RdockPassiveHealth = {
@@ -2876,6 +3014,82 @@ export type RdockPassiveHealth = {
      */
     window?: RdockDuration;
     [key: string]: unknown | RdockDuration | number | Array<number> | undefined;
+};
+
+/**
+ * One JSON Patch operation (RFC 6902 §4).
+ */
+export type RdockPatchOp = {
+    op: 'add';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+    /**
+     * The value to add.
+     */
+    value: unknown;
+} | {
+    op: 'remove';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+} | {
+    op: 'replace';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+    /**
+     * The new value.
+     */
+    value: unknown;
+} | {
+    /**
+     * Where the value is taken from.
+     */
+    from: string;
+    op: 'move';
+    /**
+     * Where it is put.
+     */
+    path: string;
+} | {
+    /**
+     * Where the value is copied from.
+     */
+    from: string;
+    op: 'copy';
+    /**
+     * Where the copy is put.
+     */
+    path: string;
+} | {
+    op: 'test';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+    /**
+     * The expected value.
+     */
+    value: unknown;
+};
+
+/**
+ * Path parameters of `validate`.
+ */
+export type RdockPathParameters = {
+    /**
+     * A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it
+     * does not match fails validation.
+     */
+    regex: string;
+    /**
+     * A schema for the object of the groups' values, converted like `query`.
+     */
+    schema: unknown;
 };
 
 /**
@@ -3208,6 +3422,17 @@ export type RdockSameSite = 'lax' | 'strict' | 'none';
  * Protocols spoken to backends.
  */
 export type RdockScheme = 'http' | 'https' | 'h2c';
+
+/**
+ * External secret stores.
+ */
+export type RdockSecrets = {
+    /**
+     * A `HashiCorp` Vault or `OpenBao` server whose KV version 2 secrets secret fields may
+     * reference as `${vault:<mount>/<path>#<field>}`.
+     */
+    vault?: RdockVaultSettings | null;
+};
 
 /**
  * Client IP trust and request limits.
@@ -3649,6 +3874,20 @@ export type RdockTracing = {
 };
 
 /**
+ * One direction of `transform`.
+ */
+export type RdockTransformSide = {
+    /**
+     * Body changes.
+     */
+    body?: RdockBodyTransform;
+    /**
+     * Header operations, applied in the order remove, set, add (as `headers` does).
+     */
+    headers?: RdockHeaderRules;
+};
+
+/**
  * `cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.
  */
 export type RdockTrustedProxy = string;
@@ -3864,6 +4103,11 @@ export type RdockUdpTimeouts = {
 };
 
 /**
+ * What `validate` does with requests outside the OpenAPI document.
+ */
+export type RdockUnknownOperations = 'deny' | 'allow';
+
+/**
  * TLS to backends.
  */
 export type RdockUpstreamTls = {
@@ -3888,6 +4132,65 @@ export type RdockUpstreamTls = {
      */
     verify?: boolean;
     [key: string]: unknown | string | null | string | null | string | null | string | null | boolean | undefined;
+};
+
+/**
+ * Whether `validate` refuses invalid requests.
+ */
+export type RdockValidationMode = 'enforce' | 'report';
+
+/**
+ * How rdock logs in to Vault.
+ */
+export type RdockVaultAuth = {
+    token: string;
+} | {
+    kubernetes: RdockKubernetesAuth;
+};
+
+/**
+ * A Vault or `OpenBao` server (`secrets.vault`).
+ *
+ * Values are read when a configuration is loaded and every `refresh`; a changed value reloads
+ * the configuration. They stay in memory only: the configuration, its history, snapshots, the
+ * admin API, logs and diagnostics keep the `${vault:…}` reference.
+ */
+export type RdockVaultSettings = {
+    /**
+     * The server, e.g. `https://vault.internal:8200`. `https://` only, or `http://` to a
+     * loopback address (a dev server or a local agent), unless `insecure_http` is set.
+     */
+    address: RdockHttpUrl;
+    /**
+     * Allow a server on a private address (`10.0.0.0/8`, …). On by default: Vault usually
+     * runs inside the network.
+     */
+    allow_private_targets?: boolean;
+    /**
+     * How rdock logs in.
+     */
+    auth: RdockVaultAuth;
+    /**
+     * CA certificates (PEM) that sign the server's certificate, instead of the system's.
+     */
+    ca_file?: string | null;
+    /**
+     * Allow `http://` to a server that is not on a loopback address. **Unsafe**: the token
+     * and every secret cross the network unencrypted. Validation warns.
+     */
+    insecure_http?: boolean;
+    /**
+     * A Vault Enterprise or `OpenBao` namespace, sent as `X-Vault-Namespace`.
+     */
+    namespace?: string | null;
+    /**
+     * How often referenced values are read again.
+     */
+    refresh?: RdockDuration;
+    /**
+     * Time allowed for one request to the server.
+     */
+    timeout?: RdockDuration;
 };
 
 /**

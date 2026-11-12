@@ -365,6 +365,41 @@ jobs:
         env:
           RDOCK_IMAGE: rdock:ci
 
+  openbao:
+    name: openbao
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Started by a step rather than as a service container: a service's environment is fixed
+      # before any step runs, and the dev root token must be generated in this job. It is a
+      # throw-away for a dev server on loopback that ends with the job, and it is never printed.
+      - name: Start OpenBao 2.7.2 in dev mode (KV v2 at secret/)
+        run: |
+          token="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          docker run -d --name openbao --network host \
+            -e BAO_DEV_ROOT_TOKEN_ID="$token" -e BAO_DEV_LISTEN_ADDRESS=127.0.0.1:8200 \
+            openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f \
+            server -dev > /dev/null
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8200/v1/sys/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8200/v1/sys/health > /dev/null
+          echo "RDOCK_OPENBAO_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: "${vault:…} against a real OpenBao (e2e_vault.rs, ignored elsewhere)"
+        run: cargo test --locked -p rdock --test e2e_vault -- --ignored --nocapture
+        env:
+          RDOCK_OPENBAO_ADDR: http://127.0.0.1:8200
+      - name: OpenBao log (without the dev server's token and unseal key lines)
+        if: failure()
+        run: docker logs openbao 2>&1 | grep -v -i -e 'root token' -e 'unseal key' | tail -n 100
+
   semgrep:
     name: semgrep
     runs-on: ubuntu-24.04

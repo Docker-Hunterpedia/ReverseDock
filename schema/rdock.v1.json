@@ -170,6 +170,10 @@
       },
       "default": {}
     },
+    "secrets": {
+      "description": "External secret stores that secret fields can reference (`${vault:…}`).",
+      "$ref": "#/$defs/Secrets"
+    },
     "security": {
       "description": "Client IP trust and request limits.",
       "$ref": "#/$defs/Security",
@@ -1444,6 +1448,21 @@
         "srv://_http._tcp.api.example.com"
       ]
     },
+    "BodyTransform": {
+      "description": "Body changes of `transform`.",
+      "type": "object",
+      "properties": {
+        "patch": {
+          "description": "A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and\n`test` with JSON Pointers (RFC 6901), applied in order, all or nothing.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PatchOp"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "ByteSize": {
       "description": "Size in bytes, optionally with a unit (KB = 1000, KiB = 1024).",
       "anyOf": [
@@ -2602,6 +2621,30 @@
           "type": "string",
           "const": "google"
         }
+      ]
+    },
+    "KubernetesAuth": {
+      "description": "Kubernetes login settings.",
+      "type": "object",
+      "properties": {
+        "mount": {
+          "description": "Where the Kubernetes auth method is mounted.",
+          "type": "string",
+          "default": "kubernetes"
+        },
+        "role": {
+          "description": "The Vault role to log in as.",
+          "type": "string"
+        },
+        "token_file": {
+          "description": "The service-account token, read at every login.",
+          "type": "string",
+          "default": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "role"
       ]
     },
     "KubernetesGateway": {
@@ -4882,6 +4925,146 @@
             "limit",
             "window"
           ]
+        },
+        {
+          "description": "Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an\nOpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).",
+          "type": "object",
+          "properties": {
+            "base_path": {
+              "description": "With `openapi`: a prefix the document's paths are relative to (`/api` when the\ndocument's server URL is `https://example.com/api`). Requests outside it are unknown\noperations.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "body": {
+              "description": "A schema for the JSON request body. A body with another content type is answered\n`415`, a body that is not JSON `400`, a body over `max_body` `413`."
+            },
+            "body_required": {
+              "description": "With `body`: a request without a body is refused. Off by default, as OpenAPI's\n`requestBody.required`.",
+              "type": "boolean",
+              "default": false
+            },
+            "cookies": {
+              "description": "A schema for the object of request cookies. Converted like `query`."
+            },
+            "formats": {
+              "description": "Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12\ntreats it as an annotation unless asked; rdock asks by default.",
+              "type": "boolean",
+              "default": true
+            },
+            "headers": {
+              "description": "A schema for the object of request headers, keyed by lower-case name. Converted like\n`query`."
+            },
+            "max_body": {
+              "description": "Largest body checked, at most 64MiB; the body is held until it is complete. The\nroute's `max_body` applies when it is smaller.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1MiB"
+            },
+            "max_errors": {
+              "description": "Most errors listed in an answer (1 to 100).",
+              "type": "integer",
+              "format": "uint32",
+              "default": 5,
+              "minimum": 0
+            },
+            "mode": {
+              "description": "`enforce` (the default) refuses invalid requests; `report` only logs and counts them,\nto try a schema on live traffic.",
+              "$ref": "#/$defs/ValidationMode",
+              "default": "enforce"
+            },
+            "openapi": {
+              "description": "An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to\nits operations by method and path template; each operation's parameters and its\n`application/json` request body are checked.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "description": "Path parameters: a regular expression for the path with named groups, and a schema for\nthe object of the groups' values.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PathParameters"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "query": {
+              "description": "A schema for the object of query parameters (`{ name: value }`; a repeated name gives\nan array). Values are strings, converted to the `type` the schema declares for the\nproperty (`integer`, `number`, `boolean`, `array`)."
+            },
+            "type": {
+              "type": "string",
+              "const": "validate"
+            },
+            "unknown_operations": {
+              "description": "With `openapi`: requests that match no operation of the document. `deny` (the\ndefault) answers `404` or `405`; `allow` lets them through unchecked.",
+              "$ref": "#/$defs/UnknownOperations",
+              "default": "deny"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)\n(F-GW-04).",
+          "type": "object",
+          "properties": {
+            "max_body": {
+              "description": "Largest body patched, request or response, at most 64MiB (default 1MiB). A larger\nrequest body is refused with `413`; a larger response body passes unchanged.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1MiB"
+            },
+            "on_error": {
+              "description": "A request patch that cannot be applied (a `test` operation fails, a location is\nmissing): `reject` (the default) answers `422`; `pass` forwards the body unchanged.\nA response patch that fails always leaves the body unchanged (the status is sent).",
+              "$ref": "#/$defs/OnPatchError",
+              "default": "reject"
+            },
+            "on_non_json": {
+              "description": "A request body that is not JSON when `request.body.patch` is set: `pass` (the\ndefault) forwards it unchanged; `reject` answers `415` (wrong content type) or `400`\n(not valid JSON).",
+              "$ref": "#/$defs/OnNonJson",
+              "default": "pass"
+            },
+            "request": {
+              "description": "Changes to the request sent to the backend.",
+              "$ref": "#/$defs/TransformSide",
+              "default": {
+                "body": {
+                  "patch": []
+                },
+                "headers": {
+                  "add": {},
+                  "remove": [],
+                  "set": {}
+                }
+              }
+            },
+            "response": {
+              "description": "Changes to the response sent to the client.",
+              "$ref": "#/$defs/TransformSide",
+              "default": {
+                "body": {
+                  "patch": []
+                },
+                "headers": {
+                  "add": {},
+                  "remove": [],
+                  "set": {}
+                }
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "transform"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -4977,6 +5160,36 @@
         "^x-": {}
       }
     },
+    "OnNonJson": {
+      "description": "What `transform` does with a request body that is not JSON.",
+      "oneOf": [
+        {
+          "description": "Forward it unchanged.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "Answer `415` or `400`.",
+          "type": "string",
+          "const": "reject"
+        }
+      ]
+    },
+    "OnPatchError": {
+      "description": "What `transform` does when a request patch cannot be applied.",
+      "oneOf": [
+        {
+          "description": "Answer `422` (problem type `patch-failed`).",
+          "type": "string",
+          "const": "reject"
+        },
+        {
+          "description": "Forward the body unchanged.",
+          "type": "string",
+          "const": "pass"
+        }
+      ]
+    },
     "PassiveHealth": {
       "description": "Ejection of backends that keep failing.",
       "type": "object",
@@ -5025,6 +5238,165 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "PatchOp": {
+      "description": "One JSON Patch operation (RFC 6902 §4).",
+      "oneOf": [
+        {
+          "description": "Adds `value` at `path`: a new member, an array element inserted before the index (`-`\nappends), or the whole document for `\"\"`. The parent must exist.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "add"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            },
+            "value": {
+              "description": "The value to add."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        },
+        {
+          "description": "Removes the value at `path`, which must exist.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "remove"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path"
+          ]
+        },
+        {
+          "description": "Replaces the value at `path`, which must exist.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "replace"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            },
+            "value": {
+              "description": "The new value."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        },
+        {
+          "description": "Removes the value at `from` and adds it at `path`. `path` must not be inside `from`.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Where the value is taken from.",
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "move"
+            },
+            "path": {
+              "description": "Where it is put.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "path"
+          ]
+        },
+        {
+          "description": "Copies the value at `from` to `path`.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Where the value is copied from.",
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "copy"
+            },
+            "path": {
+              "description": "Where the copy is put.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "path"
+          ]
+        },
+        {
+          "description": "Fails the patch unless the value at `path` equals `value` (numbers by their numeric\nvalue, objects regardless of member order).",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "test"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            },
+            "value": {
+              "description": "The expected value."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        }
+      ]
+    },
+    "PathParameters": {
+      "description": "Path parameters of `validate`.",
+      "type": "object",
+      "properties": {
+        "regex": {
+          "description": "A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it\ndoes not match fails validation.",
+          "type": "string"
+        },
+        "schema": {
+          "description": "A schema for the object of the groups' values, converted like `query`."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "regex",
+        "schema"
+      ]
     },
     "Providers": {
       "description": "Configuration sources besides this file.",
@@ -5745,6 +6117,24 @@
           "const": "h2c"
         }
       ]
+    },
+    "Secrets": {
+      "description": "External secret stores.",
+      "type": "object",
+      "properties": {
+        "vault": {
+          "description": "A `HashiCorp` Vault or `OpenBao` server whose KV version 2 secrets secret fields may\nreference as `${vault:<mount>/<path>#<field>}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VaultSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
     },
     "Security": {
       "description": "Client IP trust and request limits.",
@@ -6538,6 +6928,29 @@
         "otlp"
       ]
     },
+    "TransformSide": {
+      "description": "One direction of `transform`.",
+      "type": "object",
+      "properties": {
+        "body": {
+          "description": "Body changes.",
+          "$ref": "#/$defs/BodyTransform",
+          "default": {
+            "patch": []
+          }
+        },
+        "headers": {
+          "description": "Header operations, applied in the order remove, set, add (as `headers` does).",
+          "$ref": "#/$defs/HeaderRules",
+          "default": {
+            "add": {},
+            "remove": [],
+            "set": {}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "TrustedProxy": {
       "description": "`cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.",
       "type": "string",
@@ -6894,6 +7307,21 @@
         "^x-": {}
       }
     },
+    "UnknownOperations": {
+      "description": "What `validate` does with requests outside the OpenAPI document.",
+      "oneOf": [
+        {
+          "description": "Answer `404` (no path template matches) or `405` (the path exists, the method not).",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Let them through unchecked.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
     "UpstreamTls": {
       "description": "TLS to backends.",
       "type": "object",
@@ -6940,6 +7368,105 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "ValidationMode": {
+      "description": "Whether `validate` refuses invalid requests.",
+      "oneOf": [
+        {
+          "description": "Refuse invalid requests.",
+          "type": "string",
+          "const": "enforce"
+        },
+        {
+          "description": "Log and count invalid requests, and let them through.",
+          "type": "string",
+          "const": "report"
+        }
+      ]
+    },
+    "VaultAuth": {
+      "description": "How rdock logs in to Vault.",
+      "oneOf": [
+        {
+          "description": "A token, as a `${file:…}` or `${env:…}` reference (read again on every request, so a\ntoken file rotated by an agent is picked up).",
+          "type": "object",
+          "properties": {
+            "token": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "token"
+          ]
+        },
+        {
+          "description": "Kubernetes service-account login (`POST /v1/auth/<mount>/login`); the token is renewed\nby logging in again before its lease runs out.",
+          "type": "object",
+          "properties": {
+            "kubernetes": {
+              "$ref": "#/$defs/KubernetesAuth"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kubernetes"
+          ]
+        }
+      ]
+    },
+    "VaultSettings": {
+      "description": "A Vault or `OpenBao` server (`secrets.vault`).\n\nValues are read when a configuration is loaded and every `refresh`; a changed value reloads\nthe configuration. They stay in memory only: the configuration, its history, snapshots, the\nadmin API, logs and diagnostics keep the `${vault:…}` reference.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "The server, e.g. `https://vault.internal:8200`. `https://` only, or `http://` to a\nloopback address (a dev server or a local agent), unless `insecure_http` is set.",
+          "$ref": "#/$defs/HttpUrl"
+        },
+        "allow_private_targets": {
+          "description": "Allow a server on a private address (`10.0.0.0/8`, …). On by default: Vault usually\nruns inside the network.",
+          "type": "boolean",
+          "default": true
+        },
+        "auth": {
+          "description": "How rdock logs in.",
+          "$ref": "#/$defs/VaultAuth"
+        },
+        "ca_file": {
+          "description": "CA certificates (PEM) that sign the server's certificate, instead of the system's.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure_http": {
+          "description": "Allow `http://` to a server that is not on a loopback address. **Unsafe**: the token\nand every secret cross the network unencrypted. Validation warns.",
+          "type": "boolean",
+          "default": false
+        },
+        "namespace": {
+          "description": "A Vault Enterprise or `OpenBao` namespace, sent as `X-Vault-Namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refresh": {
+          "description": "How often referenced values are read again.",
+          "$ref": "#/$defs/Duration",
+          "default": "5m"
+        },
+        "timeout": {
+          "description": "Time allowed for one request to the server.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "address",
+        "auth"
+      ]
     },
     "Webhook": {
       "description": "An HTTPS endpoint that receives JSON events.",

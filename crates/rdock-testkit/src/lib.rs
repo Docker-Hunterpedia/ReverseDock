@@ -25,6 +25,7 @@ pub mod receiver;
 pub mod tcp;
 pub mod toxiproxy;
 pub mod udp;
+pub mod vault;
 
 /// A free TCP port on the loopback interface, taken by nobody else in this test run.
 ///

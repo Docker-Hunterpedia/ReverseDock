@@ -31,6 +31,8 @@ futures-util = { workspace = true, features = ["std"] }
 http.workspace = true
 http-range-header.workspace = true
 httpdate.workspace = true
+# Request validation (F-GW-03): no default features, so no HTTP or file reference resolver.
+jsonschema.workspace = true
 md-5.workspace = true
 mime_guess.workspace = true
 percent-encoding.workspace = true

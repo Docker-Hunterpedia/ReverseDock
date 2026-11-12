@@ -1213,3 +1213,215 @@ The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st
 - `hour`: From the start of each hour.
 - `day`: From 00:00 UTC.
 - `month`: From 00:00 UTC on the 1st.
+
+## `type: validate`
+
+Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an OpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).
+
+### `middlewares.<name>.base_path`
+
+**Type:** `string`
+
+With `openapi`: a prefix the document's paths are relative to (`/api` when the document's server URL is `https://example.com/api`). Requests outside it are unknown operations.
+
+### `middlewares.<name>.body`
+
+**Type:** `any`
+
+A schema for the JSON request body. A body with another content type is answered `415`, a body that is not JSON `400`, a body over `max_body` `413`.
+
+### `middlewares.<name>.body_required`
+
+**Type:** `boolean` · **Default:** `false`
+
+With `body`: a request without a body is refused. Off by default, as OpenAPI's `requestBody.required`.
+
+### `middlewares.<name>.cookies`
+
+**Type:** `any`
+
+A schema for the object of request cookies. Converted like `query`.
+
+### `middlewares.<name>.formats`
+
+**Type:** `boolean` · **Default:** `true`
+
+Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12 treats it as an annotation unless asked; rdock asks by default.
+
+### `middlewares.<name>.headers`
+
+**Type:** `any`
+
+A schema for the object of request headers, keyed by lower-case name. Converted like `query`.
+
+### `middlewares.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `1MiB`
+
+Largest body checked, at most 64MiB; the body is held until it is complete. The route's `max_body` applies when it is smaller.
+
+### `middlewares.<name>.max_errors`
+
+**Type:** `integer` · **Default:** `5`
+
+Most errors listed in an answer (1 to 100).
+
+### `middlewares.<name>.mode`
+
+**Type:** `enforce` · `report` · **Default:** `enforce`
+
+`enforce` (the default) refuses invalid requests; `report` only logs and counts them, to try a schema on live traffic.
+
+- `enforce`: Refuse invalid requests.
+- `report`: Log and count invalid requests, and let them through.
+
+### `middlewares.<name>.openapi`
+
+**Type:** `string`
+
+An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to its operations by method and path template; each operation's parameters and its `application/json` request body are checked.
+
+### `middlewares.<name>.path`
+
+**Type:** object
+
+Path parameters: a regular expression for the path with named groups, and a schema for the object of the groups' values.
+
+#### `middlewares.<name>.path.regex`
+
+**Type:** `string` · **Required**
+
+A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it does not match fails validation.
+
+#### `middlewares.<name>.path.schema`
+
+**Type:** `any` · **Required**
+
+A schema for the object of the groups' values, converted like `query`.
+
+### `middlewares.<name>.query`
+
+**Type:** `any`
+
+A schema for the object of query parameters (`{ name: value }`; a repeated name gives an array). Values are strings, converted to the `type` the schema declares for the property (`integer`, `number`, `boolean`, `array`).
+
+### `middlewares.<name>.unknown_operations`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+With `openapi`: requests that match no operation of the document. `deny` (the default) answers `404` or `405`; `allow` lets them through unchecked.
+
+- `deny`: Answer `404` (no path template matches) or `405` (the path exists, the method not).
+- `allow`: Let them through unchecked.
+
+## `type: transform`
+
+Change request and response headers, and JSON bodies with JSON Patch (RFC 6902) (F-GW-04).
+
+### `middlewares.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `1MiB`
+
+Largest body patched, request or response, at most 64MiB (default 1MiB). A larger request body is refused with `413`; a larger response body passes unchanged.
+
+### `middlewares.<name>.on_error`
+
+**Type:** `reject` · `pass` · **Default:** `reject`
+
+A request patch that cannot be applied (a `test` operation fails, a location is missing): `reject` (the default) answers `422`; `pass` forwards the body unchanged. A response patch that fails always leaves the body unchanged (the status is sent).
+
+- `reject`: Answer `422` (problem type `patch-failed`).
+- `pass`: Forward the body unchanged.
+
+### `middlewares.<name>.on_non_json`
+
+**Type:** `pass` · `reject` · **Default:** `pass`
+
+A request body that is not JSON when `request.body.patch` is set: `pass` (the default) forwards it unchanged; `reject` answers `415` (wrong content type) or `400` (not valid JSON).
+
+- `pass`: Forward it unchanged.
+- `reject`: Answer `415` or `400`.
+
+### `middlewares.<name>.request`
+
+**Type:** object · **Default:** `{"body":{"patch":[]},"headers":{"add":{},"remove":[],"set":{}}}`
+
+Changes to the request sent to the backend.
+
+#### `middlewares.<name>.request.body`
+
+**Type:** object · **Default:** `{"patch":[]}`
+
+Body changes.
+
+#### `middlewares.<name>.request.body.patch`
+
+**Type:** list of object, selected by `type`
+
+A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and `test` with JSON Pointers (RFC 6901), applied in order, all or nothing.
+
+#### `middlewares.<name>.request.headers`
+
+**Type:** object · **Default:** `{"add":{},"remove":[],"set":{}}`
+
+Header operations, applied in the order remove, set, add (as `headers` does).
+
+#### `middlewares.<name>.request.headers.add`
+
+**Type:** map of names to `string`
+
+Append header values.
+
+#### `middlewares.<name>.request.headers.remove`
+
+**Type:** list of `string`
+
+Remove headers.
+
+#### `middlewares.<name>.request.headers.set`
+
+**Type:** map of names to `string`
+
+Replace headers.
+
+### `middlewares.<name>.response`
+
+**Type:** object · **Default:** `{"body":{"patch":[]},"headers":{"add":{},"remove":[],"set":{}}}`
+
+Changes to the response sent to the client.
+
+#### `middlewares.<name>.response.body`
+
+**Type:** object · **Default:** `{"patch":[]}`
+
+Body changes.
+
+#### `middlewares.<name>.response.body.patch`
+
+**Type:** list of object, selected by `type`
+
+A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and `test` with JSON Pointers (RFC 6901), applied in order, all or nothing.
+
+#### `middlewares.<name>.response.headers`
+
+**Type:** object · **Default:** `{"add":{},"remove":[],"set":{}}`
+
+Header operations, applied in the order remove, set, add (as `headers` does).
+
+#### `middlewares.<name>.response.headers.add`
+
+**Type:** map of names to `string`
+
+Append header values.
+
+#### `middlewares.<name>.response.headers.remove`
+
+**Type:** list of `string`
+
+Remove headers.
+
+#### `middlewares.<name>.response.headers.set`
+
+**Type:** map of names to `string`
+
+Replace headers.

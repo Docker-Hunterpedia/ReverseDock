@@ -41,6 +41,8 @@ mod quota;
 mod ratelimit;
 mod redirect;
 mod static_files;
+mod transform;
+mod validate;
 
 pub use api_key::IDENTITY_HEADERS as CONSUMER_HEADERS;
 pub use chain::{Answered, Chain, Flags, Released};
@@ -248,6 +250,9 @@ pub struct Reply {
     /// middleware's plain stand-in for the standard page: routes whose `errors.format` is not
     /// `html` get the rendered page instead (`basic_auth`'s text).
     pub problem: Option<ProblemKind>,
+    /// Extension members of the problem details (RFC 9457 §3.2), such as `validate`'s
+    /// `errors`. Only rendered as problem details; never holds a value from the request.
+    pub extensions: Option<Arc<serde_json::Map<String, serde_json::Value>>>,
 }
 
 /// The body of a [`Reply`].
@@ -300,6 +305,7 @@ impl Reply {
             headers: Vec::new(),
             body: None,
             problem: None,
+            extensions: None,
         }
     }
 
@@ -308,6 +314,7 @@ impl Reply {
     pub fn problem(kind: ProblemKind) -> Self {
         Self {
             problem: Some(kind),
+            extensions: None,
             ..Self::status(kind.status())
         }
     }
@@ -316,6 +323,15 @@ impl Reply {
     #[must_use]
     pub fn header(mut self, name: HeaderName, value: HeaderValue) -> Self {
         self.headers.push((name, value));
+        self
+    }
+
+    /// Adds an extension member to the problem details.
+    #[must_use]
+    pub fn extension(mut self, name: &str, value: serde_json::Value) -> Self {
+        let mut map = self.extensions.as_deref().cloned().unwrap_or_default();
+        map.insert(name.to_owned(), value);
+        self.extensions = Some(Arc::new(map));
         self
     }
 }
@@ -535,6 +551,8 @@ pub fn build(
             Arc::new(jwt::Jwt::cloudflare_access(name, c, env.client.clone())?)
         }
         Config::ApiKey(c) => Arc::new(api_key::ApiKey::new(name, c, env.consumers.clone())?),
+        Config::Validate(c) => Arc::new(validate::Validate::new(name, c, env.metrics)?),
+        Config::Transform(c) => Arc::new(transform::Transform::new(name, c, env.metrics)?),
         Config::Quota(c) => match env.quotas {
             Some(registry) => Arc::new(quota::Quota::new(name, c, registry)),
             None => Arc::new(quota::Quota::new(

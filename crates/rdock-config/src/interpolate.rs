@@ -1,12 +1,16 @@
-//! `${NAME}`, `${env:NAME}` and `${file:/path}` references in string values.
+//! `${NAME}`, `${env:NAME}`, `${file:/path}` and `${vault:<mount>/<path>#<field>}` references
+//! in string values.
 //!
-//! A reference is replaced by the value of an environment variable or by the contents of a file
-//! (one trailing newline removed). `$${` writes a literal `${`. Replaced text is never expanded
-//! again, so a secret cannot inject further references.
+//! A reference is replaced by the value of an environment variable, by the contents of a file
+//! (one trailing newline removed) or by a field of a Vault KV secret read earlier into
+//! [`vault_store`]. `$${` writes a literal `${`. Replaced text is never expanded again, so a
+//! secret cannot inject further references.
 
 use std::borrow::Cow;
+use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
+use std::sync::{PoisonError, RwLock};
 
 /// Largest file a `${file:…}` reference may read.
 pub const MAX_FILE_BYTES: u64 = 64 * 1024;
@@ -17,6 +21,62 @@ pub trait Lookup {
     fn env(&self, name: &str) -> Result<Option<String>, ReferenceError>;
     /// The contents of a file, at most [`MAX_FILE_BYTES`].
     fn file(&self, path: &Path) -> Result<String, ReferenceError>;
+    /// The value of a Vault reference (`<mount>/<path>#<field>`), as read into
+    /// [`vault_store`]. Lookups that do not read Vault refuse it.
+    fn vault(&self, reference: &str) -> Result<String, ReferenceError> {
+        Err(ReferenceError::VaultNotRead(reference.to_owned()))
+    }
+}
+
+/// Values of `${vault:…}` references, read by the engine before a configuration is compiled
+/// and on every refresh (W-OBS-02). In memory only; keyed by the reference body
+/// (`<mount>/<path>#<field>`). Values are never formatted by this module.
+pub mod vault_store {
+    use super::{BTreeMap, PoisonError, RwLock};
+
+    static VALUES: RwLock<BTreeMap<String, String>> = RwLock::new(BTreeMap::new());
+
+    /// The value of `reference`, if it was read.
+    #[must_use]
+    pub fn get(reference: &str) -> Option<String> {
+        VALUES
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .get(reference)
+            .cloned()
+    }
+
+    /// Stores values; returns whether any stored value changed (a new reference counts).
+    pub fn put(values: impl IntoIterator<Item = (String, String)>) -> bool {
+        let mut store = VALUES.write().unwrap_or_else(PoisonError::into_inner);
+        let mut changed = false;
+        for (reference, value) in values {
+            if store.get(&reference) != Some(&value) {
+                store.insert(reference, value);
+                changed = true;
+            }
+        }
+        changed
+    }
+
+    /// The references read so far.
+    #[must_use]
+    pub fn references() -> Vec<String> {
+        VALUES
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .keys()
+            .cloned()
+            .collect()
+    }
+
+    /// Keeps only `keep`, dropping values no configuration references any more.
+    pub fn retain(keep: &std::collections::BTreeSet<String>) {
+        VALUES
+            .write()
+            .unwrap_or_else(PoisonError::into_inner)
+            .retain(|reference, _| keep.contains(reference));
+    }
 }
 
 /// The process environment and file system.
@@ -48,6 +108,11 @@ impl Lookup for System {
             return Err(ReferenceError::FileTooLarge(path.to_owned()));
         }
         String::from_utf8(bytes).map_err(|_| ReferenceError::FileNotUnicode(path.to_owned()))
+    }
+
+    fn vault(&self, reference: &str) -> Result<String, ReferenceError> {
+        vault_store::get(reference)
+            .ok_or_else(|| ReferenceError::VaultNotRead(reference.to_owned()))
     }
 }
 
@@ -84,9 +149,23 @@ pub enum ReferenceError {
     /// The name is empty or has characters other than letters, digits and `_`.
     #[error("invalid variable name `{0}`; use letters, digits and `_`")]
     InvalidName(String),
-    /// A prefix other than `env:` or `file:`.
-    #[error("unknown reference `${{{0}:…}}`; use `${{env:NAME}}` or `${{file:/path}}`")]
+    /// A prefix other than `env:`, `file:` or `vault:`.
+    #[error(
+        "unknown reference `${{{0}:…}}`; use `${{env:NAME}}`, `${{file:/path}}` or `${{vault:<mount>/<path>#<field>}}`"
+    )]
     UnknownKind(String),
+    /// A malformed `${vault:…}` reference.
+    #[error("{0}")]
+    VaultSyntax(String),
+    /// A `${vault:…}` reference whose value has not been read (no `secrets.vault`, or the
+    /// read failed).
+    #[error("`${{vault:{0}}}` has not been read from Vault; check `secrets.vault` and the logs")]
+    VaultNotRead(String),
+    /// A `${vault:…}` reference outside a secret field.
+    #[error(
+        "`${{vault:…}}` is accepted only in secret fields (tokens, passwords, keys), so its value never enters the loaded configuration"
+    )]
+    VaultNotAllowed,
 }
 
 /// Replaces every reference in `text`. Returns the input unchanged (borrowed) when it has none.
@@ -119,6 +198,11 @@ fn resolve(body: &str, lookup: &dyn Lookup) -> Result<String, ReferenceError> {
     match body.split_once(':') {
         Some(("env", name)) => env(name, lookup),
         Some(("file", path)) => file(path, lookup),
+        Some(("vault", reference)) => {
+            rdock_model::secrets::VaultReference::parse(reference)
+                .map_err(ReferenceError::VaultSyntax)?;
+            lookup.vault(reference)
+        }
         Some((kind, _)) => Err(ReferenceError::UnknownKind(kind.to_owned())),
         None => env(body, lookup),
     }
@@ -225,7 +309,36 @@ mod tests {
         assert!(err("${a-b}").contains("invalid variable name"));
         assert!(err("${file:relative/path}").contains("not an absolute path"));
         assert!(err("${file:/nope}").contains("cannot read `/nope`"));
-        assert!(err("${vault:x}").contains("unknown reference `${vault:…}`"));
+        assert!(err("${other:x}").contains("unknown reference `${other:…}`"));
+        assert!(err("${vault:x}").contains("needs `#<field>`"));
+        assert!(err("${vault:kv/a#b}").contains("has not been read from Vault"));
+    }
+
+    #[test]
+    fn vault_references_come_from_the_store() {
+        assert!(vault_store::put([(
+            "kv/app#token".to_owned(),
+            "v1".to_owned()
+        )]));
+        assert!(!vault_store::put([(
+            "kv/app#token".to_owned(),
+            "v1".to_owned()
+        )]));
+        assert_eq!(
+            expand("Bearer ${vault:kv/app#token}", &System).unwrap(),
+            "Bearer v1"
+        );
+        assert!(vault_store::put([(
+            "kv/app#token".to_owned(),
+            "v2".to_owned()
+        )]));
+        assert_eq!(expand("${vault:kv/app#token}", &System).unwrap(), "v2");
+        let err = expand("${vault:kv/app#other}", &System)
+            .unwrap_err()
+            .to_string();
+        assert!(err.contains("kv/app#other") && !err.contains("v2"), "{err}");
+        vault_store::retain(&std::collections::BTreeSet::new());
+        assert_eq!(vault_store::references(), Vec::<String>::new());
     }
 
     #[test]

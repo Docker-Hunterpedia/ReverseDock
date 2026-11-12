@@ -256,6 +256,32 @@ accepted the batch) or `failed` (dropped after the last attempt or a refusal).
 full when the request finished) or `undeliverable` (the batch failed every attempt or was
 refused).
 
+## Validation, transformation and secrets
+
+<Status since="v0.8" /> Metrics of [`validate`](/docs/guides/request-validation/),
+[`transform`](/docs/guides/transforming-requests/) and
+[`${vault:…}` references](/docs/guides/secrets/#vault-and-openbao). Middleware names come from
+the configuration.
+
+### `rdock_validation_requests_total`
+
+**Counter.** Requests checked by `validate` middlewares. Labels: `middleware` and `result`:
+`valid`, `invalid` (refused with `validation-failed`), `reported` (invalid, let through in
+`mode: report`), `unknown_operation` (no operation of the OpenAPI document matched) or
+`unsupported_media_type`.
+
+### `rdock_transform_skipped_total`
+
+**Counter.** Response bodies a `transform` middleware with `response.body.patch` left unchanged.
+Labels: `middleware` and `reason`: `status` (not a 2xx with a body, or 206), `not_json`,
+`encoded` (the backend compressed it), `too_large` (over `max_body`), `invalid_json`, or
+`patch_failed` (a `test` failed or a location is missing).
+
+### `rdock_vault_refresh_failures_total`
+
+**Counter.** Reads of `${vault:…}` references that failed while a value from an earlier read
+stayed in use (Vault is then degraded in `rdock status`). No labels.
+
 ## Plugins and agents
 
 <Status since="v0.8" /> Metrics of [native plugins](/docs/guides/plugins/) and

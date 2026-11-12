@@ -79,6 +79,7 @@ impl Middleware for RefuseEvil {
                 )],
                 body: Some(Body::Bytes(Bytes::from("refused ".repeat(256)))),
                 problem: None,
+                extensions: None,
             })
         } else {
             BodyVerdict::Continue

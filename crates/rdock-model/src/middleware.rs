@@ -80,6 +80,12 @@ pub enum Middleware {
     /// Requests per consumer per calendar window (hour, day, month), persisted across
     /// restarts; `429` when used up (F-GW-02).
     Quota(crate::gateway::QuotaConfig),
+    /// Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an
+    /// OpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).
+    Validate(crate::validation::ValidateConfig),
+    /// Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)
+    /// (F-GW-04).
+    Transform(crate::transform::TransformConfig),
 }
 
 /// Cloudflare Access application tokens (`type: cloudflare_access`, W-CF-06, ADR-0030).

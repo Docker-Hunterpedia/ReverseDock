@@ -16,6 +16,9 @@ pub enum ProblemKind {
     Unauthenticated,
     /// 403: the client is known but not allowed (a network rule, a group restriction).
     Forbidden,
+    /// 400: the request does not match the route's schemas (`validate`); the answer lists the
+    /// errors in `errors`.
+    ValidationFailed,
     /// 404: no route matches, or nothing is found at the path.
     NotFound,
     /// 405: the method is not allowed here.
@@ -26,8 +29,13 @@ pub enum ProblemKind {
     PayloadTooLarge,
     /// 414: the request target is too long.
     UriTooLong,
+    /// 415: the request body's content type is not accepted (`validate`, `transform`).
+    UnsupportedMediaType,
     /// 417: an `Expect` value other than `100-continue`.
     ExpectationFailed,
+    /// 422: a `transform` request patch could not be applied (a `test` operation failed or a
+    /// location is missing).
+    PatchFailed,
     /// 429: a rate limit or a cap on requests in flight.
     RateLimited,
     /// 429: the consumer's quota for the current window is used up.
@@ -48,8 +56,9 @@ pub enum ProblemKind {
 
 impl ProblemKind {
     /// Every kind, for the reference page and the tests.
-    pub const ALL: [Self; 17] = [
+    pub const ALL: [Self; 20] = [
         Self::BadRequest,
+        Self::ValidationFailed,
         Self::Unauthenticated,
         Self::Forbidden,
         Self::NotFound,
@@ -57,7 +66,9 @@ impl ProblemKind {
         Self::RequestTimeout,
         Self::PayloadTooLarge,
         Self::UriTooLong,
+        Self::UnsupportedMediaType,
         Self::ExpectationFailed,
+        Self::PatchFailed,
         Self::RateLimited,
         Self::QuotaExceeded,
         Self::HeadersTooLarge,
@@ -80,6 +91,7 @@ impl ProblemKind {
             408 => Self::RequestTimeout,
             413 => Self::PayloadTooLarge,
             414 => Self::UriTooLong,
+            415 => Self::UnsupportedMediaType,
             417 => Self::ExpectationFailed,
             429 => Self::RateLimited,
             431 => Self::HeadersTooLarge,
@@ -95,7 +107,7 @@ impl ProblemKind {
     #[must_use]
     pub fn status(self) -> u16 {
         match self {
-            Self::BadRequest => 400,
+            Self::BadRequest | Self::ValidationFailed => 400,
             Self::Unauthenticated => 401,
             Self::Forbidden => 403,
             Self::NotFound => 404,
@@ -103,7 +115,9 @@ impl ProblemKind {
             Self::RequestTimeout => 408,
             Self::PayloadTooLarge => 413,
             Self::UriTooLong => 414,
+            Self::UnsupportedMediaType => 415,
             Self::ExpectationFailed => 417,
+            Self::PatchFailed => 422,
             Self::RateLimited | Self::QuotaExceeded => 429,
             Self::HeadersTooLarge => 431,
             Self::InternalError => 500,
@@ -118,6 +132,9 @@ impl ProblemKind {
     pub fn slug(self) -> &'static str {
         match self {
             Self::BadRequest => "bad-request",
+            Self::ValidationFailed => "validation-failed",
+            Self::UnsupportedMediaType => "unsupported-media-type",
+            Self::PatchFailed => "patch-failed",
             Self::Unauthenticated => "unauthenticated",
             Self::Forbidden => "forbidden",
             Self::NotFound => "not-found",
@@ -148,6 +165,9 @@ impl ProblemKind {
     pub fn title(self) -> &'static str {
         match self {
             Self::BadRequest => "Bad request",
+            Self::ValidationFailed => "Request validation failed",
+            Self::UnsupportedMediaType => "Unsupported media type",
+            Self::PatchFailed => "Request transformation failed",
             Self::Unauthenticated => "Authentication required",
             Self::Forbidden => "Forbidden",
             Self::NotFound => "Not found",
@@ -173,6 +193,13 @@ impl ProblemKind {
     pub fn detail(self) -> &'static str {
         match self {
             Self::BadRequest => "The request is malformed or repeats a credential.",
+            Self::ValidationFailed => {
+                "The request does not match the schema of this route. `errors` lists where."
+            }
+            Self::UnsupportedMediaType => "The request body's content type is not accepted here.",
+            Self::PatchFailed => {
+                "The request body cannot be transformed for this route: it lacks a value the route expects."
+            }
             Self::Unauthenticated => "The request carries no valid credential for this route.",
             Self::Forbidden => "The request is not allowed on this route.",
             Self::NotFound => "Nothing is served at this address.",
@@ -207,7 +234,13 @@ mod tests {
         for kind in ProblemKind::ALL {
             assert!(slugs.insert(kind.slug()), "{kind:?}");
             assert!(kind.type_uri().starts_with("https://"));
-            if !matches!(kind, ProblemKind::QuotaExceeded | ProblemKind::Maintenance) {
+            if !matches!(
+                kind,
+                ProblemKind::QuotaExceeded
+                    | ProblemKind::Maintenance
+                    | ProblemKind::ValidationFailed
+                    | ProblemKind::PatchFailed
+            ) {
                 assert_eq!(ProblemKind::for_status(kind.status()), Some(kind));
             }
         }

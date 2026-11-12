@@ -262,6 +262,7 @@ fn reply(response: api::Response) -> Reply {
         headers: out,
         body: body.map(Body::Bytes),
         problem: None,
+        extensions: None,
     }
 }
 
@@ -274,6 +275,7 @@ fn internal_error() -> Reply {
         )],
         body: Some(Body::Bytes(Bytes::from_static(PANIC_BODY))),
         problem: None,
+        extensions: None,
     }
 }
 

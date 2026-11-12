@@ -1,0 +1,174 @@
+---
+title: Request validation
+description: Check query parameters, headers, path parameters and JSON bodies against JSON Schema 2020-12 or an OpenAPI 3.1 document before a request reaches the backend, and answer 400 with the errors.
+sidebar:
+  order: 29
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `validate` middleware <Status since="v0.8" /> checks a request against a schema before it
+reaches the backend: query parameters, headers, cookies, path parameters and a JSON body. A
+request that does not match is answered `400` with the problem type
+[`validation-failed`](/docs/reference/problems/#validation-failed) and a list of what failed. The
+schemas are [JSON Schema 2020-12](https://json-schema.org/draft/2020-12), written inline or taken
+from an [OpenAPI 3.1](https://spec.openapis.org/oas/v3.1.1) document.
+
+## Inline schemas
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+defaults:
+  errors: { format: problem }
+
+routes:
+  orders:
+    match: "Host(`api.example.com`) && PathPrefix(`/orders`)"
+    service: api
+    middlewares: [check-orders]
+
+middlewares:
+  check-orders:
+    type: validate
+    path:
+      regex: "^/orders(/(?<id>[0-9a-z-]+))?$"
+      schema:
+        type: object
+        properties: { id: { type: string, minLength: 8 } }
+    query:
+      type: object
+      properties:
+        limit: { type: integer, minimum: 1, maximum: 100 }
+        status: { type: array, items: { enum: [open, shipped] } }
+      additionalProperties: false
+    headers:
+      type: object
+      properties: { x-request-source: { type: string, maxLength: 64 } }
+    body:
+      type: object
+      required: [sku, quantity]
+      properties:
+        sku: { type: string, pattern: "^[A-Z0-9-]{4,20}$" }
+        quantity: { type: integer, minimum: 1 }
+        email: { type: string, format: email }
+      additionalProperties: false
+
+services:
+  api:
+    backends: [{ address: "10.0.0.5:8080" }]
+```
+
+A request with `?limit=500` gets:
+
+```json
+{
+  "type": "https://reversedock.oday-bakkour.com/docs/reference/problems/#validation-failed",
+  "title": "Request validation failed",
+  "status": 400,
+  "detail": "The request does not match the schema of this route. `errors` lists where.",
+  "request_id": "019a7c1e-2f4b-7c3d-9e8f-0a1b2c3d4e5f",
+  "errors": [{ "pointer": "/query/limit", "message": "must be at most 100" }]
+}
+```
+
+How each part is checked:
+
+| Part | The schema sees | Notes |
+|---|---|---|
+| `path` | An object of the named groups of `regex` (`(?<id>…)`), percent-decoded | A path the expression does not match fails with `/path`. The rule grammar has no named captures, so the path is matched here. |
+| `query` | An object `{ name: value }` | A repeated name gives an array; a repeated name whose property is not an `array` fails (parameter pollution is refused). |
+| `headers` | An object keyed by lower-case header name | Write the property names in lower case. |
+| `cookies` | An object of the `Cookie` header's pairs | |
+| `body` | The parsed JSON body | `application/json` or any `+json` type. |
+
+Query, header, cookie and path values are text. A value is converted to the `type` its property
+declares (`integer`, `number`, `boolean`, or an `array` of those) before it is checked; a value
+that does not convert stays text and fails `type`.
+
+## Bodies
+
+A body is held until it is complete (in memory, then in an unlinked spool file in the data
+directory; see [ADR-0030](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0030-v0-8-cache-extensibility-gateway.md)),
+then checked; nothing of it reaches the backend before. The request head has already gone to the
+backend by then, so a refused body aborts that request.
+
+| The body | Answer |
+|---|---|
+| Larger than `max_body` (default `1MiB`, at most `64MiB`) or the route's `max_body` | `413` [`payload-too-large`](/docs/reference/problems/#payload-too-large) |
+| A `Content-Type` that is not JSON (or none) | `415` [`unsupported-media-type`](/docs/reference/problems/#unsupported-media-type) |
+| Not valid JSON | `400` `validation-failed`, `{ "pointer": "/body", "message": "is not valid JSON" }` |
+| Missing, with `body_required: true` | `400` `validation-failed`, `{ "pointer": "/body", "message": "a request body is required" }` |
+
+## An OpenAPI 3.1 document
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  check-api:
+    type: validate
+    openapi: /etc/rdock/openapi.yaml   # JSON or YAML; read again on every reload, and watched
+    base_path: /api                    # the document's paths are below /api
+    unknown_operations: deny           # the default
+```
+
+The request is matched to an operation by method and path template (`/orders/{id}`; a concrete
+path such as `/orders/latest` wins over a template, and `HEAD` uses `GET`). The operation's
+parameters (with those of its path item) and its request body are checked:
+
+- Parameters `in: path`, `query`, `header` and `cookie` with a `schema`, in the default
+  serialisation (`form` for query and cookie, `simple` for path and header). Other `style` and
+  `explode` values and `content` parameters are refused when the document is loaded rather than
+  checked wrongly. `Accept`, `Content-Type` and `Authorization` header parameters are ignored, as
+  OpenAPI says.
+- `requestBody.content`: JSON media types with a `schema` are checked; other listed types are
+  accepted as they are; a type not listed is `415`. `requestBody.required: true` refuses a request
+  without a body.
+- `#/components/…` references resolve inside the document.
+
+A request that matches no operation is answered `404` (no path template matches) or `405` with
+`Allow` (the path exists, the method does not) unless `unknown_operations: allow`. A `cors`
+middleware that should answer preflights must come **before** `validate` in the route's list,
+since a document rarely lists `OPTIONS`; `rdock validate` warns otherwise.
+
+Only OpenAPI **3.1** documents are read: their Schema Objects are JSON Schema 2020-12. A 3.0
+document is refused with a diagnostic.
+
+## Settings
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `max_body` | `1MiB` | Largest body held and checked (at most `64MiB`). |
+| `max_errors` | `5` | Most entries in `errors` (1 to 100); `errors_truncated: true` says there were more. |
+| `formats` | `true` | Check `format` (`email`, `date-time`, `uuid`, `ipv4`…) as an assertion. JSON Schema 2020-12 makes it an annotation unless asked. |
+| `body_required` | `false` | With `body`: refuse a request without a body. |
+| `mode` | `enforce` | `report` lets invalid requests through, logs a warning (with the first pointer, never a value) and counts them as `reported`: try a schema on live traffic first. |
+| `unknown_operations` | `deny` | With `openapi`: `allow` lets requests outside the document through unchecked. |
+| `base_path` | none | With `openapi`: the prefix the document's paths are relative to. |
+
+`openapi` and the inline schemas cannot be combined in one middleware; use two.
+
+## Safe by design
+
+- **Schemas never fetch anything.** A `$ref` outside the schema's own document (`https://…`,
+  `other.json`) is refused by `rdock validate`; ReverseDock is built without the schema library's
+  HTTP and file resolvers.
+- **Schemas are compiled when the configuration is loaded.** A schema that does not compile is a
+  diagnostic of `rdock validate` at its path, and a reload with one is rejected.
+- **Messages never repeat the request.** An entry names the location (`pointer`) and the failed
+  rule with the schema's own limits (`must be at most 100`, `` `sku` is required ``, `does not
+  match the required pattern`), never the value sent, which may be a password or a token.
+- `pattern` uses a linear-time regular-expression engine, so a crafted value cannot make a
+  pattern backtrack.
+
+The pre-v0.8 error format (`errors.format: html`, the default) answers `400` with an HTML page to
+browsers and the old JSON object, which also carries `errors`, to clients that ask for JSON. Set
+`errors.format: problem` for API routes.
+
+Metrics: [`rdock_validation_requests_total`](/docs/reference/metrics/#rdock_validation_requests_total).
+
+## Related
+
+- [Transforming requests and responses](/docs/guides/transforming-requests/)
+- [Problem types](/docs/reference/problems/)
+- [API keys and consumers](/docs/guides/api-keys/)

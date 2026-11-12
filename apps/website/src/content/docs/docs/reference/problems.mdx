@@ -32,6 +32,7 @@ When a route (or `defaults`) sets `errors.format: problem` or `auto`
 | `instance` | `urn:uuid:` and the request ID, when the ID is a UUID (ReverseDock makes UUIDv7s; an ID a trusted proxy sent is not one). |
 | `request_id` | The request ID, also in `X-Request-ID` and the access log. |
 | `retry_after` | Seconds, when the answer has `Retry-After`. |
+| `errors` | `validation-failed` and `patch-failed` only: what failed, as a list. Never holds a value from the request. |
 
 Answers carry `Content-Language: en` and `Cache-Control: no-store`. A status without a type of
 its own below is sent as `type: about:blank` with the reason phrase as `title`.
@@ -41,6 +42,26 @@ its own below is sent as `type: about:blank` with the reason phrase as `title`.
 **400 — Bad request.** The request is malformed or repeats a credential.
 
 Sent by: A credential sent twice (two `X-API-Key` headers, two tokens), an HTTP/1.1 request without `Host`.
+
+### `validation-failed`
+
+**400 — Request validation failed.** The request does not match the schema of this route. `errors` lists where.
+
+Sent by: [`validate`](/docs/guides/request-validation/) <Status since="v0.8" />. `errors` holds at most `max_errors` entries (default 5) `{ "pointer": "/query/limit", "message": "must be at most 100" }`: `pointer` is a JSON Pointer into an object with the members `path`, `query`, `headers`, `cookies` and `body`; `message` names the failing rule and the schema's own limits, never the value sent. `errors_truncated: true` says more errors were found. A body that is not JSON is reported as `{ "pointer": "/body", "message": "is not valid JSON" }`. The pre-v0.8 JSON object (`errors.format: html` with a client that asks for JSON) carries `errors` too.
+
+```json
+{
+  "type": "https://reversedock.oday-bakkour.com/docs/reference/problems/#validation-failed",
+  "title": "Request validation failed",
+  "status": 400,
+  "detail": "The request does not match the schema of this route. `errors` lists where.",
+  "request_id": "019a7c1e-2f4b-7c3d-9e8f-0a1b2c3d4e5f",
+  "errors": [
+    { "pointer": "/query/limit", "message": "must be at most 100" },
+    { "pointer": "/body", "message": "`name` is required" }
+  ]
+}
+```
 
 ### `unauthenticated`
 
@@ -76,7 +97,7 @@ Sent by: A held body (`hold_body`, agents) that arrives too slowly.
 
 **413 — Request body too large.** The request body is larger than this route accepts.
 
-Sent by: `max_body` or `security.limits.max_body_bytes`, a held body over its limit.
+Sent by: `max_body` or `security.limits.max_body_bytes`, a held body over its limit (`hold_body`, `agent`, `validate`, `transform`).
 
 ### `uri-too-long`
 
@@ -84,11 +105,23 @@ Sent by: `max_body` or `security.limits.max_body_bytes`, a held body over its li
 
 Sent by: `security.limits.max_uri_bytes`.
 
+### `unsupported-media-type`
+
+**415 — Unsupported media type.** The request body's content type is not accepted here.
+
+Sent by: [`validate`](/docs/guides/request-validation/) when the route checks the body and its `Content-Type` is not JSON (or not a type the OpenAPI operation lists); [`transform`](/docs/guides/transforming-requests/) with `on_non_json: reject` <Status since="v0.8" />.
+
 ### `expectation-failed`
 
 **417 — Expectation failed.** Only `Expect: 100-continue` is supported.
 
 Sent by: Any other `Expect` value.
+
+### `patch-failed`
+
+**422 — Request transformation failed.** The request body cannot be transformed for this route: it lacks a value the route expects.
+
+Sent by: [`transform`](/docs/guides/transforming-requests/) <Status since="v0.8" /> when its request patch cannot be applied (a `test` operation fails, a location is missing) and `on_error` is `reject` (the default). `errors` holds one entry `{ "operation": 0, "op": "test", "message": "the value is not the expected one" }`, naming the operation of the configured patch, never the body's content.
 
 ### `rate-limited`
 

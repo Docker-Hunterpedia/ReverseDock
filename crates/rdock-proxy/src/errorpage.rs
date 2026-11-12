@@ -26,6 +26,31 @@ pub struct ErrorInfo<'a> {
     pub kind: Option<ProblemKind>,
     /// Seconds in the answer's `Retry-After`, when it has one.
     pub retry_after: Option<u64>,
+    /// Extension members a middleware added (`validate`'s `errors`), rendered in the JSON
+    /// formats only. Members named like the standard ones are ignored.
+    pub extensions: Option<&'a serde_json::Map<String, serde_json::Value>>,
+}
+
+/// Members an extension cannot replace.
+const RESERVED: [&str; 8] = [
+    "type",
+    "title",
+    "status",
+    "detail",
+    "instance",
+    "request_id",
+    "retry_after",
+    "error",
+];
+
+fn extend(body: &mut serde_json::Map<String, serde_json::Value>, info: &ErrorInfo<'_>) {
+    if let Some(extensions) = info.extensions {
+        for (name, value) in extensions {
+            if !RESERVED.contains(&name.as_str()) {
+                body.insert(name.clone(), value.clone());
+            }
+        }
+    }
 }
 
 /// A rendered page.
@@ -103,11 +128,12 @@ h1{{margin:0;font-size:3rem;color:#c2410c}}p{{margin:.5rem 0}}\
 }
 
 fn legacy_json(info: &ErrorInfo<'_>) -> Page {
-    let body = serde_json::json!({
-        "status": info.status,
-        "error": reason(info.status),
-        "request_id": info.request_id,
-    });
+    let mut body = serde_json::Map::new();
+    body.insert("status".into(), info.status.into());
+    body.insert("error".into(), reason(info.status).into());
+    body.insert("request_id".into(), info.request_id.into());
+    extend(&mut body, info);
+    let body = serde_json::Value::Object(body);
     Page {
         content_type: HeaderValue::from_static("application/json"),
         body: Bytes::from(body.to_string()),
@@ -142,6 +168,7 @@ fn problem_json(info: &ErrorInfo<'_>) -> Page {
     if let Some(seconds) = info.retry_after {
         body.insert("retry_after".into(), seconds.into());
     }
+    extend(&mut body, info);
     Page {
         content_type: HeaderValue::from_static("application/problem+json"),
         body: Bytes::from(serde_json::Value::Object(body).to_string()),

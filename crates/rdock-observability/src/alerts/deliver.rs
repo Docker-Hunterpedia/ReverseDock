@@ -30,7 +30,7 @@ const TIMEOUT: Duration = Duration::from_secs(5);
 const ATTEMPTS: u32 = 3;
 
 /// Whether an address is one a public alert service never has.
-fn private(ip: IpAddr) -> bool {
+pub(crate) fn private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_private()
@@ -67,8 +67,8 @@ pub(crate) fn private_literal(url: &str) -> bool {
 
 /// Resolves names and drops private addresses unless allowed.
 #[derive(Clone)]
-struct Guarded {
-    allow_private: bool,
+pub(crate) struct Guarded {
+    pub(crate) allow_private: bool,
 }
 
 impl tower_service::Service<Name> for Guarded {

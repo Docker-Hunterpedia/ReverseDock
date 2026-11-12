@@ -200,8 +200,8 @@ Tracked as W-SWM-01…03 below.
 ### F-GW · API gateway features (P2)
 - [ ] F-GW-01 API-key validation (hashed keys, external store) and OIDC login/policies (plain JWT validation is M-SEC-01). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the API-key half: `consumers`, `api_key` with `rdk_` keys stored as ID and SHA-256 (inline, keys file, admin API); the external store (RFC 7662) and OIDC login are open.
 - [ ] F-GW-02 Per-consumer rate limits and quotas. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `rate_limit.key: consumer` with group overrides, the `quota` middleware with persisted per-instance counters; the box is ticked by the release PR.
-- [ ] F-GW-03 Request validation against OpenAPI/JSON Schema
-- [ ] F-GW-04 Consistent JSON error envelope; request/response transformation. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the envelope half (`errors.format`, RFC 9457 problem details); body transformation is open.
+- [ ] F-GW-03 Request validation against OpenAPI/JSON Schema. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `type: validate` with inline JSON Schema 2020-12 or an OpenAPI 3.1 document; non-default OpenAPI parameter styles are refused as planned.
+- [ ] F-GW-04 Consistent JSON error envelope; request/response transformation. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the envelope half (`errors.format`, RFC 9457 problem details) and the transformation half (`type: transform`: header rules and JSON Patch on request bodies and, up to a cap, JSON response bodies).
 - [ ] F-GW-05 Usage metering events export (OTLP/webhook) — no billing in core. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `observability.metering` (CloudEvents webhook, OTLP logs, bounded queue, at least once); the box is ticked by the release PR.
 
 ### F-WEB · Web server and legacy compatibility
@@ -282,5 +282,5 @@ Tracked as W-SWM-01…03 below.
 
 ### W-OBS · Monitoring, config and secrets
 - [ ] W-OBS-01 Prometheus, Grafana, OTLP (Tempo/Jaeger), Loki/OpenSearch via stdout or OTLP, syslog (P0–P1)
-- [ ] W-OBS-02 Secrets: env, files, Docker/Swarm/K8s secrets (P0); Vault/External Secrets (P2)
+- [ ] W-OBS-02 Secrets: env, files, Docker/Swarm/K8s secrets (P0); Vault/External Secrets (P2). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* External Secrets Operator, the CSI driver and Vault Agent documented as file and Secret producers; `${vault:…}` for KV v2 with token and Kubernetes login, tested against OpenBao.
 - [x] W-OBS-03 GitOps: file provider + `rdock validate` in CI (P0); Terraform (P2)

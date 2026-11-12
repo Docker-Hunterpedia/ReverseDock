@@ -180,15 +180,70 @@ pub fn clienthello(data: &[u8]) {
     use rdock_tls::clienthello::{MAX_PEEK, Parsed, parse};
     match parse(data) {
         Ok(Parsed::NeedMore { total }) => {
-            assert!(total > data.len(), "NeedMore {total} for {} bytes", data.len());
+            assert!(
+                total > data.len(),
+                "NeedMore {total} for {} bytes",
+                data.len()
+            );
             assert!(total <= MAX_PEEK, "NeedMore {total} beyond the cap");
         }
         Ok(Parsed::Hello { hello, len }) => {
-            assert!(len <= data.len(), "a hello of {len} bytes in {} bytes", data.len());
+            assert!(
+                len <= data.len(),
+                "a hello of {len} bytes in {} bytes",
+                data.len()
+            );
             let again = parse(&data[..len]);
-            assert_eq!(again, Ok(Parsed::Hello { hello, len }), "later bytes changed the hello");
+            assert_eq!(
+                again,
+                Ok(Parsed::Hello { hello, len }),
+                "later bytes changed the hello"
+            );
         }
         Ok(Parsed::NotTls) | Err(_) => {}
+    }
+}
+
+/// Treats `data` as a pointer and as `patch \0 document` (both JSON). Pointers that parse
+/// round-trip through escaping; a patch that applies gives the same result twice; a check that
+/// passes without a document never makes `apply` panic.
+pub fn json_patch(data: &[u8]) {
+    use rdock_model::json_patch::{PatchOp, apply, escape_token, parse_pointer};
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
+    };
+    if let Ok(tokens) = parse_pointer(text) {
+        let rebuilt: String = tokens
+            .iter()
+            .map(|t| format!("/{}", escape_token(t)))
+            .collect();
+        assert_eq!(
+            parse_pointer(&rebuilt),
+            Ok(tokens),
+            "pointer `{text}` does not round-trip"
+        );
+    }
+    let (patch, document) = text.split_once('\0').unwrap_or((text, "{}"));
+    let (Ok(ops), Ok(doc)) = (
+        serde_json::from_str::<Vec<PatchOp>>(patch),
+        serde_json::from_str::<serde_json::Value>(document),
+    ) else {
+        return;
+    };
+    for op in &ops {
+        let _ = op.check();
+    }
+    let mut first = doc.clone();
+    let mut second = doc;
+    let a = apply(&mut first, &ops);
+    let b = apply(&mut second, &ops);
+    assert_eq!(
+        a.is_ok(),
+        b.is_ok(),
+        "the same patch gave different results"
+    );
+    if a.is_ok() {
+        assert_eq!(first, second);
     }
 }
 
@@ -249,6 +304,20 @@ mod tests {
         super::config_loader(b"routes: { a: { match: \"Host(`x`)\", service: s } }");
         super::config_loader(b"{\"listeners\": {\"web\": {\"address\": \":80\"}}}");
         super::config_loader(b"\xff\xfe");
+    }
+
+    #[test]
+    fn json_patch_seeds() {
+        for input in [
+            "/a~1b/~0c/0",
+            "~2",
+            "[{\"op\":\"move\",\"from\":\"/a\",\"path\":\"/a/b\"}]\0{\"a\":{}}",
+            "[{\"op\":\"add\",\"path\":\"/a/-\",\"value\":1},{\"op\":\"test\",\"path\":\"/a/0\",\"value\":1.0}]\0{\"a\":[]}",
+            "[{\"op\":\"remove\",\"path\":\"\"}]\0[]",
+            "[{\"op\":\"copy\",\"from\":\"/01\",\"path\":\"/x\"}]\0[1,2]",
+        ] {
+            super::json_patch(input.as_bytes());
+        }
     }
 
     #[test]

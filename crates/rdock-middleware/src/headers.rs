@@ -9,14 +9,14 @@ use crate::{BuildError, Context, Flow, Middleware};
 
 /// Compiled header operations, applied in the order remove, set, add.
 #[derive(Debug, Default)]
-struct Rules {
+pub(crate) struct Rules {
     remove: Vec<HeaderName>,
     set: Vec<(HeaderName, HeaderValue)>,
     add: Vec<(HeaderName, HeaderValue)>,
 }
 
 impl Rules {
-    fn new(rules: &HeaderRules) -> Result<Self, BuildError> {
+    pub(crate) fn new(rules: &HeaderRules) -> Result<Self, BuildError> {
         let pairs = |map: &std::collections::BTreeMap<String, String>| {
             map.iter()
                 .map(|(k, v)| Ok((name(k)?, value(v)?)))
@@ -31,6 +31,33 @@ impl Rules {
             set: pairs(&rules.set)?,
             add: pairs(&rules.add)?,
         })
+    }
+
+    /// Applies the rules to a request head.
+    pub(crate) fn apply_request(&self, req: &mut RequestHeader) {
+        for name in &self.remove {
+            req.remove_header(name);
+        }
+        for (name, value) in &self.set {
+            // Valid names and values are always accepted.
+            let _ = req.insert_header(name.clone(), value.clone());
+        }
+        for (name, value) in &self.add {
+            let _ = req.append_header(name.clone(), value.clone());
+        }
+    }
+
+    /// Applies the rules to a response head.
+    pub(crate) fn apply_response(&self, resp: &mut ResponseHeader) {
+        for name in &self.remove {
+            resp.remove_header(name);
+        }
+        for (name, value) in &self.set {
+            let _ = resp.insert_header(name.clone(), value.clone());
+        }
+        for (name, value) in &self.add {
+            let _ = resp.append_header(name.clone(), value.clone());
+        }
     }
 }
 
@@ -75,16 +102,7 @@ impl Headers {
 #[async_trait]
 impl Middleware for Headers {
     async fn request(&self, req: &mut RequestHeader, _cx: &mut Context) -> Flow {
-        for name in &self.request.remove {
-            req.remove_header(name);
-        }
-        for (name, value) in &self.request.set {
-            // Valid names and values are always accepted.
-            let _ = req.insert_header(name.clone(), value.clone());
-        }
-        for (name, value) in &self.request.add {
-            let _ = req.append_header(name.clone(), value.clone());
-        }
+        self.request.apply_request(req);
         Flow::Next
     }
 
@@ -94,15 +112,7 @@ impl Middleware for Headers {
         {
             let _ = resp.insert_header(http::header::STRICT_TRANSPORT_SECURITY, hsts.clone());
         }
-        for name in &self.response.remove {
-            resp.remove_header(name);
-        }
-        for (name, value) in &self.response.set {
-            let _ = resp.insert_header(name.clone(), value.clone());
-        }
-        for (name, value) in &self.response.add {
-            let _ = resp.append_header(name.clone(), value.clone());
-        }
+        self.response.apply_response(resp);
     }
 }
 

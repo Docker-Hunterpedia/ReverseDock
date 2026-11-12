@@ -43,6 +43,10 @@ exceptions = [
   # Quoted-printable encoding for SMTP alert mail, via lettre (#106). 0BSD is public-domain-like
   # with no patent clause, so it is allowed for this crate only.
   { crate = "quoted_printable", allow = ["0BSD"] },
+  # Borrowed-or-owned helper of fluent-uri <- referencing <- jsonschema (request validation,
+  # F-GW-03, ADR-0030). MIT-0 is MIT without the attribution clause, so it is allowed for this
+  # crate only.
+  { crate = "borrow-or-share", allow = ["MIT-0"] },
 ]
 
 [bans]

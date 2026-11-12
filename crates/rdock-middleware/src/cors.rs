@@ -111,6 +111,7 @@ impl Middleware for Cors {
             headers,
             body: Some(Bytes::new().into()),
             problem: None,
+            extensions: None,
         })
     }
 

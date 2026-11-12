@@ -253,6 +253,7 @@ impl Middleware for Redirect {
             headers: vec![(http::header::LOCATION, value)],
             body: Some(Bytes::new().into()),
             problem: None,
+            extensions: None,
         })
     }
 }

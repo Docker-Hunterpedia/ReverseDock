@@ -112,8 +112,17 @@ pub fn load_value(source: Value, lookup: &dyn Lookup) -> Result<Loaded, LoadErro
         lookup,
         resolved: Vec::new(),
         diagnostics: Vec::new(),
+        vault: None,
     };
     references.walk(&mut input, &mut Vec::new(), "");
+    if let Some(first) = &references.vault
+        && source.pointer("/secrets/vault").is_none_or(Value::is_null)
+    {
+        references.diagnostics.push(
+            Diagnostic::error(first, "a `${vault:…}` reference needs `secrets.vault`")
+                .with_hint("add `secrets.vault` with the server's `address` and `auth`"),
+        );
+    }
     let config: Config = serde_path_to_error::deserialize(&input).map_err(|err| {
         let path = path_of(err.path());
         let message = if references.resolved.iter().any(|p| p == &path) {
@@ -139,6 +148,12 @@ pub fn load_value(source: Value, lookup: &dyn Lookup) -> Result<Loaded, LoadErro
         source,
         diagnostics,
     })
+}
+
+/// Parses YAML or JSON text into a document, the way configuration files are read (YAML 1.2
+/// booleans only). For other documents rdock reads, such as OpenAPI files.
+pub fn parse_document(text: &str, format: Format) -> Result<Value, LoadError> {
+    parse(text, format)
 }
 
 pub(crate) fn parse(text: &str, format: Format) -> Result<Value, LoadError> {
@@ -181,6 +196,8 @@ struct References<'a> {
     /// Paths whose value came from a reference.
     resolved: Vec<String>,
     diagnostics: Vec<Diagnostic>,
+    /// The first secret field with a `${vault:…}` reference.
+    vault: Option<String>,
 }
 
 impl References<'_> {
@@ -188,8 +205,32 @@ impl References<'_> {
         match value {
             Value::String(text) => {
                 let segments: Vec<&str> = keys.iter().map(String::as_str).collect();
-                if field_kind(&segments) != FieldKind::Interpolated {
-                    return;
+                let vault = rdock_model::secrets::vault_references(text);
+                match field_kind(&segments) {
+                    FieldKind::Interpolated if !vault.is_empty() => {
+                        self.diagnostics.push(
+                            Diagnostic::error(
+                                path,
+                                interpolate::ReferenceError::VaultNotAllowed.to_string(),
+                            )
+                            .with_hint("reference the secret where it is used (a token, password or key field), or render it to a file and use `${file:…}`"),
+                        );
+                        return;
+                    }
+                    FieldKind::Interpolated => {}
+                    FieldKind::Secret => {
+                        for reference in vault {
+                            if let Err(message) =
+                                rdock_model::secrets::VaultReference::parse(reference)
+                            {
+                                self.diagnostics.push(Diagnostic::error(path, message));
+                            } else if self.vault.is_none() {
+                                self.vault = Some(path.to_owned());
+                            }
+                        }
+                        return;
+                    }
+                    FieldKind::Verbatim => return,
                 }
                 match interpolate::expand(text, self.lookup) {
                     Ok(std::borrow::Cow::Borrowed(_)) => {}

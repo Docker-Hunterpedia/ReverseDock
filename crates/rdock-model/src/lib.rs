@@ -6,13 +6,17 @@ pub mod config;
 pub mod diagnostics;
 pub mod gateway;
 pub mod interpolation;
+pub mod json_patch;
 pub mod middleware;
 pub mod providers;
 pub mod route;
 mod schema;
+pub mod secrets;
 pub mod service;
 pub mod settings;
+pub mod transform;
 mod validate;
+pub mod validation;
 pub mod values;
 
 pub use config::Config;

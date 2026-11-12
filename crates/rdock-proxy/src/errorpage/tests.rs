@@ -12,6 +12,7 @@ fn info(status: u16, accept: Option<&'static str>, format: ErrorFormat) -> Error
         format,
         kind: None,
         retry_after: None,
+        extensions: None,
     }
 }
 
@@ -140,4 +141,34 @@ fn golden_pages() {
         "the rendered pages differ from {}; rerun with RDOCK_UPDATE_GOLDEN=1 and review",
         path.display()
     );
+}
+
+#[test]
+fn extensions_are_rendered_in_the_json_formats_only() {
+    let mut extensions = serde_json::Map::new();
+    extensions.insert(
+        "errors".into(),
+        serde_json::json!([{ "pointer": "/query/limit", "message": "must be at most 100" }]),
+    );
+    extensions.insert("status".into(), serde_json::json!(999));
+    let mut problem = info(400, Some("application/json"), ErrorFormat::Problem);
+    problem.kind = Some(ProblemKind::ValidationFailed);
+    problem.extensions = Some(&extensions);
+    let body: serde_json::Value = serde_json::from_slice(&render(&problem).body).unwrap();
+    assert_eq!(body["errors"][0]["pointer"], "/query/limit");
+    assert_eq!(body["status"], 400, "a standard member cannot be replaced");
+    assert!(
+        body["type"]
+            .as_str()
+            .unwrap()
+            .ends_with("#validation-failed")
+    );
+    let mut legacy = info(400, Some("application/json"), ErrorFormat::Html);
+    legacy.extensions = Some(&extensions);
+    let body: serde_json::Value = serde_json::from_slice(&render(&legacy).body).unwrap();
+    assert_eq!(body["errors"][0]["message"], "must be at most 100");
+    let mut html = info(400, Some("text/html"), ErrorFormat::Html);
+    html.extensions = Some(&extensions);
+    let text = String::from_utf8(render(&html).body.to_vec()).unwrap();
+    assert!(!text.contains("query/limit"), "{text}");
 }

@@ -199,6 +199,8 @@ async fn serve(
     );
     // Provider listeners left out because their address was in use are retried until they bind.
     tokio::spawn(engine.clone().retry_unbound(stop.subscribe()));
+    // `${vault:…}` references are read again every `secrets.vault.refresh`.
+    tokio::spawn(engine.clone().refresh_vault(stop.subscribe()));
     let mut watcher = (!args.no_watch)
         .then(|| start_watcher(&engine, on_change))
         .flatten();

@@ -114,6 +114,14 @@ pub struct Metrics {
     pub metering_events: IntCounterVec,
     /// Metering events dropped by sink and reason (`queue_full`, `undeliverable`).
     pub metering_dropped: IntCounterVec,
+    /// Requests checked by `validate`, by middleware and result (`valid`, `invalid`,
+    /// `reported`, `unknown_operation`, `unsupported_media_type`).
+    pub validation_requests: IntCounterVec,
+    /// Bodies `transform` left unchanged, by middleware and reason (`not_json`, `encoded`,
+    /// `too_large`, `status`, `invalid_json`, `patch_failed`).
+    pub transform_skipped: IntCounterVec,
+    /// Failed reads of `${vault:…}` references after the first (the last value stays in use).
+    pub vault_refresh_failures: prometheus::IntCounter,
 }
 
 /// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
@@ -437,7 +445,29 @@ impl Metrics {
             "Usage metering events dropped, by sink and reason (queue_full, undeliverable).",
             &["sink", "reason"],
         )?;
+        let validation_requests = counters(
+            &registry,
+            "rdock_validation_requests_total",
+            "Requests checked by validate middlewares, by result.",
+            &["middleware", "result"],
+        )?;
+        let transform_skipped = counters(
+            &registry,
+            "rdock_transform_skipped_total",
+            "Bodies a transform middleware left unchanged, by reason.",
+            &["middleware", "reason"],
+        )?;
+        let vault_refresh_failures = registered(
+            &registry,
+            prometheus::IntCounter::new(
+                "rdock_vault_refresh_failures_total",
+                "Failed refreshes of Vault references; the last values stay in use.",
+            ),
+        )?;
         Ok(Self {
+            validation_requests,
+            transform_skipped,
+            vault_refresh_failures,
             consumer_requests,
             consumers_seen: std::sync::Arc::default(),
             metering_events,

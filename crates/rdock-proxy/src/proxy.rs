@@ -404,6 +404,7 @@ impl RdockProxy {
             ],
             body: Some(Body::Bytes(body)),
             problem: None,
+            extensions: None,
         };
         if listener.tls.is_none()
             && let Some(answer) = self.http01_answer(req)
@@ -507,6 +508,7 @@ impl RdockProxy {
                 format: error_format(ctx),
                 kind: reply.problem,
                 retry_after,
+                extensions: reply.extensions.as_deref(),
             });
             resp.insert_header(http::header::CONTENT_TYPE, page.content_type)?;
             resp.insert_header(http::header::CACHE_CONTROL, "no-store")?;
@@ -1515,6 +1517,7 @@ impl ProxyHttp for RdockProxy {
                         format: error_format(ctx),
                         kind: None,
                         retry_after,
+                        extensions: None,
                     })
                 },
                 |(content_type, body)| errorpage::Page {

@@ -377,6 +377,7 @@ fn parse_verdict(
                 headers,
                 body: doc.body.map(|b| Body::Bytes(Bytes::from(b))),
                 problem: None,
+                extensions: None,
             }))
         }
     }
@@ -604,6 +605,7 @@ impl Agent {
                     headers,
                     body: Some(Body::Bytes(fetched.body)),
                     problem: None,
+                    extensions: None,
                 }))
             }
             _ => {
@@ -924,6 +926,7 @@ mod tests {
                 headers: vec![],
                 body: None,
                 problem: None,
+                extensions: None,
             })
         );
         for bad in [

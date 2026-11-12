@@ -1877,6 +1877,21 @@
         ],
         "type": "string"
       },
+      "rdock.BodyTransform": {
+        "additionalProperties": false,
+        "description": "Body changes of `transform`.",
+        "properties": {
+          "patch": {
+            "default": [],
+            "description": "A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and\n`test` with JSON Pointers (RFC 6901), applied in order, all or nothing.",
+            "items": {
+              "$ref": "#/components/schemas/rdock.PatchOp"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "rdock.ByteSize": {
         "anyOf": [
           {
@@ -2301,6 +2316,10 @@
             "default": {},
             "description": "HTTP routes: which requests go to which service, through which middlewares.",
             "type": "object"
+          },
+          "secrets": {
+            "$ref": "#/components/schemas/rdock.Secrets",
+            "description": "External secret stores that secret fields can reference (`${vault:…}`)."
           },
           "security": {
             "$ref": "#/components/schemas/rdock.Security",
@@ -3278,6 +3297,30 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.KubernetesAuth": {
+        "additionalProperties": false,
+        "description": "Kubernetes login settings.",
+        "properties": {
+          "mount": {
+            "default": "kubernetes",
+            "description": "Where the Kubernetes auth method is mounted.",
+            "type": "string"
+          },
+          "role": {
+            "description": "The Vault role to log in as.",
+            "type": "string"
+          },
+          "token_file": {
+            "default": "/var/run/secrets/kubernetes.io/serviceaccount/token",
+            "description": "The service-account token, read at every login.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "role"
+        ],
+        "type": "object"
       },
       "rdock.KubernetesGateway": {
         "additionalProperties": false,
@@ -5557,6 +5600,146 @@
               "window"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an\nOpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).",
+            "properties": {
+              "base_path": {
+                "description": "With `openapi`: a prefix the document's paths are relative to (`/api` when the\ndocument's server URL is `https://example.com/api`). Requests outside it are unknown\noperations.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "body": {
+                "description": "A schema for the JSON request body. A body with another content type is answered\n`415`, a body that is not JSON `400`, a body over `max_body` `413`."
+              },
+              "body_required": {
+                "default": false,
+                "description": "With `body`: a request without a body is refused. Off by default, as OpenAPI's\n`requestBody.required`.",
+                "type": "boolean"
+              },
+              "cookies": {
+                "description": "A schema for the object of request cookies. Converted like `query`."
+              },
+              "formats": {
+                "default": true,
+                "description": "Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12\ntreats it as an annotation unless asked; rdock asks by default.",
+                "type": "boolean"
+              },
+              "headers": {
+                "description": "A schema for the object of request headers, keyed by lower-case name. Converted like\n`query`."
+              },
+              "max_body": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "1MiB",
+                "description": "Largest body checked, at most 64MiB; the body is held until it is complete. The\nroute's `max_body` applies when it is smaller."
+              },
+              "max_errors": {
+                "default": 5,
+                "description": "Most errors listed in an answer (1 to 100).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "mode": {
+                "$ref": "#/components/schemas/rdock.ValidationMode",
+                "default": "enforce",
+                "description": "`enforce` (the default) refuses invalid requests; `report` only logs and counts them,\nto try a schema on live traffic."
+              },
+              "openapi": {
+                "description": "An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to\nits operations by method and path template; each operation's parameters and its\n`application/json` request body are checked.",
+                "type": [
+                  "string",
+                  "null"
+                ]
+              },
+              "path": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.PathParameters"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "Path parameters: a regular expression for the path with named groups, and a schema for\nthe object of the groups' values."
+              },
+              "query": {
+                "description": "A schema for the object of query parameters (`{ name: value }`; a repeated name gives\nan array). Values are strings, converted to the `type` the schema declares for the\nproperty (`integer`, `number`, `boolean`, `array`)."
+              },
+              "type": {
+                "const": "validate",
+                "type": "string"
+              },
+              "unknown_operations": {
+                "$ref": "#/components/schemas/rdock.UnknownOperations",
+                "default": "deny",
+                "description": "With `openapi`: requests that match no operation of the document. `deny` (the\ndefault) answers `404` or `405`; `allow` lets them through unchecked."
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)\n(F-GW-04).",
+            "properties": {
+              "max_body": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "1MiB",
+                "description": "Largest body patched, request or response, at most 64MiB (default 1MiB). A larger\nrequest body is refused with `413`; a larger response body passes unchanged."
+              },
+              "on_error": {
+                "$ref": "#/components/schemas/rdock.OnPatchError",
+                "default": "reject",
+                "description": "A request patch that cannot be applied (a `test` operation fails, a location is\nmissing): `reject` (the default) answers `422`; `pass` forwards the body unchanged.\nA response patch that fails always leaves the body unchanged (the status is sent)."
+              },
+              "on_non_json": {
+                "$ref": "#/components/schemas/rdock.OnNonJson",
+                "default": "pass",
+                "description": "A request body that is not JSON when `request.body.patch` is set: `pass` (the\ndefault) forwards it unchanged; `reject` answers `415` (wrong content type) or `400`\n(not valid JSON)."
+              },
+              "request": {
+                "$ref": "#/components/schemas/rdock.TransformSide",
+                "default": {
+                  "body": {
+                    "patch": []
+                  },
+                  "headers": {
+                    "add": {},
+                    "remove": [],
+                    "set": {}
+                  }
+                },
+                "description": "Changes to the request sent to the backend."
+              },
+              "response": {
+                "$ref": "#/components/schemas/rdock.TransformSide",
+                "default": {
+                  "body": {
+                    "patch": []
+                  },
+                  "headers": {
+                    "add": {},
+                    "remove": [],
+                    "set": {}
+                  }
+                },
+                "description": "Changes to the response sent to the client."
+              },
+              "type": {
+                "const": "transform",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -5652,6 +5835,36 @@
         },
         "type": "object"
       },
+      "rdock.OnNonJson": {
+        "description": "What `transform` does with a request body that is not JSON.",
+        "oneOf": [
+          {
+            "const": "pass",
+            "description": "Forward it unchanged.",
+            "type": "string"
+          },
+          {
+            "const": "reject",
+            "description": "Answer `415` or `400`.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.OnPatchError": {
+        "description": "What `transform` does when a request patch cannot be applied.",
+        "oneOf": [
+          {
+            "const": "reject",
+            "description": "Answer `422` (problem type `patch-failed`).",
+            "type": "string"
+          },
+          {
+            "const": "pass",
+            "description": "Forward the body unchanged.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.PassiveHealth": {
         "additionalProperties": false,
         "description": "Ejection of backends that keep failing.",
@@ -5699,6 +5912,165 @@
             "description": "Sliding window for counting failures."
           }
         },
+        "type": "object"
+      },
+      "rdock.PatchOp": {
+        "description": "One JSON Patch operation (RFC 6902 §4).",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "Adds `value` at `path`: a new member, an array element inserted before the index (`-`\nappends), or the whole document for `\"\"`. The parent must exist.",
+            "properties": {
+              "op": {
+                "const": "add",
+                "type": "string"
+              },
+              "path": {
+                "description": "A JSON Pointer (RFC 6901).",
+                "type": "string"
+              },
+              "value": {
+                "description": "The value to add."
+              }
+            },
+            "required": [
+              "op",
+              "path",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Removes the value at `path`, which must exist.",
+            "properties": {
+              "op": {
+                "const": "remove",
+                "type": "string"
+              },
+              "path": {
+                "description": "A JSON Pointer (RFC 6901).",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Replaces the value at `path`, which must exist.",
+            "properties": {
+              "op": {
+                "const": "replace",
+                "type": "string"
+              },
+              "path": {
+                "description": "A JSON Pointer (RFC 6901).",
+                "type": "string"
+              },
+              "value": {
+                "description": "The new value."
+              }
+            },
+            "required": [
+              "op",
+              "path",
+              "value"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Removes the value at `from` and adds it at `path`. `path` must not be inside `from`.",
+            "properties": {
+              "from": {
+                "description": "Where the value is taken from.",
+                "type": "string"
+              },
+              "op": {
+                "const": "move",
+                "type": "string"
+              },
+              "path": {
+                "description": "Where it is put.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "from",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Copies the value at `from` to `path`.",
+            "properties": {
+              "from": {
+                "description": "Where the value is copied from.",
+                "type": "string"
+              },
+              "op": {
+                "const": "copy",
+                "type": "string"
+              },
+              "path": {
+                "description": "Where the copy is put.",
+                "type": "string"
+              }
+            },
+            "required": [
+              "op",
+              "from",
+              "path"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Fails the patch unless the value at `path` equals `value` (numbers by their numeric\nvalue, objects regardless of member order).",
+            "properties": {
+              "op": {
+                "const": "test",
+                "type": "string"
+              },
+              "path": {
+                "description": "A JSON Pointer (RFC 6901).",
+                "type": "string"
+              },
+              "value": {
+                "description": "The expected value."
+              }
+            },
+            "required": [
+              "op",
+              "path",
+              "value"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "rdock.PathParameters": {
+        "additionalProperties": false,
+        "description": "Path parameters of `validate`.",
+        "properties": {
+          "regex": {
+            "description": "A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it\ndoes not match fails validation.",
+            "type": "string"
+          },
+          "schema": {
+            "description": "A schema for the object of the groups' values, converted like `query`."
+          }
+        },
+        "required": [
+          "regex",
+          "schema"
+        ],
         "type": "object"
       },
       "rdock.Providers": {
@@ -6420,6 +6792,24 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.Secrets": {
+        "additionalProperties": false,
+        "description": "External secret stores.",
+        "properties": {
+          "vault": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.VaultSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "A `HashiCorp` Vault or `OpenBao` server whose KV version 2 secrets secret fields may\nreference as `${vault:<mount>/<path>#<field>}`."
+          }
+        },
+        "type": "object"
       },
       "rdock.Security": {
         "additionalProperties": false,
@@ -7213,6 +7603,29 @@
         ],
         "type": "object"
       },
+      "rdock.TransformSide": {
+        "additionalProperties": false,
+        "description": "One direction of `transform`.",
+        "properties": {
+          "body": {
+            "$ref": "#/components/schemas/rdock.BodyTransform",
+            "default": {
+              "patch": []
+            },
+            "description": "Body changes."
+          },
+          "headers": {
+            "$ref": "#/components/schemas/rdock.HeaderRules",
+            "default": {
+              "add": {},
+              "remove": [],
+              "set": {}
+            },
+            "description": "Header operations, applied in the order remove, set, add (as `headers` does)."
+          }
+        },
+        "type": "object"
+      },
       "rdock.TrustedProxy": {
         "description": "`cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.",
         "examples": [
@@ -7569,6 +7982,21 @@
         },
         "type": "object"
       },
+      "rdock.UnknownOperations": {
+        "description": "What `validate` does with requests outside the OpenAPI document.",
+        "oneOf": [
+          {
+            "const": "deny",
+            "description": "Answer `404` (no path template matches) or `405` (the path exists, the method not).",
+            "type": "string"
+          },
+          {
+            "const": "allow",
+            "description": "Let them through unchecked.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.UpstreamTls": {
         "additionalProperties": false,
         "description": "TLS to backends.",
@@ -7614,6 +8042,105 @@
             "type": "boolean"
           }
         },
+        "type": "object"
+      },
+      "rdock.ValidationMode": {
+        "description": "Whether `validate` refuses invalid requests.",
+        "oneOf": [
+          {
+            "const": "enforce",
+            "description": "Refuse invalid requests.",
+            "type": "string"
+          },
+          {
+            "const": "report",
+            "description": "Log and count invalid requests, and let them through.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.VaultAuth": {
+        "description": "How rdock logs in to Vault.",
+        "oneOf": [
+          {
+            "additionalProperties": false,
+            "description": "A token, as a `${file:…}` or `${env:…}` reference (read again on every request, so a\ntoken file rotated by an agent is picked up).",
+            "properties": {
+              "token": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "token"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Kubernetes service-account login (`POST /v1/auth/<mount>/login`); the token is renewed\nby logging in again before its lease runs out.",
+            "properties": {
+              "kubernetes": {
+                "$ref": "#/components/schemas/rdock.KubernetesAuth"
+              }
+            },
+            "required": [
+              "kubernetes"
+            ],
+            "type": "object"
+          }
+        ]
+      },
+      "rdock.VaultSettings": {
+        "additionalProperties": false,
+        "description": "A Vault or `OpenBao` server (`secrets.vault`).\n\nValues are read when a configuration is loaded and every `refresh`; a changed value reloads\nthe configuration. They stay in memory only: the configuration, its history, snapshots, the\nadmin API, logs and diagnostics keep the `${vault:…}` reference.",
+        "properties": {
+          "address": {
+            "$ref": "#/components/schemas/rdock.HttpUrl",
+            "description": "The server, e.g. `https://vault.internal:8200`. `https://` only, or `http://` to a\nloopback address (a dev server or a local agent), unless `insecure_http` is set."
+          },
+          "allow_private_targets": {
+            "default": true,
+            "description": "Allow a server on a private address (`10.0.0.0/8`, …). On by default: Vault usually\nruns inside the network.",
+            "type": "boolean"
+          },
+          "auth": {
+            "$ref": "#/components/schemas/rdock.VaultAuth",
+            "description": "How rdock logs in."
+          },
+          "ca_file": {
+            "description": "CA certificates (PEM) that sign the server's certificate, instead of the system's.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "insecure_http": {
+            "default": false,
+            "description": "Allow `http://` to a server that is not on a loopback address. **Unsafe**: the token\nand every secret cross the network unencrypted. Validation warns.",
+            "type": "boolean"
+          },
+          "namespace": {
+            "description": "A Vault Enterprise or `OpenBao` namespace, sent as `X-Vault-Namespace`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "refresh": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "5m",
+            "description": "How often referenced values are read again."
+          },
+          "timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "5s",
+            "description": "Time allowed for one request to the server."
+          }
+        },
+        "required": [
+          "address",
+          "auth"
+        ],
         "type": "object"
       },
       "rdock.Webhook": {

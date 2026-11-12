@@ -1782,3 +1782,143 @@ fn agents_and_plugins_are_checked() {
         "{warnings:?}"
     );
 }
+
+#[test]
+fn validate_middlewares_are_checked() {
+    let check = |mw: Value| errors(with(app(), json!({ "middlewares": { "v": mw } })));
+    let found = check(json!({ "type": "validate" }));
+    assert!(
+        has(&found, "middlewares.v", "nothing to check"),
+        "{found:?}"
+    );
+    let found = check(json!({ "type": "validate", "openapi": "/api.yaml", "body": {} }));
+    assert!(
+        has(&found, "middlewares.v", "cannot be combined"),
+        "{found:?}"
+    );
+    let found = check(json!({
+        "type": "validate",
+        "body": { "properties": { "a": { "$ref": "https://example.com/a.json" } } }
+    }));
+    assert!(
+        has(
+            &found,
+            "middlewares.v.body.properties.a.$ref",
+            "outside the schema"
+        ),
+        "{found:?}"
+    );
+    let found = check(json!({ "type": "validate", "query": "string" }));
+    assert!(
+        has(&found, "middlewares.v.query", "object or a boolean"),
+        "{found:?}"
+    );
+    let found =
+        check(json!({ "type": "validate", "body": {}, "max_body": "65MiB", "max_errors": 0 }));
+    assert!(
+        has(&found, "middlewares.v.max_body", "at most"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.v.max_errors", "use 1 to 100"),
+        "{found:?}"
+    );
+    assert_eq!(
+        check(json!({ "type": "validate", "body": { "$ref": "#/$defs/a", "$defs": { "a": {} } } })),
+        Vec::<(String, String)>::new()
+    );
+}
+
+#[test]
+fn transform_middlewares_are_checked() {
+    let check = |mw: Value| errors(with(app(), json!({ "middlewares": { "t": mw } })));
+    let found = check(json!({
+        "type": "transform",
+        "request": { "body": { "patch": [{ "op": "add", "path": "nope", "value": 1 }] } },
+        "response": { "body": { "patch": [{ "op": "move", "from": "/a", "path": "/a/b" }] } }
+    }));
+    assert!(
+        has(
+            &found,
+            "middlewares.t.request.body.patch[0]",
+            "must be empty or start with `/`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.t.response.body.patch[0]",
+            "moved into itself"
+        ),
+        "{found:?}"
+    );
+    let found = warnings(with(
+        app(),
+        json!({ "middlewares": { "t": { "type": "transform" } } }),
+    ));
+    assert!(
+        has(&found, "middlewares.t", "nothing to change"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn vault_settings_are_checked() {
+    let check = |vault: Value| errors(with(app(), json!({ "secrets": { "vault": vault } })));
+    let found = check(
+        json!({ "address": "http://vault.internal:8200", "auth": { "token": "${file:/t}" } }),
+    );
+    assert!(
+        has(&found, "secrets.vault.address", "`https://`"),
+        "{found:?}"
+    );
+    assert_eq!(
+        check(json!({ "address": "http://127.0.0.1:8200", "auth": { "token": "${file:/t}" } })),
+        Vec::<(String, String)>::new()
+    );
+    let insecure = json!({ "address": "http://vault.internal:8200", "insecure_http": true, "auth": { "token": "${file:/t}" } });
+    assert_eq!(check(insecure.clone()), Vec::<(String, String)>::new());
+    let found = warnings(with(app(), json!({ "secrets": { "vault": insecure } })));
+    assert!(
+        has(&found, "secrets.vault.insecure_http", "unencrypted"),
+        "{found:?}"
+    );
+    let found = check(
+        json!({ "address": "https://vault.internal:8200/v1", "auth": { "token": "s.literal" } }),
+    );
+    assert!(has(&found, "secrets.vault.address", "root"), "{found:?}");
+    assert!(
+        has(
+            &found,
+            "secrets.vault.auth.token",
+            "written in the configuration"
+        ),
+        "{found:?}"
+    );
+    let found = check(json!({
+        "address": "https://vault.internal:8200",
+        "auth": { "kubernetes": { "role": "", "token_file": "relative" } },
+        "refresh": "500ms"
+    }));
+    assert!(
+        has(&found, "secrets.vault.auth.kubernetes.role", "empty"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "secrets.vault.auth.kubernetes.token_file",
+            "absolute"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "secrets.vault.refresh", "at least 1s"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "secrets.vault.timeout", "shorter than `refresh`"),
+        "{found:?}"
+    );
+}

@@ -81,6 +81,7 @@ impl BasicAuth {
             body: Some(Bytes::from_static(b"401 Unauthorized\n").into()),
             // The text is the `html` format's body; other formats render the problem.
             problem: Some(crate::ProblemKind::Unauthenticated),
+            extensions: None,
         })
     }
 }

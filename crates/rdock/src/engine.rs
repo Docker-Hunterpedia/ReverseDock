@@ -25,6 +25,9 @@ use crate::validate::load_error;
 use crate::zero_config::{self, Source};
 
 mod api;
+mod vault;
+
+pub(crate) use vault::{read_once as read_vault_once, references as vault_references};
 
 /// Where the applied configuration came from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -162,6 +165,8 @@ pub(crate) struct Engine {
     /// Provider listeners the applied configuration left out for a bind failure; the bind
     /// retry ([`Engine::retry_unbound`]) and the providers watch it.
     unbound: tokio::sync::watch::Sender<Unbound>,
+    /// The Vault client and the state of the last read of `${vault:…}` references.
+    vault: vault::VaultState,
 }
 
 /// What the certificate manager should do for an applied configuration: nothing when
@@ -241,6 +246,7 @@ impl Engine {
             api_writes: tokio::sync::Mutex::new(()),
             alerts,
             unbound: tokio::sync::watch::Sender::new(Unbound::new()),
+            vault: vault::VaultState::default(),
         }
     }
 
@@ -536,6 +542,10 @@ impl Engine {
             source,
             mut diagnostics,
         } = loaded;
+        if let Err(errors) = self.read_vault(&file).await {
+            drop(applied);
+            return self.vault_rejected(trigger, diagnostics, errors).await;
+        }
         let snapshots = self.current_snapshots(&file);
         for snapshot in &snapshots {
             diagnostics.extend(snapshot.diagnostics.iter().cloned());
@@ -1005,6 +1015,7 @@ fn referenced_files(config_path: &Path, config: &Config) -> BTreeSet<PathBuf> {
             Middleware::BasicAuth(c) => files.extend(c.users_file.clone()),
             Middleware::Errors(c) => files.extend(c.file.clone()),
             Middleware::Maintenance(c) => files.extend(c.file.clone()),
+            Middleware::Validate(c) => files.extend(c.openapi.clone()),
             _ => {}
         }
     }
@@ -1081,6 +1092,7 @@ impl rdock_admin::Control for Engine {
             "listeners": self.plane.listeners().await,
             "providers": self.provider_status(),
             "certificates": self.acme.status(),
+            "secrets": { "vault": self.vault.status() },
             "last_reload": last,
         })
     }

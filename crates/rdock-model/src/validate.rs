@@ -65,6 +65,7 @@ impl Config {
         v.check_caches();
         v.check_consumers();
         v.check_metering();
+        v.check_secrets();
         v.check_tcp();
         v.check_udp();
         v.check_certificates();
@@ -448,6 +449,7 @@ impl Validator<'_> {
             self.check_terminal_position(&path, route);
             self.check_route_cache(&path, route);
             self.check_route_consumer_keys(&path, route);
+            self.check_route_validation(&path, route);
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
                 self.check_reference(
@@ -1060,6 +1062,8 @@ impl Validator<'_> {
                 Middleware::CloudflareAccess(c) => self.check_cloudflare_access(&path, c),
                 Middleware::ApiKey(a) => self.check_api_key(&path, a),
                 Middleware::Quota(q) => self.check_quota(&path, q),
+                Middleware::Validate(v) => self.check_validate(&path, v),
+                Middleware::Transform(t) => self.check_transform(&path, t),
                 Middleware::ClientCert(c) => {
                     for (i, pattern) in c.allow.iter().enumerate() {
                         if pattern.trim().is_empty() {
@@ -2506,6 +2510,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 mod cache;
 mod extensions;
 mod gateway;
+mod shaping;
 mod static_files;
 mod tcp;
 #[cfg(test)]

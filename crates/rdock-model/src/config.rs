@@ -67,6 +67,9 @@ pub struct Config {
     pub observability: Observability,
     /// Start-up and shutdown behaviour.
     pub lifecycle: Lifecycle,
+    /// External secret stores that secret fields can reference (`${vault:…}`).
+    #[serde(skip_serializing_if = "crate::secrets::Secrets::is_empty")]
+    pub secrets: crate::secrets::Secrets,
 }
 
 impl Config {
