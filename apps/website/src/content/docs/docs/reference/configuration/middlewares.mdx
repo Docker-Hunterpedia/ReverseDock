@@ -916,6 +916,12 @@ Longest wait. After it the waiting request goes to the origin without storing, a
 
 Largest response body stored; larger ones pass through uncached.
 
+### `middlewares.<name>.remove_targeted`
+
+**Type:** `boolean` · **Default:** `false`
+
+Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off by default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without it would fall back to the less specific `Cache-Control`.
+
 ### `middlewares.<name>.request_directives`
 
 **Type:** `honour` · `ignore` · **Default:** `honour`
@@ -975,6 +981,12 @@ Response headers that carry tags (comma or space separated).
 **Type:** `boolean` · **Default:** `false`
 
 Pass the tag headers on to clients; by default they are removed.
+
+### `middlewares.<name>.targeted`
+
+**Type:** list of `string` · **Default:** `["CDN-Cache-Control"]`
+
+Targeted cache-control fields honoured, in order (RFC 9213): the first one with a valid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both directions (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600` stores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the origin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of your own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.
 
 ## `type: plugin`
 

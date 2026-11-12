@@ -2609,6 +2609,12 @@ export type RdockMiddleware = {
      */
     max_object_size?: RdockByteSize;
     /**
+     * Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off
+     * by default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without
+     * it would fall back to the less specific `Cache-Control`.
+     */
+    remove_targeted?: boolean;
+    /**
      * The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default,
      * RFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches.
      * `only-if-cached` is always honoured.
@@ -2654,6 +2660,15 @@ export type RdockMiddleware = {
         keep?: boolean;
         [key: string]: unknown | Array<string> | boolean | undefined;
     };
+    /**
+     * Targeted cache-control fields honoured, in order (RFC 9213): the first one with a
+     * valid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both
+     * directions (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600`
+     * stores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the
+     * origin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of
+     * your own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.
+     */
+    targeted?: Array<string>;
     type: 'cache';
     [key: string]: unknown | RdockAuthorizationRule | boolean | {
         /**
@@ -2704,7 +2719,7 @@ export type RdockMiddleware = {
          */
         keep?: boolean;
         [key: string]: unknown | Array<string> | boolean | undefined;
-    } | 'cache' | undefined;
+    } | Array<string> | 'cache' | undefined;
 } | {
     /**
      * The plugin's own settings, checked by the plugin when the configuration is validated

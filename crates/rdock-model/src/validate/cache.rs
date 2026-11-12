@@ -129,6 +129,7 @@ impl Validator<'_> {
             &cache.tags.headers,
             "header name",
         );
+        self.check_targeted(path, &cache.targeted);
         match &cache.key.query {
             QueryKey::Only(list) | QueryKey::Ignore(list) => {
                 let p = format!("{path}.key.query");
@@ -153,6 +154,27 @@ impl Validator<'_> {
                 format!("{path}.lock.timeout"),
                 format!("must be above zero and at most {MAX_LOCK_TIMEOUT_SECS}s"),
             );
+        }
+    }
+
+    /// `targeted` lists header names, each once, and never the fields a targeted field
+    /// replaces (RFC 9213 §2.1).
+    fn check_targeted(&mut self, path: &str, targeted: &[String]) {
+        self.check_token_list(&format!("{path}.targeted"), targeted, "header name");
+        for (i, name) in targeted.iter().enumerate() {
+            let lower = name.to_ascii_lowercase();
+            let p = path_index(&format!("{path}.targeted"), i);
+            if matches!(lower.as_str(), "cache-control" | "expires" | "pragma") {
+                self.push(
+                    Diagnostic::error(p, format!("`{name}` is not a targeted field"))
+                        .with_hint("`Cache-Control` is always read when no targeted field applies (RFC 9213 §2.1); list fields such as `CDN-Cache-Control`"),
+                );
+            } else if targeted[..i]
+                .iter()
+                .any(|other| other.eq_ignore_ascii_case(name))
+            {
+                self.error(p, format!("`{name}` is listed twice"));
+            }
         }
     }
 

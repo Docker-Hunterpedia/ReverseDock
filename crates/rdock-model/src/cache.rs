@@ -145,6 +145,23 @@ pub struct CacheConfig {
     /// Add `Cache-Status` (RFC 9211) to responses.
     #[serde(default = "crate::defaults::yes")]
     pub cache_status: bool,
+    /// Targeted cache-control fields honoured, in order (RFC 9213): the first one with a
+    /// valid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both
+    /// directions (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600`
+    /// stores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the
+    /// origin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of
+    /// your own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.
+    #[serde(default = "default_targeted")]
+    pub targeted: Vec<String>,
+    /// Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off
+    /// by default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without
+    /// it would fall back to the less specific `Cache-Control`.
+    #[serde(default)]
+    pub remove_targeted: bool,
+}
+
+fn default_targeted() -> Vec<String> {
+    vec!["CDN-Cache-Control".to_owned()]
 }
 
 const fn default_max_object_size() -> ByteSize {

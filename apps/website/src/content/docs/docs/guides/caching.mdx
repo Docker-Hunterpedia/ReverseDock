@@ -82,7 +82,9 @@ A response is stored only when **all** of these hold:
 - The origin gives it a lifetime: `s-maxage`, then `max-age`, then `Expires` minus `Date`
   (RFC 9111 §4.2.1). There is **no default lifetime**: a response without one is not stored, so
   a personalised page your backend forgot to mark is never shared. `no-cache` stores it with a
-  zero lifetime, to be revalidated on every use; that needs an `ETag` or `Last-Modified`.
+  zero lifetime, to be revalidated on every use, even next to `max-age` or `Expires`
+  (RFC 9111 §5.2.2.4); that needs an `ETag` or `Last-Modified`. A `no-cache="…"` that names
+  fields only leaves those fields out of the stored copy.
 - It does not say `no-store` or `private`, and its `Vary` is not `*` (which can never match).
 - It sets no cookie (`Set-Cookie`). RFC 9111 has no rule for this; nginx, Varnish and Cloudflare
   all refuse to cache such responses, because the cookie is usually a session.
@@ -95,7 +97,39 @@ A response is stored only when **all** of these hold:
 `no-cache="…"` directive names, are left out of the stored copy.
 
 The age a response already had when it arrived (its own `Age` and `Date`) counts against its
-lifetime (RFC 9111 §4.2.3), so an object that aged in another cache is not kept too long.
+lifetime (RFC 9111 §4.2.3), so an object that aged in another cache is not kept too long. Of an
+`Age` with several values (`Age: 7200, 0`, or two `Age` lines) the first counts; one that is not
+a number of seconds (`abc`, `-5`, `1.5`) is ignored (RFC 9111 §5.1).
+
+### `CDN-Cache-Control`
+
+An origin can give caches of one kind their own directives in a *targeted* field (RFC 9213,
+2022; read 2026-11-12). From the origin's side this cache is the CDN tier, so by default it
+honours `CDN-Cache-Control`: when the response has one with a valid value, its directives
+**replace** `Cache-Control` and `Expires` for this cache, in both directions.
+
+```http
+Cache-Control: no-store
+CDN-Cache-Control: max-age=600
+```
+
+is stored for ten minutes (browsers still store nothing), and
+
+```http
+Cache-Control: max-age=3600
+CDN-Cache-Control: no-store
+```
+
+is not stored at all (`private` and `no-cache` work the same way). The field is a Structured
+Field dictionary (RFC 9651); one that does not parse, is empty, or gives a directive the wrong
+type (`max-age="600"`, `MAX-AGE=600`, `max-age = 600`) is ignored and `Cache-Control` applies.
+The other rules on this page (`Set-Cookie`, `Authorization`, statuses, `Vary: *`) still apply,
+reading the targeted directives where they read `Cache-Control`.
+
+| Setting | Default | The opposite |
+|---|---|---|
+| `targeted` | `[CDN-Cache-Control]` | `[]` reads `Cache-Control` only. A field of your own first, `[RDock-Cache-Control, CDN-Cache-Control]`, gives this cache directives no CDN in front of it reads. Choose `[]` when a CDN in front of rdock is meant to honour `CDN-Cache-Control` and your purges reach only that CDN: otherwise rdock keeps what the origin allowed CDNs to keep. |
+| `remove_targeted` | `false` | `true` removes the listed fields from responses (RFC 9213 §2.2 allows it). By default they pass on, because a CDN in front of rdock needs them too and would otherwise fall back to the less specific `Cache-Control`. |
 
 ### Explicit opposites
 
@@ -316,7 +350,10 @@ Size `max_object_size` below the store's `max_size`; `rdock validate` warns when
 - A `PURGE` method on the data plane: purges go through the admin API.
 - Heuristic freshness by default: it is opt-in (`heuristic_freshness`).
 - Partial reads for waiters: a waiting request reads an object once its fill completes.
-- `CDN-Cache-Control` (RFC 9213) and `immutable` (RFC 8246).
+- `immutable` (RFC 8246).
+- Keep the origin's `Date` on a stored response: Pingora 0.9.1 replaces `Date` on every
+  response it writes, so a hit carries the time it was served (its `Age` says how old it is).
+  A known defect, waiting for an upstream change.
 - A memory tier in front of a disk store, and cluster-wide purges.
 - Mirrored requests skip the cache, so the [mirror](/docs/guides/backends/) sees every request
   the service sees; a route that mirrors every request never uses its cache (`rdock validate`
@@ -329,11 +366,15 @@ The cache is tested against the RFC rules it implements, section by section, and
 restarts of the disk store).
 
 The public RFC 9111 suite [`http-tests/cache-tests`](https://github.com/http-tests/cache-tests),
-pinned by commit, runs against the cache at its safe defaults in the `http-cache` CI job. The job
-is informational, not a required check: its first complete run was on 2026-11-12, and its
-results are being triaged. The gate the design asks for (fail on any failing required test that
-is not on a reviewed allow-list with a reason) is not in place yet, so the suite's results do not
-yet block a change.
+pinned by commit, runs against the cache at its safe defaults in the `http-cache` CI job, with
+its RFC 9213 (`CDN-Cache-Control`) tests. The job fails when a test the suite marks *required*
+fails, unless that test is on a reviewed allow-list with its reason
+(`tests/conformance/http-cache/allowlist.json`), and when an allow-listed test starts passing.
+It is not a required check of the repository yet; a maintainer adds it once it is stable.
+Optional and behaviour-only tests are reported, not gated: many fail by design, because the
+defaults store nothing the origin did not give a lifetime. On 2026-11-12 the allow-list holds
+the two `Date` tests (the known defect above); each required failure of the first run has an
+end-to-end test of its own case.
 
 ## Related
 

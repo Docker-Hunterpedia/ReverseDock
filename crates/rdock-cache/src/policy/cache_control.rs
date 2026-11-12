@@ -53,6 +53,26 @@ impl Directives {
         Self { entries }
     }
 
+    /// Directives already split into names (lower case) and values, in field order; used for
+    /// a targeted field (RFC 9213), whose structured-field members map onto them.
+    #[must_use]
+    pub fn from_entries(entries: Vec<(String, Option<String>)>) -> Self {
+        Self { entries }
+    }
+
+    /// Whether `no-cache` is present without a field-name list (or with an empty one), which
+    /// forbids any reuse without revalidation (RFC 9111 §5.2.2.4).
+    #[must_use]
+    pub fn unqualified_no_cache(&self) -> bool {
+        match self.value("no-cache") {
+            None => false,
+            Some(None) => true,
+            Some(Some(list)) => list
+                .split(',')
+                .all(|f| f.trim_matches([' ', '\t']).is_empty()),
+        }
+    }
+
     /// The `Cache-Control` directives of `headers`.
     #[must_use]
     pub fn of(headers: &HeaderMap) -> Self {

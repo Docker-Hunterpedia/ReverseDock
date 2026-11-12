@@ -62,15 +62,25 @@ pub fn http_date(headers: &HeaderMap, name: &http::HeaderName) -> Option<SystemT
 /// The freshness lifetime of a response in a shared cache (RFC 9111 §4.2.1): `s-maxage`, then
 /// `max-age`, then `Expires` minus `Date`; then the configured default for the status, then
 /// heuristic freshness when enabled. An invalid `max-age`, `s-maxage` or `Expires` makes the
-/// response stale (§4.2.1, §5.3); `no-cache` stores it with a zero lifetime (§5.2.2.4).
+/// response stale (§4.2.1, §5.3). An unqualified `no-cache` gives a zero lifetime whatever
+/// `max-age`, `s-maxage` or `Expires` say, so a stored copy is revalidated before every use
+/// (§5.2.2.4); a qualified one (`no-cache="x-a"`, whose fields are not stored) still keeps
+/// the default and heuristic lifetimes away.
+///
+/// `cc` are the directives in effect: `Cache-Control`, or the targeted field that replaces
+/// it (RFC 9213 §2.1), in which case `expires` is false and `Expires` is ignored too.
 #[must_use]
 pub fn freshness_lifetime(
     status: u16,
     headers: &HeaderMap,
     cc: &Directives,
+    expires: bool,
     response_time: SystemTime,
     options: &FreshnessOptions,
 ) -> Lifetime {
+    if cc.unqualified_no_cache() {
+        return Lifetime::Explicit(Duration::ZERO);
+    }
     for name in ["s-maxage", "max-age"] {
         match cc.seconds(name) {
             Some(Seconds::Valid(s)) => return Lifetime::Explicit(Duration::from_secs(s.into())),
@@ -78,7 +88,7 @@ pub fn freshness_lifetime(
             None => {}
         }
     }
-    if headers.contains_key(EXPIRES) {
+    if expires && headers.contains_key(EXPIRES) {
         let Some(expires) = http_date(headers, &EXPIRES) else {
             return Lifetime::Explicit(Duration::ZERO);
         };
@@ -103,6 +113,22 @@ pub fn freshness_lifetime(
     Lifetime::None
 }
 
+/// The origin's `Age` (RFC 9111 §5.1): the first member of the field, across its lines, so
+/// `Age: 7200, 0` and the lines `Age: 7200` and `Age: 0` both read 7200 (a cache that chose
+/// the smaller value would serve a stale response as fresh). A parameter (`7200;foo=bar`) is
+/// cut off, which can only make the response older. Anything else that is not a
+/// delta-seconds value (`abc`, `-7200`, `7200.0`) is ignored, as §5.1 asks.
+#[must_use]
+pub fn age_header(headers: &HeaderMap) -> Option<Duration> {
+    let first = headers.get(AGE)?.to_str().ok()?;
+    let member = first.split(',').next().unwrap_or_default();
+    let value = member.split(';').next().unwrap_or_default();
+    match parse_delta_seconds(value.trim_matches([' ', '\t'])) {
+        Seconds::Valid(s) => Some(Duration::from_secs(s.into())),
+        Seconds::Invalid => None,
+    }
+}
+
 /// The age a response already has when it arrives (RFC 9111 §4.2.3, `corrected_initial_age`):
 /// the larger of its apparent age (`response_time` − `Date`) and the origin's `Age` plus the
 /// time the request took.
@@ -115,13 +141,7 @@ pub fn initial_age(
     let apparent = http_date(headers, &DATE)
         .and_then(|date| response_time.duration_since(date).ok())
         .unwrap_or(Duration::ZERO);
-    let age_value = headers
-        .get(AGE)
-        .and_then(|v| v.to_str().ok())
-        .map_or(Duration::ZERO, |v| match parse_delta_seconds(v.trim()) {
-            Seconds::Valid(s) => Duration::from_secs(s.into()),
-            Seconds::Invalid => Duration::ZERO,
-        });
+    let age_value = age_header(headers).unwrap_or(Duration::ZERO);
     let delay = response_time
         .duration_since(request_time)
         .unwrap_or(Duration::ZERO);
@@ -131,6 +151,7 @@ pub fn initial_age(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::policy::cache_control::DELTA_SECONDS_MAX;
 
     fn headers(pairs: &[(&'static str, String)]) -> HeaderMap {
         let mut h = HeaderMap::new();
@@ -149,7 +170,7 @@ mod tests {
     }
 
     fn lifetime(h: &HeaderMap, options: &FreshnessOptions) -> Lifetime {
-        freshness_lifetime(200, h, &Directives::of(h), at(0), options)
+        freshness_lifetime(200, h, &Directives::of(h), true, at(0), options)
     }
 
     #[test]
@@ -242,6 +263,72 @@ mod tests {
             heuristic: false,
         };
         assert_eq!(lifetime(&h, &default), Lifetime::Explicit(Duration::ZERO));
+    }
+
+    #[test]
+    fn rfc9111_5_2_2_4_no_cache_beats_max_age_and_expires_but_a_qualified_one_does_not() {
+        let none = FreshnessOptions::default();
+        for cc in [
+            "max-age=10000, no-cache",
+            "No-CaChE, s-maxage=50",
+            "no-cache=\"\"",
+        ] {
+            let h = headers(&[
+                ("cache-control", cc.into()),
+                ("date", date(at(0))),
+                ("expires", date(at(10_000))),
+            ]);
+            assert_eq!(
+                lifetime(&h, &none),
+                Lifetime::Explicit(Duration::ZERO),
+                "{cc}"
+            );
+        }
+        let h = headers(&[("cache-control", "max-age=60, no-cache=\"x-a\"".into())]);
+        assert_eq!(
+            lifetime(&h, &none),
+            Lifetime::Explicit(Duration::from_secs(60))
+        );
+        // Without a lifetime, a qualified no-cache still keeps the defaults away.
+        let default = FreshnessOptions {
+            default_ttl: BTreeMap::from([(200, Duration::from_secs(5))]),
+            heuristic: false,
+        };
+        let h = headers(&[("cache-control", "no-cache=\"x-a\"".into())]);
+        assert_eq!(lifetime(&h, &default), Lifetime::Explicit(Duration::ZERO));
+    }
+
+    #[test]
+    fn rfc9213_2_1_a_targeted_field_ignores_expires() {
+        let h = headers(&[("date", date(at(0))), ("expires", date(at(90)))]);
+        let none = FreshnessOptions::default();
+        assert_eq!(
+            freshness_lifetime(200, &h, &Directives::default(), false, at(0), &none),
+            Lifetime::None
+        );
+    }
+
+    #[test]
+    fn rfc9111_5_1_age_reads_the_first_member_and_ignores_invalid_values() {
+        let read = |lines: &[&str]| {
+            let mut h = HeaderMap::new();
+            for l in lines {
+                h.append(AGE, l.parse().unwrap());
+            }
+            age_header(&h).map(|d| d.as_secs())
+        };
+        assert_eq!(read(&["7200, 0"]), Some(7200));
+        assert_eq!(read(&["0, 7200"]), Some(0));
+        assert_eq!(read(&["7200", "0"]), Some(7200));
+        assert_eq!(read(&["0", "7200"]), Some(0));
+        assert_eq!(read(&["0, 0"]), Some(0));
+        assert_eq!(read(&["7200;foo=bar"]), Some(7200));
+        assert_eq!(read(&[" 30 "]), Some(30));
+        assert_eq!(read(&["2147483649"]), Some(u64::from(DELTA_SECONDS_MAX)));
+        for bad in ["abc", "-7200", "7200.0", "", ", 5"] {
+            assert_eq!(read(&[bad]), None, "{bad:?}");
+        }
+        assert_eq!(read(&[]), None);
     }
 
     #[test]

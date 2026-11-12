@@ -1501,6 +1501,35 @@ fn cached(middlewares: Value, chain: Value) -> Value {
 }
 
 #[test]
+fn cache_targeted_fields_are_header_names_other_than_cache_control() {
+    let found = errors(cached(
+        json!({ "c": { "type": "cache", "store": "mem", "targeted": ["Cache-Control", "bad name", "CDN-Cache-Control", "cdn-cache-control"] } }),
+        json!(["c"]),
+    ));
+    assert!(
+        has(&found, "middlewares.c.targeted[0]", "not a targeted field"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.targeted[1]",
+            "not a valid header name"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.targeted[3]", "listed twice"),
+        "{found:?}"
+    );
+    let ok = cached(
+        json!({ "c": { "type": "cache", "store": "mem", "targeted": [] } }),
+        json!(["c"]),
+    );
+    assert_eq!(errors(ok), Vec::<(String, String)>::new());
+}
+
+#[test]
 fn cache_middlewares_need_a_defined_store_and_sane_settings() {
     let found = errors(cached(
         json!({ "c": { "type": "cache", "store": "nope", "statuses": [206, 200, 99], "default_ttl": { "404": "1m", "x": "1m" }, "lock": { "timeout": "0s" }, "key": { "headers": ["bad header"], "query": { "only": [] } } } }),

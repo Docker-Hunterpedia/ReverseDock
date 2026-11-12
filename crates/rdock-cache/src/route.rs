@@ -115,6 +115,8 @@ pub struct RoutePolicy {
     pub keep_tags: bool,
     /// `cache_status`.
     pub cache_status: bool,
+    /// `remove_targeted`: the targeted fields are removed from responses.
+    pub remove_targeted: bool,
 }
 
 fn header_names(names: &[String]) -> Result<Vec<HeaderName>, String> {
@@ -174,6 +176,7 @@ impl RoutePolicy {
                     heuristic: config.heuristic_freshness,
                 },
                 stale_if_error_cap: config.stale_if_error.as_std(),
+                targeted: header_names(&config.targeted)?,
             },
             honour_request_directives: config.request_directives == RequestDirectives::Honour,
             lock: (config.lock.enabled && !timeout.is_zero()).then(|| LockPolicy {
@@ -183,6 +186,7 @@ impl RoutePolicy {
             tag_headers: header_names(&config.tags.headers)?,
             keep_tags: config.tags.keep,
             cache_status: config.cache_status,
+            remove_targeted: config.remove_targeted,
         })
     }
 
@@ -222,6 +226,13 @@ impl RoutePolicy {
                 )
             })
             .collect()
+    }
+
+    /// The directives a stored or received response is judged by: its first valid targeted
+    /// field, else `Cache-Control` (RFC 9213 §2.1).
+    #[must_use]
+    pub fn directives(&self, response: &HeaderMap) -> crate::policy::cache_control::Directives {
+        crate::policy::targeted::effective(response, &self.store_options.targeted).cc
     }
 
     /// Whether the route keys on request header `name`.
@@ -277,6 +288,8 @@ mod tests {
         assert_eq!(policy.lock.map(|l| l.timeout), Some(Duration::from_secs(5)));
         assert!(policy.cache_status && !policy.keep_tags);
         assert_eq!(policy.tag_headers, ["cache-tag", "surrogate-key"]);
+        assert_eq!(policy.store_options.targeted, ["cdn-cache-control"]);
+        assert!(!policy.remove_targeted);
     }
 
     #[test]
@@ -286,7 +299,8 @@ mod tests {
                 "store": "m", "default_ttl": { "200": "5m" }, "heuristic_freshness": true,
                 "set_cookie": "strip", "authorization": "store", "request_directives": "ignore",
                 "lock": { "enabled": false }, "tags": { "keep": true }, "cache_status": false,
-                "key": { "query": { "ignore": ["utm_*"] }, "headers": ["Accept-Language"] }
+                "key": { "query": { "ignore": ["utm_*"] }, "headers": ["Accept-Language"] },
+                "targeted": [], "remove_targeted": true
             })),
             store(),
         )
@@ -304,6 +318,7 @@ mod tests {
         assert!(policy.keep_tags && !policy.cache_status);
         assert!(policy.keys_on("ACCEPT-language"));
         assert_eq!(policy.query, QueryRule::Ignore(vec![Pattern::new("utm_*")]));
+        assert!(policy.store_options.targeted.is_empty() && policy.remove_targeted);
     }
 
     #[test]

@@ -1,9 +1,12 @@
 # HTTP cache conformance (ADR-0030, "Proof"): the public caching test suite http-tests/cache-tests
-# (RFC 9111, by Mark Nottingham) run against rdock's `cache` middleware at its safe defaults.
-# INFORMATIONAL: not a required check, and a failing test does not fail the job (the suite calls
-# itself "not a conformance test suite" and has optional and behaviour tests no cache passes).
-# The job fails only when it cannot do its work: the build, `rdock validate`, the origin or rdock
-# not starting. The results and logs are uploaded as an artifact; the step summary has the table.
+# (RFC 9111 and RFC 9213, by Mark Nottingham) run against rdock's `cache` middleware at its safe
+# defaults. GATED, but NOT (yet) a required check: a maintainer adds `http-cache` to the "Protect
+# main" ruleset when it has been stable. The job fails when a test of kind "required" fails that is
+# not on tests/conformance/http-cache/allowlist.json (each entry: test id and the reason), when an
+# allow-listed test passes (a stale entry), or when it cannot do its work (the build,
+# `rdock validate`, the origin or rdock not starting, no results). Optional and check tests, and
+# setup, harness and dependency failures, are information only. The results and logs are uploaded
+# as an artifact; the step summary has the table and the lists.
 # Reproduce locally and read the results: tests/conformance/http-cache/README.md.
 name: cache
 
@@ -13,6 +16,7 @@ on:
       - crates/rdock-cache/**
       - crates/rdock-proxy/**
       - crates/rdock-middleware/**
+      - Cargo.lock
       - tests/conformance/http-cache/**
       - .github/workflows/cache.yml
   schedule:
@@ -107,7 +111,7 @@ jobs:
             > "$RUNNER_TEMP/out/control.json" 2> "$RUNNER_TEMP/out/control.err" || rc=$?
           echo "control run: exit status $rc, $(wc -c < "$RUNNER_TEMP/out/control.json") bytes of results"
           tail -n 20 "$RUNNER_TEMP/out/control.err" || true
-      # The suite's exit status is captured, not propagated: a failing test is information.
+      # The suite's exit status is captured, not propagated: the gate reads the results instead.
       - name: Run the suite against rdock
         working-directory: cache-tests
         run: |
@@ -122,11 +126,18 @@ jobs:
             echo "::error::the suite produced no results"
             exit 1
           fi
-      - name: Summarise
+      # The gate: exits 1 for a required failure that is not allow-listed or a stale entry.
+      - name: Summarise and apply the gate
         run: |
+          rc=0
           node "$HARNESS/summarize.mjs" "$RUNNER_TEMP/out/results.json" cache-tests \
-            "$(cat "$RUNNER_TEMP/out/cli.exit")" | tee "$RUNNER_TEMP/out/summary.md" > /dev/null
+            "$(cat "$RUNNER_TEMP/out/cli.exit")" "$HARNESS/allowlist.json" \
+            > "$RUNNER_TEMP/out/summary.md" || rc=$?
           cat "$RUNNER_TEMP/out/summary.md"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::http-cache gate failed (see the summary above and $HARNESS/allowlist.json)"
+          fi
+          exit "$rc"
       - name: rdock log (tail)
         if: always()
         run: tail -n 50 "$RUNNER_TEMP/out/rdock.log" || true

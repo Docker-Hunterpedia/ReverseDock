@@ -5276,6 +5276,11 @@
                 "default": "64MiB",
                 "description": "Largest response body stored; larger ones pass through uncached."
               },
+              "remove_targeted": {
+                "default": false,
+                "description": "Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off\nby default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without\nit would fall back to the less specific `Cache-Control`.",
+                "type": "boolean"
+              },
               "request_directives": {
                 "$ref": "#/components/schemas/rdock.RequestDirectives",
                 "default": "honour",
@@ -5346,6 +5351,16 @@
                   }
                 },
                 "type": "object"
+              },
+              "targeted": {
+                "default": [
+                  "CDN-Cache-Control"
+                ],
+                "description": "Targeted cache-control fields honoured, in order (RFC 9213): the first one with a\nvalid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both\ndirections (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600`\nstores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the\norigin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of\nyour own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               },
               "type": {
                 "const": "cache",

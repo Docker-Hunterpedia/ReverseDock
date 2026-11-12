@@ -11,4 +11,5 @@ pub mod revalidate;
 pub mod status;
 pub mod storable;
 pub mod tags;
+pub mod targeted;
 pub mod vary;

@@ -2,11 +2,12 @@
 
 use std::time::{Duration, SystemTime};
 
-use http::header::{AUTHORIZATION, ETAG, LAST_MODIFIED, SET_COOKIE};
+use http::header::{AUTHORIZATION, ETAG, HeaderName, LAST_MODIFIED, SET_COOKIE};
 use http::{HeaderMap, Method};
 
 use super::cache_control::{Directives, Seconds};
 use super::freshness::{FreshnessOptions, Lifetime, freshness_lifetime, initial_age};
+use super::targeted::{CDN_CACHE_CONTROL, effective};
 use super::vary::{Vary, parse_vary};
 
 /// Statuses stored by default, each only with a lifetime (RFC 9110 §15.1's heuristically
@@ -49,6 +50,9 @@ pub struct StoreOptions {
     pub freshness: FreshnessOptions,
     /// Upper bound on the origin's `stale-if-error` window.
     pub stale_if_error_cap: Duration,
+    /// Targeted cache-control fields honoured, in order (RFC 9213); the first valid one
+    /// replaces `Cache-Control` and `Expires`.
+    pub targeted: Vec<HeaderName>,
 }
 
 impl Default for StoreOptions {
@@ -59,6 +63,7 @@ impl Default for StoreOptions {
             authorization: AuthorizationPolicy::Refuse,
             freshness: FreshnessOptions::default(),
             stale_if_error_cap: Duration::from_secs(24 * 3600),
+            targeted: vec![HeaderName::from_static(CDN_CACHE_CONTROL)],
         }
     }
 }
@@ -137,7 +142,9 @@ pub struct Storable {
 /// Fields a cache must not store (RFC 9111 §3.1).
 const NEVER_STORED: [&str; 2] = ["proxy-authenticate", "proxy-authentication-info"];
 
-/// Decides whether the response (`status`, `headers`) to `request` may be stored.
+/// Decides whether the response (`status`, `headers`) to `request` may be stored. The
+/// response's directives are those of the first valid targeted field of the route, else
+/// `Cache-Control` (RFC 9213 §2.1).
 pub fn storable(
     request: &RequestFacts<'_>,
     status: u16,
@@ -158,7 +165,8 @@ pub fn storable(
     if !options.statuses.contains(&status) {
         return Err(NotStorable::Status(status));
     }
-    let cc = Directives::of(headers);
+    let effective = effective(headers, &options.targeted);
+    let cc = effective.cc;
     if cc.has("no-store") {
         return Err(NotStorable::NoStore);
     }
@@ -188,7 +196,14 @@ pub fn storable(
     {
         return Err(NotStorable::Authorization);
     }
-    let source = freshness_lifetime(status, headers, &cc, response_time, &options.freshness);
+    let source = freshness_lifetime(
+        status,
+        headers,
+        &cc,
+        effective.targeted.is_none(),
+        response_time,
+        &options.freshness,
+    );
     let Some(lifetime) = source.duration() else {
         return Err(NotStorable::NoFreshness);
     };
@@ -431,6 +446,97 @@ mod tests {
         assert_eq!(
             decide(&Method::GET, &none, 200, &useless),
             Err(NotStorable::NoFreshness)
+        );
+    }
+
+    #[test]
+    fn rfc9111_5_2_2_4_no_cache_with_max_age_is_revalidated_or_not_stored() {
+        let none = HeaderMap::new();
+        let fresh_no_cache = headers(&[("cache-control", "max-age=10000, no-cache")]);
+        assert_eq!(
+            decide(&Method::GET, &none, 200, &fresh_no_cache),
+            Err(NotStorable::NoFreshness),
+            "zero lifetime and no validator: never usable"
+        );
+        let with_etag = headers(&[
+            ("cache-control", "max-age=10000, no-cache"),
+            ("etag", "\"a\""),
+        ]);
+        assert_eq!(
+            decide(&Method::GET, &none, 200, &with_etag)
+                .unwrap()
+                .lifetime,
+            Duration::ZERO
+        );
+    }
+
+    #[test]
+    fn rfc9213_cdn_cache_control_replaces_cache_control_by_default_and_can_be_turned_off() {
+        let none = HeaderMap::new();
+        for (cdn, why) in [
+            ("private", NotStorable::Private),
+            ("no-store", NotStorable::NoStore),
+            ("no-cache", NotStorable::NoFreshness),
+        ] {
+            let resp = headers(&[
+                ("cache-control", "max-age=10000"),
+                ("cdn-cache-control", cdn),
+            ]);
+            assert_eq!(decide(&Method::GET, &none, 200, &resp), Err(why), "{cdn}");
+        }
+        let resp = headers(&[
+            ("cache-control", "no-store"),
+            ("cdn-cache-control", "max-age=10000"),
+        ]);
+        assert_eq!(
+            decide(&Method::GET, &none, 200, &resp).unwrap().lifetime,
+            Duration::from_secs(10_000)
+        );
+        // Expires is ignored with the targeted field, Cache-Control too.
+        let resp = headers(&[
+            ("cdn-cache-control", "max-age=0"),
+            ("expires", "Thu, 01 Jan 2099 00:00:00 GMT"),
+        ]);
+        assert_eq!(
+            decide(&Method::GET, &none, 200, &resp),
+            Err(NotStorable::NoFreshness)
+        );
+        // An invalid field is ignored.
+        let resp = headers(&[
+            ("cache-control", "no-store"),
+            ("cdn-cache-control", "max-age=\"1\""),
+        ]);
+        assert_eq!(
+            decide(&Method::GET, &none, 200, &resp),
+            Err(NotStorable::NoStore)
+        );
+        // `targeted: []` reads Cache-Control only.
+        let off = StoreOptions {
+            targeted: Vec::new(),
+            ..StoreOptions::default()
+        };
+        let resp = headers(&[
+            ("cache-control", "no-store"),
+            ("cdn-cache-control", "max-age=10000"),
+        ]);
+        assert_eq!(
+            decide_with(&Method::GET, &none, 200, &resp, &off),
+            Err(NotStorable::NoStore)
+        );
+        let resp = headers(&[
+            ("cache-control", "max-age=60"),
+            ("cdn-cache-control", "no-store"),
+        ]);
+        assert!(decide_with(&Method::GET, &none, 200, &resp, &off).is_ok());
+        // The Authorization rule reads the directives in effect.
+        let auth = headers(&[("authorization", "Bearer x")]);
+        let resp = headers(&[
+            ("cache-control", "public, max-age=60"),
+            ("cdn-cache-control", "max-age=60"),
+        ]);
+        assert_eq!(
+            decide(&Method::GET, &auth, 200, &resp),
+            Err(NotStorable::Authorization)
         );
     }
 

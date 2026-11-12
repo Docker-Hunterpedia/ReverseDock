@@ -245,8 +245,7 @@ pub(crate) fn hit_filter(
 ) -> Option<ForcedFreshness> {
     let now = SystemTime::now();
     let fresh_until = meta.fresh_until();
-    let stored_cc =
-        rdock_cache::policy::cache_control::Directives::of(&meta.response_header().headers);
+    let stored_cc = cc.policy.directives(&meta.response_header().headers);
     let stored = request::Stored {
         age: meta.age(),
         remaining: is_fresh.then(|| fresh_until.duration_since(now).unwrap_or(Duration::ZERO)),
@@ -483,7 +482,8 @@ pub(crate) fn status(session: &Session, cc: &mut CacheCtx) -> CacheStatus {
     status
 }
 
-/// Adds `Cache-Status` (when the route sends it) and removes the tag headers (unless kept).
+/// Adds `Cache-Status` (when the route sends it) and removes the tag headers (unless kept)
+/// and, with `remove_targeted`, the targeted cache-control fields (RFC 9213 §2.2).
 pub(crate) fn decorate(session: &Session, resp: &mut ResponseHeader, cc: &mut CacheCtx) {
     let status = status(session, cc);
     if cc.policy.cache_status {
@@ -491,6 +491,11 @@ pub(crate) fn decorate(session: &Session, resp: &mut ResponseHeader, cc: &mut Ca
     }
     if !cc.policy.keep_tags {
         for name in &cc.policy.tag_headers {
+            resp.remove_header(name);
+        }
+    }
+    if cc.policy.remove_targeted {
+        for name in &cc.policy.store_options.targeted {
             resp.remove_header(name);
         }
     }

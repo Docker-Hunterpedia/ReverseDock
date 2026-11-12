@@ -1161,3 +1161,195 @@ async fn retried_misses_are_stored_once_and_mirrored_requests_skip_the_cache() {
         "the mirror sees every request the service sees"
     );
 }
+
+// -- cases of the RFC 9111 / RFC 9213 conformance suite (http-tests/cache-tests) -------------
+
+/// A far-future `Expires` (the suite sends `now + 10000s`; any future date is the same case).
+const FUTURE: &str = "Thu, 01 Jan 2099 00:00:00 GMT";
+
+/// `cc-resp-no-cache`, `cc-resp-no-cache-case-insensitive`, `cc-resp-no-cache-revalidate-fresh`:
+/// `no-cache` wins over `max-age` and `Expires` (RFC 9111 §5.2.2.4).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn no_cache_beats_max_age_and_expires() {
+    let origin = Origin::start().await;
+    origin.set(
+        "/nc",
+        cached("max-age=10000, no-cache", "x").header("expires", FUTURE),
+    );
+    origin.set(
+        "/nc-case",
+        cached("max-age=10000, No-CaChE", "x").header("expires", FUTURE),
+    );
+    origin.set(
+        "/nc-etag",
+        cached("max-age=10000, no-cache", "x")
+            .header("expires", FUTURE)
+            .etag("\"abcd\""),
+    );
+    origin.set(
+        "/nc-field",
+        cached("max-age=60, no-cache=\"x-secret\"", "x").header("x-secret", "s"),
+    );
+    let (_rdock, port) = start(&origin, &Setup::default());
+    for path in ["/nc", "/nc-case"] {
+        let first = get(port, path).await;
+        assert!(
+            status(&first).ends_with("detail=no-freshness"),
+            "{path}: {}",
+            status(&first)
+        );
+        let second = get(port, path).await;
+        assert!(!is_hit(&second), "{path}: {}", status(&second));
+        assert_eq!(origin.count(path), 2, "{path}");
+    }
+    // With a validator it is stored and revalidated before every use.
+    get(port, "/nc-etag").await;
+    let second = get(port, "/nc-etag").await;
+    assert!(
+        status(&second).starts_with("rdock; fwd=stale; fwd-status=304"),
+        "{}",
+        status(&second)
+    );
+    assert_eq!(
+        origin.last_headers("/nc-etag").unwrap()["if-none-match"],
+        "\"abcd\""
+    );
+    assert_eq!(second.text(), "x");
+    // A qualified no-cache stores the rest of the response and reuses it without the field.
+    get(port, "/nc-field").await;
+    let hit = get(port, "/nc-field").await;
+    assert!(is_hit(&hit), "{}", status(&hit));
+    assert!(hit.header("x-secret").is_none());
+    assert_eq!(origin.count("/nc-field"), 1);
+}
+
+/// `age-parse-suffix`, `age-parse-prefix`, `age-parse-suffix-twoline`,
+/// `age-parse-prefix-twoline`, `age-parse-float`: the first `Age` member counts, an invalid
+/// value is ignored (RFC 9111 §5.1).
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn the_first_age_member_counts_and_an_invalid_age_is_ignored() {
+    let origin = Origin::start().await;
+    let aged = |ages: &[&str]| {
+        ages.iter()
+            .fold(cached("max-age=3600", "x"), |s, age| s.header("age", age))
+    };
+    let cases = [
+        ("/suffix", &["7200, 0"][..], false),
+        ("/prefix", &["0, 7200"][..], true),
+        ("/suffix-twoline", &["7200", "0"][..], false),
+        ("/prefix-twoline", &["0", "7200"][..], true),
+        ("/float", &["7200.0"][..], true),
+        ("/negative", &["-7200"][..], true),
+        ("/parameter", &["7200;foo=bar"][..], false),
+    ];
+    for (path, ages, _) in cases {
+        origin.set(path, aged(ages));
+    }
+    let (_rdock, port) = start(&origin, &Setup::default());
+    for (path, _, reused) in cases {
+        get(port, path).await;
+        let second = get(port, path).await;
+        assert_eq!(is_hit(&second), reused, "{path}: {}", status(&second));
+        assert_eq!(origin.count(path), if reused { 1 } else { 2 }, "{path}");
+    }
+}
+
+/// `cdn-private`, `cdn-no-cache`, `cdn-no-store-cc-fresh`, `cdn-fresh-cc-nostore`,
+/// `cdn-max-age-0-expires`, `cdn-cc-invalid-sh-type-wrong`, `cdn-remove-header`: the first
+/// valid targeted field (default `CDN-Cache-Control`) replaces `Cache-Control` and `Expires`
+/// (RFC 9213 §2.1), an invalid one is ignored, and the field is forwarded unless
+/// `remove_targeted` is set; `targeted: []` reads `Cache-Control` alone.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn cdn_cache_control_replaces_cache_control_and_each_choice_has_an_opposite() {
+    let origin = Origin::start().await;
+    let fresh = |cdn: &str| {
+        cached("max-age=10000", "x")
+            .header("expires", FUTURE)
+            .header("cdn-cache-control", cdn)
+    };
+    origin.set("/cdn-private", fresh("private"));
+    origin.set("/cdn-no-cache", fresh("no-cache"));
+    origin.set("/cdn-no-store", fresh("no-store"));
+    origin.set(
+        "/cdn-max-age-0",
+        Script::ok("x")
+            .header("expires", FUTURE)
+            .header("cdn-cache-control", "max-age=0"),
+    );
+    origin.set(
+        "/cdn-fresh",
+        cached("no-store", "x").header("cdn-cache-control", "max-age=10000"),
+    );
+    origin.set(
+        "/cdn-invalid",
+        cached("no-store", "x").header("cdn-cache-control", "max-age=\"10000\""),
+    );
+    let (_rdock, port) = start(&origin, &Setup::default());
+    for (path, detail) in [
+        ("/cdn-private", "private"),
+        ("/cdn-no-cache", "no-freshness"),
+        ("/cdn-no-store", "no-store"),
+        ("/cdn-max-age-0", "no-freshness"),
+        ("/cdn-invalid", "no-store"),
+    ] {
+        let first = get(port, path).await;
+        assert!(
+            status(&first).ends_with(&format!("detail={detail}")),
+            "{path}: {}",
+            status(&first)
+        );
+        assert!(!is_hit(&get(port, path).await), "{path}");
+        assert_eq!(origin.count(path), 2, "{path}");
+    }
+    let first = get(port, "/cdn-fresh").await;
+    assert_eq!(first.header("cdn-cache-control"), Some("max-age=10000"));
+    let hit = get(port, "/cdn-fresh").await;
+    assert!(is_hit(&hit), "{}", status(&hit));
+    assert_eq!(hit.header("cache-control"), Some("no-store"));
+    assert_eq!(
+        hit.header("cdn-cache-control"),
+        Some("max-age=10000"),
+        "forwarded by default, for a CDN in front"
+    );
+    assert_eq!(origin.count("/cdn-fresh"), 1);
+
+    // `targeted: []`: Cache-Control alone decides.
+    let plain = Origin::start().await;
+    plain.set(
+        "/cdn-fresh",
+        cached("no-store", "x").header("cdn-cache-control", "max-age=10000"),
+    );
+    plain.set("/cdn-no-store", fresh("no-store"));
+    let (_off, port) = start(
+        &plain,
+        &Setup {
+            settings: "targeted: []",
+            ..Setup::default()
+        },
+    );
+    for path in ["/cdn-fresh", "/cdn-fresh", "/cdn-no-store", "/cdn-no-store"] {
+        get(port, path).await;
+    }
+    assert_eq!(plain.count("/cdn-fresh"), 2);
+    assert_eq!(plain.count("/cdn-no-store"), 1);
+
+    // `remove_targeted: true`: honoured, and kept from clients on misses and hits.
+    let removed = Origin::start().await;
+    removed.set(
+        "/cdn-fresh",
+        cached("no-store", "x").header("cdn-cache-control", "max-age=10000"),
+    );
+    let (_rm, port) = start(
+        &removed,
+        &Setup {
+            settings: "remove_targeted: true",
+            ..Setup::default()
+        },
+    );
+    let miss = get(port, "/cdn-fresh").await;
+    let hit = get(port, "/cdn-fresh").await;
+    assert!(is_hit(&hit), "{}", status(&hit));
+    assert!(miss.header("cdn-cache-control").is_none());
+    assert!(hit.header("cdn-cache-control").is_none());
+    assert_eq!(removed.count("/cdn-fresh"), 1);
+}
