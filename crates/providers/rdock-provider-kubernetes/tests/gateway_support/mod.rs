@@ -753,6 +753,8 @@ impl Router {
                 sticky_key: b"test",
                 live: &rdock_observability::live::Live::default(),
                 caches: None,
+                plugins: &rdock_plugin_api::Registry::new(),
+                metrics: None,
             },
         );
         let errors: Vec<_> = compiled

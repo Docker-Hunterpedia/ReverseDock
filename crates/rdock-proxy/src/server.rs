@@ -94,6 +94,7 @@ pub struct DataPlane {
     sticky_key: Vec<u8>,
     live: Arc<rdock_observability::live::Live>,
     caches: rdock_cache::Registry,
+    plugins: Arc<rdock_plugin_api::Registry>,
     state: Mutex<State>,
     generation: AtomicU64,
 }
@@ -136,6 +137,7 @@ impl DataPlane {
             sticky_key: random_key(),
             live: Arc::default(),
             caches,
+            plugins: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
             }),
@@ -171,6 +173,13 @@ impl DataPlane {
     #[must_use]
     pub fn spool(&self) -> Option<Arc<rdock_middleware::Spool>> {
         self.shared.spool.get().cloned()
+    }
+
+    /// The native plugins `type: plugin` middlewares may name (`rdock::run(registry)`).
+    #[must_use]
+    pub fn with_plugins(mut self, plugins: Arc<rdock_plugin_api::Registry>) -> Self {
+        self.plugins = plugins;
+        self
     }
 
     /// Signs sticky cookies with `key` instead of a key that lives only as long as the process.
@@ -226,6 +235,8 @@ impl DataPlane {
                 sticky_key: &self.sticky_key,
                 live: &self.live,
                 caches: Some(&self.caches),
+                plugins: &self.plugins,
+                metrics: Some(&self.shared.metrics),
             },
         )
     }

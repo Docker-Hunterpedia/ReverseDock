@@ -548,6 +548,42 @@ export type RdockAdminTokens = {
 };
 
 /**
+ * An agent's circuit breaker: after `failures` failed calls in a row, the most recent within
+ * `window` of the first, the agent is not called for `open_for`; `on_error` applies at once
+ * meanwhile. Then one call is tried: success closes the breaker, failure opens it again.
+ */
+export type RdockAgentBreaker = {
+    /**
+     * Failed calls in a row that open the breaker; `0` turns it off.
+     */
+    failures?: number;
+    /**
+     * How long the breaker stays open.
+     */
+    open_for?: RdockDuration;
+    /**
+     * The failures must fall within this time.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | number | RdockDuration | undefined;
+};
+
+/**
+ * What an agent failure does to the request.
+ */
+export type RdockAgentOnError = 'deny' | 'allow';
+
+/**
+ * What a body longer than `max_body` does.
+ */
+export type RdockAgentOversize = 'reject' | 'skip';
+
+/**
+ * How a request is described to an agent.
+ */
+export type RdockAgentProtocol = 'rdock' | 'forward' | 'ext_proc' | 'ext_authz' | 'spop';
+
+/**
  * One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as
  * `${file:…}` or `${env:…}` references.
  */
@@ -2385,6 +2421,78 @@ export type RdockMiddleware = {
         keep?: boolean;
         [key: string]: unknown | Array<string> | boolean | undefined;
     } | 'cache' | undefined;
+} | {
+    /**
+     * The plugin's own settings, checked by the plugin when the configuration is validated
+     * and loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay
+     * visible in the configuration API.
+     */
+    config?: {
+        [key: string]: unknown;
+    };
+    /**
+     * The name the plugin is registered under in this binary.
+     */
+    name: string;
+    type: 'plugin';
+    [key: string]: unknown | {
+        [key: string]: unknown;
+    } | string | 'plugin' | undefined;
+} | {
+    /**
+     * The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless
+     * the network between rdock and the agent is private.
+     */
+    address: RdockHttpUrl;
+    /**
+     * The circuit breaker that stops calling a failing agent for a while.
+     */
+    breaker?: RdockAgentBreaker;
+    /**
+     * Largest request body sent to the agent; `0` sends none. The body is held until the
+     * agent has answered, so nothing of it reaches the backend before the verdict.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an
+     * open breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker
+     * is open), `allow` lets it through unchecked.
+     */
+    on_error?: RdockAgentOnError;
+    /**
+     * A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without
+     * the body (only when the length is declared; a chunked body that grows past
+     * `max_body` is refused with `413` either way).
+     */
+    on_oversize?: RdockAgentOversize;
+    /**
+     * How the request is described to the agent.
+     */
+    protocol?: RdockAgentProtocol;
+    /**
+     * Request headers sent to the agent besides the default set (`accept`,
+     * `accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,
+     * `referer`, `user-agent`); `["*"]` sends every header except hop-by-hop ones.
+     * `authorization`, `cookie` and `proxy-authorization` go only when listed here.
+     */
+    request_headers?: Array<string>;
+    /**
+     * Request headers the agent may set on the request that goes to the backend (allowed
+     * answers only). Copies sent by the client are removed first. Applied only when the
+     * verdict comes before the request head leaves, which is the case for requests without
+     * a body (or whose body is not sent to the agent).
+     */
+    response_headers?: Array<string>;
+    /**
+     * Time allowed for the agent's whole answer.
+     */
+    timeout?: RdockDuration;
+    /**
+     * TLS to an `https://` agent.
+     */
+    tls?: RdockUpstreamTls | null;
+    type: 'agent';
+    [key: string]: unknown | RdockHttpUrl | RdockAgentBreaker | RdockByteSize | RdockAgentOnError | RdockAgentOversize | RdockAgentProtocol | Array<string> | Array<string> | RdockDuration | RdockUpstreamTls | null | 'agent' | undefined;
 };
 
 /**

@@ -35,6 +35,27 @@ impl Gate<'_> {
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
     for (name, middleware) in &config.middlewares {
+        // gRPC and SPOP agent transports are planned (ADR-0030); `rdock` and `forward` exist.
+        if let rdock_model::middleware::Middleware::Agent(agent) = middleware {
+            use rdock_model::middleware::AgentProtocol;
+            let what = match agent.protocol {
+                AgentProtocol::Rdock | AgentProtocol::Forward => None,
+                AgentProtocol::ExtProc => {
+                    Some("agents over Envoy's gRPC external processing (`ext_proc`)")
+                }
+                AgentProtocol::ExtAuthz => {
+                    Some("agents over Envoy's gRPC external authorization (`ext_authz`)")
+                }
+                AgentProtocol::Spop => Some("agents over HAProxy's SPOP (`spop`)"),
+            };
+            if let Some(what) = what {
+                gate.unsupported(
+                    format!("{}.protocol", path_key("middlewares", name)),
+                    what,
+                    "a later version",
+                );
+            }
+        }
         // Background refresh re-runs the whole pipeline for a request no client waits on
         // (ADR-0030); `stale-while-revalidate` is honoured as plain staleness instead.
         if let rdock_model::middleware::Middleware::Cache(cache) = middleware
@@ -105,6 +126,31 @@ mod tests {
                 .iter()
                 .all(|d| !d.is_error())
         );
+    }
+
+    #[test]
+    fn grpc_and_spop_agents_are_planned() {
+        for protocol in ["ext_proc", "ext_authz", "spop"] {
+            let yaml = format!(
+                "middlewares:\n  waf: {{ type: agent, address: \"http://127.0.0.1:9000\", protocol: {protocol} }}\n"
+            );
+            let run = diagnostics(&yaml, Mode::Run);
+            assert_eq!(run.len(), 1, "{run:?}");
+            assert_eq!(run[0].path, "middlewares.waf.protocol");
+            assert!(run[0].is_error());
+            assert!(
+                run[0].message.contains(&format!("`{protocol}`")),
+                "{}",
+                run[0].message
+            );
+            assert!(run[0].message.ends_with("(planned for a later version)"));
+        }
+        for protocol in ["rdock", "forward"] {
+            let yaml = format!(
+                "middlewares:\n  waf: {{ type: agent, address: \"http://127.0.0.1:9000\", protocol: {protocol} }}\n"
+            );
+            assert_eq!(diagnostics(&yaml, Mode::Run), Vec::new());
+        }
     }
 
     #[test]

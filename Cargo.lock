@@ -1003,6 +1003,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "custom-rdock"
+version = "0.1.0"
+dependencies = [
+ "header-rewrite",
+ "ip-blocklist",
+ "rdock",
+ "rdock-testkit",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "daemonix"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1655,6 +1667,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "header-rewrite"
+version = "0.1.0"
+dependencies = [
+ "rdock-plugin-api",
+ "serde",
+]
+
+[[package]]
 name = "heck"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2145,6 +2165,14 @@ name = "io-lifetimes"
 version = "3.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2f0fb0570afe1fed943c5c3d4102d5358592d8625fda6a0007fdbe65a92fba96"
+
+[[package]]
+name = "ip-blocklist"
+version = "0.1.0"
+dependencies = [
+ "rdock-plugin-api",
+ "serde",
+]
 
 [[package]]
 name = "ipconfig"
@@ -3927,6 +3955,7 @@ dependencies = [
  "rdock-migrate",
  "rdock-model",
  "rdock-observability",
+ "rdock-plugin-api",
  "rdock-provider-docker",
  "rdock-provider-kubernetes",
  "rdock-provider-swarm",
@@ -4142,6 +4171,7 @@ dependencies = [
  "bytes",
  "cap-std",
  "flate2",
+ "futures-util",
  "http",
  "http-range-header",
  "httpdate",
@@ -4152,9 +4182,13 @@ dependencies = [
  "rdock-config",
  "rdock-limits",
  "rdock-model",
+ "rdock-observability",
+ "rdock-plugin-api",
  "rdock-rules",
  "regex",
  "ring",
+ "rustls",
+ "rustls-pki-types",
  "serde",
  "serde_json",
  "sha1",
@@ -4164,6 +4198,7 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
+ "x509-parser 0.18.1",
  "zstd",
 ]
 
@@ -4226,6 +4261,29 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-plugin-api"
+version = "0.1.0"
+dependencies = [
+ "async-trait",
+ "bytes",
+ "http",
+ "serde",
+ "serde_json",
+ "serde_path_to_error",
+ "thiserror 2.0.21",
+ "tokio",
+]
+
+[[package]]
+name = "rdock-plugin-template"
+version = "0.1.0"
+dependencies = [
+ "rdock",
+ "rdock-plugin-api",
+ "serde",
+]
+
+[[package]]
 name = "rdock-provider-api"
 version = "0.6.0-alpha.1"
 
@@ -4266,6 +4324,7 @@ dependencies = [
  "rdock-middleware",
  "rdock-model",
  "rdock-observability",
+ "rdock-plugin-api",
  "rdock-proxy",
  "rdock-rules",
  "rdock-testkit",
@@ -4318,6 +4377,7 @@ dependencies = [
  "http-body-util",
  "httpdate",
  "ipnet",
+ "jsonschema",
  "opentelemetry",
  "pingora",
  "proxy-header",
@@ -4328,6 +4388,7 @@ dependencies = [
  "rdock-middleware",
  "rdock-model",
  "rdock-observability",
+ "rdock-plugin-api",
  "rdock-rules",
  "rdock-testkit",
  "rdock-tls",

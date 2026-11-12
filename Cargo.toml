@@ -13,6 +13,7 @@ members = [
   "crates/rdock-balancer",
   "crates/rdock-cache",
   "crates/rdock-middleware",
+  "crates/rdock-plugin-api",
   "crates/rdock-limits",
   "crates/rdock-observability",
   "crates/rdock-admin",
@@ -25,6 +26,11 @@ members = [
   "crates/providers/rdock-provider-swarm",
   "crates/providers/rdock-provider-kubernetes",
   "crates/providers/rdock-provider-api",
+  # Native plugin SDK examples and the template (ADR-0030); built and tested in CI.
+  "examples/plugins/header-rewrite",
+  "examples/plugins/ip-blocklist",
+  "examples/plugins/custom-rdock",
+  "examples/plugins/template",
 ]
 
 [workspace.package]
@@ -51,6 +57,7 @@ rdock-middleware = { path = "crates/rdock-middleware" }
 rdock-migrate = { path = "crates/rdock-migrate" }
 rdock-model = { path = "crates/rdock-model" }
 rdock-observability = { path = "crates/rdock-observability" }
+rdock-plugin-api = { path = "crates/rdock-plugin-api" }
 rdock-provider-docker = { path = "crates/providers/rdock-provider-docker" }
 rdock-provider-file = { path = "crates/providers/rdock-provider-file" }
 rdock-provider-kubernetes = { path = "crates/providers/rdock-provider-kubernetes" }

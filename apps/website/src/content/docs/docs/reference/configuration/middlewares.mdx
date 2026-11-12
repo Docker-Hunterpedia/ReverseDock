@@ -918,3 +918,147 @@ Response headers that carry tags (comma or space separated).
 **Type:** `boolean` · **Default:** `false`
 
 Pass the tag headers on to clients; by default they are removed.
+
+## `type: plugin`
+
+A native plugin compiled into this binary and registered under `name` (ADR-0030). The stock `rdock` binary registers none; see `docs/guides/plugins`.
+
+### `middlewares.<name>.config`
+
+**Type:** `object`
+
+The plugin's own settings, checked by the plugin when the configuration is validated and loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay visible in the configuration API.
+
+### `middlewares.<name>.name`
+
+**Type:** `string` · **Required**
+
+The name the plugin is registered under in this binary.
+
+## `type: agent`
+
+Ask an out-of-process agent (a WAF, a policy service) whether to allow a request, with its body up to `max_body` (ADR-0030). Fails closed by default.
+
+### `middlewares.<name>.address`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless the network between rdock and the agent is private.
+
+### `middlewares.<name>.breaker`
+
+**Type:** object · **Default:** `{"failures":5,"open_for":"30s","window":"10s"}`
+
+The circuit breaker that stops calling a failing agent for a while.
+
+#### `middlewares.<name>.breaker.failures`
+
+**Type:** `integer` · **Default:** `5`
+
+Failed calls in a row that open the breaker; `0` turns it off.
+
+#### `middlewares.<name>.breaker.open_for`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
+
+How long the breaker stays open.
+
+#### `middlewares.<name>.breaker.window`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
+
+The failures must fall within this time.
+
+### `middlewares.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64KiB`
+
+Largest request body sent to the agent; `0` sends none. The body is held until the agent has answered, so nothing of it reaches the backend before the verdict.
+
+### `middlewares.<name>.on_error`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an open breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker is open), `allow` lets it through unchecked.
+
+- `deny`: Refuse the request (fail closed).
+- `allow`: Let the request through unchecked (fail open); counted and logged.
+
+### `middlewares.<name>.on_oversize`
+
+**Type:** `reject` · `skip` · **Default:** `reject`
+
+A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without the body (only when the length is declared; a chunked body that grows past `max_body` is refused with `413` either way).
+
+- `reject`: Refuse the request with `413`.
+- `skip`: Ask the agent without the body.
+
+### `middlewares.<name>.protocol`
+
+**Type:** `rdock` · `forward` · `ext_proc` · `ext_authz` · `spop` · **Default:** `rdock`
+
+How the request is described to the agent.
+
+- `rdock`: POST a JSON document describing the request; the agent answers a JSON verdict (`schema/agent.v1.json`).
+- `forward`: Replay the request to the agent (same method, path, query, allowed headers and body); a 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image understands.
+- `ext_proc`: Envoy's gRPC external processing (planned for a later version).
+- `ext_authz`: Envoy's gRPC external authorization (planned for a later version).
+- `spop`: HAProxy's stream processing offload protocol (planned for a later version).
+
+:::note[Planned for a later version]
+Agents over Envoy's gRPC external processing (protocol: ext_proc): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `middlewares.<name>.request_headers`
+
+**Type:** list of `string`
+
+Request headers sent to the agent besides the default set (`accept`, `accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`, `referer`, `user-agent`); `["*"]` sends every header except hop-by-hop ones. `authorization`, `cookie` and `proxy-authorization` go only when listed here.
+
+### `middlewares.<name>.response_headers`
+
+**Type:** list of `string`
+
+Request headers the agent may set on the request that goes to the backend (allowed answers only). Copies sent by the client are removed first. Applied only when the verdict comes before the request head leaves, which is the case for requests without a body (or whose body is not sent to the agent).
+
+### `middlewares.<name>.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1s`
+
+Time allowed for the agent's whole answer.
+
+### `middlewares.<name>.tls`
+
+**Type:** object
+
+TLS to an `https://` agent.
+
+#### `middlewares.<name>.tls.ca_file`
+
+**Type:** `string`
+
+CA bundle used instead of the system roots.
+
+#### `middlewares.<name>.tls.cert_file`
+
+**Type:** `string`
+
+Client certificate for upstream mTLS.
+
+#### `middlewares.<name>.tls.key_file`
+
+**Type:** `string`
+
+Client key for upstream mTLS.
+
+#### `middlewares.<name>.tls.server_name`
+
+**Type:** `string`
+
+SNI and verification name, when it differs from the backend host.
+
+#### `middlewares.<name>.tls.verify`
+
+**Type:** `boolean` · **Default:** `true`
+
+Verify the backend certificate and host name.

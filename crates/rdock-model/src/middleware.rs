@@ -64,6 +64,12 @@ pub enum Middleware {
     /// Cache responses in a store named under `caches` (RFC 9111). Only what the origin's
     /// headers allow is stored; see `docs/guides/caching`.
     Cache(crate::cache::CacheConfig),
+    /// A native plugin compiled into this binary and registered under `name` (ADR-0030). The
+    /// stock `rdock` binary registers none; see `docs/guides/plugins`.
+    Plugin(PluginConfig),
+    /// Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,
+    /// with its body up to `max_body` (ADR-0030). Fails closed by default.
+    Agent(AgentConfig),
 }
 
 /// How an authenticating middleware identifies who it let in, for the cache rule
@@ -114,6 +120,10 @@ impl Middleware {
             Self::ClientCert(_) => Some(Identity::Certificate),
             Self::ForwardAuth(f) => Some(Identity::External {
                 headers: f.copy_headers.clone(),
+            }),
+            // An agent that sets identity headers decides who is let in, as `forward_auth` does.
+            Self::Agent(a) if !a.response_headers.is_empty() => Some(Identity::External {
+                headers: a.response_headers.clone(),
             }),
             _ => None,
         }
@@ -482,6 +492,176 @@ pub struct BasicAuthConfig {
     pub realm: Option<String>,
     /// Remove the `Authorization` header before forwarding.
     pub remove_header: bool,
+}
+
+/// A native plugin (`type: plugin`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct PluginConfig {
+    /// The name the plugin is registered under in this binary.
+    pub name: String,
+    /// The plugin's own settings, checked by the plugin when the configuration is validated
+    /// and loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay
+    /// visible in the configuration API.
+    #[serde(default)]
+    pub config: serde_json::Map<String, serde_json::Value>,
+}
+
+/// An out-of-process agent (`type: agent`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct AgentConfig {
+    /// The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless
+    /// the network between rdock and the agent is private.
+    pub address: HttpUrl,
+    /// How the request is described to the agent.
+    #[serde(default)]
+    pub protocol: AgentProtocol,
+    /// Time allowed for the agent's whole answer.
+    #[serde(default = "one_second")]
+    pub timeout: Duration,
+    /// What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an
+    /// open breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker
+    /// is open), `allow` lets it through unchecked.
+    #[serde(default)]
+    pub on_error: AgentOnError,
+    /// Largest request body sent to the agent; `0` sends none. The body is held until the
+    /// agent has answered, so nothing of it reaches the backend before the verdict.
+    #[serde(default = "sixty_four_kib")]
+    pub max_body: ByteSize,
+    /// A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without
+    /// the body (only when the length is declared; a chunked body that grows past
+    /// `max_body` is refused with `413` either way).
+    #[serde(default)]
+    pub on_oversize: AgentOversize,
+    /// Request headers sent to the agent besides the default set (`accept`,
+    /// `accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,
+    /// `referer`, `user-agent`); `["*"]` sends every header except hop-by-hop ones.
+    /// `authorization`, `cookie` and `proxy-authorization` go only when listed here.
+    #[serde(default)]
+    pub request_headers: Vec<String>,
+    /// Request headers the agent may set on the request that goes to the backend (allowed
+    /// answers only). Copies sent by the client are removed first. Applied only when the
+    /// verdict comes before the request head leaves, which is the case for requests without
+    /// a body (or whose body is not sent to the agent).
+    #[serde(default)]
+    pub response_headers: Vec<String>,
+    /// The circuit breaker that stops calling a failing agent for a while.
+    #[serde(default)]
+    pub breaker: AgentBreaker,
+    /// TLS to an `https://` agent.
+    #[serde(default)]
+    pub tls: Option<crate::service::UpstreamTls>,
+}
+
+impl AgentConfig {
+    /// Request headers an agent may never set: framing, routing and forwarding facts belong
+    /// to the proxy (and every `x-forwarded-*` header).
+    pub const PROTECTED_HEADERS: [&'static str; 13] = [
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
+        "expect",
+        "x-request-id",
+        "forwarded",
+        "x-real-ip",
+    ];
+
+    /// Whether an agent may not set the request header `lower` (a lower-case name).
+    #[must_use]
+    pub fn is_protected_header(lower: &str) -> bool {
+        Self::PROTECTED_HEADERS.contains(&lower) || lower.starts_with("x-forwarded-")
+    }
+}
+
+const fn sixty_four_kib() -> ByteSize {
+    ByteSize::kib(64)
+}
+
+/// How a request is described to an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProtocol {
+    /// POST a JSON document describing the request; the agent answers a JSON verdict
+    /// (`schema/agent.v1.json`).
+    #[default]
+    Rdock,
+    /// Replay the request to the agent (same method, path, query, allowed headers and body);
+    /// a 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image
+    /// understands.
+    Forward,
+    /// Envoy's gRPC external processing (planned for a later version).
+    ExtProc,
+    /// Envoy's gRPC external authorization (planned for a later version).
+    ExtAuthz,
+    /// HAProxy's stream processing offload protocol (planned for a later version).
+    Spop,
+}
+
+impl AgentProtocol {
+    /// The name used in configuration.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rdock => "rdock",
+            Self::Forward => "forward",
+            Self::ExtProc => "ext_proc",
+            Self::ExtAuthz => "ext_authz",
+            Self::Spop => "spop",
+        }
+    }
+}
+
+/// What an agent failure does to the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOnError {
+    /// Refuse the request (fail closed).
+    #[default]
+    Deny,
+    /// Let the request through unchecked (fail open); counted and logged.
+    Allow,
+}
+
+/// What a body longer than `max_body` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOversize {
+    /// Refuse the request with `413`.
+    #[default]
+    Reject,
+    /// Ask the agent without the body.
+    Skip,
+}
+
+/// An agent's circuit breaker: after `failures` failed calls in a row, the most recent within
+/// `window` of the first, the agent is not called for `open_for`; `on_error` applies at once
+/// meanwhile. Then one call is tried: success closes the breaker, failure opens it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AgentBreaker {
+    /// Failed calls in a row that open the breaker; `0` turns it off.
+    pub failures: u32,
+    /// The failures must fall within this time.
+    pub window: Duration,
+    /// How long the breaker stays open.
+    pub open_for: Duration,
+}
+
+impl Default for AgentBreaker {
+    fn default() -> Self {
+        Self {
+            failures: 5,
+            window: Duration::from_secs(10),
+            open_for: Duration::from_secs(30),
+        }
+    }
 }
 
 /// Forward authentication.

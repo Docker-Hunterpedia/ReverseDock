@@ -81,6 +81,18 @@ pub struct Metrics {
     /// Mirrored copies by target service and outcome (`sent`, `failed`, `dropped`,
     /// `too_large`, `no_backend`).
     pub mirrors: IntCounterVec,
+    /// Panics caught in native plugin hooks, by plugin name (ADR-0030).
+    pub plugin_panics: IntCounterVec,
+    /// Agent calls by middleware and result (`allow`, `deny`, `error`, `timeout`,
+    /// `breaker_open`, `skipped`, `oversize`).
+    pub agent_requests: IntCounterVec,
+    /// Duration of agent calls by middleware.
+    pub agent_duration: HistogramVec,
+    /// Whether an agent's circuit breaker is open (1) or closed (0), by middleware.
+    pub agent_breaker_open: IntGaugeVec,
+    /// Headers an agent asked to set that were not applied, by middleware and reason
+    /// (`not_allowed`, `too_late`, `invalid`).
+    pub agent_ignored_headers: IntCounterVec,
     /// Requests on caching routes by store, route and outcome (`hit`, `stale`,
     /// `revalidated`, `expired`, `miss`, `bypass`).
     pub cache_requests: IntCounterVec,
@@ -313,6 +325,43 @@ impl Metrics {
             "Copies of requests sent to mirror services.",
             &["service", "outcome"],
         )?;
+        let plugin_panics = counters(
+            &registry,
+            "rdock_plugin_panics_total",
+            "Panics caught in native plugin hooks; each answered its request with 500.",
+            &["plugin"],
+        )?;
+        let agent_requests = counters(
+            &registry,
+            "rdock_agent_requests_total",
+            "Calls to out-of-process agents, by result.",
+            &["agent", "result"],
+        )?;
+        let agent_duration = registered(
+            &registry,
+            HistogramVec::new(
+                HistogramOpts::new(
+                    "rdock_agent_duration_seconds",
+                    "Time an agent took to answer.",
+                )
+                .buckets(vec![
+                    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+                ]),
+                &["agent"],
+            ),
+        )?;
+        let agent_breaker_open = gauges(
+            &registry,
+            "rdock_agent_breaker_open",
+            "Whether an agent's circuit breaker is open (1) or closed (0).",
+            &["agent"],
+        )?;
+        let agent_ignored_headers = counters(
+            &registry,
+            "rdock_agent_ignored_headers_total",
+            "Headers an agent asked to set on the request that were not applied, by reason.",
+            &["agent", "reason"],
+        )?;
         let build_info = gauges(
             &registry,
             "rdock_build_info",
@@ -393,6 +442,11 @@ impl Metrics {
             backend_requests,
             upstream_duration,
             mirrors,
+            plugin_panics,
+            agent_requests,
+            agent_duration,
+            agent_breaker_open,
+            agent_ignored_headers,
         })
     }
 

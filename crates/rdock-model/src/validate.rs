@@ -1047,6 +1047,8 @@ impl Validator<'_> {
                 Middleware::GrpcWeb(_) => {}
                 Middleware::HoldBody(h) => self.check_hold_body(&path, h),
                 Middleware::Cache(c) => self.check_cache(&path, c),
+                Middleware::Plugin(p) => self.check_plugin(&path, p),
+                Middleware::Agent(a) => self.check_agent(&path, a),
                 Middleware::Static(st) => self.check_static(&path, st),
                 Middleware::Jwt(j) => self.check_jwt(&path, j),
                 Middleware::ClientCert(c) => {
@@ -2438,6 +2440,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 }
 
 mod cache;
+mod extensions;
 mod static_files;
 mod tcp;
 #[cfg(test)]

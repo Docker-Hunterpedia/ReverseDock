@@ -1,0 +1,25 @@
+[package]
+name = "custom-rdock"
+description = "Example: a ReverseDock binary with the header-rewrite and ip-blocklist plugins compiled in"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+publish = false
+
+# Outside this repository the same manifest uses git dependencies (the crates are not
+# published on crates.io), pinned to one tag for all of them:
+#   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+#   header-rewrite = { path = "../header-rewrite" }   # or your own plugin crates
+[dependencies]
+header-rewrite = { path = "../header-rewrite" }
+ip-blocklist = { path = "../ip-blocklist" }
+rdock = { path = "../../../crates/rdock" }
+
+[dev-dependencies]
+rdock-testkit = { path = "../../../crates/rdock-testkit" }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["macros", "rt-multi-thread"] }
+
+[lints]
+workspace = true

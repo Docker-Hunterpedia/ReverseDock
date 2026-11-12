@@ -8,6 +8,7 @@
     missing_docs
 )]
 
+pub mod agent;
 pub mod backend;
 pub mod certs;
 pub mod client;

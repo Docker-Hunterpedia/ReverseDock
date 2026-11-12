@@ -1,0 +1,217 @@
+---
+title: Agents and a WAF (out-of-process checks)
+description: Ask an external service — a web application firewall such as OWASP CRS, or a policy engine — whether each request may pass, with the agent middleware, failing closed by default.
+sidebar:
+  order: 25
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `agent` middleware <Status since="v0.8" /> asks a service running in its own process or
+container whether a request may continue, before the request reaches your backend. The agent
+sees the request line, an allow-list of headers and the body up to a limit; it answers "allow"
+(optionally with headers for the backend) or gives the response to send. Use it for a web
+application firewall (WAF), a policy engine, or any check you want to keep out of the proxy.
+
+An agent is the safe way to run logic you do not want inside ReverseDock: it sees only what the
+middleware sends it, and when it fails, the failure policy decides. Logic that must run inside
+the proxy is a [native plugin](/docs/guides/plugins/).
+
+## Two protocols
+
+`protocol` chooses how the request is described to the agent.
+
+### `forward`: replay the request
+
+The request is sent to the agent as an ordinary HTTP request: the same method, path and query
+(after the path of `address`, if it has one), the allowed headers, the original `Host`, and the
+body when there is one. ReverseDock adds `X-Forwarded-For` (the client address),
+`X-Forwarded-Proto`, `X-Forwarded-Host` and `X-Request-ID`, and `X-Rdock-Body-Skipped: 1` when a
+body was left out (see `on_oversize`).
+
+- A **2xx** answer allows the request. The headers listed in `response_headers` are copied from
+  the agent's answer to the request.
+- **Any other** answer is sent to the client: its status, its body (up to 1 MiB) and a safe
+  subset of its headers (`Content-Type`, `Content-Language`, `Cache-Control`, `Location`,
+  `Retry-After`, `WWW-Authenticate`, `X-Request-ID`).
+
+This is what a WAF reverse-proxy image understands: it inspects the request, blocks it with
+`403` or proxies it to its own backend, which only has to answer `200`.
+
+### `rdock`: a JSON verdict
+
+ReverseDock `POST`s a JSON document to `address` and reads a JSON verdict (status `200`). Both
+are specified by [`schema/agent.v1.json`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/schema/agent.v1.json);
+unknown fields are ignored in both directions.
+
+```json title="what the agent receives"
+{
+  "version": 1,
+  "request": {
+    "method": "POST", "path": "/login", "query": "next=%2F",
+    "http_version": "HTTP/1.1", "host": "app.example.com", "scheme": "https",
+    "headers": [["content-type", "application/x-www-form-urlencoded"], ["user-agent", "curl/8.18.0"]]
+  },
+  "client": { "ip": "203.0.113.7", "tls": true },
+  "route": "app",
+  "request_id": "0192f6d8-7b3c-7a52-9c4e-5d1b2a3c4d5e",
+  "body": { "length": 21, "base64": "dXNlcj1hbGljZSZwYXNzd29yZD14" },
+  "body_skipped": false
+}
+```
+
+`body` is `null` for a request without a body, or when the body was not sent.
+
+```json title="what the agent answers"
+{ "action": "allow", "set_request_headers": { "x-user": "alice" } }
+```
+
+```json title="or"
+{ "action": "deny", "status": 429, "headers": { "retry-after": "30" }, "body": "slow down\n" }
+```
+
+`status` defaults to `403`; without `body` the client gets ReverseDock's standard page for the
+status. `set_request_headers` applies only to names in `response_headers` (others are ignored
+and counted). A status other than `200`, or a body that is not a verdict, is a failure.
+
+An agent can be a few lines in any language. This Python agent refuses `DELETE` requests:
+
+```python title="agent.py"
+import json
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class Agent(BaseHTTPRequestHandler):
+    def do_POST(self):
+        doc = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        verdict = {"action": "deny", "status": 405} if doc["request"]["method"] == "DELETE" else {"action": "allow"}
+        body = json.dumps(verdict).encode()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+HTTPServer(("127.0.0.1", 9000), Agent).serve_forever()
+```
+
+```yaml title="rdock.yaml"
+middlewares:
+  policy:
+    type: agent
+    address: http://127.0.0.1:9000/check
+    protocol: rdock
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [policy]
+
+services:
+  app:
+    backends: [{ address: "127.0.0.1:3000" }]
+```
+
+## Settings and defaults
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `address` | (required) | `http://` or `https://` URL of the agent. `rdock validate` warns about plain `http://` to a host that is not loopback. |
+| `protocol` | `rdock` | `rdock` or `forward`. `ext_proc`, `ext_authz` and `spop` are accepted by the schema and refused as planned for a later version. |
+| `timeout` | `1s` | Time for the agent's whole answer. |
+| `on_error` | `deny` | When the agent cannot answer: `deny` refuses the request, `allow` lets it through unchecked. |
+| `max_body` | `64KiB` | Largest body sent to the agent (at most `64MiB`); `0` sends none. |
+| `on_oversize` | `reject` | A longer body: `reject` answers `413`, `skip` asks the agent without the body. |
+| `request_headers` | `[]` | Headers sent besides the default set; `["*"]` sends all but hop-by-hop ones. |
+| `response_headers` | `[]` | Headers the agent may set on the request to the backend. |
+| `breaker` | `failures: 5`, `window: 10s`, `open_for: 30s` | The circuit breaker; `failures: 0` turns it off. |
+| `tls` | system roots, verified | For `https://`: `ca_file`, `server_name`, `verify`, `cert_file` and `key_file` (mutual TLS), as for [backends](/docs/guides/backends/). |
+
+**Headers sent to the agent** are an allow-list: `Accept`, `Accept-Encoding`,
+`Accept-Language`, `Cache-Control`, `Content-Type`, `Origin`, `Referer` and `User-Agent`, plus
+`request_headers`. `Authorization`, `Cookie` and other credentials go only when you list them:
+a WAF usually wants them (attacks hide in cookies too), a rate-limit or geo service does not.
+Framing headers (`Content-Length`, `Transfer-Encoding`, `Connection`…) are never copied; the
+agent request has its own.
+
+**Headers from the agent** (`response_headers`): copies the client sent of those names are
+always removed, so a client cannot forge them. `Host`, framing headers, `X-Forwarded-*`,
+`Forwarded`, `X-Real-IP`, `X-Request-ID` and `Expect` cannot be listed.
+
+## When the agent is asked
+
+- A request **without a body** (or whose body is not sent: `max_body: 0`, or `skip` with a
+  declared length over `max_body`) is decided in the `request` phase, before ReverseDock chooses
+  a backend. A refused request never reaches the backend.
+- A request **with a body** is decided when the body is complete. ReverseDock holds the body
+  (in memory up to 64 KiB, then in an unlinked private file) and sends nothing of it to the
+  backend until the agent has answered. The backend connection exists by then and the request
+  head has been sent, because Pingora sends the head before reading the body; a refusal closes
+  that connection, and the backend sees the head and no body. For the same reason, headers
+  from the agent cannot be added to such a request: they are counted as `too_late` in
+  [`rdock_agent_ignored_headers_total`](/docs/reference/metrics/#rdock_agent_ignored_headers_total),
+  and `rdock validate` warns when `response_headers` is set with `max_body` above `0`.
+- `on_oversize: skip` works when the body's length is declared (`Content-Length`). A chunked
+  body that grows past `max_body` is refused with `413` either way: ReverseDock cannot pass on a
+  body it has started holding without holding all of it.
+
+Body holding uses the route's limits too: the route's `max_body` applies when it is smaller.
+
+## Why it fails closed
+
+`on_error: deny` is the default because a check that silently stops checking is worse than an
+outage you notice: with a WAF, `allow` would let attacks through exactly when the WAF is down
+or overloaded. Envoy's `ext_authz` and `ext_proc` filters make the same choice
+([`failure_mode_allow` defaults to false](https://github.com/envoyproxy/envoy/blob/v1.40.2/api/envoy/extensions/filters/http/ext_authz/v3/ext_authz.proto), checked 2026-11-11).
+
+A refused request gets `502` when the agent cannot be reached or gives an answer that is not a
+verdict, `504` when it does not answer within `timeout`, and `503` while the breaker is open.
+With `on_error: allow` those requests pass unchecked; each is logged as a warning and counted in
+[`rdock_agent_requests_total`](/docs/reference/metrics/#rdock_agent_requests_total) with
+`result` `error`, `timeout` or `breaker_open`.
+
+## The circuit breaker
+
+After `failures` failed calls in a row, the latest within `window` of the first, the breaker
+opens: for `open_for` the agent is not called and `on_error` applies at once, so a dead agent
+does not add its timeout to every request. Then one request is let through as a trial; success
+closes the breaker, failure opens it again for `open_for`.
+[`rdock_agent_breaker_open`](/docs/reference/metrics/#rdock_agent_breaker_open) shows the state.
+The breaker is per middleware and starts closed after a reload.
+
+## A WAF: OWASP CRS
+
+The repository's [WAF example](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/examples/waf)
+runs the CRS project's ModSecurity image (`owasp/modsecurity-crs`, nginx, CRS 4.30.0, pinned by
+digest) as a `forward` agent with Docker Compose, and a smoke test that CI runs: a clean request
+gets `200` from the application, a path traversal or an SQL injection in the query and a
+cross-site scripting payload in a form body get `403`, and a stopped WAF makes requests fail
+closed.
+
+```yaml title="rdock.yaml (excerpt from examples/waf)"
+middlewares:
+  waf:
+    type: agent
+    protocol: forward
+    address: http://waf:8080      # the CRS container, on the Compose network
+    timeout: 2s
+    max_body: 128KiB              # CRS's own limit for bodies without files
+    on_oversize: reject
+    on_error: deny
+    request_headers: [cookie, authorization, x-requested-with]
+```
+
+The WAF container is itself a reverse proxy; its `BACKEND` is a tiny service that answers `200`
+to everything, so its answer means "allowed". ReverseDock then sends the original request to
+your application. What this covers and what it does not:
+
+- Requests are inspected, bodies up to `max_body`; **responses are not** (CRS's response rules
+  do not apply).
+- The WAF inspects the request ReverseDock received and forwards, after ReverseDock's own
+  parsing and path normalisation, which is also what your application gets.
+- A request with a body reaches the backend's connection as a head before the verdict (above).
+- One WAF container is a single point of failure for the routes that use it. Run replicas, or
+  choose `on_error: allow` knowingly.
+
+gRPC agent protocols (Envoy's `ext_proc` and `ext_authz`) and HAProxy's SPOP are not built yet;
+`protocol` accepts them so that `rdock validate` can say they are planned.

@@ -1,0 +1,34 @@
+# A ReverseDock binary with one native plugin: copy this directory, rename the package and the
+# plugin, and build with `cargo build --release`. Inside this repository it builds as a
+# workspace member (CI checks it); outside, replace the two path dependencies with git ones
+# (the crates are not published on crates.io), pinned to the same tag:
+#
+#   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+#   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+#
+# and copy the repository's `rust-toolchain.toml`. Building needs a C compiler and CMake. Keep
+# the release profile unwinding (no `panic = "abort"`): that is what lets the proxy catch a
+# panicking plugin and answer 500 for that request only.
+[package]
+name = "rdock-plugin-template"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.89"
+license = "Apache-2.0"
+publish = false
+
+[lib]
+name = "my_plugin"
+path = "src/lib.rs"
+
+[[bin]]
+name = "my-rdock"
+path = "src/main.rs"
+
+[dependencies]
+rdock = { path = "../../../crates/rdock" }
+rdock-plugin-api = { path = "../../../crates/rdock-plugin-api" }
+serde = { version = "1.0.229", features = ["derive"] }
+
+[lints.rust]
+unsafe_code = "forbid"

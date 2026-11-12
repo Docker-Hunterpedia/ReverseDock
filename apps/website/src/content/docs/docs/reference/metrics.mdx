@@ -232,6 +232,41 @@ Label: `store`.
 `corrupt` (a checksum, length or format that does not check out) or `partial` (a temporary file
 an interrupted fill left behind).
 
+## Plugins and agents
+
+<Status since="v0.8" /> Metrics of [native plugins](/docs/guides/plugins/) and
+[agents](/docs/guides/agents/). Plugin and middleware names come from the binary and the
+configuration.
+
+### `rdock_plugin_panics_total`
+
+**Counter.** Panics caught in a native plugin's hooks. Each answered its request with `500` (a
+panic in `response_body` lets the chunk pass unchanged, one in `log` only counts). Label:
+`plugin` (the registered name).
+
+### `rdock_agent_requests_total`
+
+**Counter.** Decisions of `agent` middlewares. Labels: `agent` (the middleware's name) and
+`result`: `allow`, `deny` (the agent refused, or answered a non-2xx in `forward`), `error` (no
+connection, an answer that is not a verdict), `timeout`, `breaker_open` (not called because the
+breaker is open) and `oversize` (a body over `max_body` refused with `413`). `error`, `timeout`
+and `breaker_open` follow `on_error`.
+
+### `rdock_agent_duration_seconds`
+
+**Histogram.** Time an agent took to answer (calls made, not those the breaker skipped). Label:
+`agent`. Buckets from 1 ms to 5 s.
+
+### `rdock_agent_breaker_open`
+
+**Gauge.** `1` while an agent's circuit breaker is open, else `0`. Label: `agent`.
+
+### `rdock_agent_ignored_headers_total`
+
+**Counter.** Request headers an agent asked to set that were not applied. Labels: `agent` and
+`reason`: `not_allowed` (not in `response_headers`), `invalid` (not a valid header) or
+`too_late` (the verdict came with the body, after the request head had gone to the backend).
+
 ## Configuration
 
 ### `rdock_config_generation`

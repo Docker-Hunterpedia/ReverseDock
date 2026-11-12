@@ -10,7 +10,7 @@ use rdock_model::{Diagnostic, Severity};
 use rdock_proxy::{CompileEnv, Mode, compile};
 use serde::Serialize;
 
-use crate::{OutputFormat, ValidateArgs, print};
+use crate::{OutputFormat, Registry, ValidateArgs, print};
 
 /// Result of validating one file, as printed by `--format json`.
 #[derive(Serialize)]
@@ -22,11 +22,11 @@ struct FileReport {
     diagnostics: Vec<Diagnostic>,
 }
 
-pub(crate) fn validate(args: &ValidateArgs) -> anyhow::Result<ExitCode> {
+pub(crate) fn validate(args: &ValidateArgs, plugins: &Registry) -> anyhow::Result<ExitCode> {
     let reports: Vec<FileReport> = args
         .files
         .iter()
-        .map(|file| report(file, args.strict))
+        .map(|file| report(file, args.strict, plugins))
         .collect();
     match args.format {
         OutputFormat::Json => print(&format!("{}\n", serde_json::to_string_pretty(&reports)?))?,
@@ -40,7 +40,7 @@ pub(crate) fn validate(args: &ValidateArgs) -> anyhow::Result<ExitCode> {
 }
 
 /// Load, validation and compile diagnostics of one file.
-pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
+pub(crate) fn diagnostics(file: &Path, plugins: &Registry) -> Vec<Diagnostic> {
     match load_file_with_includes(file).map(|(loaded, _)| loaded) {
         Ok(Loaded {
             config,
@@ -64,6 +64,8 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
                         sticky_key: b"validate",
                         live: &rdock_observability::live::Live::default(),
                         caches: None,
+                        plugins,
+                        metrics: None,
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);
@@ -74,8 +76,8 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
     }
 }
 
-fn report(file: &Path, strict: bool) -> FileReport {
-    let mut diagnostics = diagnostics(file);
+fn report(file: &Path, strict: bool, plugins: &Registry) -> FileReport {
+    let mut diagnostics = diagnostics(file, plugins);
     if strict {
         for d in &mut diagnostics {
             d.severity = Severity::Error;

@@ -12,5 +12,26 @@
     "what": "Background refresh of stale cached responses (stale-while-revalidate)",
     "value": true,
     "fixture": "caches:\n  mem: { type: memory }\nmiddlewares:\n  cache: { type: cache, store: mem, background_refresh: true }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [cache] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.protocol",
+    "planned": "a later version",
+    "what": "Agents over Envoy's gRPC external processing (protocol: ext_proc)",
+    "value": true,
+    "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: ext_proc }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.protocol",
+    "planned": "a later version",
+    "what": "Agents over Envoy's gRPC external authorization (protocol: ext_authz)",
+    "value": true,
+    "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: ext_authz }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.protocol",
+    "planned": "a later version",
+    "what": "Agents over HAProxy's SPOP (protocol: spop)",
+    "value": true,
+    "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: spop }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   }
 ]

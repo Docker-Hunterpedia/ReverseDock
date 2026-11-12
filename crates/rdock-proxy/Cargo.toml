@@ -32,6 +32,7 @@ rdock-limits.workspace = true
 rdock-middleware.workspace = true
 rdock-model.workspace = true
 rdock-observability.workspace = true
+rdock-plugin-api.workspace = true
 rdock-rules.workspace = true
 rdock-tls.workspace = true
 regex.workspace = true
@@ -48,6 +49,7 @@ x509-parser.workspace = true
 
 [dev-dependencies]
 http-body-util.workspace = true
+jsonschema.workspace = true
 rdock-testkit.workspace = true
 tempfile.workspace = true
 

@@ -161,6 +161,23 @@ impl Chain {
             .any(|e| e.middleware.translates_grpc_web())
     }
 
+    /// The body hold for this request: the chain's, unless middlewares waived theirs in the
+    /// `request` phase ([`Context::waive_body_hold`]); then the strictest of the remaining
+    /// holds, or none.
+    #[must_use]
+    pub fn hold_for(&self, cx: &Context) -> Option<BodyHold> {
+        let hold = self.flags.request_body?;
+        if !cx.any_waived() {
+            return Some(hold);
+        }
+        self.entries
+            .iter()
+            .enumerate()
+            .filter(|(index, _)| !cx.waived(*index))
+            .filter_map(|(_, entry)| entry.caps.body())
+            .reduce(BodyHold::merge)
+    }
+
     /// Prepares a new request's context: state slots, only when some middleware asked for one.
     pub fn start(&self, cx: &mut Context) {
         if self.flags.state {
@@ -221,7 +238,7 @@ impl Chain {
     ) -> Result<Released, Answered> {
         let mut replaced = false;
         for (index, entry) in self.entries.iter().enumerate() {
-            if !entry.caps.phases().contains(Phases::REQUEST_BODY) {
+            if !entry.caps.phases().contains(Phases::REQUEST_BODY) || cx.waived(index) {
                 continue;
             }
             cx.enter(index);

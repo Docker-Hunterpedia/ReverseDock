@@ -12,6 +12,7 @@ use http::{HeaderName, HeaderValue};
 use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_model::middleware::Middleware as Config;
 
+mod agent;
 mod auth;
 pub mod chain;
 pub mod client;
@@ -32,12 +33,13 @@ mod limits;
 mod maintenance;
 mod paths;
 pub mod phase;
+mod plugin;
 mod ratelimit;
 mod redirect;
 mod static_files;
 
 pub use chain::{Answered, Chain, Flags, Released};
-pub use client::{FetchError, Fetched, HttpClient};
+pub use client::{ClientTls, FetchError, Fetched, HttpClient};
 pub use client_cert::{ClientIdentity, IDENTITY_HEADERS};
 pub use compress::Encoder;
 pub use held::{BodyHolder, HeldBody, HoldError, Spool};
@@ -80,6 +82,13 @@ pub struct Context {
     pub consumer: Option<Consumer>,
     /// The backend of the current attempt: set before `upstream_request`, kept for `log`.
     pub upstream: Option<Upstream>,
+    /// Whether the request has a body: set by the proxy before the `request` phase (a declared
+    /// length above zero, chunked framing, or an HTTP/2 stream that did not end with its
+    /// headers; never for upgrades). A middleware that holds the body uses it to tell whether
+    /// its `request_body` hook will run for this request.
+    pub has_body: bool,
+    /// Positions (below 64) whose middleware waived its body hold for this request.
+    waived: u64,
     state: Vec<Option<Box<dyn Any + Send + Sync>>>,
     slot: usize,
     encoding: Option<rdock_model::middleware::CompressAlgorithm>,
@@ -112,6 +121,8 @@ impl Context {
             throttle: None,
             consumer: None,
             upstream: None,
+            has_body: false,
+            waived: 0,
             state: Vec::new(),
             slot: 0,
             encoding: None,
@@ -169,6 +180,30 @@ impl Context {
             return None;
         }
         slot.take()?.downcast().ok().map(|b| *b)
+    }
+
+    /// Declares, in the `request` phase, that this middleware does not need the request body
+    /// of this request after all (it decided from the head): its `request_body` hook is not
+    /// called, and the proxy holds the body only if another middleware still needs it.
+    /// Returns `false` when the chain is too long to waive (position 64 and later), in which
+    /// case the hook runs as declared.
+    pub fn waive_body_hold(&mut self) -> bool {
+        if self.slot < 64 {
+            self.waived |= 1 << self.slot;
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Whether the middleware at `position` waived its body hold.
+    pub(crate) fn waived(&self, position: usize) -> bool {
+        position < 64 && self.waived & (1 << position) != 0
+    }
+
+    /// Whether any middleware waived its body hold.
+    pub(crate) fn any_waived(&self) -> bool {
+        self.waived != 0
     }
 
     /// Whether state slots were allocated for this request.
@@ -337,8 +372,43 @@ pub trait ServiceClient: Send + Sync + fmt::Debug {
 pub struct BuildEnv<'a> {
     /// Looks up a service by reference (`name` or `name@provider`).
     pub service: &'a dyn Fn(&str) -> Option<Arc<dyn ServiceClient>>,
-    /// Shared HTTP client for `forward_auth`.
+    /// Shared HTTP client for `forward_auth` and agents.
     pub client: Arc<HttpClient>,
+    /// The native plugins compiled into this binary (`type: plugin`).
+    pub plugins: &'a rdock_plugin_api::Registry,
+    /// Where plugins and agents count (panics, agent calls); `None` when validating.
+    pub metrics: Option<&'a rdock_observability::Metrics>,
+}
+
+/// One problem found while building a middleware, at a path inside it (`name`,
+/// `config.deny[1]`), for a diagnostic under `middlewares.<name>`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Issue {
+    /// Path relative to the middleware; empty for the middleware itself.
+    pub path: String,
+    /// What is wrong.
+    pub message: String,
+    /// How to fix it.
+    pub hint: Option<String>,
+}
+
+impl Issue {
+    /// An issue at `path`.
+    #[must_use]
+    pub fn new(path: impl Into<String>, message: impl Into<String>) -> Self {
+        Self {
+            path: path.into(),
+            message: message.into(),
+            hint: None,
+        }
+    }
+
+    /// Adds a hint.
+    #[must_use]
+    pub fn with_hint(mut self, hint: impl Into<String>) -> Self {
+        self.hint = Some(hint.into());
+        self
+    }
 }
 
 /// Why a middleware could not be built.
@@ -356,6 +426,9 @@ pub enum BuildError {
     /// A setting is invalid (validation normally catches these first).
     #[error("{0}")]
     Invalid(String),
+    /// Problems at paths inside the middleware (a plugin's configuration, its name).
+    #[error("{}", .0.iter().map(|i| i.message.as_str()).collect::<Vec<_>>().join("; "))]
+    Issues(Vec<Issue>),
 }
 
 pub(crate) fn read_file(path: &Path) -> Result<Vec<u8>, BuildError> {
@@ -420,6 +493,13 @@ pub fn build(
         Config::GrpcWeb(_) => Arc::new(GrpcWeb),
         Config::HoldBody(c) => Arc::new(hold_body::HoldBody::new(c)),
         Config::Cache(_) => Arc::new(CacheMarker),
+        Config::Plugin(c) => Arc::new(plugin::PluginMiddleware::build(
+            name,
+            c,
+            env.plugins,
+            env.metrics,
+        )?),
+        Config::Agent(c) => Arc::new(agent::Agent::new(name, c, env)?),
     })
 }
 

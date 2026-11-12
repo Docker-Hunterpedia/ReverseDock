@@ -1136,6 +1136,93 @@
         },
         "type": "object"
       },
+      "rdock.AgentBreaker": {
+        "additionalProperties": false,
+        "description": "An agent's circuit breaker: after `failures` failed calls in a row, the most recent within\n`window` of the first, the agent is not called for `open_for`; `on_error` applies at once\nmeanwhile. Then one call is tried: success closes the breaker, failure opens it again.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "failures": {
+            "default": 5,
+            "description": "Failed calls in a row that open the breaker; `0` turns it off.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "open_for": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "How long the breaker stays open."
+          },
+          "window": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "10s",
+            "description": "The failures must fall within this time."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.AgentOnError": {
+        "description": "What an agent failure does to the request.",
+        "oneOf": [
+          {
+            "const": "deny",
+            "description": "Refuse the request (fail closed).",
+            "type": "string"
+          },
+          {
+            "const": "allow",
+            "description": "Let the request through unchecked (fail open); counted and logged.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AgentOversize": {
+        "description": "What a body longer than `max_body` does.",
+        "oneOf": [
+          {
+            "const": "reject",
+            "description": "Refuse the request with `413`.",
+            "type": "string"
+          },
+          {
+            "const": "skip",
+            "description": "Ask the agent without the body.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AgentProtocol": {
+        "description": "How a request is described to an agent.",
+        "oneOf": [
+          {
+            "const": "rdock",
+            "description": "POST a JSON document describing the request; the agent answers a JSON verdict\n(`schema/agent.v1.json`).",
+            "type": "string"
+          },
+          {
+            "const": "forward",
+            "description": "Replay the request to the agent (same method, path, query, allowed headers and body);\na 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image\nunderstands.",
+            "type": "string"
+          },
+          {
+            "const": "ext_proc",
+            "description": "Envoy's gRPC external processing (planned for a later version).",
+            "type": "string"
+          },
+          {
+            "const": "ext_authz",
+            "description": "Envoy's gRPC external authorization (planned for a later version).",
+            "type": "string"
+          },
+          {
+            "const": "spop",
+            "description": "HAProxy's stream processing offload protocol (planned for a later version).",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.AlertChannel": {
         "description": "One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as\n`${file:…}` or `${env:…}` references.",
         "oneOf": [
@@ -4868,6 +4955,118 @@
             "required": [
               "type",
               "store"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "A native plugin compiled into this binary and registered under `name` (ADR-0030). The\nstock `rdock` binary registers none; see `docs/guides/plugins`.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "config": {
+                "additionalProperties": true,
+                "default": {},
+                "description": "The plugin's own settings, checked by the plugin when the configuration is validated\nand loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay\nvisible in the configuration API.",
+                "type": "object"
+              },
+              "name": {
+                "description": "The name the plugin is registered under in this binary.",
+                "type": "string"
+              },
+              "type": {
+                "const": "plugin",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "name"
+            ],
+            "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,\nwith its body up to `max_body` (ADR-0030). Fails closed by default.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "address": {
+                "$ref": "#/components/schemas/rdock.HttpUrl",
+                "description": "The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless\nthe network between rdock and the agent is private."
+              },
+              "breaker": {
+                "$ref": "#/components/schemas/rdock.AgentBreaker",
+                "default": {
+                  "failures": 5,
+                  "open_for": "30s",
+                  "window": "10s"
+                },
+                "description": "The circuit breaker that stops calling a failing agent for a while."
+              },
+              "max_body": {
+                "$ref": "#/components/schemas/rdock.ByteSize",
+                "default": "64KiB",
+                "description": "Largest request body sent to the agent; `0` sends none. The body is held until the\nagent has answered, so nothing of it reaches the backend before the verdict."
+              },
+              "on_error": {
+                "$ref": "#/components/schemas/rdock.AgentOnError",
+                "default": "deny",
+                "description": "What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an\nopen breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker\nis open), `allow` lets it through unchecked."
+              },
+              "on_oversize": {
+                "$ref": "#/components/schemas/rdock.AgentOversize",
+                "default": "reject",
+                "description": "A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without\nthe body (only when the length is declared; a chunked body that grows past\n`max_body` is refused with `413` either way)."
+              },
+              "protocol": {
+                "$ref": "#/components/schemas/rdock.AgentProtocol",
+                "default": "rdock",
+                "description": "How the request is described to the agent."
+              },
+              "request_headers": {
+                "default": [],
+                "description": "Request headers sent to the agent besides the default set (`accept`,\n`accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,\n`referer`, `user-agent`); `[\"*\"]` sends every header except hop-by-hop ones.\n`authorization`, `cookie` and `proxy-authorization` go only when listed here.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "response_headers": {
+                "default": [],
+                "description": "Request headers the agent may set on the request that goes to the backend (allowed\nanswers only). Copies sent by the client are removed first. Applied only when the\nverdict comes before the request head leaves, which is the case for requests without\na body (or whose body is not sent to the agent).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "timeout": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "1s",
+                "description": "Time allowed for the agent's whole answer."
+              },
+              "tls": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.UpstreamTls"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "default": null,
+                "description": "TLS to an `https://` agent."
+              },
+              "type": {
+                "const": "agent",
+                "type": "string"
+              }
+            },
+            "required": [
+              "type",
+              "address"
             ],
             "type": "object"
           }

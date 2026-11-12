@@ -1691,3 +1691,94 @@ fn a_fully_mirrored_cached_route_is_warned_about() {
         "{found:?}"
     );
 }
+
+#[test]
+fn agents_and_plugins_are_checked() {
+    let config = json!({ "middlewares": {
+        "waf": {
+            "type": "agent", "address": "https://waf.example.com",
+            "max_body": "65MiB", "timeout": "0s",
+            "request_headers": ["*", "bad name"],
+            "response_headers": ["X-User", "Host", "X-Forwarded-For", "Content-Length"],
+            "breaker": { "failures": 3, "window": "0s" },
+            "tls": { "verify": false }
+        },
+        "plain": { "type": "agent", "address": "http://policy.internal:9000", "tls": {} },
+        "local": { "type": "agent", "address": "http://127.0.0.1:9000", "max_body": 0, "response_headers": ["X-User"] },
+        "plug": { "type": "plugin", "name": "Not Valid" },
+        "ok": { "type": "plugin", "name": "header_rewrite", "config": { "anything": [1, 2] } }
+    }});
+    let errors = errors(config.clone());
+    assert!(
+        has(&errors, "middlewares.waf.max_body", "at most 64MiB"),
+        "{errors:?}"
+    );
+    assert!(has(&errors, "middlewares.waf.timeout", ""), "{errors:?}");
+    assert!(has(
+        &errors,
+        "middlewares.waf.request_headers[1]",
+        "not a valid header name"
+    ));
+    assert!(
+        !errors
+            .iter()
+            .any(|(p, _)| p == "middlewares.waf.request_headers[0]"),
+        "`*` is allowed"
+    );
+    assert!(has(
+        &errors,
+        "middlewares.waf.response_headers[1]",
+        "managed by rdock"
+    ));
+    assert!(has(
+        &errors,
+        "middlewares.waf.response_headers[2]",
+        "managed by rdock"
+    ));
+    assert!(has(
+        &errors,
+        "middlewares.waf.response_headers[3]",
+        "managed by rdock"
+    ));
+    assert!(
+        !errors
+            .iter()
+            .any(|(p, _)| p == "middlewares.waf.response_headers[0]")
+    );
+    assert!(
+        has(&errors, "middlewares.waf.breaker.window", ""),
+        "{errors:?}"
+    );
+    assert!(has(
+        &errors,
+        "middlewares.plug.name",
+        "is not a plugin name"
+    ));
+    assert!(
+        !errors.iter().any(|(p, _)| p.starts_with("middlewares.ok")),
+        "config is free-form"
+    );
+    let warnings = warnings(config);
+    assert!(has(&warnings, "middlewares.waf.tls.verify", "not verified"));
+    assert!(has(
+        &warnings,
+        "middlewares.waf.response_headers",
+        "only to requests without a body"
+    ));
+    assert!(has(
+        &warnings,
+        "middlewares.plain.address",
+        "plain `http://`"
+    ));
+    assert!(has(
+        &warnings,
+        "middlewares.plain.tls",
+        "only to an `https://` address"
+    ));
+    assert!(
+        !warnings
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.local")),
+        "{warnings:?}"
+    );
+}

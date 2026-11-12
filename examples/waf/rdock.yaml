@@ -1,0 +1,39 @@
+# rdock in front of `app`, asking the CRS WAF about every request first (compose.yaml).
+acme: false
+
+listeners:
+  web: { address: ":8080" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+routes:
+  app:
+    match: "PathPrefix(`/`)"
+    service: app
+    middlewares: [waf]
+
+services:
+  app:
+    backends: [{ address: "app:80" }]
+
+middlewares:
+  waf:
+    type: agent
+    # Replay the request to the WAF; a 2xx allows, anything else (CRS answers 403) is sent
+    # to the client.
+    protocol: forward
+    # Plain HTTP on the Compose network; `rdock validate` warns, as it should, because the
+    # traffic is not encrypted. Use https:// when the WAF runs elsewhere.
+    address: http://waf:8080
+    timeout: 2s
+    # Request bodies up to 128 KiB are inspected (CRS's own limit for bodies without files);
+    # a longer one with a declared length is refused with 413.
+    max_body: 128KiB
+    on_oversize: reject
+    # Fail closed: when the WAF cannot answer, requests are refused (502, 504 on timeout,
+    # 503 while the breaker is open).
+    on_error: deny
+    # The WAF needs cookies and credentials to inspect them; they are not sent unless listed.
+    request_headers: [cookie, authorization, x-requested-with]

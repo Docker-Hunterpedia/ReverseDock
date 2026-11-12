@@ -1,0 +1,51 @@
+# A CRS web application firewall as an rdock `forward` agent (F-EXT-04, ADR-0030).
+#
+#   client ──▶ rdock ──(1) the request, replayed──▶ waf (ModSecurity v3 + OWASP CRS) ──▶ waf-sink
+#                │                                   2xx = allow, 403 = blocked
+#                └──(2) the original request, if allowed──▶ app
+#
+# Run it with `./smoke.sh` (it also tests it), or `docker compose up` and send requests to
+# http://127.0.0.1:8088. RDOCK_IMAGE selects the rdock image (build it with
+# `docker build -t rdock:ci ../..`).
+name: rdock-waf-example
+
+services:
+  rdock:
+    image: ${RDOCK_IMAGE:-rdock:ci}
+    command: ["run", "--config", "/etc/rdock/rdock.yaml", "--log", "info"]
+    ports:
+      - "127.0.0.1:${PORT:-8088}:8080"
+    volumes:
+      - ./rdock.yaml:/etc/rdock/rdock.yaml:ro
+    depends_on:
+      - app
+      - waf
+
+  # The application rdock protects.
+  app:
+    image: ${WHOAMI_IMAGE:-traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab}
+    command: ["--name", "demo-backend"]
+
+  # The CRS project's reverse-proxy image: ModSecurity v3.0.17 on nginx 1.30.6 with CRS
+  # 4.30.0. Pinned by digest (the multi-architecture index), checked against Docker Hub on
+  # 2026-11-12: https://hub.docker.com/r/owasp/modsecurity-crs/tags
+  waf:
+    image: ${WAF_IMAGE:-owasp/modsecurity-crs:4.30.0-nginx-alpine-202611090911@sha256:b8d5bbf88c643800e31b248993858c335e4907ba0ee473d0c81c5726fb2c1bdc}
+    environment:
+      # The WAF is itself a reverse proxy; its backend only has to answer 2xx.
+      BACKEND: http://waf-sink:80
+      PORT: "8080"
+      # CRS defaults, written out: blocking at paranoia level 1, inbound anomaly threshold 5.
+      MODSEC_RULE_ENGINE: "on"
+      BLOCKING_PARANOIA: "1"
+      ANOMALY_INBOUND: "5"
+      # The body rdock sends is at most `max_body` (128 KiB in rdock.yaml).
+      MODSEC_REQ_BODY_NOFILES_LIMIT: "131072"
+      # Responses come from waf-sink, not from the application: nothing to inspect.
+      MODSEC_RESP_BODY_ACCESS: "off"
+      MODSEC_AUDIT_ENGINE: "RelevantOnly"
+
+  # What the WAF forwards allowed requests to: answers 200 to everything.
+  waf-sink:
+    image: ${WHOAMI_IMAGE:-traefik/whoami:v1.11.0@sha256:200689790a0a0ea48ca45992e0450bc26ccab5307375b41c84dfc4f2475937ab}
+    command: ["--name", "waf-sink"]

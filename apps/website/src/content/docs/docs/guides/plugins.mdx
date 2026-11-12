@@ -1,0 +1,232 @@
+---
+title: Native plugins (Rust)
+description: Extend ReverseDock with your own middlewares in Rust, compiled into a custom binary, with a test harness, two examples and a template.
+sidebar:
+  order: 24
+---
+
+import Status from '../../../../components/Status.astro';
+
+A native plugin <Status since="v0.8" /> is a middleware you write in Rust against the
+`rdock-plugin-api` crate and compile into your own ReverseDock binary. In the configuration it
+is a middleware like any other: `type: plugin`, the name your binary registered it under, and
+its own settings.
+
+:::caution[A plugin runs with the proxy's privileges]
+A plugin runs inside the ReverseDock process. It sees every header and body it is given, and it
+can read files, open connections and use memory as the proxy itself can. Nothing sandboxes it.
+Review a plugin's code, and its dependencies, as you would review ReverseDock's own. To run
+logic you do not fully trust, use an [agent](/docs/guides/agents/) in its own process or
+container instead.
+:::
+
+What contains a plugin's failures: a panic in one of its hooks is caught, logged with the
+plugin's name, counted in [`rdock_plugin_panics_total`](/docs/reference/metrics/#rdock_plugin_panics_total)
+and answered with `500` for that request only; other requests, and other streams on the same
+HTTP/2 connection, are not affected. A plugin that loops forever or leaks memory is not caught.
+
+## What a plugin can and cannot do
+
+| A plugin can | A plugin cannot |
+|---|---|
+| Read and change the request head before routing (`request`): headers, method, path and query | Change `Content-Length`, `Transfer-Encoding`, `Connection` and the other headers that frame a message |
+| Change the request head for the chosen backend, once per attempt (`upstream_request`) | Read the request body as it streams: it gets the whole body, held up to its declared limit |
+| Inspect, replace or refuse the complete request body before any of it is forwarded (`request_body`) | Await in `response_body` or `log` (they are synchronous) |
+| Answer instead of the backend, with any status, headers and body | Touch the proxy's internals: limiter slots, compression state, connections, the admin API |
+| Change the response status and headers (`response`), transform response body chunks (`response_body`), observe the finished request (`log`) | Be loaded at run time: plugins are compiled in, there is no `dlopen` |
+| Read the client address, route, request id, TLS flag, the consumer and its groups when one is set, and the chosen backend in later phases | Keep state across requests other than its own (for example a shared counter it owns) |
+| Keep typed per-request state from one phase to a later one | |
+
+Phases run in the route's list order on the way in (`request`, `upstream_request`,
+`request_body`) and in reverse order on the way out (`response`, `response_body`, `log`), like
+the built-in middlewares; `rdock routes explain` shows each middleware's phases. The proxy calls
+only the hooks a plugin declares, so a plugin that needs only `request` costs nothing in the
+other phases.
+
+## Write a plugin
+
+A plugin implements the `Plugin` trait and comes with a factory that builds it from its
+configuration:
+
+```rust
+use rdock_plugin_api::{
+    typed, Capabilities, ConfigError, Ctx, Decision, Factory, Phases, Plugin, RequestHead,
+    async_trait,
+};
+
+#[derive(serde::Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Config {
+    text: String,
+}
+
+pub struct Greeting {
+    text: String,
+}
+
+/// What the binary registers.
+pub fn factory() -> impl Factory {
+    typed(|config: Config| {
+        if config.text.trim().is_empty() {
+            return Err(ConfigError::at("text", "must not be empty"));
+        }
+        Ok(Greeting { text: config.text })
+    })
+}
+
+#[async_trait]
+impl Plugin for Greeting {
+    fn capabilities(&self) -> Capabilities {
+        Capabilities::new(Phases::REQUEST)
+    }
+
+    async fn request(&self, req: &mut RequestHead, _cx: &mut Ctx<'_>) -> Decision {
+        let _ = req.set_header("x-greeting", self.text.as_str());
+        Decision::Continue
+    }
+}
+```
+
+- `capabilities()` declares the phases, `with_state()` for per-request state
+  (`cx.set_state(...)`, `cx.state::<T>()`), and `with_body(BodyLimit::new(max))` to get the
+  complete request body in `request_body` (at most 64 MiB; a longer body is refused with `413`
+  before the plugin sees it).
+- `Decision::Respond(Response::text(StatusCode::FORBIDDEN, "no\n"))` answers instead of the
+  backend; `Response::new(status)` uses ReverseDock's standard page for the status.
+- The factory runs when the configuration is validated and loaded, never per request. Errors it
+  returns carry a path inside `config` and become `rdock validate` diagnostics.
+
+The crate's API documentation (`cargo doc -p rdock-plugin-api --open`) has examples for every
+type.
+
+## Build a custom binary
+
+The binary depends on `rdock` (the proxy as a library) and on its plugins, and its `main` is a
+registry and one call:
+
+```rust
+use std::process::ExitCode;
+
+fn main() -> ExitCode {
+    let registry = rdock::Registry::new()
+        .plugin("header_rewrite", header_rewrite::factory())
+        .plugin("ip_blocklist", ip_blocklist::factory());
+    rdock::run(registry)
+}
+```
+
+Every subcommand behaves as in the stock `rdock`: `run`, `validate` (which knows the plugins),
+`schema`, `reload`, `status` and the rest. `version` prints the plugin API version and the
+registered names. The stock binary is this same call with an empty registry. An invalid
+registry (a duplicate name, or a name other than lower-case letters, digits, `_` and `-`) stops
+the binary at start with exit code 2.
+
+The crates are not published on crates.io. Depend on them through git, pinned to the tag of
+the release you build:
+
+```toml title="Cargo.toml"
+[dependencies]
+rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+serde = { version = "1", features = ["derive"] }
+```
+
+Building needs the repository's Rust toolchain (copy its `rust-toolchain.toml`), a C compiler
+and CMake. Keep the release profile unwinding: with `panic = "abort"` a plugin's panic would
+end the process instead of one request. The library sets mimalloc as the global allocator, as
+the stock binary does; build `rdock` with `default-features = false` (and the provider features
+you want) to choose your own. The repository's
+[template](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/examples/plugins/template)
+is a plugin, its binary and its tests, ready to copy.
+
+## Configure it
+
+```yaml title="rdock.yaml (excerpt; needs a binary that registers both plugins)"
+middlewares:
+  tidy:
+    type: plugin
+    name: header_rewrite
+    config:
+      request: { set: { X-Team: core }, remove: [X-Debug] }
+      response: { set: { X-Frame-Options: DENY } }
+  blocklist:
+    type: plugin
+    name: ip_blocklist
+    config: { deny: [203.0.113.0/24, "2001:db8:bad::/48"] }
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+    middlewares: [blocklist, tidy]
+```
+
+`config` is whatever the plugin accepts; the JSON Schema treats it as a free-form object and the
+plugin's factory checks it. Values in it are interpolated like any other (`${env:…}`,
+`${file:…}`) and appear in the configuration API and its history, so a plugin that needs a
+secret should take a file path and read the file itself.
+
+`rdock validate` reports a plugin's own errors with their path, and a name the binary does not
+register with the names it does:
+
+```text
+error: middlewares.blocklist.config.deny[0]: `10.0.0.1/8` has host bits set
+error: middlewares.geo.name: no plugin `geo_block` is registered in this build; registered: header_rewrite, ip_blocklist
+```
+
+The stock `rdock` binary registers no plugins and says so for every `type: plugin` middleware.
+Plugins load with the configuration: adding or changing a plugin middleware applies on reload,
+like any middleware; a new plugin needs a new binary.
+
+## Test it
+
+`rdock_plugin_api::testing` runs a plugin through its phases without a proxy, under the
+proxy's rules (declared phases only, state only when declared, the body limit, replacements
+only when declared):
+
+```rust
+use rdock_plugin_api::serde_json::json;
+use rdock_plugin_api::testing::{block_on, request, response, Harness};
+use rdock_plugin_api::http::StatusCode;
+
+#[test]
+fn blocks_listed_clients() {
+    let mut h = Harness::from_factory(&ip_blocklist::factory(), &json!({ "deny": ["203.0.113.0/24"] }))
+        .unwrap()
+        .client_ip("203.0.113.9".parse().unwrap());
+    let outcome = block_on(h.run(request("GET", "/"), None, response(StatusCode::OK)));
+    assert_eq!(outcome.answered.unwrap().status(), StatusCode::FORBIDDEN);
+}
+```
+
+`Harness::run` plays a whole exchange and returns the plugin's answer, the request as the
+backend would receive it and the final response head; the single-phase methods (`request`,
+`request_body`, `response`…) test one hook. `block_on` is enough for plugins that only compute;
+a plugin that uses Tokio needs `#[tokio::test]` and `.await` on the same methods. For an
+end-to-end test, start your binary with
+[`rdock-testkit`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/crates/rdock-testkit)
+as the example's `custom-rdock` test does.
+
+## The examples
+
+The repository's [`examples/plugins`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/examples/plugins)
+holds two plugins, built and tested in CI:
+
+- **`header-rewrite`** sets and removes request and response headers from its configuration,
+  declares only the phases its rules need, and refuses framing headers and contradictory rules
+  in `rdock validate`.
+- **`ip-blocklist`** refuses client addresses from a list of networks with `403`. It shows
+  configuration errors at `deny[i]`, and state carried from `request` to `log`.
+- **`custom-rdock`** registers both and has an end-to-end test that starts it and sends real
+  HTTP/1.1 and HTTP/2 requests.
+
+## API stability
+
+`rdock-plugin-api` has its own version line, separate from ReverseDock's, and is `0.x`: until
+1.0 any release may change it, and a plugin may need changes to build against a new release.
+Types that will grow are `#[non_exhaustive]`; new phases arrive as trait methods with default
+bodies. Its public types are `http`-crate types, `bytes` and the standard library only, never
+Pingora's, so a Pingora upgrade inside ReverseDock does not break plugins by itself. Pin
+`rdock` and `rdock-plugin-api` to the same tag.
+
+WebAssembly plugins, loaded at run time in a sandbox, are planned separately (F-EXT-03).

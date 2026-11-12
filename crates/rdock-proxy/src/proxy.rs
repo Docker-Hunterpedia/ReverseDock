@@ -525,6 +525,7 @@ impl RdockProxy {
             ctx.authority.clone(),
         );
         cx.client_cert = client_identity(session);
+        cx.has_body = !session.is_body_empty() && !is_upgrade(session.req_header());
         let chain = &route.middlewares;
         chain.start(&mut cx);
         let answered = chain.request(session.req_header_mut(), &mut cx).await;
@@ -1679,12 +1680,21 @@ fn start_hold(
     route: &RouteRuntime,
     spool: Option<Arc<rdock_middleware::Spool>>,
 ) -> pingora::Result<()> {
-    let Some(hold) = route.middlewares.flags().request_body else {
-        return Ok(());
-    };
-    if session.is_body_empty() || is_upgrade(session.req_header()) {
+    if route.middlewares.flags().request_body.is_none()
+        || session.is_body_empty()
+        || is_upgrade(session.req_header())
+    {
         return Ok(());
     }
+    // Middlewares may waive their hold in the `request` phase (an agent that decided from the
+    // head alone); the strictest of the remaining holds applies.
+    let Some(hold) = ctx
+        .mw
+        .as_ref()
+        .and_then(|cx| route.middlewares.hold_for(cx))
+    else {
+        return Ok(());
+    };
     let limit = route
         .max_body
         .or(ctx.runtime.limits.max_body_bytes)

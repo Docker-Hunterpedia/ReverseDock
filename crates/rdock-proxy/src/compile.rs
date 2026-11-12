@@ -54,6 +54,10 @@ pub struct CompileEnv<'a> {
     pub live: &'a rdock_observability::live::Live,
     /// The process's cache stores; `None` where no store may be opened (tests, tools).
     pub caches: Option<&'a rdock_cache::Registry>,
+    /// The native plugins compiled into this binary (`type: plugin`, ADR-0030).
+    pub plugins: &'a rdock_plugin_api::Registry,
+    /// Where plugins and agents count; `None` when validating.
+    pub metrics: Option<&'a rdock_observability::Metrics>,
 }
 
 /// The result of compilation.
@@ -348,11 +352,11 @@ fn compile_service(
     let backends = compile_backends(&service.backends, env.dns);
     let tls = service.tls.as_ref();
     let ca = match tls.and_then(|t| t.ca_file.as_deref()) {
-        Some(file) => Some(load_ca(file)?),
+        Some(file) => Some(rdock_middleware::client::load_ca(file)?),
         None => None,
     };
     let client_cert = match tls.and_then(|t| t.cert_file.as_deref().zip(t.key_file.as_deref())) {
-        Some((cert, key)) => Some(load_client_cert(cert, key)?),
+        Some((cert, key)) => Some(rdock_middleware::client::load_client_cert(cert, key)?),
         None => None,
     };
     let verify = tls.is_none_or(|t| t.verify);
@@ -556,68 +560,6 @@ fn compile_sticky(sticky: &Sticky, default_key: &[u8]) -> Result<StickyRuntime, 
     })
 }
 
-/// Reads the client certificate chain and key that a service presents to its backends. They
-/// are checked here because Pingora asserts a non-empty chain and unwraps the key conversion.
-fn load_client_cert(
-    cert_file: &std::path::Path,
-    key_file: &std::path::Path,
-) -> Result<Arc<pingora::utils::tls::CertKey>, String> {
-    use rustls_pki_types::pem::PemObject;
-    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
-    use x509_parser::prelude::FromDer;
-
-    let chain = CertificateDer::pem_file_iter(cert_file)
-        .and_then(Iterator::collect::<Result<Vec<_>, _>>)
-        .map_err(|e| format!("cannot read `{}`: {e}", cert_file.display()))?;
-    if chain.is_empty() {
-        return Err(format!("`{}` holds no certificate", cert_file.display()));
-    }
-    for der in &chain {
-        x509_parser::certificate::X509Certificate::from_der(der.as_ref())
-            .map_err(|e| format!("invalid certificate in `{}`: {e}", cert_file.display()))?;
-    }
-    let key = PrivateKeyDer::from_pem_file(key_file)
-        .map_err(|e| format!("cannot read the key `{}`: {e}", key_file.display()))?;
-    rustls::crypto::ring::sign::any_supported_type(&key)
-        .map_err(|e| format!("unusable key `{}`: {e}", key_file.display()))?;
-    let key = key.secret_der().to_vec();
-    if PrivateKeyDer::try_from(key.clone()).is_err() {
-        return Err(format!(
-            "unsupported key format in `{}`",
-            key_file.display()
-        ));
-    }
-    Ok(Arc::new(pingora::utils::tls::CertKey::new(
-        chain.into_iter().map(|c| c.to_vec()).collect(),
-        key,
-    )))
-}
-
-/// Reads a PEM bundle of CA certificates for backend verification.
-fn load_ca(file: &std::path::Path) -> Result<Arc<[pingora::utils::tls::WrappedX509]>, String> {
-    use rustls_pki_types::CertificateDer;
-    use rustls_pki_types::pem::PemObject;
-    use x509_parser::prelude::FromDer;
-
-    let bytes =
-        std::fs::read(file).map_err(|e| format!("cannot read `{}`: {e}", file.display()))?;
-    let mut certs = Vec::new();
-    for der in CertificateDer::pem_slice_iter(&bytes) {
-        let der = der.map_err(|e| format!("invalid PEM in `{}`: {e}", file.display()))?;
-        // Pingora's parser panics on invalid DER, so check it first.
-        x509_parser::certificate::X509Certificate::from_der(der.as_ref())
-            .map_err(|e| format!("invalid certificate in `{}`: {e}", file.display()))?;
-        certs.push(pingora::utils::tls::WrappedX509::new(
-            der.as_ref().to_vec(),
-            pingora::utils::tls::parse_x509,
-        ));
-    }
-    if certs.is_empty() {
-        return Err(format!("`{}` contains no certificate", file.display()));
-    }
-    Ok(certs.into())
-}
-
 fn build_middlewares(
     config: &Config,
     services: &HashMap<String, Arc<ServiceRuntime>>,
@@ -635,6 +577,8 @@ fn build_middlewares(
     let build_env = BuildEnv {
         service: &lookup,
         client: env.client.clone(),
+        plugins: env.plugins,
+        metrics: env.metrics,
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
@@ -645,6 +589,21 @@ fn build_middlewares(
         match rdock_middleware::build(name, middleware, &build_env) {
             Ok(m) => {
                 built.insert(name.clone(), m);
+            }
+            Err(rdock_middleware::BuildError::Issues(issues)) => {
+                let base = path_key("middlewares", name);
+                for issue in issues {
+                    let path = match issue.path.as_str() {
+                        "" => base.clone(),
+                        p if p.starts_with('[') => format!("{base}{p}"),
+                        p => format!("{base}.{p}"),
+                    };
+                    let mut diagnostic = Diagnostic::error(path, issue.message);
+                    if let Some(hint) = issue.hint {
+                        diagnostic = diagnostic.with_hint(hint);
+                    }
+                    out.push(diagnostic);
+                }
             }
             Err(e) => out.push(Diagnostic::error(
                 path_key("middlewares", name),

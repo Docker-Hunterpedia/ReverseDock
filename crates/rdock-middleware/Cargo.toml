@@ -25,6 +25,8 @@ base64.workspace = true
 bcrypt.workspace = true
 bytes.workspace = true
 flate2.workspace = true
+# `catch_unwind` on plugin futures (panic isolation, ADR-0030) needs the `std` feature.
+futures-util = { workspace = true, features = ["std"] }
 http.workspace = true
 http-range-header.workspace = true
 httpdate.workspace = true
@@ -34,8 +36,15 @@ percent-encoding.workspace = true
 pingora.workspace = true
 rdock-limits.workspace = true
 rdock-model.workspace = true
+rdock-observability.workspace = true
+rdock-plugin-api.workspace = true
 rdock-rules.workspace = true
 regex.workspace = true
+# CA bundles and client certificates for subrequests (agents) and services, checked before
+# Pingora sees them.
+rustls.workspace = true
+rustls-pki-types.workspace = true
+x509-parser.workspace = true
 sha1.workspace = true
 subtle.workspace = true
 thiserror.workspace = true

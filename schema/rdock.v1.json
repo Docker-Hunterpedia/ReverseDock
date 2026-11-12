@@ -740,6 +740,93 @@
       },
       "additionalProperties": false
     },
+    "AgentBreaker": {
+      "description": "An agent's circuit breaker: after `failures` failed calls in a row, the most recent within\n`window` of the first, the agent is not called for `open_for`; `on_error` applies at once\nmeanwhile. Then one call is tried: success closes the breaker, failure opens it again.",
+      "type": "object",
+      "properties": {
+        "failures": {
+          "description": "Failed calls in a row that open the breaker; `0` turns it off.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "open_for": {
+          "description": "How long the breaker stays open.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "window": {
+          "description": "The failures must fall within this time.",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "AgentOnError": {
+      "description": "What an agent failure does to the request.",
+      "oneOf": [
+        {
+          "description": "Refuse the request (fail closed).",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Let the request through unchecked (fail open); counted and logged.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
+    "AgentOversize": {
+      "description": "What a body longer than `max_body` does.",
+      "oneOf": [
+        {
+          "description": "Refuse the request with `413`.",
+          "type": "string",
+          "const": "reject"
+        },
+        {
+          "description": "Ask the agent without the body.",
+          "type": "string",
+          "const": "skip"
+        }
+      ]
+    },
+    "AgentProtocol": {
+      "description": "How a request is described to an agent.",
+      "oneOf": [
+        {
+          "description": "POST a JSON document describing the request; the agent answers a JSON verdict\n(`schema/agent.v1.json`).",
+          "type": "string",
+          "const": "rdock"
+        },
+        {
+          "description": "Replay the request to the agent (same method, path, query, allowed headers and body);\na 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image\nunderstands.",
+          "type": "string",
+          "const": "forward"
+        },
+        {
+          "description": "Envoy's gRPC external processing (planned for a later version).",
+          "type": "string",
+          "const": "ext_proc"
+        },
+        {
+          "description": "Envoy's gRPC external authorization (planned for a later version).",
+          "type": "string",
+          "const": "ext_authz"
+        },
+        {
+          "description": "HAProxy's stream processing offload protocol (planned for a later version).",
+          "type": "string",
+          "const": "spop"
+        }
+      ]
+    },
     "AlertChannel": {
       "description": "One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as\n`${file:…}` or `${env:…}` references.",
       "oneOf": [
@@ -4238,6 +4325,118 @@
           "required": [
             "type",
             "store"
+          ]
+        },
+        {
+          "description": "A native plugin compiled into this binary and registered under `name` (ADR-0030). The\nstock `rdock` binary registers none; see `docs/guides/plugins`.",
+          "type": "object",
+          "properties": {
+            "config": {
+              "description": "The plugin's own settings, checked by the plugin when the configuration is validated\nand loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay\nvisible in the configuration API.",
+              "type": "object",
+              "additionalProperties": true,
+              "default": {}
+            },
+            "name": {
+              "description": "The name the plugin is registered under in this binary.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "plugin"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "name"
+          ]
+        },
+        {
+          "description": "Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,\nwith its body up to `max_body` (ADR-0030). Fails closed by default.",
+          "type": "object",
+          "properties": {
+            "address": {
+              "description": "The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless\nthe network between rdock and the agent is private.",
+              "$ref": "#/$defs/HttpUrl"
+            },
+            "breaker": {
+              "description": "The circuit breaker that stops calling a failing agent for a while.",
+              "$ref": "#/$defs/AgentBreaker",
+              "default": {
+                "failures": 5,
+                "open_for": "30s",
+                "window": "10s"
+              }
+            },
+            "max_body": {
+              "description": "Largest request body sent to the agent; `0` sends none. The body is held until the\nagent has answered, so nothing of it reaches the backend before the verdict.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "64KiB"
+            },
+            "on_error": {
+              "description": "What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an\nopen breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker\nis open), `allow` lets it through unchecked.",
+              "$ref": "#/$defs/AgentOnError",
+              "default": "deny"
+            },
+            "on_oversize": {
+              "description": "A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without\nthe body (only when the length is declared; a chunked body that grows past\n`max_body` is refused with `413` either way).",
+              "$ref": "#/$defs/AgentOversize",
+              "default": "reject"
+            },
+            "protocol": {
+              "description": "How the request is described to the agent.",
+              "$ref": "#/$defs/AgentProtocol",
+              "default": "rdock"
+            },
+            "request_headers": {
+              "description": "Request headers sent to the agent besides the default set (`accept`,\n`accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,\n`referer`, `user-agent`); `[\"*\"]` sends every header except hop-by-hop ones.\n`authorization`, `cookie` and `proxy-authorization` go only when listed here.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "response_headers": {
+              "description": "Request headers the agent may set on the request that goes to the backend (allowed\nanswers only). Copies sent by the client are removed first. Applied only when the\nverdict comes before the request head leaves, which is the case for requests without\na body (or whose body is not sent to the agent).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeout": {
+              "description": "Time allowed for the agent's whole answer.",
+              "$ref": "#/$defs/Duration",
+              "default": "1s"
+            },
+            "tls": {
+              "description": "TLS to an `https://` agent.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UpstreamTls"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "agent"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "address"
           ]
         }
       ]
