@@ -157,7 +157,8 @@ It is a preset over the [`jwt`](/docs/guides/jwt/) middleware:
 The request's **consumer** is the user's `email`. A **service token** (machine-to-machine access)
 has an empty `sub` and no email; its consumer is its `common_name` (the Client ID), in the group
 `service-token`, so rate limits, quotas, metering and the access log tell users and services
-apart. Map `common_name` in `claims_to_headers` to pass it on. Custom identity-provider claims
+apart. Both are keyed on the team: a service token never counts, caches or gets groups as a user
+or as a `consumers.<name>` entry with the same name. Map `common_name` in `claims_to_headers` to pass it on. Custom identity-provider claims
 arrive under `custom`, best effort; groups can be missing there.
 
 Pair it with `security.trusted_proxies: [cloudflare]` (real client IPs) and Authenticated Origin

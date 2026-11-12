@@ -21,6 +21,7 @@ pub(crate) struct Quota {
     overrides: Vec<(String, u64)>,
     headers: LimitHeaders,
     counter: Arc<QuotaCounter>,
+    metrics: Option<rdock_observability::Metrics>,
 }
 
 /// What the response phase adds when `headers: draft`.
@@ -31,7 +32,12 @@ struct Remaining {
 }
 
 impl Quota {
-    pub(crate) fn new(name: &str, config: &QuotaConfig, registry: &QuotaRegistry) -> Self {
+    pub(crate) fn new(
+        name: &str,
+        config: &QuotaConfig,
+        registry: &QuotaRegistry,
+        metrics: Option<&rdock_observability::Metrics>,
+    ) -> Self {
         let window = match config.window {
             QuotaWindow::Hour => Window::Hour,
             QuotaWindow::Day => Window::Day,
@@ -49,6 +55,7 @@ impl Quota {
                 .collect(),
             headers: config.headers,
             counter,
+            metrics: metrics.cloned(),
         }
     }
 
@@ -56,7 +63,7 @@ impl Quota {
     /// first group that has an override, or the client IP and the default limit.
     fn key_and_limit(&self, cx: &Context) -> (String, u64) {
         let Some(consumer) = &cx.consumer else {
-            return (format!("ip:{}", cx.client_ip), self.limit);
+            return (anonymous_key(cx.client_ip), self.limit);
         };
         let limit = consumer
             .groups
@@ -68,7 +75,7 @@ impl Quota {
                     .map(|(_, l)| *l)
             })
             .unwrap_or(self.limit);
-        (consumer.name.to_string(), limit)
+        (consumer.key().into_owned(), limit)
     }
 
     fn window_seconds(&self) -> i64 {
@@ -89,7 +96,16 @@ impl Middleware for Quota {
 
     async fn request(&self, _req: &mut RequestHeader, cx: &mut Context) -> Flow {
         let (key, limit) = self.key_and_limit(cx);
-        match self.counter.take(&key, limit) {
+        let (taken, overflowed) = self.counter.take_counted(&key, limit);
+        if let Some(class) = overflowed {
+            tracing::debug!(middleware = %self.name, class = class.label(), "quota keys full; shared counter used");
+            if let Some(m) = &self.metrics {
+                m.quota_overflows
+                    .with_label_values(&[self.name.as_str(), class.label()])
+                    .inc();
+            }
+        }
+        match taken {
             Taken::Allowed { remaining, reset } => {
                 if self.headers == LimitHeaders::Draft {
                     cx.set_state(Remaining {
@@ -123,6 +139,23 @@ impl Middleware for Quota {
             {
                 let _ = resp.insert_header(name, value);
             }
+        }
+    }
+}
+
+/// The counter key of a request without a consumer: `ip:<address>`, or for IPv6 the
+/// address's /64 (`ip:2001:db8:1:2::/64`), since one client usually holds a whole /64 and
+/// could otherwise fill the anonymous keys alone (M2 of the v0.8 review). IPv4-mapped IPv6
+/// addresses count as their IPv4 address.
+fn anonymous_key(ip: std::net::IpAddr) -> String {
+    match ip {
+        std::net::IpAddr::V4(v4) => format!("ip:{v4}"),
+        std::net::IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                return format!("ip:{v4}");
+            }
+            let prefix = u128::from(v6) & !((1u128 << 64) - 1);
+            format!("ip:{}/64", std::net::Ipv6Addr::from(prefix))
         }
     }
 }
@@ -171,6 +204,19 @@ fn sf_string(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn anonymous_ipv6_clients_are_keyed_by_their_slash_64() {
+        let key = |s: &str| anonymous_key(s.parse().unwrap());
+        assert_eq!(key("192.0.2.7"), "ip:192.0.2.7");
+        assert_eq!(key("::ffff:192.0.2.7"), "ip:192.0.2.7");
+        assert_eq!(key("2001:db8:1:2:aaaa::1"), "ip:2001:db8:1:2::/64");
+        assert_eq!(
+            key("2001:db8:1:2:bbbb:cccc:dddd:eeee"),
+            "ip:2001:db8:1:2::/64"
+        );
+        assert_ne!(key("2001:db8:1:3::1"), key("2001:db8:1:2::1"));
+    }
 
     #[test]
     fn draft_headers_follow_the_structured_field_syntax() {

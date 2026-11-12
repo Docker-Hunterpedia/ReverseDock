@@ -150,9 +150,10 @@ impl Transform {
     }
 
     /// The patched document, or the error of the first failing operation. All or nothing.
-    fn patch(doc: &Value, ops: &[PatchOp]) -> Result<Value, PatchError> {
+    /// The result is capped at `max_body` (a `copy` can double the document).
+    fn patch(&self, doc: &Value, ops: &[PatchOp]) -> Result<Value, PatchError> {
         let mut copy = doc.clone();
-        json_patch::apply(&mut copy, ops)?;
+        json_patch::apply_within(&mut copy, ops, self.max_body)?;
         Ok(copy)
     }
 
@@ -162,7 +163,7 @@ impl Transform {
             self.skipped("invalid_json");
             return Bytes::copy_from_slice(collected);
         };
-        match Self::patch(&doc, &self.response_patch) {
+        match self.patch(&doc, &self.response_patch) {
             Ok(patched) => match serde_json::to_vec(&patched) {
                 Ok(bytes) => Bytes::from(bytes),
                 Err(_) => Bytes::copy_from_slice(collected),
@@ -248,7 +249,7 @@ impl Middleware for Transform {
                 OnNonJson::Pass => BodyVerdict::Continue,
             };
         };
-        match Self::patch(&doc, &self.request_patch) {
+        match self.patch(&doc, &self.request_patch) {
             Ok(patched) => match serde_json::to_vec(&patched) {
                 Ok(out) => BodyVerdict::Replace(Bytes::from(out)),
                 Err(_) => BodyVerdict::Reply(Reply::problem(ProblemKind::InternalError)),

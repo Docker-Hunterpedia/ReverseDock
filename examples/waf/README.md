@@ -26,7 +26,7 @@ docker build -t rdock:ci ../..       # or set RDOCK_IMAGE to an rdock image you 
 
 - The request is evaluated by the WAF first, then rdock proxies the **original** request to the application. The WAF never talks to the application.
 - Request bodies up to `max_body` are inspected; a longer body with a declared length is refused with `413` (`on_oversize: reject`). `on_oversize: skip` would send such requests to the WAF without their body, uninspected.
-- For a request with a body, the verdict comes after rdock has connected to the application and sent it the request head; the body is withheld until the WAF has answered, and a refusal closes that connection. A request without a body is decided before rdock connects to the application at all.
+- **Limitation:** for a request with a body, the verdict comes after rdock has connected to the application and sent it the request head (Pingora 0.9.1 reads the body only once the upstream request has started); the body is withheld until the WAF has answered, and a refusal closes that connection. A request without a body is decided before rdock connects to the application at all.
 - **Responses are not inspected** (the agent sees requests only), so CRS's response rules (data leakage) do not apply.
 - The WAF parses the request rdock sends, which is the normalised request rdock received: method, path, query, the allowed headers and the body.
 - The WAF's traffic is plain HTTP on the Compose network; `rdock validate` warns about it. Use `https://` with `tls` settings when the WAF runs on another host.

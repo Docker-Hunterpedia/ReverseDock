@@ -322,10 +322,18 @@ Size `max_object_size` below the store's `max_size`; `rdock validate` warns when
   the service sees; a route that mirrors every request never uses its cache (`rdock validate`
   warns).
 
+## How it is tested
+
 The cache is tested against the RFC rules it implements, section by section, and end to end
 (storing, revalidation, `Vary`, ranges, invalidation, `stale-if-error`, purges, coalescing,
-restarts of the disk store). **A run of an external RFC 9111 test suite (such as
-`http-tests/cache-tests`) against rdock has not been done yet**; it is a separate step.
+restarts of the disk store).
+
+The public RFC 9111 suite [`http-tests/cache-tests`](https://github.com/http-tests/cache-tests),
+pinned by commit, runs against the cache at its safe defaults in the `http-cache` CI job. The job
+is informational, not a required check: its first complete run was on 2026-11-12, and its
+results are being triaged. The gate the design asks for (fail on any failing required test that
+is not on a reviewed allow-list with a reason) is not in place yet, so the suite's results do not
+yet block a change.
 
 ## Related
 

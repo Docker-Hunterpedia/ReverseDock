@@ -66,6 +66,7 @@ impl Config {
         v.check_consumers();
         v.check_metering();
         v.check_secrets();
+        v.check_provider_secrets();
         v.check_tcp();
         v.check_udp();
         v.check_certificates();
@@ -1240,6 +1241,18 @@ impl Validator<'_> {
             self.warning(
                 format!("{path}.groups_claim"),
                 "unused without `consumer_claim`",
+            );
+        }
+        if jwt.map_to_consumers && jwt.consumer_claim.is_none() {
+            self.warning(
+                format!("{path}.map_to_consumers"),
+                "unused without `consumer_claim`",
+            );
+        }
+        if jwt.unverified_emails && jwt.consumer_claim.as_deref() != Some("email") {
+            self.warning(
+                format!("{path}.unverified_emails"),
+                "unused unless `consumer_claim` is `email`",
             );
         }
     }

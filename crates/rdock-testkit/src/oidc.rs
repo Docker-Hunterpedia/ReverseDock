@@ -85,6 +85,8 @@ pub struct Knobs {
     pub unavailable: bool,
     /// Refuse every refresh.
     pub refuse_refresh: bool,
+    /// The `email_verified` claim of ID tokens; `Null` leaves it out.
+    pub email_verified: Value,
 }
 
 impl Default for Knobs {
@@ -103,6 +105,7 @@ impl Default for Knobs {
             authorize_error: None,
             unavailable: false,
             refuse_refresh: false,
+            email_verified: Value::Bool(true),
         }
     }
 }
@@ -367,13 +370,18 @@ impl FakeIdp {
             "iat": now,
             "auth_time": now,
             "email": user.email,
-            "email_verified": true,
+            "email_verified": knobs.email_verified,
             "name": user.name,
             "groups": user.groups,
             "at_hash": b64(&ring::digest::digest(&ring::digest::SHA256, access_token.as_bytes()).as_ref()[..16]),
         });
         if let Some(nonce) = knobs.nonce.clone().or(nonce) {
             claims["nonce"] = json!(nonce);
+        }
+        if knobs.email_verified.is_null()
+            && let Some(map) = claims.as_object_mut()
+        {
+            map.remove("email_verified");
         }
         body["id_token"] = json!(self.sign(&knobs, &claims));
         drop(state);

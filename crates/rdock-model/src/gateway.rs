@@ -19,9 +19,12 @@ use crate::values::{Duration, HttpUrl};
 #[serde(default, deny_unknown_fields)]
 pub struct Consumer {
     /// Groups, in order of precedence: per-group limit overrides use the first listed group
-    /// that has one, and `api_key.groups` admits a consumer in any of them.
-    #[serde(skip_serializing_if = "Vec::is_empty")]
-    pub groups: Vec<String>,
+    /// that has one, and `api_key.groups` admits a consumer in any of them. In the admin
+    /// API's document, an entry without `groups` only adds keys to a consumer of the file.
+    // Read through `Consumer::groups`; `None` (not the same as empty) marks such an entry.
+    #[serde(rename = "groups", skip_serializing_if = "Option::is_none")]
+    #[schemars(with = "Vec<String>")]
+    pub group_list: Option<Vec<String>>,
     /// API keys, stored as their ID and the SHA-256 of their secret; never the key itself.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub keys: Vec<ApiKeyEntry>,
@@ -29,6 +32,23 @@ pub struct Consumer {
     /// every reload and watched like the configuration file.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub keys_file: Option<PathBuf>,
+}
+
+impl Consumer {
+    /// Its groups, in order of precedence.
+    #[must_use]
+    pub fn groups(&self) -> &[String] {
+        self.group_list.as_deref().unwrap_or_default()
+    }
+
+    /// A consumer with these groups.
+    #[must_use]
+    pub fn with_groups(groups: Vec<String>) -> Self {
+        Self {
+            group_list: Some(groups),
+            ..Self::default()
+        }
+    }
 }
 
 /// One API key of a consumer: `rdk_<id>_<secret><checksum>` is the key, and only `id` and the

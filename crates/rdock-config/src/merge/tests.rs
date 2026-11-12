@@ -371,3 +371,64 @@ fn owners_of_listeners_and_certificates() {
         Some((Section::Certificates, "c@kubernetes".to_owned()))
     );
 }
+
+fn api(json: serde_json::Value) -> Snapshot {
+    Snapshot {
+        provider: CONSUMER_PROVIDER.to_owned(),
+        fragment: serde_json::from_value(json).unwrap(),
+        diagnostics: Vec::new(),
+        revision: None,
+    }
+}
+
+const KEY: &str = "{ \"id\": \"abcdefghijkl\", \"hash\": \"0000000000000000000000000000000000000000000000000000000000000000\" }";
+
+/// L2 of the v0.8 review: keys the API minted for a consumer of the file stop working when the
+/// file no longer defines it; an API-owned consumer (with `groups`, even empty) stays.
+#[test]
+fn api_keys_of_a_consumer_the_file_dropped_are_left_out() {
+    let key: serde_json::Value = serde_json::from_str(KEY).unwrap();
+    let snapshot = api(serde_json::json!({
+        "consumers": {
+            "partner": { "keys": [key.clone()] },
+            "mobile": { "groups": [], "keys": [{ "id": "mnopqrstuvwx", "hash": key["hash"] }] },
+        }
+    }));
+    let with = format!("{FILE}consumers:\n  partner: {{ groups: [gold] }}\n");
+    let merged = assemble(&base(&with), &[&snapshot], &BTreeSet::new());
+    assert!(merged.errors.is_empty(), "{:?}", merged.errors);
+    assert_eq!(merged.config.consumers["partner"].keys.len(), 1);
+    assert!(merged.config.consumers.contains_key("mobile"));
+
+    let merged = assemble(&base(FILE), &[&snapshot], &BTreeSet::new());
+    assert!(
+        !merged.config.consumers.contains_key("partner"),
+        "{:?}",
+        merged.config.consumers
+    );
+    assert!(merged.config.consumers.contains_key("mobile"));
+    assert!(
+        merged
+            .skipped
+            .iter()
+            .any(|d| d.path == "consumers.partner" && d.message.contains("no longer defines")),
+        "{:?}",
+        merged.skipped
+    );
+}
+
+/// L3 of the v0.8 review: a consumer of the file has the file's groups only, even when its
+/// list there is empty and the API entry has some.
+#[test]
+fn api_groups_never_reach_a_consumer_of_the_file() {
+    let key: serde_json::Value = serde_json::from_str(KEY).unwrap();
+    let snapshot = api(serde_json::json!({
+        "consumers": { "partner": { "groups": ["admin"], "keys": [key] } }
+    }));
+    let with = format!("{FILE}consumers:\n  partner: {{}}\n");
+    let merged = assemble(&base(&with), &[&snapshot], &BTreeSet::new());
+    assert!(merged.errors.is_empty(), "{:?}", merged.errors);
+    let partner = &merged.config.consumers["partner"];
+    assert!(partner.groups().is_empty(), "{:?}", partner.groups());
+    assert_eq!(partner.keys.len(), 1, "the API's keys are still added");
+}

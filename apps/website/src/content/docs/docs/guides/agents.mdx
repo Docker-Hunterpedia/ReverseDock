@@ -140,6 +140,16 @@ always removed, so a client cannot forge them. `Host`, framing headers, `X-Forwa
 
 ## When the agent is asked
 
+**Limitation: with a body, the backend sees the request head before the verdict.** ReverseDock
+withholds the body until the agent answers, but by then it has already connected to the backend
+and sent the request line and headers; a refusal closes that connection, and the backend sees a
+request whose body never arrives. Pingora 0.9.1 reads the body only once the upstream request
+has started, and the one way it offers to replay a body read earlier is capped at 64 KiB, so
+ReverseDock cannot yet decide on a body before connecting. If your backend acts on a request
+head alone (a `DELETE` with a body, an upload endpoint that allocates on the headers), put the
+check in the head's decision instead: send no body (`max_body: 0`), or refuse by method and path
+first.
+
 - A request **without a body** (or whose body is not sent: `max_body: 0`, or `skip` with a
   declared length over `max_body`) is decided in the `request` phase, before ReverseDock chooses
   a backend. A refused request never reaches the backend.

@@ -5,6 +5,7 @@
 //! Counts are exact on one instance (one lock per counter set) and approximate across
 //! restarts: a crash loses what was counted since the last flush.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -14,10 +15,94 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
-/// Keys tracked per counter set; past this, new keys share one overflow counter.
+/// Anonymous keys (`ip:…`) tracked per counter set, and apart from them keys of consumers
+/// asserted by a token issuer (`~…`); past this, new keys of the class share one overflow
+/// counter of that class. Keys of consumers defined in `consumers` (bare names, bounded by
+/// the configuration) never overflow (M2 of the v0.8 review).
 pub const MAX_KEYS: usize = 100_000;
-/// The key that keys past [`MAX_KEYS`] share.
+/// The counter anonymous keys past [`MAX_KEYS`] share.
 pub const OVERFLOW_KEY: &str = "\u{0}overflow";
+/// The counter token consumers past [`MAX_KEYS`] share.
+pub const TOKEN_OVERFLOW_KEY: &str = "\u{0}overflow:token";
+
+/// The kind of a counter key, each with its own budget of [`MAX_KEYS`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyClass {
+    /// A request without a consumer, counted per client address (`ip:…`).
+    Anonymous,
+    /// A consumer named by a token issuer (`oidc`, `jwt`, `cloudflare_access`).
+    Token,
+    /// A consumer defined in `consumers`; never overflows.
+    Consumer,
+}
+
+impl KeyClass {
+    /// The class of `key`; `None` for the overflow counters themselves.
+    #[must_use]
+    pub fn of(key: &str) -> Option<Self> {
+        if key.starts_with('\u{0}') {
+            None
+        } else if key.starts_with("ip:") {
+            Some(Self::Anonymous)
+        } else if key.starts_with('~') {
+            Some(Self::Token)
+        } else {
+            Some(Self::Consumer)
+        }
+    }
+
+    /// The label of the class in metrics.
+    #[must_use]
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Anonymous => "anonymous",
+            Self::Token => "token",
+            Self::Consumer => "consumer",
+        }
+    }
+
+    fn index(self) -> usize {
+        match self {
+            Self::Anonymous => 0,
+            Self::Token => 1,
+            Self::Consumer => 2,
+        }
+    }
+
+    fn overflow(self) -> Option<&'static str> {
+        match self {
+            Self::Anonymous => Some(OVERFLOW_KEY),
+            Self::Token => Some(TOKEN_OVERFLOW_KEY),
+            Self::Consumer => None,
+        }
+    }
+}
+
+/// The counter key of a consumer: its name when `consumers` defines it (`issuer` is `None`),
+/// otherwise `~<length of issuer>:<issuer><name>`. A configured name cannot contain `~` or
+/// `:`, and the length makes the split unambiguous, so a token's consumer never shares a
+/// configured consumer's key, nor one issuer's user another's.
+#[must_use]
+pub fn consumer_key<'a>(issuer: Option<&str>, name: &'a str) -> Cow<'a, str> {
+    match issuer {
+        None => Cow::Borrowed(name),
+        Some(issuer) => Cow::Owned(format!("~{}:{issuer}{name}", issuer.len())),
+    }
+}
+
+/// The consumer name in a counter key made by [`consumer_key`]; `None` for anonymous keys
+/// and the overflow counters.
+#[must_use]
+pub fn key_consumer(key: &str) -> Option<&str> {
+    match KeyClass::of(key)? {
+        KeyClass::Anonymous => None,
+        KeyClass::Consumer => Some(key),
+        KeyClass::Token => {
+            let (len, rest) = key.strip_prefix('~')?.split_once(':')?;
+            rest.get(len.parse::<usize>().ok()?..)
+        }
+    }
+}
 
 /// Seconds since the Unix epoch, from a clock tests can replace.
 pub trait Clock: Send + Sync + std::fmt::Debug {
@@ -118,7 +203,8 @@ pub enum Taken {
 /// One key's use in the current window.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Usage {
-    /// The key (a consumer name, or `ip:<address>` for requests without one).
+    /// The key: a consumer name, a token consumer's [`consumer_key`], or `ip:<address>`
+    /// (`ip:<prefix>/64` for IPv6) for requests without a consumer.
     pub key: String,
     /// Requests counted.
     pub used: u64,
@@ -126,10 +212,31 @@ pub struct Usage {
     pub limit: u64,
 }
 
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Default)]
 struct State {
     start: i64,
     counts: HashMap<String, (u64, u64)>,
+    /// Keys per [`KeyClass`], overflow counters not included.
+    sizes: [usize; 3],
+}
+
+impl State {
+    fn recount(&mut self) {
+        self.sizes = [0; 3];
+        for key in self.counts.keys() {
+            if let Some(class) = KeyClass::of(key) {
+                self.sizes[class.index()] += 1;
+            }
+        }
+    }
+
+    fn remove(&mut self, key: &str) -> bool {
+        let removed = self.counts.remove(key).is_some();
+        if removed && let Some(class) = KeyClass::of(key) {
+            self.sizes[class.index()] -= 1;
+        }
+        removed
+    }
 }
 
 #[derive(Serialize, Deserialize)]
@@ -160,13 +267,14 @@ impl QuotaCounter {
         let (start, _) = window.bounds(now);
         let mut state = State {
             start,
-            counts: HashMap::new(),
+            ..State::default()
         };
         if let Some(file) = path.as_deref().and_then(read_file)
             && file.window == window
             && file.start == start
         {
             state.counts = file.counts;
+            state.recount();
         }
         Self {
             window,
@@ -200,6 +308,7 @@ impl QuotaCounter {
             // A new window: everyone starts again.
             state.start = start;
             state.counts.clear();
+            state.sizes = [0; 3];
             self.dirty.store(true, Ordering::Relaxed);
         }
         state
@@ -207,25 +316,83 @@ impl QuotaCounter {
 
     /// Counts one request for `key` against `limit`, unless the quota is used up.
     pub fn take(&self, key: &str, limit: u64) -> Taken {
+        self.take_counted(key, limit).0
+    }
+
+    /// [`take`](Self::take), and the class whose overflow counter took the request when
+    /// `key` is new and its class is full.
+    pub fn take_counted(&self, key: &str, limit: u64) -> (Taken, Option<KeyClass>) {
         let now = self.clock.now();
         let (_, end) = self.window.bounds(now);
         let reset = u64::try_from(end - now).unwrap_or(0).max(1);
         let mut state = self.lock();
-        let key = if state.counts.contains_key(key) || state.counts.len() < MAX_KEYS {
+        let mut overflowed = None;
+        let key = if state.counts.contains_key(key) {
             key
         } else {
-            OVERFLOW_KEY
+            match KeyClass::of(key) {
+                Some(class) => match class.overflow() {
+                    Some(shared) if state.sizes[class.index()] >= MAX_KEYS => {
+                        overflowed = Some(class);
+                        shared
+                    }
+                    _ => {
+                        state.sizes[class.index()] += 1;
+                        key
+                    }
+                },
+                None => key,
+            }
         };
         let entry = state.counts.entry(key.to_owned()).or_insert((0, limit));
         entry.1 = limit;
         if entry.0 >= limit {
-            return Taken::Exceeded { reset };
+            return (Taken::Exceeded { reset }, overflowed);
         }
         entry.0 += 1;
         let remaining = limit - entry.0;
         drop(state);
         self.dirty.store(true, Ordering::Relaxed);
-        Taken::Allowed { remaining, reset }
+        (Taken::Allowed { remaining, reset }, overflowed)
+    }
+
+    /// The use of every key of consumer `name` in the current window: its own key and those
+    /// of token consumers with that name, whatever their issuer.
+    #[must_use]
+    pub fn usage_of(&self, name: &str) -> Vec<Usage> {
+        let mut out: Vec<Usage> = self
+            .lock()
+            .counts
+            .iter()
+            .filter(|(key, _)| key_consumer(key) == Some(name))
+            .map(|(key, &(used, limit))| Usage {
+                key: key.clone(),
+                used,
+                limit,
+            })
+            .collect();
+        out.sort_by(|a, b| a.key.cmp(&b.key));
+        out
+    }
+
+    /// Forgets the counts of every key of consumer `name` (see [`usage_of`](Self::usage_of));
+    /// returns whether there was one.
+    pub fn reset_consumer(&self, name: &str) -> bool {
+        let mut state = self.lock();
+        let keys: Vec<String> = state
+            .counts
+            .keys()
+            .filter(|key| key_consumer(key) == Some(name))
+            .cloned()
+            .collect();
+        for key in &keys {
+            state.remove(key);
+        }
+        drop(state);
+        if !keys.is_empty() {
+            self.dirty.store(true, Ordering::Relaxed);
+        }
+        !keys.is_empty()
     }
 
     /// The use of `key` in the current window.
@@ -263,7 +430,7 @@ impl QuotaCounter {
 
     /// Forgets `key`'s count; returns whether it had one.
     pub fn reset(&self, key: &str) -> bool {
-        let removed = self.lock().counts.remove(key).is_some();
+        let removed = self.lock().remove(key);
         if removed {
             self.dirty.store(true, Ordering::Relaxed);
         }
@@ -324,15 +491,30 @@ fn read_file(path: &Path) -> Option<File> {
 }
 
 /// Writes `bytes` to a temporary file next to `path` and renames it over `path`, so a reader
-/// (or a crash) never sees half a file.
+/// (or a crash) never sees half a file. The counts name consumers (e-mail addresses after an
+/// OIDC login) and client addresses, so on Unix the directory is `0700` and the file `0600`
+/// whatever the umask (L6 of the v0.8 review), as for the audit log and ACME files.
 fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    use std::io::Write as _;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
+        #[cfg(unix)]
+        std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
     }
     let mut tmp = path.as_os_str().to_owned();
     tmp.push(".tmp");
     let tmp = PathBuf::from(tmp);
-    std::fs::write(&tmp, bytes)?;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let mut file = options.open(&tmp)?;
+    // A temporary file left by an older version keeps its mode through `open`.
+    #[cfg(unix)]
+    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+    file.write_all(bytes)?;
+    file.sync_all()?;
+    drop(file);
     std::fs::rename(&tmp, path)
 }
 

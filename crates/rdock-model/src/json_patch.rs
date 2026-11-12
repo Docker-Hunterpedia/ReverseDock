@@ -1,9 +1,11 @@
 //! JSON Pointer (RFC 6901) and JSON Patch (RFC 6902) on `serde_json::Value`, for the
 //! `transform` middleware (F-GW-04, ADR-0030).
 //!
-//! The patch language is total: every operation ends, the work is linear in the patch and the
-//! document, and nothing is evaluated. Errors name the operation and the pointer, never a value
-//! from the document (it may be a secret).
+//! The patch language is total: every operation ends and nothing is evaluated. The work is not
+//! linear in the patch: each `copy` can double the document (a copy of the root into itself),
+//! so [`apply_within`] caps the size of the patched document and fails the patch past it
+//! (L5 of the v0.8 review); each operation then costs at most the cap. Errors name the
+//! operation and the pointer, never a value from the document (it may be a secret).
 
 use std::fmt;
 
@@ -135,6 +137,8 @@ pub enum PatchErrorKind {
     MoveIntoItself,
     /// `remove` of the whole document.
     RemoveRoot,
+    /// The patched document would be larger than allowed.
+    TooLarge,
 }
 
 impl PatchErrorKind {
@@ -152,6 +156,7 @@ impl PatchErrorKind {
             Self::TestFailed => "the value is not the expected one",
             Self::MoveIntoItself => "`path` is inside `from`: a value cannot be moved into itself",
             Self::RemoveRoot => "the whole document cannot be removed",
+            Self::TooLarge => "the patched document would be larger than `max_body`",
         }
     }
 }
@@ -345,12 +350,66 @@ pub fn json_equal(a: &Value, b: &Value) -> bool {
     }
 }
 
-fn apply_one(doc: &mut Value, op: &PatchOp) -> Result<(), PatchErrorKind> {
+/// The length of `value` as compact JSON, counted without building the text.
+fn encoded_len(value: &Value) -> u64 {
+    struct Count(u64);
+    impl std::io::Write for Count {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0 = self.0.saturating_add(buf.len() as u64);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+    let mut count = Count(0);
+    // Writing a `Value` to a writer that never fails cannot fail.
+    let _ = serde_json::to_writer(&mut count, value);
+    count.0
+}
+
+/// An upper bound of the document's encoded length while it is patched: values added count
+/// with their length plus a member name's, values removed or replaced are subtracted.
+struct Size {
+    now: u64,
+    max: u64,
+}
+
+impl Size {
+    fn grow(&mut self, value: &Value, name: &str) -> Result<(), PatchErrorKind> {
+        // `"name":` and a separator.
+        let added = encoded_len(value).saturating_add(name.len() as u64 + 4);
+        self.now = self.now.saturating_add(added);
+        if self.now > self.max {
+            return Err(PatchErrorKind::TooLarge);
+        }
+        Ok(())
+    }
+
+    fn shrink(&mut self, value: &Value) {
+        self.now = self.now.saturating_sub(encoded_len(value));
+    }
+}
+
+fn apply_one(doc: &mut Value, op: &PatchOp, size: &mut Size) -> Result<(), PatchErrorKind> {
+    let last = |tokens: &[String]| tokens.last().cloned().unwrap_or_default();
     match op {
-        PatchOp::Add { path, value } => add(doc, &parse_pointer(path)?, value.clone()),
-        PatchOp::Remove { path } => remove(doc, &parse_pointer(path)?).map(drop),
+        PatchOp::Add { path, value } => {
+            let tokens = parse_pointer(path)?;
+            size.grow(value, &last(&tokens))?;
+            add(doc, &tokens, value.clone())
+        }
+        PatchOp::Remove { path } => {
+            let removed = remove(doc, &parse_pointer(path)?)?;
+            size.shrink(&removed);
+            Ok(())
+        }
         PatchOp::Replace { path, value } => {
-            *get_mut(doc, &parse_pointer(path)?)? = value.clone();
+            let tokens = parse_pointer(path)?;
+            let slot = get_mut(doc, &tokens)?;
+            size.grow(value, "")?;
+            let old = std::mem::replace(slot, value.clone());
+            size.shrink(&old);
             Ok(())
         }
         PatchOp::Move { from, path } => {
@@ -367,8 +426,12 @@ fn apply_one(doc: &mut Value, op: &PatchOp) -> Result<(), PatchErrorKind> {
             add(doc, &path, value)
         }
         PatchOp::Copy { from, path } => {
-            let value = get(doc, &parse_pointer(from)?)?.clone();
-            add(doc, &parse_pointer(path)?, value)
+            let tokens = parse_pointer(path)?;
+            let source = get(doc, &parse_pointer(from)?)?;
+            // Counted before the clone, so a doubling copy fails without allocating.
+            size.grow(source, &last(&tokens))?;
+            let value = source.clone();
+            add(doc, &tokens, value)
         }
         PatchOp::Test { path, value } => {
             if json_equal(get(doc, &parse_pointer(path)?)?, value) {
@@ -380,15 +443,31 @@ fn apply_one(doc: &mut Value, op: &PatchOp) -> Result<(), PatchErrorKind> {
     }
 }
 
-/// Applies `ops` in order to `doc`.
+/// Applies `ops` in order to `doc`, without a size limit; for patches whose operations cannot
+/// grow the document past what the caller accepts (tests, trusted documents).
 ///
 /// # Errors
 ///
 /// The first operation that fails. `doc` is then partly patched: callers that need the
 /// all-or-nothing rule of RFC 6902 §5 apply to a copy and discard it.
 pub fn apply(doc: &mut Value, ops: &[PatchOp]) -> Result<(), PatchError> {
+    apply_within(doc, ops, u64::MAX)
+}
+
+/// Applies `ops` in order to `doc`, failing with [`PatchErrorKind::TooLarge`] as soon as the
+/// document could be longer than `max` bytes of JSON (an upper bound: values added count in
+/// full, values removed or replaced are subtracted).
+///
+/// # Errors
+///
+/// As [`apply`].
+pub fn apply_within(doc: &mut Value, ops: &[PatchOp], max: u64) -> Result<(), PatchError> {
+    let mut size = Size {
+        now: if max == u64::MAX { 0 } else { encoded_len(doc) },
+        max,
+    };
     for (index, op) in ops.iter().enumerate() {
-        apply_one(doc, op).map_err(|kind| PatchError {
+        apply_one(doc, op, &mut size).map_err(|kind| PatchError {
             index,
             op: op.name(),
             kind,

@@ -1968,3 +1968,65 @@ fn wasm_plugins_are_checked() {
         "listed twice"
     ));
 }
+
+/// M1 of the v0.8 review: a provider object cannot make rdock read a file, a variable or a
+/// Vault secret through a secret field; the API may name files and variables (documented for
+/// the configuration API), not Vault; the file may name anything.
+#[test]
+fn provider_objects_hold_no_references_in_secret_fields() {
+    let jwt = |secret: &str| {
+        json!({ "type": "jwt", "issuer": "any", "audiences": ["any"], "algorithms": ["HS256"],
+            "hmac_secret": secret })
+    };
+    let config: Config = serde_json::from_value(json!({
+        "middlewares": {
+            "a@docker": jwt("${file:/etc/shadow}"),
+            "b@kubernetes": jwt("${env:HOME}"),
+            "c@api": jwt("${vault:kv/prod#db}"),
+            "d@api": jwt("${file:/run/secrets/jwt}"),
+            "e": jwt("${vault:kv/prod#db}"),
+            "f@docker": jwt("a-literal-secret-of-at-least-32-bytes!!"),
+        },
+        "services": {
+            "s@swarm": { "backends": [{ "address": "10.0.0.1:80" }],
+                "sticky": { "cookie": { "name": "s", "secret": "${file:/etc/shadow}" } } }
+        }
+    }))
+    .unwrap();
+    let found: Vec<(String, String)> = config
+        .validate_merged()
+        .into_iter()
+        .filter(Diagnostic::is_error)
+        .map(|d| (d.path, d.message))
+        .collect();
+    let refused = |path: &str| has(&found, path, "reference") || has(&found, path, "read only");
+    assert!(
+        refused("middlewares[\"a@docker\"].hmac_secret"),
+        "{found:?}"
+    );
+    assert!(
+        refused("middlewares[\"b@kubernetes\"].hmac_secret"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares[\"c@api\"].hmac_secret",
+            "read only for the configuration file"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        refused("services[\"s@swarm\"].sticky.cookie.secret"),
+        "{found:?}"
+    );
+    for allowed in ["d@api", "e", "f@docker"] {
+        assert!(
+            !found
+                .iter()
+                .any(|(p, _)| p.contains(&format!("{allowed}\"]"))
+                    || p == &format!("middlewares.{allowed}.hmac_secret")),
+            "{allowed}: {found:?}"
+        );
+    }
+}

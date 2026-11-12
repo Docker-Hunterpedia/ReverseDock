@@ -22,7 +22,7 @@ impl Validator<'_> {
             if name.contains(',') {
                 self.error(&path, "a consumer name cannot contain `,`");
             }
-            for (i, group) in consumer.groups.iter().enumerate() {
+            for (i, group) in consumer.groups().iter().enumerate() {
                 if !is_token(group) || group.contains(',') {
                     self.error(
                         path_index(&format!("{path}.groups"), i),
@@ -113,7 +113,7 @@ impl Validator<'_> {
                 .config
                 .consumers
                 .values()
-                .any(|c| c.groups.contains(group))
+                .any(|c| c.groups().contains(group))
                 && self.merged
             {
                 self.warning(

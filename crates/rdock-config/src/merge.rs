@@ -369,8 +369,9 @@ fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) 
             .insert(format!("{name}@{provider}"), middleware);
     }
     add_l4(config, provider, fragment, &own_listener);
+    let mut dropped = dropped;
     if provider == CONSUMER_PROVIDER {
-        add_consumers(config, fragment);
+        dropped.extend(add_consumers(config, base, fragment));
     }
     dropped
 }
@@ -378,21 +379,38 @@ fn add(config: &mut Config, base: &Config, provider: &str, fragment: &Fragment) 
 /// The only provider that may contribute consumers: keys are minted through the admin API.
 pub const CONSUMER_PROVIDER: &str = "api";
 
-/// Adds the fragment's consumers and keys (see [`Fragment::consumers`]).
-fn add_consumers(config: &mut Config, fragment: &Fragment) {
+/// Adds the fragment's consumers and keys (see [`Fragment::consumers`]), and a warning for
+/// each entry left out (v0.8 security review, L2 and L3):
+///
+/// - A consumer the file defines keeps the file's groups, whatever the API entry says, so the
+///   API cannot give a file consumer groups (`PUT /consumers/{name}` refuses that too); the
+///   API's keys are added.
+/// - An API entry without `groups` only adds keys to a consumer of the file. When the file no
+///   longer defines that consumer, the entry is dropped with its keys: deleting a consumer
+///   from the file revokes the keys the API minted for it.
+fn add_consumers(config: &mut Config, base: &Config, fragment: &Fragment) -> Vec<Diagnostic> {
+    let mut dropped = Vec::new();
     for (name, consumer) in &fragment.consumers {
-        match config.consumers.get_mut(name) {
-            Some(existing) => {
+        if base.consumers.contains_key(name) {
+            if let Some(existing) = config.consumers.get_mut(name) {
                 existing.keys.extend(consumer.keys.iter().cloned());
-                if existing.groups.is_empty() {
-                    existing.groups.clone_from(&consumer.groups);
-                }
             }
-            None => {
-                config.consumers.insert(name.clone(), consumer.clone());
-            }
+        } else if consumer.group_list.is_some() {
+            config.consumers.insert(name.clone(), consumer.clone());
+        } else {
+            dropped.push(
+                Diagnostic::warning(
+                    rdock_model::path_key("consumers", name),
+                    format!(
+                        "left out: the API added {} key(s) to the file's consumer `{name}`, which the file no longer defines; they do not work",
+                        consumer.keys.len()
+                    ),
+                )
+                .with_hint("define the consumer in the file again, or revoke the keys with `DELETE /api/v1/consumers/{name}/keys/{id}`"),
+            );
         }
     }
+    dropped
 }
 
 /// Adds `fragment`'s TCP and UDP routes and services, like [`add`] does the HTTP objects.

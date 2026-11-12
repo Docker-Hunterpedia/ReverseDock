@@ -161,6 +161,75 @@ impl Validator<'_> {
         }
     }
 
+    /// Secret fields of provider objects (M1 of the v0.8 review): a reference there would make
+    /// rdock read a file, an environment variable or a Vault secret on behalf of a container
+    /// label, a Kubernetes object or an API client. Only the API, whose writers are operators,
+    /// may name `${file:…}` and `${env:…}` (documented for the configuration API); `${vault:…}`
+    /// is read only for the configuration file. Errors leave the object out.
+    pub(super) fn check_provider_secrets(&mut self) {
+        if !self.merged {
+            return;
+        }
+        let sections: [(&str, Vec<(&String, serde_json::Value)>); 3] = [
+            ("middlewares", provider_objects(&self.config.middlewares)),
+            ("services", provider_objects(&self.config.services)),
+            ("certificates", provider_objects(&self.config.certificates)),
+        ];
+        for (section, objects) in sections {
+            for (name, value) in objects {
+                let provider = name.rsplit_once('@').map_or("file", |(_, p)| p);
+                let mut keys = vec![section.to_owned(), name.clone()];
+                let path = crate::diagnostics::path_key(section, name);
+                self.provider_secret_walk(provider, &value, &mut keys, &path);
+            }
+        }
+    }
+
+    fn provider_secret_walk(
+        &mut self,
+        provider: &str,
+        value: &serde_json::Value,
+        keys: &mut Vec<String>,
+        path: &str,
+    ) {
+        match value {
+            serde_json::Value::String(text) => {
+                let segments: Vec<&str> = keys.iter().map(String::as_str).collect();
+                if crate::interpolation::field_kind(&segments)
+                    != crate::interpolation::FieldKind::Secret
+                    || !text.contains("${")
+                {
+                    return;
+                }
+                if provider == "api" && crate::secrets::vault_references(text).is_empty() {
+                    return;
+                }
+                let message = if provider == "api" {
+                    "`${vault:…}` is read only for the configuration file; write the secret, a `${file:…}` reference, or the reference in the file"
+                } else {
+                    "a secret field of a provider object cannot hold a `${…}` reference; the configuration file names files, variables and Vault secrets"
+                };
+                self.error(path, message);
+            }
+            serde_json::Value::Array(items) => {
+                for (i, item) in items.iter().enumerate() {
+                    keys.push("*".to_owned());
+                    self.provider_secret_walk(provider, item, keys, &path_index(path, i));
+                    keys.pop();
+                }
+            }
+            serde_json::Value::Object(map) => {
+                for (key, item) in map {
+                    keys.push(key.clone());
+                    let at = crate::diagnostics::path_key(path, key);
+                    self.provider_secret_walk(provider, item, keys, &at);
+                    keys.pop();
+                }
+            }
+            _ => {}
+        }
+    }
+
     pub(super) fn check_secrets(&mut self) {
         let Some(vault) = &self.config.secrets.vault else {
             return;
@@ -245,4 +314,15 @@ impl Validator<'_> {
             self.error(format!("{path}.timeout"), "must be shorter than `refresh`");
         }
     }
+}
+
+/// The objects of `section` that a provider other than the file owns, as JSON.
+fn provider_objects<T: serde::Serialize>(
+    section: &std::collections::BTreeMap<String, T>,
+) -> Vec<(&String, serde_json::Value)> {
+    section
+        .iter()
+        .filter(|(name, _)| name.rsplit_once('@').is_some_and(|(_, p)| p != "file"))
+        .filter_map(|(name, object)| serde_json::to_value(object).ok().map(|v| (name, v)))
+        .collect()
 }

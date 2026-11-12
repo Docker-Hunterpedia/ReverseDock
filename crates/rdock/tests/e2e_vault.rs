@@ -244,6 +244,106 @@ async fn values_are_read_rotated_and_kept_when_vault_fails() {
     assert_nowhere(&rdock, &[KEY_1, KEY_2, vault.root_token()]);
 }
 
+fn etag(head: &str) -> String {
+    head.lines()
+        .find_map(|l| {
+            l.strip_prefix("etag: ")
+                .or_else(|| l.strip_prefix("ETag: "))
+        })
+        .unwrap()
+        .trim()
+        .to_owned()
+}
+
+/// M1 of the v0.8 review: a `${vault:…}` reference in a provider's or the API's object never
+/// makes rdock read Vault (not at a reload, not at a refresh), and a secret field of such an
+/// object cannot hold one; the API keeps `${file:…}` there.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn provider_objects_cannot_make_rdock_read_vault() {
+    let vault = FakeVault::start().await;
+    vault.put("secret/rdock/jwt", json!({ "key": KEY_1 }));
+    vault.put("secret/prod/db", json!({ "password": "not-for-the-api" }));
+    let backend = Backend::start("api").await;
+    let port = free_port();
+    let dir = tempfile::tempdir().unwrap();
+    let token_file = dir.path().join("vault-token");
+    std::fs::write(&token_file, vault.root_token()).unwrap();
+    let auth = format!("{{ token: \"${{file:{}}}\" }}", token_file.display());
+    let rdock = tokio::task::block_in_place(|| {
+        Rdock::start(RDOCK, &config(port, backend.addr, vault.url(), &auth))
+    });
+    assert_eq!(status_with(port, KEY_1).await, 200);
+    let tag = |rdock: &Rdock| {
+        let (status, head, body) = rdock
+            .admin_send("GET", "/api/v1/config/api", &[], "")
+            .unwrap();
+        assert_eq!(status, 200, "{body}");
+        etag(&head)
+    };
+    let put = |rdock: &Rdock, document: Value| {
+        let tag = tag(rdock);
+        let headers = [
+            ("Content-Type", "application/json"),
+            ("If-Match", tag.as_str()),
+        ];
+        rdock
+            .admin_send("PUT", "/api/v1/config/api", &headers, &document.to_string())
+            .unwrap()
+    };
+
+    // A reference where it is taken literally (a regex replacement, as a Docker label may
+    // carry) is accepted and never read.
+    let (status, _, body) = put(
+        &rdock,
+        json!({ "middlewares": { "jump": { "type": "redirect",
+            "regex": "^http://x/(.*)", "replacement": "${vault:secret/prod/db#password}" } } }),
+    );
+    assert_eq!(status, 200, "{body}");
+    let generation = |rdock: &Rdock| {
+        let (_, body) = rdock.get_admin("/api/v1/status").unwrap();
+        serde_json::from_str::<Value>(&body).unwrap()["generation"].clone()
+    };
+    let before = generation(&rdock);
+    // `refresh: 1s`: several refreshes pass.
+    tokio::time::sleep(Duration::from_millis(3500)).await;
+    let reads = vault.lines();
+    assert!(
+        !reads.iter().any(|l| l.contains("secret/data/prod/db")),
+        "Vault was read for an API object: {reads:?}"
+    );
+    assert_eq!(generation(&rdock), before, "no reload loop");
+
+    // In a secret field the API may name a file, but not a Vault secret.
+    let (status, _, body) = put(
+        &rdock,
+        json!({ "middlewares": { "steal": { "type": "jwt", "issuer": "any",
+            "audiences": ["any"], "algorithms": ["HS256"],
+            "hmac_secret": "${vault:secret/rdock/jwt#key}" } } }),
+    );
+    assert_eq!(status, 422, "{body}");
+    assert!(
+        body.contains("read only for the configuration file"),
+        "{body}"
+    );
+    let key_file = dir.path().join("api-key");
+    std::fs::write(&key_file, KEY_2).unwrap();
+    let (status, _, body) = put(
+        &rdock,
+        json!({ "middlewares": { "own": { "type": "jwt", "issuer": "any",
+            "audiences": ["any"], "algorithms": ["HS256"],
+            "hmac_secret": format!("${{file:{}}}", key_file.display()) } } }),
+    );
+    assert_eq!(status, 200, "{body}");
+    assert!(
+        !vault
+            .lines()
+            .iter()
+            .any(|l| l.contains("secret/data/prod/db")),
+        "{:?}",
+        vault.lines()
+    );
+}
+
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 async fn kubernetes_login_is_renewed_before_the_lease_ends() {
     let vault = FakeVault::start().await;

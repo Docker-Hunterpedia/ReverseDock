@@ -91,12 +91,13 @@ sees another port).
 | `scopes` | `openid email profile` | Must contain `openid`. Add `offline_access` where the provider issues refresh tokens only for it (Dex). |
 | `redirect_path` | `/_rdock/oidc/callback` | The callback. The route must match it. |
 | `redirect_url` | none | The full redirect URI, when it cannot be built from the request. |
-| `logout_path` | `/_rdock/oidc/logout` | Ends the session (`GET`). When the provider advertises an `end_session_endpoint`, the browser goes there next (RP-initiated logout) with `client_id` and `post_logout_redirect_uri`. |
+| `logout_path` | `/_rdock/oidc/logout` | Ends the session (`GET`, `HEAD` or `POST`; other methods get `405`). Only a request from the site itself counts: `Sec-Fetch-Site: same-origin` or `none` (a typed URL, a bookmark), or, from browsers that do not send that header, an `Origin` or `Referer` of the route's own origin; anything else, `same-site` included, gets `403`, so another page cannot log users out with an image or a form. A plain link or a form on your site works. When the provider advertises an `end_session_endpoint`, the browser goes there next (RP-initiated logout) with `client_id` and `post_logout_redirect_uri`. |
 | `post_logout_path` | `/` | Where the browser lands after logout. |
 | `claims_to_headers` | none | `claim: Header`. Arrays are joined with `,`. Client-sent copies are always removed. |
-| `consumer_claim` | `email` | The claim that becomes the consumer; `sub` when the token lacks it. |
-| `groups_claim` | `groups` | The claim with the user's groups (a string or an array). Groups of a `consumers.<name>` entry with the same name are added. |
-| `allowed` | everyone | `emails`, `domains`, `groups`: a user matching **any one** entry may log in; others get `403`. E-mail entries count only with `email_verified: true` unless `unverified_emails: true`. |
+| `consumer_claim` | `email` | The claim that becomes the consumer; `sub` when the token lacks it. An `email` counts only when the provider verified it (`email_verified: true`, or absent with `allowed.unverified_emails`); otherwise `sub` is the consumer. |
+| `groups_claim` | `groups` | The claim with the user's groups (a string or an array). |
+| `map_to_consumers` | `false` | Treat the consumer name as a [`consumers.<name>`](/docs/guides/api-keys/) entry: its groups are added and the user shares its quota, rate-limit and cache identity with its API keys. Turn it on only when users cannot choose the claim. |
+| `allowed` | everyone | `emails`, `domains`, `groups`: a user matching **any one** entry may log in; others get `403`. E-mail entries count only with `email_verified: true` unless `unverified_emails: true`, which also lets an unverified `email` name the consumer: **unsafe** with a provider that lets users enter an address they do not own. |
 | `unauthenticated` | `auto` | `auto` redirects page navigations and answers `401` to the rest; `redirect` redirects every `GET`/`HEAD`; `deny` always answers `401`. |
 | `forward_access_token` | `false` | Pass the access token in `X-Forwarded-Access-Token`. It is then kept in the cookie, which grows. |
 | `allow_private_targets` | `false` | Let the provider's endpoints resolve to private, loopback or link-local addresses (an in-cluster Keycloak or Dex). The address actually connected to is checked. |
@@ -225,6 +226,15 @@ middlewares:
 Put `oidc` **before** the `rate_limit` or `quota` that counts per consumer; `rdock validate`
 refuses the other order. A `cache` on such a route needs `key.consumer: true` (one copy per
 user) or `shared_across_users: true`.
+
+An OIDC user is an identity of its own, keyed on the issuer and the consumer name: a user of
+another provider, or an API-key consumer, with the same name never shares its quota, its rate
+limit or its cached copies, and gets none of the groups of a `consumers.<name>` entry with the
+same name. The access log and metering show the bare name. To make the provider's users *be*
+configured consumers (their groups and per-group limits), set `map_to_consumers: true`, and
+pick a `consumer_claim` the provider controls. An e-mail address names the consumer only when
+the provider says it verified it; an unverified one falls back to `sub`, so nobody becomes
+`victim@example.com` by typing that address into a provider's sign-up form.
 
 ## Several replicas and Kubernetes
 

@@ -536,7 +536,12 @@ pub fn build(
         Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c)),
         Config::InFlight(c) => Arc::new(limits::InFlight::new(c)),
         Config::ClientCert(c) => Arc::new(client_cert::ClientCert::new(c)),
-        Config::Jwt(c) => Arc::new(jwt::Jwt::new(name, c, env.client.clone())?),
+        Config::Jwt(c) => Arc::new(jwt::Jwt::new(
+            name,
+            c,
+            env.client.clone(),
+            env.consumers.clone(),
+        )?),
         Config::Bandwidth(c) => Arc::new(limits::Bandwidth::new(c)),
         Config::Cors(c) => Arc::new(cors::Cors::new(c)?),
         Config::Compress(c) => Arc::new(compress::Compress::new(c)),
@@ -555,19 +560,23 @@ pub fn build(
         )?),
         Config::Wasm(c) => Arc::new(wasm::WasmMiddleware::build(name, c, env.metrics)?),
         Config::Agent(c) => Arc::new(agent::Agent::new(name, c, env)?),
-        Config::CloudflareAccess(c) => {
-            Arc::new(jwt::Jwt::cloudflare_access(name, c, env.client.clone())?)
-        }
+        Config::CloudflareAccess(c) => Arc::new(jwt::Jwt::cloudflare_access(
+            name,
+            c,
+            env.client.clone(),
+            env.consumers.clone(),
+        )?),
         Config::ApiKey(c) => Arc::new(api_key::ApiKey::new(name, c, env.consumers.clone())?),
         Config::Validate(c) => Arc::new(validate::Validate::new(name, c, env.metrics)?),
         Config::Transform(c) => Arc::new(transform::Transform::new(name, c, env.metrics)?),
         Config::Oidc(c) => Arc::new(oidc::Oidc::new(name, c, env)?),
         Config::Quota(c) => match env.quotas {
-            Some(registry) => Arc::new(quota::Quota::new(name, c, registry)),
+            Some(registry) => Arc::new(quota::Quota::new(name, c, registry, env.metrics)),
             None => Arc::new(quota::Quota::new(
                 name,
                 c,
                 &rdock_limits::quota::QuotaRegistry::default(),
+                env.metrics,
             )),
         },
     })

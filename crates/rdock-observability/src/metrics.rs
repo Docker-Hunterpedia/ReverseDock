@@ -128,6 +128,9 @@ pub struct Metrics {
     /// OIDC logins by middleware and result (`success`, `denied`, `failed`,
     /// `provider_error`, `unavailable`).
     pub oidc_logins: IntCounterVec,
+    /// `rdock_quota_overflows_total{middleware,class}`: requests counted on a shared counter
+    /// because their class of quota keys was full.
+    pub quota_overflows: IntCounterVec,
     /// OIDC session refreshes by middleware and result (`success`, `failed`).
     pub oidc_refreshes: IntCounterVec,
     /// Failed requests to OIDC providers by middleware and operation (`discovery`, `jwks`,
@@ -481,6 +484,12 @@ impl Metrics {
                 "Failed refreshes of Vault references; the last values stay in use.",
             ),
         )?;
+        let quota_overflows = counters(
+            &registry,
+            "rdock_quota_overflows_total",
+            "Requests a quota counted on a shared counter because its keys of that class were full, by middleware and class.",
+            &["middleware", "class"],
+        )?;
         let oidc_logins = counters(
             &registry,
             "rdock_oidc_logins_total",
@@ -500,6 +509,7 @@ impl Metrics {
             &["middleware", "operation"],
         )?;
         Ok(Self {
+            quota_overflows,
             oidc_logins,
             oidc_refreshes,
             oidc_provider_errors,

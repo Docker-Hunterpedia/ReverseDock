@@ -42,10 +42,11 @@ impl ConsumerIndex {
             let consumer = Consumer {
                 name: Arc::from(name.as_str()),
                 groups: config
-                    .groups
+                    .groups()
                     .iter()
                     .map(|g| Arc::from(g.as_str()))
                     .collect(),
+                issuer: None,
             };
             index.consumers.insert(name.clone(), consumer.clone());
             let base = rdock_model::path_key("consumers", name);

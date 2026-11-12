@@ -21,7 +21,7 @@ use serde_json::Value;
 use tokio::sync::Notify;
 
 use crate::client::HttpClient;
-use crate::{BuildError, Context, Flow, Middleware, Reply};
+use crate::{BuildError, ConsumerIndex, Context, Flow, Middleware, Reply};
 use keys::Key;
 use token::{Invalid, Rules};
 
@@ -38,6 +38,7 @@ const MAX_JWKS: usize = 1024 * 1024;
 
 /// The `jwt` middleware.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // independent settings of the configuration
 pub(crate) struct Jwt {
     name: String,
     issuer: Option<String>,
@@ -54,6 +55,12 @@ pub(crate) struct Jwt {
     /// The claim that names the consumer, and the one that lists its groups.
     consumer_claim: Option<String>,
     groups_claim: Option<String>,
+    /// `map_to_consumers`: the claim names a consumer of `consumers`.
+    map_to_consumers: bool,
+    /// `unverified_emails`: an `email` without `email_verified` names the consumer.
+    unverified_emails: bool,
+    /// The configuration's consumers, for `map_to_consumers`.
+    consumers: Arc<ConsumerIndex>,
 }
 
 /// The group a Cloudflare Access service token's consumer is in.
@@ -79,6 +86,7 @@ impl Jwt {
         name: &str,
         config: &JwtConfig,
         client: Arc<HttpClient>,
+        consumers: Arc<ConsumerIndex>,
     ) -> Result<Self, BuildError> {
         let invalid =
             |message: String| BuildError::Invalid(format!("middleware `{name}`: {message}"));
@@ -149,6 +157,9 @@ impl Jwt {
             access: false,
             consumer_claim: config.consumer_claim.clone(),
             groups_claim: config.groups_claim.clone(),
+            map_to_consumers: config.map_to_consumers,
+            unverified_emails: config.unverified_emails,
+            consumers,
         })
     }
 
@@ -158,6 +169,7 @@ impl Jwt {
         name: &str,
         config: &rdock_model::middleware::CloudflareAccessConfig,
         client: Arc<HttpClient>,
+        consumers: Arc<ConsumerIndex>,
     ) -> Result<Self, BuildError> {
         if !config.team_is_valid() {
             return Err(BuildError::Invalid(format!(
@@ -168,9 +180,43 @@ impl Jwt {
         let jwt = config.to_jwt().ok_or_else(|| {
             BuildError::Invalid(format!("middleware `{name}`: the certs URL is invalid"))
         })?;
-        let mut this = Self::new(name, &jwt, client)?;
+        let mut this = Self::new(name, &jwt, client, consumers)?;
         this.access = true;
         Ok(this)
+    }
+
+    /// The issuer that namespaces the token's consumer: the configured one, or the token's
+    /// `iss` with `issuer: any`, or the middleware's name when the token has none.
+    fn token_issuer(&self, claims: &serde_json::Map<String, Value>) -> Arc<str> {
+        match (
+            self.issuer.as_deref(),
+            claims.get("iss").and_then(Value::as_str),
+        ) {
+            (Some(issuer), _) | (None, Some(issuer)) => Arc::from(issuer),
+            (None, None) => Arc::from(format!("jwt:{}", self.name)),
+        }
+    }
+
+    /// With `map_to_consumers` and a consumer of `consumers` with the same name, adds its
+    /// groups and shares its identity; otherwise keys the consumer on the token's issuer, so
+    /// it never shares a configured consumer's identity (H1 of the v0.8 review).
+    fn place(&self, consumer: &mut crate::Consumer, claims: &serde_json::Map<String, Value>) {
+        let defined = self
+            .map_to_consumers
+            .then(|| self.consumers.consumer(&consumer.name))
+            .flatten();
+        let Some(defined) = defined else {
+            consumer.issuer = Some(self.token_issuer(claims));
+            return;
+        };
+        consumer.issuer = None;
+        let mut groups: Vec<Arc<str>> = consumer.groups.to_vec();
+        for group in defined.groups.iter() {
+            if !groups.contains(group) {
+                groups.push(group.clone());
+            }
+        }
+        consumer.groups = Arc::from(groups);
     }
 
     /// The token and, for header tokens, the header it came from.
@@ -353,7 +399,12 @@ fn unauthorized(error: Option<&str>) -> Flow {
 
 /// The consumer of a Cloudflare Access token: a user's `email`, or for a service token (whose
 /// `sub` is empty) its `common_name`, the Client ID, in the group [`SERVICE_TOKEN_GROUP`].
-fn access_consumer(claims: &serde_json::Map<String, Value>) -> Option<crate::Consumer> {
+/// Both are keyed on the team's `issuer`, service tokens on `<issuer> service-token`, so a
+/// service token never shares the identity of a user or of a consumer of `consumers`.
+fn access_consumer(
+    claims: &serde_json::Map<String, Value>,
+    issuer: &str,
+) -> Option<crate::Consumer> {
     let text = |name: &str| {
         claims
             .get(name)
@@ -366,18 +417,34 @@ fn access_consumer(claims: &serde_json::Map<String, Value>) -> Option<crate::Con
         return Some(crate::Consumer {
             name: Arc::from(common_name),
             groups: Arc::from([Arc::from(SERVICE_TOKEN_GROUP)]),
+            issuer: Some(Arc::from(format!("{issuer} {SERVICE_TOKEN_GROUP}"))),
         });
     }
-    text("email").map(crate::Consumer::named)
+    // Cloudflare Access verifies the address before it issues a user token.
+    text("email").map(|email| crate::Consumer {
+        issuer: Some(Arc::from(issuer)),
+        ..crate::Consumer::named(email)
+    })
 }
 
 /// The consumer named by `claim` (a non-empty string, or a number), with the groups listed in
-/// `groups` (a string or an array of strings).
+/// `groups` (a string or an array of strings). With `claim` `email`, the address counts only
+/// with `email_verified: true` (or without `email_verified` when `unverified_emails`), and
+/// `sub` names the consumer otherwise. The consumer is not yet placed (`issuer` is `None`).
 fn claim_consumer(
     claims: &serde_json::Map<String, Value>,
     claim: &str,
     groups: Option<&str>,
+    unverified_emails: bool,
 ) -> Option<crate::Consumer> {
+    let verified = email_verified(claims);
+    let claim =
+        if claim == "email" && verified != Some(true) && !(unverified_emails && verified.is_none())
+        {
+            "sub"
+        } else {
+            claim
+        };
     let name = match claims.get(claim)? {
         Value::String(s) if !s.trim().is_empty() => s.clone(),
         Value::Number(n) => n.to_string(),
@@ -395,6 +462,17 @@ fn claim_consumer(
     Some(crate::Consumer {
         name: Arc::from(name.as_str()),
         groups: Arc::from(groups),
+        issuer: None,
+    })
+}
+
+/// The `email_verified` claim: `true`/`false` (also as strings), `None` when absent or of
+/// another type.
+pub(crate) fn email_verified(claims: &serde_json::Map<String, Value>) -> Option<bool> {
+    claims.get("email_verified").and_then(|v| match v {
+        Value::Bool(b) => Some(*b),
+        Value::String(s) => Some(s == "true"),
+        _ => None,
     })
 }
 
@@ -460,18 +538,24 @@ impl Middleware for Jwt {
             req.remove_header(&header);
         }
         if self.access {
-            let Some(consumer) = access_consumer(&claims) else {
+            let issuer = self.token_issuer(&claims);
+            let Some(consumer) = access_consumer(&claims, &issuer) else {
                 tracing::debug!(middleware = %self.name, "Access token without email or common_name");
                 return unauthorized(Some("invalid_token"));
             };
             cx.user = Some(consumer.name.to_string());
             cx.consumer = Some(consumer);
         } else if let Some(claim) = &self.consumer_claim {
-            let Some(consumer) = claim_consumer(&claims, claim, self.groups_claim.as_deref())
-            else {
+            let Some(mut consumer) = claim_consumer(
+                &claims,
+                claim,
+                self.groups_claim.as_deref(),
+                self.unverified_emails,
+            ) else {
                 tracing::debug!(middleware = %self.name, claim = %claim, "JWT without the consumer claim");
                 return unauthorized(Some("invalid_token"));
             };
+            self.place(&mut consumer, &claims);
             cx.user = Some(consumer.name.to_string());
             cx.consumer = Some(consumer);
         } else if cx.user.is_none() {

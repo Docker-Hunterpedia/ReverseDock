@@ -19,7 +19,7 @@ fn fixture() -> Fixture {
     consumers.insert(
         "acme".to_owned(),
         ConsumerConfig {
-            groups: vec!["gold".into(), "eu".into()],
+            group_list: Some(vec!["gold".into(), "eu".into()]),
             keys: vec![
                 ApiKeyEntry {
                     id: key.id.clone(),
@@ -203,4 +203,64 @@ fn query_keys_only_when_named_anonymous_and_groups() {
         req.headers.get("x-api-key").is_some(),
         "forward_credential keeps it"
     );
+}
+
+/// L4 of the v0.8 review: with `forward_credential: false` no configured location keeps a key
+/// for the backend, the query parameter's name is matched decoded, and a second, different
+/// key elsewhere is refused like a repeated one.
+#[test]
+fn every_copy_of_the_key_is_removed_and_a_second_key_is_refused() {
+    let f = fixture();
+    let mw = middleware(
+        &f,
+        &ApiKeyConfig {
+            query: Some("api_key".into()),
+            ..ApiKeyConfig::default()
+        },
+    );
+    // The same key in a header, the other header and the query (name percent-encoded).
+    let bearer = format!("Bearer {}", f.key);
+    let target = format!("/x?%61pi_key={}&a=1", f.key);
+    let mut req = request(
+        "GET",
+        &target,
+        &[("authorization", &bearer), ("x-api-key", &f.key)],
+    );
+    assert_eq!(block_on(mw.request(&mut req, &mut cx())), Flow::Next);
+    assert!(req.headers.get("authorization").is_none());
+    assert!(req.headers.get("x-api-key").is_none());
+    assert_eq!(req.uri.to_string(), "/x?a=1");
+
+    // A value that is not a key in another configured header is not ours and stays.
+    let mut req = request(
+        "GET",
+        "/",
+        &[("authorization", &bearer), ("x-api-key", "not-a-key")],
+    );
+    assert_eq!(block_on(mw.request(&mut req, &mut cx())), Flow::Next);
+    assert_eq!(req.headers.get("x-api-key").unwrap(), "not-a-key");
+
+    // A different key in another location: 400, whichever location comes first.
+    for (headers, target) in [
+        (
+            vec![
+                ("authorization", bearer.clone()),
+                ("x-api-key", f.expired.clone()),
+            ],
+            "/".to_owned(),
+        ),
+        (
+            vec![("x-api-key", f.key.clone())],
+            format!("/?api_key={}", f.expired),
+        ),
+        (vec![], format!("/?api_key={}&%61pi_key={}", f.key, f.key)),
+    ] {
+        let headers: Vec<(&'static str, &str)> =
+            headers.iter().map(|(n, v)| (*n, v.as_str())).collect();
+        let mut req = request("GET", &target, &headers);
+        let Flow::Reply(reply) = block_on(mw.request(&mut req, &mut cx())) else {
+            panic!("two keys: {headers:?} {target}")
+        };
+        assert_eq!(reply.status, 400, "{headers:?} {target}");
+    }
 }

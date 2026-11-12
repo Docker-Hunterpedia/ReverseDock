@@ -36,11 +36,30 @@ pub(crate) struct ApiKey {
 }
 
 /// Where a key was found.
-enum Found<'a> {
-    Header(&'a HeaderName, &'a str),
-    Query(String),
+enum Found {
+    /// The key checked (from the first configured location that has one), and whether the
+    /// query carried one too.
+    Key {
+        key: String,
+        headers: Vec<HeaderName>,
+        query: bool,
+    },
     Missing,
+    /// A location repeated, or two locations with different keys: the backend could read
+    /// another key than the one checked here.
     Repeated,
+}
+
+/// Whether `value` has the shape of an API key (prefix, length, alphabet, checksum).
+fn key_shaped(value: &str) -> bool {
+    rdock_credentials::API_KEY.parse(value).is_some()
+}
+
+/// Whether the query pair `name=value` names `name` once its name is percent-decoded, so
+/// `%61pi_key` is `api_key`.
+fn query_name_is(pair: &str, name: &str) -> bool {
+    let key = pair.split_once('=').map_or(pair, |(k, _)| k);
+    percent_encoding::percent_decode_str(key).decode_utf8_lossy() == name
 }
 
 impl ApiKey {
@@ -82,7 +101,13 @@ impl ApiKey {
         })
     }
 
-    fn find<'a>(&'a self, req: &'a RequestHeader) -> Found<'a> {
+    /// The key in the configured locations: headers in their order, then the query
+    /// parameter. The first location with a value gives the key; every other location is
+    /// looked at too (L4 of the v0.8 review): one holding a different well-formed key is
+    /// refused like a repeated header, and those holding a key are remembered so they can all
+    /// be removed before the request goes upstream.
+    fn find(&self, req: &RequestHeader) -> Found {
+        let mut found: Vec<(Option<HeaderName>, String)> = Vec::new();
         for header in &self.headers {
             let mut values = req.headers.get_all(header).iter();
             let Some(first) = values.next() else {
@@ -92,35 +117,58 @@ impl ApiKey {
                 return Found::Repeated;
             }
             let Ok(value) = first.to_str() else {
-                return Found::Header(header, "");
+                found.push((Some(header.clone()), String::new()));
+                continue;
             };
             if *header == http::header::AUTHORIZATION {
                 // Other schemes (Basic for another middleware) are not ours.
-                match value
+                if let Some(key) = value
                     .strip_prefix("Bearer ")
                     .or_else(|| value.strip_prefix("bearer "))
                 {
-                    Some(key) => return Found::Header(header, key.trim()),
-                    None => continue,
+                    found.push((Some(header.clone()), key.trim().to_owned()));
                 }
+                continue;
             }
-            return Found::Header(header, value.trim());
+            found.push((Some(header.clone()), value.trim().to_owned()));
         }
-        let (Some(name), Some(query)) = (self.query.as_deref(), req.uri.query()) else {
+        if let (Some(name), Some(query)) = (self.query.as_deref(), req.uri.query()) {
+            let mut values = query
+                .split('&')
+                .filter(|pair| query_name_is(pair, name))
+                .map(|pair| pair.split_once('=').map_or("", |(_, v)| v));
+            match (values.next(), values.next()) {
+                (Some(value), None) => found.push((
+                    None,
+                    percent_encoding::percent_decode_str(value)
+                        .decode_utf8_lossy()
+                        .into_owned(),
+                )),
+                (Some(_), Some(_)) => return Found::Repeated,
+                (None, _) => {}
+            }
+        }
+        let Some((_, key)) = found.first().cloned() else {
             return Found::Missing;
         };
-        let mut values = query.split('&').filter_map(|pair| {
-            let (k, v) = pair.split_once('=')?;
-            (k == name).then_some(v)
-        });
-        match (values.next(), values.next()) {
-            (Some(value), None) => Found::Query(
-                percent_encoding::percent_decode_str(value)
-                    .decode_utf8_lossy()
-                    .into_owned(),
-            ),
-            (Some(_), Some(_)) => Found::Repeated,
-            (None, _) => Found::Missing,
+        let mut headers = Vec::new();
+        let mut query = false;
+        for (index, (location, value)) in found.into_iter().enumerate() {
+            let same = value == key;
+            if !same && key_shaped(&value) {
+                return Found::Repeated;
+            }
+            if index == 0 || same || key_shaped(&value) {
+                match location {
+                    Some(header) => headers.push(header),
+                    None => query = true,
+                }
+            }
+        }
+        Found::Key {
+            key,
+            headers,
+            query,
         }
     }
 
@@ -136,14 +184,14 @@ impl ApiKey {
         )
     }
 
-    /// Removes the query parameter that carried the key.
+    /// Removes the query parameter that carried the key, its name compared decoded.
     fn strip_query(&self, req: &mut RequestHeader) {
         let (Some(name), Some(query)) = (self.query.as_deref(), req.uri.query()) else {
             return;
         };
         let kept: Vec<&str> = query
             .split('&')
-            .filter(|pair| pair.split_once('=').map_or(*pair, |(k, _)| k) != name)
+            .filter(|pair| !query_name_is(pair, name))
             .collect();
         let path = req.uri.path();
         let target = if kept.is_empty() {
@@ -169,9 +217,12 @@ impl Middleware for ApiKey {
         for header in IDENTITY_HEADERS {
             req.remove_header(header);
         }
-        let (presented, header) = match self.find(req) {
-            Found::Header(header, key) => (key.to_owned(), Some(header.clone())),
-            Found::Query(key) => (key, None),
+        let (presented, headers, in_query) = match self.find(req) {
+            Found::Key {
+                key,
+                headers,
+                query,
+            } => (key, headers, query),
             Found::Missing => {
                 return match self.anonymous {
                     Anonymous::Allow => Flow::Next,
@@ -216,11 +267,11 @@ impl Middleware for ApiKey {
             return Flow::Reply(Reply::problem(ProblemKind::Forbidden));
         }
         if !self.forward {
-            match &header {
-                Some(header) => {
-                    req.remove_header(header);
-                }
-                None => self.strip_query(req),
+            for header in &headers {
+                req.remove_header(header);
+            }
+            if in_query {
+                self.strip_query(req);
             }
         }
         if let Ok(value) = HeaderValue::from_str(&consumer.name) {

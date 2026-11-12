@@ -1721,7 +1721,7 @@
       "type": "object",
       "properties": {
         "groups": {
-          "description": "Groups, in order of precedence: per-group limit overrides use the first listed group\nthat has one, and `api_key.groups` admits a consumer in any of them.",
+          "description": "Groups, in order of precedence: per-group limit overrides use the first listed group\nthat has one, and `api_key.groups` admits a consumer in any of them. In the admin\nAPI's document, an entry without `groups` only adds keys to a consumer of the file.",
           "type": "array",
           "items": {
             "type": "string"
@@ -4249,6 +4249,11 @@
               "$ref": "#/$defs/Duration",
               "default": "1m"
             },
+            "map_to_consumers": {
+              "description": "With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding\nits groups and sharing its quota, rate-limit and cache identity with its API keys\n(other names stay keyed on the issuer). Off by default: a token's consumer is a\nseparate identity keyed on the token's issuer and the name. Turn it on only when the\nissuer controls the claim.",
+              "type": "boolean",
+              "default": false
+            },
             "token": {
               "description": "Where the token is read from; `Authorization: Bearer` when empty.",
               "$ref": "#/$defs/TokenSource",
@@ -4261,6 +4266,11 @@
             "type": {
               "type": "string",
               "const": "jwt"
+            },
+            "unverified_emails": {
+              "description": "With `consumer_claim: email`: accept an `email` claim that comes without\n`email_verified`. Off: the address names the consumer only with `email_verified:\ntrue`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an\nissuer that lets users set an address they do not own.",
+              "type": "boolean",
+              "default": false
             }
           },
           "additionalProperties": false,
@@ -4802,7 +4812,7 @@
               }
             },
             "max_body": {
-              "description": "Largest request body sent to the agent; `0` sends none. The body is held until the\nagent has answered, so nothing of it reaches the backend before the verdict.",
+              "description": "Largest request body sent to the agent; `0` sends none. The body is held until the\nagent has answered, so none of the body reaches the backend before the verdict; the\nrequest head does: with a body, the backend connection is opened and the head sent\nbefore the body is read (Pingora 0.9.1), and a refusal closes that connection.",
               "$ref": "#/$defs/ByteSize",
               "default": "64KiB"
             },
@@ -5220,7 +5230,7 @@
               ]
             },
             "consumer_claim": {
-              "description": "The claim that becomes the request's consumer (rate limits, quotas, the cache key,\nthe access log). `sub` is used when the token lacks it.",
+              "description": "The claim that becomes the request's consumer (rate limits, quotas, the cache key,\nthe access log). `sub` is used when the token lacks it, and in place of `email` when\nthe provider has not verified the address (`email_verified` is not `true`; see\n`allowed.unverified_emails`).",
               "type": "string",
               "default": "email"
             },
@@ -5244,9 +5254,14 @@
               "default": "1m"
             },
             "logout_path": {
-              "description": "Path that ends the session; the provider's `end_session_endpoint` is called when it\nadvertises one (RP-initiated logout).",
+              "description": "Path that ends the session (`GET`, `HEAD` or `POST`, from the site itself: a request\nanother site triggers is refused with `403`); the provider's `end_session_endpoint` is\ncalled when it advertises one (RP-initiated logout).",
               "type": "string",
               "default": "/_rdock/oidc/logout"
+            },
+            "map_to_consumers": {
+              "description": "Treat a consumer name that `consumers` defines as that consumer: the session then\ngets its groups, and shares its quota, rate-limit and cache identity with its API keys\n(other names stay keyed on the issuer). Off by default: an OIDC user is a separate\nidentity, keyed on the issuer and the name, so a user whose claim happens to equal a\nconfigured consumer's name gains nothing from it. Turn it on only when the provider controls the\nclaim (it cannot be chosen by the user).",
+              "type": "boolean",
+              "default": false
             },
             "post_logout_path": {
               "description": "Where the browser lands after logging out (a path on the same host).",
@@ -5431,7 +5446,7 @@
           }
         },
         "unverified_emails": {
-          "description": "Also match `emails` and `domains` against an `email` claim that comes without\n`email_verified` (some providers never send it). Off: only `email_verified: true`\ncounts.",
+          "description": "Also trust an `email` claim that comes without `email_verified` (some providers never\nsend it): for `emails` and `domains`, and as the consumer name when `consumer_claim`\nis `email`. Unsafe with a provider that lets users set an address they do not own.\nOff: only `email_verified: true` counts; `email_verified: false` never does.",
           "type": "boolean",
           "default": false
         }

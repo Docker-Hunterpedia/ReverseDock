@@ -218,20 +218,37 @@ impl Capabilities {
 /// middlewares, the access log and, later, metrics and the cache key.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Consumer {
-    /// The consumer's name (`consumers.<name>`).
+    /// The consumer's name (`consumers.<name>`, or the name a token asserts), as the access
+    /// log, metrics and metering show it.
     pub name: Arc<str>,
     /// Its groups.
     pub groups: Arc<[Arc<str>]>,
+    /// Who asserted the name: `None` for a consumer defined in `consumers` (an API key, or a
+    /// token middleware with `map_to_consumers`), otherwise the token's issuer. Two consumers
+    /// with the same name but different issuers are different identities for the cache,
+    /// quotas and rate limits (see [`Consumer::key`]).
+    pub issuer: Option<Arc<str>>,
 }
 
 impl Consumer {
-    /// A consumer without groups.
+    /// A consumer of `consumers` without groups.
     #[must_use]
     pub fn named(name: &str) -> Self {
         Self {
             name: Arc::from(name),
             groups: Arc::from([]),
+            issuer: None,
         }
+    }
+
+    /// The identity the cache key, quotas and rate limits count: the name for a consumer of
+    /// `consumers`; for a consumer asserted by a token issuer, `~<length of issuer>:<issuer>`
+    /// followed by the name. `~` is not allowed in a consumer name, and the length makes the
+    /// split unambiguous, so a token can never take a configured consumer's identity, nor one
+    /// issuer's user another issuer's.
+    #[must_use]
+    pub fn key(&self) -> std::borrow::Cow<'_, str> {
+        rdock_limits::quota::consumer_key(self.issuer.as_deref(), &self.name)
     }
 }
 

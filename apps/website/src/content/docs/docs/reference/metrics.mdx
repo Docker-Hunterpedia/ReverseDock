@@ -245,6 +245,13 @@ an interrupted fill left behind).
 later ones are counted under `consumer="_other"`. Per-consumer numbers beyond that belong in
 usage metering.
 
+### `rdock_quota_overflows_total`
+
+**Counter.** Requests a [`quota`](/docs/guides/quotas/) counted on a shared counter because the
+quota already tracked 100,000 keys of their kind. Labels: `middleware` and `class`: `anonymous`
+(client addresses) or `token` (consumers named by a token issuer). Consumers defined in
+`consumers` never overflow.
+
 ### `rdock_metering_events_total`
 
 **Counter.** Metering events by `sink` (`webhook`, `otlp`) and `result`: `sent` (the receiver

@@ -81,6 +81,10 @@ pub(crate) struct Oidc {
     secure: bool,
     claims_to_headers: Vec<(String, HeaderName)>,
     consumer_claim: String,
+    /// `map_to_consumers`: the consumer is a consumer of `consumers`.
+    map_to_consumers: bool,
+    /// The configured issuer, which namespaces the consumer otherwise.
+    issuer: Arc<str>,
     groups_claim: String,
     allowed_emails: Vec<String>,
     allowed_domains: Vec<String>,
@@ -227,6 +231,8 @@ impl Oidc {
             secure: config.session.secure,
             claims_to_headers,
             consumer_claim: config.consumer_claim.clone(),
+            map_to_consumers: config.map_to_consumers,
+            issuer: Arc::from(config.issuer.as_url().as_str()),
             groups_claim: config.groups_claim.clone(),
             allowed_emails: lower(&config.allowed.emails),
             allowed_domains: lower(&config.allowed.domains),
@@ -457,7 +463,14 @@ impl Oidc {
             .iter()
             .map(|g| Arc::from(g.as_str()))
             .collect();
-        if let Some(defined) = self.consumers.consumer(&session.consumer) {
+        // Only with `map_to_consumers` is the name one of `consumers` (H1 of the v0.8
+        // review): otherwise a user whose claim equals a configured name would get its groups
+        // and share its quota. A name that is not configured stays keyed on the issuer.
+        let defined = self
+            .map_to_consumers
+            .then(|| self.consumers.consumer(&session.consumer))
+            .flatten();
+        if let Some(defined) = defined {
             for group in defined.groups.iter() {
                 if !groups.contains(group) {
                     groups.push(group.clone());
@@ -468,6 +481,7 @@ impl Oidc {
         cx.consumer = Some(crate::Consumer {
             name: Arc::from(session.consumer.as_str()),
             groups: Arc::from(groups),
+            issuer: defined.is_none().then(|| self.issuer.clone()),
         });
         self.strip_cookies(req);
     }
@@ -552,7 +566,13 @@ impl Oidc {
         let now = now();
         let text = |name: &str| claims.get(name).and_then(Value::as_str).map(str::to_owned);
         let sub = text("sub").unwrap_or_default();
+        let verified = crate::jwt::email_verified(claims);
+        let trusted_email =
+            verified == Some(true) || (self.unverified_emails && verified.is_none());
         let consumer = match claims.get(&self.consumer_claim) {
+            // An address the provider has not verified could be anyone's (H1 of the v0.8
+            // review): it names the consumer only when verified, `sub` otherwise.
+            _ if self.consumer_claim == "email" && !trusted_email => sub.clone(),
             Some(Value::String(s)) if !s.trim().is_empty() => s.clone(),
             Some(Value::Number(n)) => n.to_string(),
             _ => sub.clone(),
@@ -566,13 +586,7 @@ impl Oidc {
                 .collect(),
             _ => Vec::new(),
         };
-        let verified = claims.get("email_verified").and_then(|v| match v {
-            Value::Bool(b) => Some(*b),
-            Value::String(s) => Some(s == "true"),
-            _ => None,
-        });
-        let email = text("email")
-            .filter(|_| verified == Some(true) || (self.unverified_emails && verified.is_none()));
+        let email = text("email").filter(|_| trusted_email);
         let claims_out = self
             .claims_to_headers
             .iter()
@@ -987,6 +1001,30 @@ impl Oidc {
         Flow::Reply(reply)
     }
 
+    /// Whether a logout request comes from the site itself (L1 of the v0.8 review): otherwise
+    /// any page could log the user out with an `<img>` or a form. `Sec-Fetch-Site` decides
+    /// when the browser sends it (`same-origin`, or `none` for a typed URL or a bookmark);
+    /// without it, an `Origin` or else a `Referer` of the request's own origin is needed.
+    /// `same-site` is refused: a sibling subdomain may serve other people's content.
+    fn same_origin(&self, req: &RequestHeader, cx: &Context) -> bool {
+        let header = |name: &str| req.headers.get(name).and_then(|v| v.to_str().ok());
+        if let Some(site) = header("sec-fetch-site") {
+            return site.eq_ignore_ascii_case("same-origin") || site.eq_ignore_ascii_case("none");
+        }
+        let Some(origin) = self.origin(cx) else {
+            return false;
+        };
+        if let Some(sent) = header("origin") {
+            return sent.eq_ignore_ascii_case(&origin);
+        }
+        header("referer").is_some_and(|referer| {
+            referer
+                .get(..origin.len())
+                .is_some_and(|start| start.eq_ignore_ascii_case(&origin))
+                && matches!(referer.as_bytes().get(origin.len()), None | Some(b'/'))
+        })
+    }
+
     /// Ends the session, and at the provider when it supports RP-initiated logout.
     fn logout(&self, req: &RequestHeader, cx: &Context) -> Flow {
         let landing = self
@@ -1128,6 +1166,19 @@ impl Middleware for Oidc {
             return self.callback(req).await;
         }
         if path == self.logout_path {
+            if !matches!(
+                req.method,
+                http::Method::GET | http::Method::HEAD | http::Method::POST
+            ) {
+                return Flow::Reply(Reply::problem(ProblemKind::MethodNotAllowed).header(
+                    http::header::ALLOW,
+                    HeaderValue::from_static("GET, HEAD, POST"),
+                ));
+            }
+            if !self.same_origin(req, cx) {
+                tracing::debug!(middleware = %self.name, "cross-site logout refused");
+                return Flow::Reply(Reply::problem(ProblemKind::Forbidden));
+            }
             return self.logout(req, cx);
         }
         let now = now();

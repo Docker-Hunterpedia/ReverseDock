@@ -174,7 +174,7 @@ pub(crate) fn identity(cx: Option<&rdock_middleware::Context>) -> rdock_cache::I
         return rdock_cache::Identity::Anonymous;
     };
     if let Some(consumer) = &cx.consumer {
-        return rdock_cache::Identity::Consumer(consumer.name.to_string());
+        return rdock_cache::Identity::Consumer(consumer.key().into_owned());
     }
     if let Some(user) = &cx.user {
         return rdock_cache::Identity::User(user.clone());

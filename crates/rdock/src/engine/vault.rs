@@ -32,6 +32,10 @@ const IDLE: Duration = Duration::from_secs(30);
 pub(crate) struct VaultState {
     client: Mutex<Option<Arc<Vault>>>,
     status: Mutex<Status>,
+    /// The references of the configuration file last read, the only ones the refresh task
+    /// reads (M1 of the v0.8 review): never the merged configuration's, which holds
+    /// provider and API objects.
+    references: Mutex<Vec<VaultReference>>,
 }
 
 #[derive(Default, Clone)]
@@ -108,6 +112,20 @@ impl VaultState {
         Ok(fresh)
     }
 
+    fn set_references(&self, references: Vec<VaultReference>) {
+        *self
+            .references
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner) = references;
+    }
+
+    fn references(&self) -> Vec<VaultReference> {
+        self.references
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+
     fn set(&self, update: impl FnOnce(&mut Status)) {
         update(&mut self.status.lock().unwrap_or_else(PoisonError::into_inner));
     }
@@ -138,12 +156,14 @@ impl Engine {
         let keep: BTreeSet<String> = wanted.iter().map(VaultReference::body).collect();
         let Some(settings) = &file.secrets.vault else {
             vault_store::retain(&keep);
+            self.vault.set_references(Vec::new());
             self.vault.set(|s| *s = Status::default());
             // The loader refuses references without `secrets.vault`.
             return Ok(());
         };
         if wanted.is_empty() {
             vault_store::retain(&keep);
+            self.vault.set_references(Vec::new());
             self.vault.set(|s| {
                 *s = Status {
                     configured: true,
@@ -173,6 +193,7 @@ impl Engine {
         }
         vault_store::retain(&keep);
         self.record_vault_read(wanted.len(), &kept);
+        self.vault.set_references(wanted);
         Ok(())
     }
 
@@ -207,28 +228,27 @@ impl Engine {
         });
     }
 
-    /// Reads the references of the applied configuration every `secrets.vault.refresh` and
+    /// Reads the references of the configuration file every `secrets.vault.refresh` and
     /// reloads when a value changed. Runs until `stop` fires.
     pub(crate) async fn refresh_vault(
         self: Arc<Self>,
         mut stop: tokio::sync::watch::Receiver<bool>,
     ) {
         loop {
-            let applied = self.config().await;
-            let settings = applied.as_ref().and_then(|c| c.secrets.vault.clone());
+            let settings = self.config().await.and_then(|c| c.secrets.vault);
             let wait = settings.as_ref().map_or(IDLE, |s| s.refresh.as_std());
             tokio::select! {
                 _ = stop.changed() => return,
                 () = tokio::time::sleep(wait) => {}
             }
-            let (Some(settings), Some(config)) = (settings, applied) else {
+            let Some(settings) = settings else {
                 continue;
             };
             // The settings may have changed while waiting; the next round uses the new ones.
             if self.config().await.and_then(|c| c.secrets.vault) != Some(settings.clone()) {
                 continue;
             }
-            let wanted = references(&config);
+            let wanted = self.vault.references();
             if wanted.is_empty() {
                 continue;
             }

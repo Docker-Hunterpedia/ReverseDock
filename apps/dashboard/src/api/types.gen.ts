@@ -1196,7 +1196,8 @@ export type RdockConfig = {
 export type RdockConsumer = {
     /**
      * Groups, in order of precedence: per-group limit overrides use the first listed group
-     * that has one, and `api_key.groups` admits a consumer in any of them.
+     * that has one, and `api_key.groups` admits a consumer in any of them. In the admin
+     * API's document, an entry without `groups` only adds keys to a consumer of the file.
      */
     groups?: Array<string>;
     /**
@@ -2398,10 +2399,25 @@ export type RdockMiddleware = {
      */
     leeway?: RdockDuration;
     /**
+     * With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding
+     * its groups and sharing its quota, rate-limit and cache identity with its API keys
+     * (other names stay keyed on the issuer). Off by default: a token's consumer is a
+     * separate identity keyed on the token's issuer and the name. Turn it on only when the
+     * issuer controls the claim.
+     */
+    map_to_consumers?: boolean;
+    /**
      * Where the token is read from; `Authorization: Bearer` when empty.
      */
     token?: RdockTokenSource;
     type: 'jwt';
+    /**
+     * With `consumer_claim: email`: accept an `email` claim that comes without
+     * `email_verified`. Off: the address names the consumer only with `email_verified:
+     * true`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an
+     * issuer that lets users set an address they do not own.
+     */
+    unverified_emails?: boolean;
     [key: string]: unknown | Array<RdockJwtAlgorithm> | Array<string> | {
         [key: string]: string;
     } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
@@ -2778,7 +2794,9 @@ export type RdockMiddleware = {
     breaker?: RdockAgentBreaker;
     /**
      * Largest request body sent to the agent; `0` sends none. The body is held until the
-     * agent has answered, so nothing of it reaches the backend before the verdict.
+     * agent has answered, so none of the body reaches the backend before the verdict; the
+     * request head does: with a body, the backend connection is opened and the head sent
+     * before the body is read (Pingora 0.9.1), and a refusal closes that connection.
      */
     max_body?: RdockByteSize;
     /**
@@ -3039,7 +3057,9 @@ export type RdockMiddleware = {
     client_secret?: string | null;
     /**
      * The claim that becomes the request's consumer (rate limits, quotas, the cache key,
-     * the access log). `sub` is used when the token lacks it.
+     * the access log). `sub` is used when the token lacks it, and in place of `email` when
+     * the provider has not verified the address (`email_verified` is not `true`; see
+     * `allowed.unverified_emails`).
      */
     consumer_claim?: string;
     /**
@@ -3061,10 +3081,20 @@ export type RdockMiddleware = {
      */
     leeway?: RdockDuration;
     /**
-     * Path that ends the session; the provider's `end_session_endpoint` is called when it
-     * advertises one (RP-initiated logout).
+     * Path that ends the session (`GET`, `HEAD` or `POST`, from the site itself: a request
+     * another site triggers is refused with `403`); the provider's `end_session_endpoint` is
+     * called when it advertises one (RP-initiated logout).
      */
     logout_path?: string;
+    /**
+     * Treat a consumer name that `consumers` defines as that consumer: the session then
+     * gets its groups, and shares its quota, rate-limit and cache identity with its API keys
+     * (other names stay keyed on the issuer). Off by default: an OIDC user is a separate
+     * identity, keyed on the issuer and the name, so a user whose claim happens to equal a
+     * configured consumer's name gains nothing from it. Turn it on only when the provider controls the
+     * claim (it cannot be chosen by the user).
+     */
+    map_to_consumers?: boolean;
     /**
      * Where the browser lands after logging out (a path on the same host).
      */
@@ -3162,9 +3192,10 @@ export type RdockOidcAllowed = {
      */
     groups?: Array<string>;
     /**
-     * Also match `emails` and `domains` against an `email` claim that comes without
-     * `email_verified` (some providers never send it). Off: only `email_verified: true`
-     * counts.
+     * Also trust an `email` claim that comes without `email_verified` (some providers never
+     * send it): for `emails` and `domains`, and as the consumer name when `consumer_claim`
+     * is `email`. Unsafe with a provider that lets users set an address they do not own.
+     * Off: only `email_verified: true` counts; `email_verified: false` never does.
      */
     unverified_emails?: boolean;
 };

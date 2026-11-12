@@ -18,9 +18,12 @@ answer different questions:
 Both need a middleware that sets the consumer **earlier in the route's list** (`api_key`,
 [`oidc`](/docs/guides/oidc-login/), `cloudflare_access`, or `jwt` with
 [`consumer_claim`](/docs/guides/jwt/#consumers-from-tokens)); `rdock validate` refuses a route
-where none does. After an OIDC login the consumer is the user's `email` claim (or another
-`consumer_claim`), and its groups come from the token's `groups` claim plus those of a
-`consumers.<name>` entry with the same name, so group overrides work for logged-in users too.
+where none does. After an OIDC login the consumer is the user's verified `email` claim (or
+another `consumer_claim`), and its groups come from the token's `groups` claim, so group
+overrides work for logged-in users too. A consumer named by a token (`oidc`, `jwt`,
+`cloudflare_access`) is counted apart from an API-key consumer of the same name and from a
+user of another issuer; with `map_to_consumers: true` on `oidc` or `jwt`, a name that
+`consumers` defines is that consumer, with its groups and its counters.
 
 ## A quota per consumer
 
@@ -112,8 +115,15 @@ off by default; `Retry-After` takes precedence, as the draft says. The older
   `flush_interval` and at shutdown, and read back at start while their window lasts. A crash
   loses what was counted since the last write. Quotas are an allowance, not a billing record.
 - **Reloads keep counts**, unless the middleware's `window` changes. Requests without a consumer
-  (with `anonymous: allow`) are counted per client IP. At most 100,000 keys per quota; more share
-  one counter.
+  (with `anonymous: allow`) are counted per client IP, IPv6 clients per /64.
+- **Bounded memory.** Each quota tracks at most 100,000 anonymous addresses and, apart from
+  them, 100,000 token consumers (OIDC users, JWT subjects); new keys past that share one counter
+  of their kind, counted in
+  [`rdock_quota_overflows_total`](/docs/reference/metrics/#rdock_quota_overflows_total).
+  Consumers defined in `consumers` (or through the API) always have their own counter, so a
+  flood of anonymous addresses never locks a paying consumer out.
+- **Private files.** On Unix the counter files are `0600` in a `0700` directory: they name
+  consumers (e-mail addresses after an OIDC login) and client addresses.
 
 ## Read and reset counters
 
@@ -123,7 +133,9 @@ rdock consumers reset-quota acme    # audited; or --middleware monthly
 ```
 
 The admin API has `GET /api/v1/quota`, `GET /api/v1/quota/{consumer}` (viewer) and
-`DELETE /api/v1/quota/{consumer}` (operator, audited).
+`DELETE /api/v1/quota/{consumer}` (operator, audited). A name covers the consumer's own counter
+and the counters of token users with that name from every issuer; those show as
+`~<length>:<issuer><name>` in `key`.
 
 ## Related
 

@@ -149,16 +149,133 @@ fn counts_are_exact_under_concurrency() {
     assert_eq!(counter.usage("acme").unwrap().used, 5000);
 }
 
+/// Fills `class` of `counter` with `MAX_KEYS` keys made by `key`.
+fn fill(counter: &QuotaCounter, key: impl Fn(usize) -> String) {
+    let mut state = counter.state.lock().unwrap();
+    for i in 0..MAX_KEYS {
+        state.counts.insert(key(i), (0, 1));
+    }
+    state.recount();
+}
+
 #[test]
 fn keys_past_the_cap_share_one_counter() {
     let counter = QuotaCounter::open(Window::Day, None, Arc::new(SystemClock));
-    {
-        let mut state = counter.state.lock().unwrap();
-        for i in 0..MAX_KEYS {
-            state.counts.insert(format!("k{i}"), (0, 1));
-        }
-    }
-    assert!(matches!(counter.take("new-1", 1), Taken::Allowed { .. }));
-    assert!(matches!(counter.take("new-2", 1), Taken::Exceeded { .. }));
+    fill(&counter, |i| format!("ip:10.0.{}.{}", i / 256, i % 256));
+    let (taken, overflowed) = counter.take_counted("ip:192.0.2.1", 1);
+    assert!(matches!(taken, Taken::Allowed { remaining: 0, .. }));
+    assert_eq!(overflowed, Some(KeyClass::Anonymous));
+    assert!(matches!(
+        counter.take("ip:192.0.2.2", 1),
+        Taken::Exceeded { .. }
+    ));
     assert_eq!(counter.usage(OVERFLOW_KEY).unwrap().used, 1);
+}
+
+/// M2 of the v0.8 review: anonymous addresses filling their keys never push a consumer onto
+/// a shared counter; token consumers have a budget of their own; configured consumers none.
+#[test]
+fn anonymous_keys_never_crowd_out_consumers() {
+    let counter = QuotaCounter::open(Window::Day, None, Arc::new(SystemClock));
+    fill(&counter, |i| format!("ip:10.0.{}.{}", i / 256, i % 256));
+    // A consumer seen for the first time gets its own counter, as does a token consumer.
+    assert_eq!(counter.take_counted("acme", 2).1, None);
+    assert_eq!(counter.take_counted("acme", 2).1, None);
+    assert!(matches!(counter.take("acme", 2), Taken::Exceeded { .. }));
+    let alice = consumer_key(Some("https://idp.example"), "alice@example.com");
+    assert_eq!(counter.take_counted(&alice, 1).1, None);
+    assert_eq!(counter.usage("acme").unwrap().used, 2);
+    assert_eq!(counter.usage(OVERFLOW_KEY), None);
+
+    // Token consumers overflow among themselves only.
+    fill(&counter, |i| {
+        consumer_key(Some("https://idp.example"), &format!("u{i}")).into_owned()
+    });
+    assert_eq!(
+        counter
+            .take_counted(&consumer_key(Some("https://idp.example"), "late"), 5)
+            .1,
+        Some(KeyClass::Token)
+    );
+    assert_eq!(counter.usage(TOKEN_OVERFLOW_KEY).unwrap().used, 1);
+    // Configured consumers are bounded by the configuration and never overflow.
+    fill(&counter, |i| format!("c{i}"));
+    assert_eq!(counter.take_counted("newcomer", 5).1, None);
+    assert_eq!(counter.usage("newcomer").unwrap().used, 1);
+    // Forgetting a key frees its place.
+    assert!(counter.reset("ip:10.0.0.0"));
+    assert_eq!(counter.take_counted("ip:192.0.2.9", 5).1, None);
+}
+
+#[test]
+fn consumer_keys_name_their_consumer() {
+    assert_eq!(consumer_key(None, "acme"), "acme");
+    let token = consumer_key(Some("https://idp.example"), "alice");
+    assert_eq!(token, "~19:https://idp.examplealice");
+    assert_eq!(key_consumer(&token), Some("alice"));
+    assert_eq!(key_consumer("acme"), Some("acme"));
+    assert_eq!(key_consumer("ip:192.0.2.1"), None);
+    assert_eq!(key_consumer(OVERFLOW_KEY), None);
+    assert_eq!(key_consumer("~99:short"), None);
+    // Different issuers or names never give the same key.
+    assert_ne!(
+        consumer_key(Some("a b"), "c"),
+        consumer_key(Some("a"), "b c")
+    );
+
+    let counter = QuotaCounter::open(Window::Day, None, Arc::new(SystemClock));
+    let _ = counter.take("alice", 5);
+    let _ = counter.take(&token, 5);
+    let _ = counter.take(&consumer_key(Some("https://other.example"), "alice"), 5);
+    let _ = counter.take("bob", 5);
+    assert_eq!(counter.usage_of("alice").len(), 3);
+    assert!(counter.reset_consumer("alice"));
+    assert_eq!(counter.usage_of("alice").len(), 0);
+    assert_eq!(counter.usage("bob").unwrap().used, 1);
+}
+
+/// Files written before the key classes existed (one budget, one overflow counter) still load.
+#[test]
+fn files_of_earlier_versions_load() {
+    let dir = tempfile::tempdir().unwrap();
+    let clock = Arc::new(Fake::default());
+    clock.set(10 * 86_400 + 100);
+    let path = dir.path().join("q.json");
+    std::fs::write(
+        &path,
+        format!(
+            r#"{{"version":1,"window":"day","start":{},"counts":{{"acme":[3,5],"ip:192.0.2.1":[1,5],"\u0000overflow":[2,5]}}}}"#,
+            10 * 86_400
+        ),
+    )
+    .unwrap();
+    let counter = QuotaCounter::open(Window::Day, Some(path), clock);
+    assert_eq!(counter.usage("acme").unwrap().used, 3);
+    assert_eq!(counter.usage(OVERFLOW_KEY).unwrap().used, 2);
+    let state = counter.state.lock().unwrap();
+    assert_eq!(state.sizes, [1, 0, 1]);
+}
+
+/// L6 of the v0.8 review: the counts name people and addresses; only the owner reads them.
+#[cfg(unix)]
+#[test]
+fn quota_files_are_private() {
+    use std::os::unix::fs::PermissionsExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let quota = dir.path().join("quota");
+    let registry = QuotaRegistry::with_clock(Arc::new(SystemClock));
+    registry.set_dir(quota.clone());
+    let counter = registry.counter("daily", Window::Day);
+    // A temporary file an older version left world-readable.
+    std::fs::create_dir_all(&quota).unwrap();
+    let name = file_name("daily");
+    let tmp = quota.join(format!("{name}.tmp"));
+    std::fs::write(&tmp, b"{}").unwrap();
+    std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o644)).unwrap();
+    std::fs::set_permissions(&quota, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let _ = counter.take("alice@example.com", 5);
+    counter.flush().unwrap();
+    let mode = |p: &Path| std::fs::metadata(p).unwrap().permissions().mode() & 0o777;
+    assert_eq!(mode(&quota.join(name)), 0o600);
+    assert_eq!(mode(&quota), 0o700);
 }

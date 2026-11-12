@@ -10,8 +10,9 @@ Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard ch
 > | `GATEWAY-GRPC` | success, 17 passed | success, 7 passed |
 > | `GATEWAY-TLS` | success, 21 passed | success, 8 passed |
 > | `GATEWAY-TCP` | success, 20 passed | success, 7 passed |
+> | `GATEWAY-UDP` | success, 21 passed | success, 7 passed |
 >
-> `GATEWAY-UDP` (core features only: `Gateway`, `ReferenceGrant`, `UDPRoute`) joined `options.yaml` with UDP routes (v0.8, [ADR-0030](../../../docs/decisions/0030-v0-8-cache-extensibility-gateway.md)); its nine tests are transcribed against the translator in `crates/providers/rdock-provider-kubernetes/tests/gateway_udp.rs` and pass there, but the profile has **not run in CI yet**: the table above predates it, and only the kind run proves that cloud-provider-kind forwards the per-Gateway Service's UDP ports.
+> `GATEWAY-UDP` (core features only: `Gateway`, `ReferenceGrant`, `UDPRoute`) joined `options.yaml` with UDP routes (v0.8, [ADR-0030](../../../docs/decisions/0030-v0-8-cache-extensibility-gateway.md)); its nine tests are transcribed against the translator in `crates/providers/rdock-provider-kubernetes/tests/gateway_udp.rs` and pass there, and the profile passed in the same job on kind on 2026-11-12, on commit `43d81de` (the `GATEWAY-UDP` row above; the other four rows are from the 2026-11-11 run), which also proves that cloud-provider-kind forwards the per-Gateway Service's UDP ports. All five profiles of `options.yaml` pass.
 >
 > "Extended success" means every test for the extended features this implementation claims ([`features.rs`](../../../crates/providers/rdock-provider-kubernetes/src/features.rs)) passed; it does not mean every extended feature of the Gateway API is supported. The same core results were obtained on two earlier commits the same day, before ListenerSet support was added. The job now fails the workflow (no `--allow-partial`); adding it to the repository ruleset's required checks is a maintainer action. No report has been submitted to the upstream Gateway API repository, because reports require a released version (see "Reports"), and the software is not released.
 

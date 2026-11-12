@@ -178,6 +178,8 @@ impl CloudflareAccessConfig {
             forward_token: true,
             consumer_claim: None,
             groups_claim: None,
+            map_to_consumers: false,
+            unverified_emails: false,
         })
     }
 }
@@ -319,6 +321,19 @@ pub struct JwtConfig {
     /// `consumer_claim`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub groups_claim: Option<String>,
+    /// With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding
+    /// its groups and sharing its quota, rate-limit and cache identity with its API keys
+    /// (other names stay keyed on the issuer). Off by default: a token's consumer is a
+    /// separate identity keyed on the token's issuer and the name. Turn it on only when the
+    /// issuer controls the claim.
+    #[serde(default)]
+    pub map_to_consumers: bool,
+    /// With `consumer_claim: email`: accept an `email` claim that comes without
+    /// `email_verified`. Off: the address names the consumer only with `email_verified:
+    /// true`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an
+    /// issuer that lets users set an address they do not own.
+    #[serde(default)]
+    pub unverified_emails: bool,
 }
 
 fn default_jwt_algorithms() -> Vec<JwtAlgorithm> {
@@ -755,7 +770,9 @@ pub struct AgentConfig {
     #[serde(default)]
     pub on_error: AgentOnError,
     /// Largest request body sent to the agent; `0` sends none. The body is held until the
-    /// agent has answered, so nothing of it reaches the backend before the verdict.
+    /// agent has answered, so none of the body reaches the backend before the verdict; the
+    /// request head does: with a body, the backend connection is opened and the head sent
+    /// before the body is read (Pingora 0.9.1), and a refusal closes that connection.
     #[serde(default = "sixty_four_kib")]
     pub max_body: ByteSize,
     /// A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without

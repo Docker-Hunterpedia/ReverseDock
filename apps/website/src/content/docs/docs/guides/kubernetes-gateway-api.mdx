@@ -394,9 +394,8 @@ If ReverseDock gets a burst of changes, translations are coalesced: at most one 
 - Listeners are in-process sockets in shared pods. A Gateway's address is a Service address, not a pod: a host-port DaemonSet exposes the file-configured Ingress listeners only, not Gateway listeners.
 - `providers.kubernetes.namespaces` (chart `watchNamespaces`) limits which namespaces are watched.
 - No request timeout or retry policy yet ([above](#what-is-supported)).
-- `GATEWAY-UDP` is in the conformance job's profiles, and its nine tests are transcribed against the translator and pass there, but it has not run on kind yet: only that run proves the load balancer forwards the Service's UDP ports.
 - The data plane never waits for the Kubernetes API at request time; the last snapshot serves while the API is away.
-- Proven in CI (2026-11-11, commit `19e88cc`): the upstream conformance suite on kind, and the Helm install on k3s with the example Gateway. Not exercised in a cluster job: Ingress, cert-manager, RKE2 and the namespaced mode. No conformance report has been submitted upstream, and nothing is released.
+- Proven in CI: the upstream conformance suite on kind (2026-11-11, commit `19e88cc`, for `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`; `GATEWAY-UDP` on 2026-11-12, commit `43d81de`, core 21 and extended 7 passed, which also shows the load balancer forwards the Service's UDP ports), and the Helm install on k3s with the example Gateway. Not exercised in a cluster job: Ingress, cert-manager, RKE2 and the namespaced mode. No conformance report has been submitted upstream, and nothing is released.
 
 ## Related
 

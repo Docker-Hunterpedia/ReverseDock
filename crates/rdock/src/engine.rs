@@ -1272,7 +1272,7 @@ impl rdock_admin::Control for Engine {
             .map(|(name, counter)| {
                 let (start, end) = counter.bounds();
                 let usage: Vec<_> = match &consumer {
-                    Some(c) => counter.usage(c).into_iter().collect(),
+                    Some(c) => counter.usage_of(c),
                     None => counter.all(),
                 };
                 serde_json::json!({
@@ -1294,7 +1294,7 @@ impl rdock_admin::Control for Engine {
             .counters()
             .into_iter()
             .filter(|(name, _)| middleware.as_deref().is_none_or(|m| m == name))
-            .filter(|(_, counter)| counter.reset(&consumer))
+            .filter(|(_, counter)| counter.reset_consumer(&consumer))
             .count();
         tracing::info!(consumer = %consumer, reset, "quota counts reset through the admin API");
         reset

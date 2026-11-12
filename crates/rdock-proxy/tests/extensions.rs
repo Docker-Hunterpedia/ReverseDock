@@ -545,6 +545,33 @@ async fn the_body_goes_to_the_agent_and_is_withheld_from_the_backend_until_the_v
     assert_eq!(&reply.body[..], b"fine payload");
 }
 
+/// M3 of the v0.8 review records what a body verdict can and cannot withhold under Pingora
+/// 0.9.1: a `validate` that refuses a body answers `400`, and the backend has received the
+/// request head (its connection was opened before the body was read) but not one byte of the
+/// body, and the connection is closed. A refusal from the request head alone (the query
+/// here) reaches no backend at all.
+#[tokio::test]
+async fn a_refused_body_leaves_the_backend_with_the_head_only() {
+    let (backend, seen) = recording_backend().await;
+    let check = "  check:\n    type: validate\n    query: { type: object, properties: { limit: { type: integer, maximum: 100 } } }\n    body: { type: object, required: [name] }\n";
+    let h = Harness::start(&site("check", backend, check), api::Registry::new()).await;
+    let mut req = post("/items?limit=1000", r#"{"name":"x"}"#);
+    req.headers_mut()
+        .insert("content-type", "application/json".parse().unwrap());
+    assert_eq!(client::http1(h.addr, req).await.status, 400);
+    let mut req = post("/items", r#"{"evil":"payload"}"#);
+    req.headers_mut()
+        .insert("content-type", "application/json".parse().unwrap());
+    assert_eq!(client::http1(h.addr, req).await.status, 400);
+    let bytes = seen.await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    // One connection, made only for the request with a body: the query refusal sent nothing.
+    assert_eq!(text.matches("HTTP/1.1\r\n").count(), 1, "{text}");
+    assert!(text.starts_with("POST /items HTTP/1.1\r\n"), "{text}");
+    assert!(text.ends_with("\r\n\r\n"), "only the head: {text:?}");
+    assert!(!text.contains("evil"), "{text}");
+}
+
 #[tokio::test]
 async fn oversize_bodies_are_rejected_or_sent_without_the_body() {
     let backend = Backend::start("one").await;

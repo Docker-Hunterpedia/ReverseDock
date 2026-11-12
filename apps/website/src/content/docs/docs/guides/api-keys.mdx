@@ -10,7 +10,9 @@ import Status from '../../../../components/Status.astro';
 A **consumer** <Status since="v0.8" /> is a client of your API: a partner, an app, a team, or a
 user who logged in. The `api_key` middleware checks the key a request carries, and the request
 then belongs to that consumer (an [OIDC login](/docs/guides/oidc-login/), a
-[JWT claim](/docs/guides/jwt/#consumers-from-tokens) or Cloudflare Access set it the same way): [rate limits and quotas](/docs/guides/quotas/) can count per consumer, the access log
+[JWT claim](/docs/guides/jwt/#consumers-from-tokens) or Cloudflare Access set it the same way,
+as identities of their own, keyed on the issuer, unless `map_to_consumers: true` maps them to
+the consumers defined here): [rate limits and quotas](/docs/guides/quotas/) can count per consumer, the access log
 and [usage metering](/docs/guides/usage-metering/) name it, and the backend learns who called.
 
 ## The key format
@@ -119,7 +121,9 @@ The same as HTTP (send `If-Match` with the `ETag` of `GET /api/v1/consumers`):
 | `DELETE /api/v1/consumers/{name}/keys/{id}` | operator | Revoke a key the API minted. |
 
 A consumer of the configuration file can get keys from the API too; its groups and file keys
-are changed in the file. A revoked key stops working with the configuration that applies the
+are changed in the file, and its groups come from the file only, never from the API. Remove the
+consumer from the file and the keys the API minted for it stop working with that reload (a
+warning names the consumer); define it again to bring them back, or revoke them. A revoked key stops working with the configuration that applies the
 revocation: no restart, and on this instance within the request that changes it.
 
 ## Where a key may be sent
@@ -128,13 +132,15 @@ revocation: no restart, and on this instance within the request that changes it.
 |---|---|---|
 | `headers` | `[Authorization, X-API-Key]` | Headers tried in order; the first present wins. In `Authorization` the key follows `Bearer `; other schemes there (Basic) are ignored. |
 | `query` | none | A query parameter, only when named. Keys in URLs end up in browser histories and other systems' logs; `rdock validate` warns. |
-| `forward_credential` | `false` | Keep the key in the request to the backend. |
+| `forward_credential` | `false` | Keep the key in the request to the backend. When `false`, every configured header that holds a key and the query parameter (its name compared after percent-decoding, so `%61pi_key` is `api_key`) are removed, not only the one the key was read from. |
 | `anonymous` | `deny` | `allow` lets requests without a key through without a consumer. An invalid key is refused either way. |
 | `groups` | any | Admit only consumers in one of these groups; others get `403`. |
 | `realm` | `api` | The realm of the `WWW-Authenticate` challenge. |
 
-Keys are never read from cookies. A key sent twice (two headers, or two query values) is
-refused with `400`, so the backend cannot read a copy that was not checked.
+Keys are never read from cookies. A key sent twice (two headers of the same name, or two query
+values) is refused with `400`, and so is a second, different key in another configured location
+(a key in `Authorization` and another in `X-API-Key`), so the backend cannot read a copy that
+was not checked. The same key in several locations is accepted.
 
 ## What the backend and the logs see
 

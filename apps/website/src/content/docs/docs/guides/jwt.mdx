@@ -42,6 +42,8 @@ middlewares:
 | `forward_token` | `true` | Keep the token header for the backend. |
 | `consumer_claim` <Status since="v0.8" /> | none | A claim (`sub`, `email`, `client_id`…) that becomes the request's [consumer](/docs/guides/api-keys/). A token without it is refused. |
 | `groups_claim` <Status since="v0.8" /> | none | With `consumer_claim`: the claim listing the consumer's groups (a string or an array), for group overrides. |
+| `map_to_consumers` <Status since="v0.8" /> | `false` | With `consumer_claim`: a name that `consumers` defines is that consumer (its groups are added; it shares the quota, rate-limit and cache identity of its API keys). Only when the issuer controls the claim. |
+| `unverified_emails` <Status since="v0.8" /> | `false` | With `consumer_claim: email`: accept an `email` without `email_verified`. **Unsafe** with an issuer that lets users enter an address they do not own. |
 
 ## What is checked
 
@@ -96,6 +98,13 @@ middlewares:
     groups_claim: plan
   daily: { type: quota, limit: 10000, window: day, overrides: { enterprise: 1000000 } }
 ```
+
+The consumer is keyed on the issuer: a token's `user-7` is counted, cached and grouped apart from
+an API-key consumer `user-7` and from another issuer's `user-7`, and gets none of the groups of
+`consumers.user-7`, unless `map_to_consumers: true`. The access log and metering show the bare
+name. With `consumer_claim: email`, the address names the consumer only when the token says
+`email_verified: true` (or carries no `email_verified` and `unverified_emails: true`);
+otherwise `sub` does, and a token with neither is refused.
 
 For browsers that should log in rather than bring a token, use [OIDC login](/docs/guides/oidc-login/).
 

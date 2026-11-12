@@ -67,7 +67,7 @@ body is known, so the client's `Content-Length` is dropped and the new body is s
 
 | Case | Default | Other choice |
 |---|---|---|
-| A patch that cannot apply: a `test` fails, a location is missing | `on_error: reject`: `422` [`patch-failed`](/docs/reference/problems/#patch-failed), naming the operation | `on_error: pass`: forward the body unchanged |
+| A patch that cannot apply: a `test` fails, a location is missing, the patched document would be larger than `max_body` (each `copy` can double it) | `on_error: reject`: `422` [`patch-failed`](/docs/reference/problems/#patch-failed), naming the operation | `on_error: pass`: forward the body unchanged |
 | A body that is not JSON (other `Content-Type`, or not valid JSON) | `on_non_json: pass`: forward it unchanged | `on_non_json: reject`: `415` (content type) or `400` (not JSON) |
 
 ## Response bodies

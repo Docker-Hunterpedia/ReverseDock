@@ -15,7 +15,7 @@ API clients and users that requests are attributed to, with their API keys (stor
 
 **Type:** list of `string`
 
-Groups, in order of precedence: per-group limit overrides use the first listed group that has one, and `api_key.groups` admits a consumer in any of them.
+Groups, in order of precedence: per-group limit overrides use the first listed group that has one, and `api_key.groups` admits a consumer in any of them. In the admin API's document, an entry without `groups` only adds keys to a consumer of the file.
 
 ## `consumers.<name>.keys`
 

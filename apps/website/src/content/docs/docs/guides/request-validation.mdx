@@ -91,8 +91,14 @@ that does not convert stays text and fails `type`.
 
 A body is held until it is complete (in memory, then in an unlinked spool file in the data
 directory; see [ADR-0030](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0030-v0-8-cache-extensibility-gateway.md)),
-then checked; nothing of it reaches the backend before. The request head has already gone to the
-backend by then, so a refused body aborts that request.
+then checked; nothing of it reaches the backend before.
+
+**Limitation: the request head reaches the backend before the body is checked.** By the time the
+body is complete, ReverseDock has connected to the backend and sent the request line and headers
+(Pingora 0.9.1 reads the body only once the upstream request has started), so a refused body
+aborts that request: the backend sees a request whose body never arrives, and the connection
+closes. Checks of the path, query, headers and cookies run before any backend is chosen; a
+request refused by them reaches no backend at all.
 
 | The body | Answer |
 |---|---|

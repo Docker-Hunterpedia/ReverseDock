@@ -41,7 +41,7 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
             .unwrap_or_default(),
         // Requests without a consumer are counted per client IP, apart from every consumer.
         RateLimitKey::Consumer => match &cx.consumer {
-            Some(consumer) => [b"c:", consumer.name.as_bytes()].concat(),
+            Some(consumer) => [b"c:", consumer.key().as_bytes()].concat(),
             None => format!("ip:{}", cx.client_ip).into_bytes(),
         },
     }

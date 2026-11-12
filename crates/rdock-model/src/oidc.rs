@@ -44,8 +44,9 @@ pub struct OidcConfig {
     /// replaces `redirect_path`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirect_url: Option<HttpUrl>,
-    /// Path that ends the session; the provider's `end_session_endpoint` is called when it
-    /// advertises one (RP-initiated logout).
+    /// Path that ends the session (`GET`, `HEAD` or `POST`, from the site itself: a request
+    /// another site triggers is refused with `403`); the provider's `end_session_endpoint` is
+    /// called when it advertises one (RP-initiated logout).
     #[serde(default = "default_logout_path")]
     pub logout_path: String,
     /// Where the browser lands after logging out (a path on the same host).
@@ -58,9 +59,19 @@ pub struct OidcConfig {
     #[serde(default)]
     pub claims_to_headers: BTreeMap<String, String>,
     /// The claim that becomes the request's consumer (rate limits, quotas, the cache key,
-    /// the access log). `sub` is used when the token lacks it.
+    /// the access log). `sub` is used when the token lacks it, and in place of `email` when
+    /// the provider has not verified the address (`email_verified` is not `true`; see
+    /// `allowed.unverified_emails`).
     #[serde(default = "default_consumer_claim")]
     pub consumer_claim: String,
+    /// Treat a consumer name that `consumers` defines as that consumer: the session then
+    /// gets its groups, and shares its quota, rate-limit and cache identity with its API keys
+    /// (other names stay keyed on the issuer). Off by default: an OIDC user is a separate
+    /// identity, keyed on the issuer and the name, so a user whose claim happens to equal a
+    /// configured consumer's name gains nothing from it. Turn it on only when the provider controls the
+    /// claim (it cannot be chosen by the user).
+    #[serde(default)]
+    pub map_to_consumers: bool,
     /// The claim that lists the user's groups (a string or an array of strings).
     #[serde(default = "default_groups_claim")]
     pub groups_claim: String,
@@ -181,9 +192,10 @@ pub struct OidcAllowed {
     pub domains: Vec<String>,
     /// Groups from `groups_claim`.
     pub groups: Vec<String>,
-    /// Also match `emails` and `domains` against an `email` claim that comes without
-    /// `email_verified` (some providers never send it). Off: only `email_verified: true`
-    /// counts.
+    /// Also trust an `email` claim that comes without `email_verified` (some providers never
+    /// send it): for `emails` and `domains`, and as the consumer name when `consumer_claim`
+    /// is `email`. Unsafe with a provider that lets users set an address they do not own.
+    /// Off: only `email_verified: true` counts; `email_verified: false` never does.
     pub unverified_emails: bool,
 }
 

@@ -359,8 +359,59 @@ async fn the_login_flow_admits_browsers_and_refuses_api_requests_without_a_sessi
     assert!(!refused.text().contains("<script>"), "{}", refused.text());
     idp.knobs(|k| k.authorize_error = None);
 
-    // Logout clears the session and goes to the provider's end-session endpoint.
-    let out = send(port, "app.test", "/_rdock/oidc/logout", &mut alice, true).await;
+    // L1 of the v0.8 review: a logout another site triggers (an `<img>`, a form, a link) is
+    // refused and the session stays; other methods are not logouts.
+    let logout = async |alice: &mut Browser, method: &str, headers: &[(&str, &str)]| {
+        let mut req = client::request(method, "app.test", "/_rdock/oidc/logout", "");
+        for (name, value) in headers {
+            req.headers_mut().insert(
+                http::HeaderName::from_bytes(name.as_bytes()).unwrap(),
+                value.parse().unwrap(),
+            );
+        }
+        if let Some(cookie) = alice.header() {
+            req.headers_mut().insert("cookie", cookie.parse().unwrap());
+        }
+        let reply = client::http1(addr(port), req).await;
+        alice.absorb(&reply.headers);
+        reply
+    };
+    for (method, headers) in [
+        ("GET", vec![("sec-fetch-site", "cross-site")]),
+        ("GET", vec![("sec-fetch-site", "same-site")]),
+        ("POST", vec![("sec-fetch-site", "cross-site")]),
+        ("GET", vec![]),
+        ("GET", vec![("referer", "https://evil.example/page")]),
+        ("GET", vec![("referer", "https://app.test.evil.example/")]),
+        ("POST", vec![("origin", "https://evil.example")]),
+    ] {
+        let out = logout(&mut alice, method, &headers).await;
+        assert_eq!(out.status, 403, "{method} {headers:?}");
+        assert!(alice.get(SESSION).is_some(), "{method} {headers:?}");
+    }
+    assert_eq!(
+        logout(&mut alice, "DELETE", &[("sec-fetch-site", "same-origin")])
+            .await
+            .status,
+        405
+    );
+    assert!(alice.get(SESSION).is_some());
+    // Older browsers without `Sec-Fetch-Site`: the site's own `Referer` or `Origin` counts.
+    let mut via_referer = alice.clone();
+    let out = logout(
+        &mut via_referer,
+        "GET",
+        &[("referer", "https://app.test/account")],
+    )
+    .await;
+    assert_eq!(out.status, 302);
+    let mut via_origin = alice.clone();
+    let out = logout(&mut via_origin, "POST", &[("origin", "https://app.test")]).await;
+    assert_eq!(out.status, 302);
+
+    // Logout from the site itself clears the session and goes to the provider's end-session
+    // endpoint.
+    let out = logout(&mut alice, "GET", &[("sec-fetch-site", "same-origin")]).await;
     assert_eq!(out.status, 302);
     let location = out.header("location").unwrap();
     assert!(
@@ -706,6 +757,103 @@ async fn sessions_refresh_expire_rotate_and_work_across_replicas_and_outages() {
         metrics.contains("rdock_oidc_refreshes_total{middleware=\"login\",result=\"failed\"} 1"),
         "{metrics}"
     );
+}
+
+/// H1 of the v0.8 review: an address the provider has not verified never names the consumer
+/// (it would share the owner's quota and cache entries), and a consumer name equal to one of
+/// `consumers` gets that consumer's groups only with `map_to_consumers`.
+#[tokio::test]
+async fn consumers_need_a_verified_email_and_an_explicit_mapping() {
+    let idp = FakeIdp::start(CLIENT, Some(SECRET)).await;
+    let backend = Backend::start("app").await;
+    let dir = tempfile::tempdir().unwrap();
+    secrets(dir.path());
+    let consumers = "consumers:\n  user-7: { groups: [vip] }\n";
+    let start = |extra: &str| {
+        let port = free_port();
+        let mut text = config(
+            port,
+            backend.addr,
+            &idp,
+            dir.path(),
+            &key_a(dir.path()),
+            extra,
+        );
+        text.push_str(consumers);
+        (port, Rdock::start(RDOCK, &text))
+    };
+
+    // The owner of the address uses up the daily quota of 2.
+    let (port, _default) = start("");
+    idp.set_user(User::new("victim", "victim@corp.example", &[]));
+    let mut victim = Browser::default();
+    assert_eq!(
+        login(port, "quota.test", "/", &mut victim, &idp)
+            .await
+            .status,
+        302
+    );
+    for expected in [200, 200, 429] {
+        assert_eq!(
+            send(port, "quota.test", "/", &mut victim, false)
+                .await
+                .status,
+            expected
+        );
+    }
+    // Someone whose provider let them claim the same address, unverified or without
+    // `email_verified`, is a consumer of their own (`sub`), not the owner.
+    for verified in [serde_json::json!(false), serde_json::Value::Null] {
+        idp.knobs(|k| k.email_verified = verified.clone());
+        idp.set_user(User::new("attacker", "victim@corp.example", &[]));
+        let mut attacker = Browser::default();
+        assert_eq!(
+            login(port, "quota.test", "/", &mut attacker, &idp)
+                .await
+                .status,
+            302
+        );
+        assert_eq!(
+            send(port, "quota.test", "/", &mut attacker, false)
+                .await
+                .status,
+            200,
+            "email_verified = {verified}: not the victim's quota"
+        );
+    }
+    idp.knobs(|k| k.email_verified = serde_json::json!(true));
+
+    // `consumer_claim: sub` names `user-7`, a configured consumer in group `vip`: without
+    // `map_to_consumers` the session gets nothing from it, so `burst` allows 4 a minute.
+    idp.set_user(User::new("user-7", "seven@example.com", &[]));
+    let burst = |port: u16, mut browser: Browser| async move {
+        let mut out = Vec::new();
+        for _ in 0..6 {
+            out.push(
+                send(port, "app.test", "/api", &mut browser, false)
+                    .await
+                    .status,
+            );
+        }
+        out
+    };
+    let (port, _unmapped) = start("    consumer_claim: sub\n");
+    let mut seven = Browser::default();
+    assert_eq!(
+        login(port, "app.test", "/", &mut seven, &idp).await.status,
+        302
+    );
+    let statuses = burst(port, seven).await;
+    assert!(statuses.contains(&429), "{statuses:?}");
+
+    // With `map_to_consumers` it is that consumer, with its `vip` override.
+    let (port, _mapped) = start("    consumer_claim: sub\n    map_to_consumers: true\n");
+    let mut seven = Browser::default();
+    assert_eq!(
+        login(port, "app.test", "/", &mut seven, &idp).await.status,
+        302
+    );
+    assert_eq!(burst(port, seven).await, [200; 6]);
 }
 
 /// `rdock validate` output for a configuration with one `oidc` middleware.

@@ -303,3 +303,56 @@ fn edge_cases() {
     .unwrap_err();
     assert!(!err.to_string().contains("hunter2") && !err.to_string().contains("nope"));
 }
+
+/// L5 of the v0.8 review: `copy` of the root into itself doubles the document each time; the
+/// size cap fails the patch before it allocates past `max`.
+#[test]
+fn doubling_copies_stop_at_the_size_cap() {
+    let ops: Vec<PatchOp> = (0..64)
+        .map(|i| PatchOp::Copy {
+            from: String::new(),
+            path: format!("/k{i}"),
+        })
+        .collect();
+    let mut doc = json!({ "seed": "x".repeat(100) });
+    let err = apply_within(&mut doc, &ops, 64 * 1024).unwrap_err();
+    assert_eq!(err.kind, PatchErrorKind::TooLarge);
+    assert!(err.index < 12, "{err:?}");
+    assert!(serde_json::to_vec(&doc).unwrap().len() <= 64 * 1024);
+
+    // Within the cap, removals make room again.
+    let mut doc = json!({ "a": "x".repeat(600) });
+    let ops = [
+        PatchOp::Copy {
+            from: "/a".into(),
+            path: "/b".into(),
+        },
+        PatchOp::Remove { path: "/a".into() },
+        PatchOp::Copy {
+            from: "/b".into(),
+            path: "/c".into(),
+        },
+        PatchOp::Remove { path: "/b".into() },
+        PatchOp::Replace {
+            path: "/c".into(),
+            value: json!("short"),
+        },
+        PatchOp::Add {
+            path: "/d".into(),
+            value: json!([1, 2, 3]),
+        },
+    ];
+    apply_within(&mut doc, &ops, 1300).unwrap();
+    assert_eq!(doc, json!({ "c": "short", "d": [1, 2, 3] }));
+    let mut big = json!({ "a": 1 });
+    let err = apply_within(
+        &mut big,
+        &[PatchOp::Add {
+            path: "/b".into(),
+            value: json!("y".repeat(100)),
+        }],
+        50,
+    )
+    .unwrap_err();
+    assert_eq!(err.kind, PatchErrorKind::TooLarge);
+}

@@ -208,7 +208,10 @@ pub fn clienthello(data: &[u8]) {
 /// round-trip through escaping; a patch that applies gives the same result twice; a check that
 /// passes without a document never makes `apply` panic.
 pub fn json_patch(data: &[u8]) {
-    use rdock_model::json_patch::{PatchOp, apply, escape_token, parse_pointer};
+    use rdock_model::json_patch::{PatchOp, apply_within, escape_token, parse_pointer};
+    // The cap `transform` applies (its default `max_body`): repeated `copy` operations would
+    // otherwise grow the document exponentially.
+    const MAX: u64 = 1024 * 1024;
     let Ok(text) = std::str::from_utf8(data) else {
         return;
     };
@@ -235,8 +238,8 @@ pub fn json_patch(data: &[u8]) {
     }
     let mut first = doc.clone();
     let mut second = doc;
-    let a = apply(&mut first, &ops);
-    let b = apply(&mut second, &ops);
+    let a = apply_within(&mut first, &ops, MAX);
+    let b = apply_within(&mut second, &ops, MAX);
     assert_eq!(
         a.is_ok(),
         b.is_ok(),
