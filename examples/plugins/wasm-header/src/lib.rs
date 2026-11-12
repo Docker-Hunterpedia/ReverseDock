@@ -82,6 +82,7 @@ mod bump {
     unsafe impl GlobalAlloc for Bump {
         unsafe fn alloc(&self, layout: Layout) -> *mut u8 {
             // SAFETY: single-threaded (see `Sync`).
+            // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage -- guest allocator, runs inside the sandbox (no_std has no safe one)
             let next = unsafe { &mut *self.0.get() };
             if *next == 0 {
                 *next = memory_size(0) * PAGE;
@@ -119,12 +120,14 @@ pub unsafe extern "C" fn cabi_realloc(
         core::arch::wasm32::unreachable()
     };
     // SAFETY: `layout` has a non-zero size.
+    // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage -- guest allocator, runs inside the sandbox (no_std has no safe one)
     let new = unsafe { alloc::alloc::alloc(layout) };
     if new.is_null() {
         core::arch::wasm32::unreachable()
     }
     if !old.is_null() {
         // SAFETY: both blocks are at least `min(old_len, new_len)` long and do not overlap.
+        // nosemgrep: rust.lang.security.unsafe-usage.unsafe-usage -- guest allocator, runs inside the sandbox (no_std has no safe one)
         unsafe { core::ptr::copy_nonoverlapping(old, new, old_len.min(new_len)) };
     }
     new
