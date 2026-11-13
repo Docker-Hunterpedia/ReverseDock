@@ -3,6 +3,7 @@
     python3 -I perreq/summarize.py counts <out-dir> [<out-dir-after>]
     python3 -I perreq/summarize.py cpu <out-dir>
     python3 -I perreq/summarize.py tail <out-dir> [<out-dir> ...]
+    python3 -I perreq/summarize.py scaling <out-dir>
 
 `cpu`: per variant, the median of the A runs and of the B runs, the A/A spread ((max - min) / median
 of the A runs, the noise floor) and the B/A change. A change is called a difference only when it
@@ -74,6 +75,48 @@ def tail(dirs):
             )
 
 
+SCALING_BUSY = 0.85  # below this share of rdock's CPUs busy, rdock was not the limit
+SCALING_TOOL = 0.90  # at or above this share of its CPUs the tool may have been the limit
+
+
+def scaling(d):
+    by = {}
+    for r in lines(d / "scaling.jsonl"):
+        by.setdefault(r["label"], []).append(r)
+    if not by:
+        print("no scaling.jsonl")
+        return
+    machine = d / "machine.txt"
+    if machine.exists():
+        print("Machine: " + "; ".join(machine.read_text().strip().splitlines()) + "\n")
+    print("| rdock CPUs | Tool CPUs | Rounds | Requests/s median (min–max) | CPU µs per request median (min–max) "
+          "| rdock CPUs busy | Tool CPUs busy | vs smallest | Efficiency | Errors | Reading |")
+    print("|---:|---:|---:|---|---|---:|---:|---:|---:|---:|---|")
+    rows = sorted(by.items(), key=lambda kv: kv[1][0]["rdock_cpus"])
+    base = statistics.median(r["req_per_s"] for r in rows[0][1])
+    base_cpus = rows[0][1][0]["rdock_cpus"]
+    for label, runs in rows:
+        rps = [r["req_per_s"] for r in runs]
+        us = [r["rdock_cpu_us_per_req"] for r in runs]
+        busy = statistics.median(r["rdock_cpu_util"] for r in runs)
+        tool = statistics.median(r["tool_cpu_util"] for r in runs)
+        cpus = runs[0]["rdock_cpus"]
+        ratio = statistics.median(rps) / base
+        notes = []
+        if label.endswith("/shared"):
+            notes.append("the tool shares these CPUs with rdock: a lower bound, not a clean measurement")
+        if busy < SCALING_BUSY:
+            notes.append("rdock's CPUs were not all busy: it was not the limit")
+        if tool >= SCALING_TOOL:
+            notes.append("the tool was near its own CPU limit: it may have been the limit")
+        reading = "; ".join(notes) or "clean"
+        print(
+            f"| {cpus} | {runs[0]['tool_cpus']} | {len(runs)} | {statistics.median(rps):,.0f} ({min(rps):,.0f}–{max(rps):,.0f}) "
+            f"| {statistics.median(us):.1f} ({min(us):.1f}–{max(us):.1f}) | {busy:.0%} | {tool:.0%} "
+            f"| {ratio:.2f}× | {ratio * base_cpus / cpus:.0%} | {sum(r['errors'] for r in runs)} | {reading} |"
+        )
+
+
 def main():
     if len(sys.argv) < 3:
         print(__doc__, file=sys.stderr)
@@ -85,6 +128,8 @@ def main():
         cpu(dirs[0])
     elif kind == "tail":
         tail(dirs)
+    elif kind == "scaling":
+        scaling(dirs[0])
     else:
         print(__doc__, file=sys.stderr)
         sys.exit(2)

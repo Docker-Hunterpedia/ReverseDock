@@ -1,0 +1,5 @@
+cpus: 4
+sizes: 1 2 4
+model: Intel(R) Xeon(R) Processor @ 2.30GHz
+kernel: 6.18.44-fc-v445
+cgroup cpu.max: n/a

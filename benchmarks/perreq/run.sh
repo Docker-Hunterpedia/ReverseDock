@@ -4,6 +4,7 @@
 #   perreq/run.sh counts <alloc-count rdock> <out-dir>          # exact counts, every variant
 #   perreq/run.sh cpu <rdock A> <rdock B> <out-dir> [rounds]     # interleaved A/B with an A/A floor
 #   perreq/run.sh tail <rdock> <out-dir> [max_handshakes]        # TLS tail during a handshake burst
+#   perreq/run.sh scaling <rdock> <out-dir> [rounds]             # rdock on 1, 2, 4 CPUs: throughput and CPU per request
 #
 # Build the binaries first (benchmarks/README.md, "Per-request cost without Docker"):
 #   cargo build --locked -p rdock --features alloc-count        # counts (debug build)
@@ -82,8 +83,47 @@ case "$cmd" in
       echo "tail round $round done" >&2
     done
     ;;
+  scaling)
+    # rdock on the first n CPUs (n in SIZES), `runtime.worker_threads` = n; the tool (generator and
+    # backend together) on the CPUs that are left, or, when none are (n = every CPU), on all of
+    # them, sharing with rdock: that size is then a lower bound, not a clean measurement. Each
+    # round runs every size once, in alternating order, so drift in the machine hits all sizes.
+    bin=$2 out=$3 rounds=${4:-3}
+    mkdir -p "$out"
+    total=$(nproc)
+    sizes=${SIZES:-"1 2 4"}
+    {
+      echo "cpus: $total"
+      echo "sizes: $sizes"
+      echo "model: $(grep -m1 'model name' /proc/cpuinfo | cut -d: -f2- | sed 's/^ //')"
+      echo "kernel: $(uname -r)"
+      echo "cgroup cpu.max: $(cat /sys/fs/cgroup/cpu.max 2>/dev/null || echo n/a)"
+    } >"$out/machine.txt"
+    for round in $(seq 1 "$rounds"); do
+      order=$sizes
+      if ((round % 2 == 0)); then order=$(echo "$sizes" | tr ' ' '\n' | tac | tr '\n' ' '); fi
+      for n in $order; do
+        ((n <= total)) || { echo "skipping $n CPUs: this machine has $total" >&2; continue; }
+        rdock_cpus="0-$((n - 1))"
+        label="cpus-$n"
+        if ((n < total)); then
+          tool_cpus="$n-$((total - 1))"
+          tool_n=$((total - n))
+        else
+          tool_cpus="0-$((total - 1))"
+          tool_n=$total
+          label="cpus-$n/shared"
+        fi
+        taskset -c "$tool_cpus" "$perreq" scale --rdock "$bin" --cpus "$rdock_cpus" \
+          --config-extra "runtime: { worker_threads: $n }" --tool-threads "$tool_n" --tool-cpus "$tool_cpus" \
+          --conns "${SCALE_CONNS:-64}" --warmup "${SCALE_WARMUP:-5}" --seconds "${SCALE_SECONDS:-20}" \
+          --label "$label" >>"$out/scaling.jsonl"
+        echo "scaling round $round: $n CPUs done" >&2
+      done
+    done
+    ;;
   *)
-    sed -n '2,13p' "$0" >&2
+    sed -n '2,14p' "$0" >&2
     exit 2
     ;;
 esac

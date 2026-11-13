@@ -41,6 +41,11 @@ wasm = ["rdock-proxy/wasm", "rdock-middleware/wasm"]
 # HTTP/3 ingress on quinn and h3 (experimental, ADR-0032). Off by default and in release builds:
 # without it a listener with `http3.enabled: true` is refused with a diagnostic.
 http3 = ["rdock-proxy/http3", "rdock-testkit/http3"]
+# jemalloc (tikv-jemallocator) as the global allocator, to compare with mimalloc (H-PERF-06,
+# ADR-0031; benchmarks/README.md, "Allocator comparison"). Wins over `mimalloc` when both are on, so
+# `--features jemalloc` on a default build is enough. Off by default and never in a published
+# binary. Builds jemalloc from C source: needs `make` and a C compiler.
+jemalloc = ["dep:tikv-jemallocator"]
 # Faults for the admin isolation test (benchmarks/isolation, H-ENG-04); never in release builds.
 fault-injection = ["rdock-admin/fault-injection"]
 # Counts allocations for the per-request measurement helper (benchmarks/perreq): the system
@@ -87,6 +92,7 @@ base64.workspace = true
 thiserror.workspace = true
 sd-notify.workspace = true
 mimalloc = { workspace = true, optional = true }
+tikv-jemallocator = { workspace = true, optional = true }
 stats_alloc = { workspace = true, optional = true }
 nix.workspace = true
 serde.workspace = true

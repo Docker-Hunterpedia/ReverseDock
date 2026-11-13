@@ -19,7 +19,10 @@
 //! connections send requests at a steady rate while a burst of new TLS connections arrives,
 //! all at once or ramped; it reports the latency of the established connections' requests.
 //!
-//! See `benchmarks/README.md`, "Per-request cost without Docker".
+//! `rdock-perreq scale` is the CPU-scaling measurement (ADR-0031 step 9): peak throughput and
+//! CPU time per request of an `rdock` pinned to a number of CPUs, by closed-loop saturation.
+//!
+//! See `benchmarks/README.md`, "Per-request cost without Docker" and "CPU scaling".
 
 // A measurement tool: counts and times become ratios and averages in floating point, where
 // precision far beyond what is measured does not matter.
@@ -32,6 +35,7 @@
     clippy::format_push_string
 )]
 
+mod scale;
 mod tail;
 
 use std::collections::BTreeMap;
@@ -63,6 +67,8 @@ enum Cmd {
     Tail(tail::TailArgs),
     /// The burst of new TLS connections for `tail` (started by it).
     Burst(tail::BurstArgs),
+    /// Peak throughput and CPU per request of rdock pinned to a number of CPUs.
+    Scale(scale::ScaleArgs),
 }
 
 /// What `measure` reads.
@@ -124,14 +130,20 @@ struct MeasureArgs {
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
+    // The tool's own threads: two, except for `scale`, which sizes them to the CPUs it may use.
+    let threads = match &cli.command {
+        Cmd::Scale(args) => args.tool_threads,
+        _ => 2,
+    };
     let runtime = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(2)
+        .worker_threads(threads)
         .enable_all()
         .build()?;
     match cli.command {
         Cmd::Measure(args) => runtime.block_on(measure(args)),
         Cmd::Tail(args) => runtime.block_on(tail::run(args)),
         Cmd::Burst(args) => runtime.block_on(tail::burst(args)),
+        Cmd::Scale(args) => runtime.block_on(scale::run(args)),
     }
 }
 

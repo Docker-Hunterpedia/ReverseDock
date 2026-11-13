@@ -197,6 +197,10 @@ prometheus = { version = "0.14.0", default-features = false }
 sd-notify = "0.5.0"
 # Global allocator (0.1.52 released 2026-05-22): musl's malloc mapped and unmapped memory on the request path (#93).
 mimalloc = "0.1.52"
+# Optional comparison allocator behind the `jemalloc` feature of `rdock` (H-PERF-06, ADR-0031): off by
+# default and in release builds, so mimalloc stays the allocator we ship. 0.7.0 on crates.io, MIT OR
+# Apache-2.0, checked 2026-11-13.
+tikv-jemallocator = { version = "0.7.0", default-features = false }
 # Counting allocator for the per-request measurement helper (benchmarks/perreq); only behind the
 # bench-only `alloc-count` feature of `rdock`, never in a release build (0.1.10, MIT, checked 2026-11-13).
 stats_alloc = "0.1.10"

@@ -17,7 +17,8 @@
 //! [`plugin_api`] (the `rdock-plugin-api` crate) only.
 //!
 //! With the default feature `mimalloc` the library also sets mimalloc as the global allocator,
-//! as the stock binary does; turn the feature off to choose your own.
+//! as the stock binary does; turn the feature off to choose your own. The `jemalloc` feature
+//! (off by default) sets jemalloc instead, for comparisons (H-PERF-06).
 
 use std::ffi::OsString;
 use std::io::Write;
@@ -31,9 +32,19 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 /// musl's malloc took a global lock on every allocation and mapped and unmapped memory for
 /// the 64 KiB connection buffers, which was about a quarter of the CPU per request on 2 CPUs
 /// (perf, 2026-11-02, #93). mimalloc keeps freed memory per thread and reuses it.
-#[cfg(all(feature = "mimalloc", not(feature = "alloc-count")))]
+#[cfg(all(
+    feature = "mimalloc",
+    not(feature = "jemalloc"),
+    not(feature = "alloc-count")
+))]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+/// The comparison allocator of H-PERF-06, behind the `jemalloc` feature (off by default and in
+/// release builds). It wins over mimalloc when both features are on.
+#[cfg(all(feature = "jemalloc", not(feature = "alloc-count")))]
+#[global_allocator]
+static ALLOCATOR: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
 
 #[cfg(feature = "alloc-count")]
 mod alloc_count;
