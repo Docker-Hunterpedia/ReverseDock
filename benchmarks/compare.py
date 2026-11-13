@@ -28,9 +28,15 @@ MAX_FAILED = 0.01
 # 10,000 req/s against NGINX's 56 µs (1.36×, v0.5, results/2026-11-02-small-cpu) and about 80 µs
 # in v0.6 (1.43×, results/2026-11-07-v06). CPU time does not wait in queues, so it moves far less
 # on a shared runner than latency does, but the two proxies run minutes apart on a machine whose
-# neighbours change; 1.6 leaves about 12 % above the worst lab ratio for that and still catches a
-# regression of a fifth. Tighten it once a few weeks of nightly readings show the runner's spread.
-MAX_CPU_RATIO = 1.6
+# neighbours change. The limit was first 1.6 (12 % above the worst lab ratio). Three runs of the
+# same code on hosted runners on 2026-11-13 read 1.32 and 1.37, 1.40 and 1.46, and 2.18 and
+# 1.79: in the third, on a faster machine, NGINX's cost fell from about 100 µs to 37 µs per
+# request and rdock's from about 130 µs to 81 µs, so the ratio depends on the runner's CPU and 1.6
+# fails by the machine drawn, not by the code. 2.4 leaves 10 % above the highest reading and
+# still catches a regression of about three quarters against the usual 1.4; a smaller one shows
+# in the printed table and in the dedicated-hardware results. Tighten it once a few weeks of
+# nightly readings show the spread, or compare against the previous night on the same CPU model.
+MAX_CPU_RATIO = 2.4
 
 
 def load(directory):
