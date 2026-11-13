@@ -118,7 +118,7 @@ reversedock/
 | `mimalloc` | on | `rdock` (the library) sets mimalloc as the global allocator; a custom binary with native plugins turns it off to bring its own (ADR-0030) |
 | `wasm` | off, experimental | WASM plugins (`type: wasm`) on wasmtime 36 LTS with Cranelift and the component model (`rdock-wasm`; also a feature of `rdock-middleware` and `rdock-proxy`); about 50 more crates. Without it `type: wasm` is refused with a diagnostic. Tested only in the non-required `wasm` CI job ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
 | `cache` | none: always built | The HTTP cache (`rdock-cache`, v0.8) is in every build: `pingora-proxy` compiles `pingora-cache` anyway, so a feature would save no dependency ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
-| `http3` | off, experimental | QUIC ingress; requires the `boringssl` backend |
+| `http3` | off, experimental | HTTP/3 ingress on `quinn` and `h3` with the listener's rustls configuration; about 7 more crates; not in release binaries ([ADR-0032](decisions/0032-http3-on-quinn-and-h3.md)). Without it `http3.enabled: true` is refused with a diagnostic |
 | `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
 
 `cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard). The features appear as their crates gain code; M0 has none yet.

@@ -205,9 +205,9 @@ stateDiagram-v2
   Compile --> Apply: ArcSwap store (lock-free)
   Apply --> Persist: history entry + LKG
   Apply --> ListenerDiff
-  ListenerDiff --> RestartRequired: listeners added/removed → flag + optional supervised restart
+  ListenerDiff --> Rebind: listeners added/removed → bind new sockets first, drain removed (ADR-0012)
   ListenerDiff --> Active: no listener change
-  RestartRequired --> Active
+  Rebind --> Active
   Validate --> Rejected: keep previous, emit diagnostics, mark provider degraded
   Rejected --> Active
   Active --> [*]
@@ -216,7 +216,7 @@ stateDiagram-v2
 - **Immutable snapshots:** the compiled `Runtime` is an `Arc` stored in an `ArcSwap`. Each request clones the `Arc` once in `new_ctx`; the request sees one consistent config for its lifetime even if a reload happens mid-flight.
 - **Compile step** (`rdock-proxy`, also run by `rdock validate`): compiled rules (regexes, IP networks) per listener in priority order, middleware chains as `Arc<[Arc<dyn Middleware>]>`, backend pools whose DNS names are resolved in the background and shared across generations, the certificate index, and the settings v0.1 cannot honour yet as diagnostics (ADR-0014). An index for hosts and paths can replace the ordered scan when route counts call for it.
 - **History:** `$RDOCK_DATA_DIR/state/history/<unix-ms>-<hash>.json` (last 50 by default, plus the diff summary). **LKG** `state/lkg.json` is loaded at boot when providers are slow/unavailable, so a reboot with Docker not yet up still serves yesterday's routes.
-- **Listener changes** apply in place ([ADR-0012](decisions/0012-own-listeners-pingora-http-engine.md)): rdock binds its own sockets, so on reload new sockets are bound and TLS settings built first; only when every bind succeeds is the new configuration published. Unchanged addresses keep their socket and get new settings; removed listeners stop accepting and drain. An address a removed (or moved) listener gives up and a new listener of the same transport wants is handed over with its socket, so it never fails to bind; a removed TCP listener closes its socket at once, a removed `udp` listener keeps it while its sessions drain unless a reload needs the port, which ends the drain (ADR-0030). A port that is already in use rejects the reload and nothing changes. Zero-downtime *binary* upgrades remain the v0.9 track H-PERF-04.
+- **Listener changes** apply in place ([ADR-0012](decisions/0012-own-listeners-pingora-http-engine.md)): rdock binds its own sockets, so on reload new sockets are bound and TLS settings built first; only when every bind succeeds is the new configuration published. Unchanged addresses keep their socket and get new settings; removed listeners stop accepting and drain. An address a removed (or moved) listener gives up and a new listener of the same transport wants is handed over with its socket, so it never fails to bind; a removed TCP listener closes its socket at once, a removed `udp` listener keeps it while its sessions drain unless a reload needs the port, which ends the drain (ADR-0030). A port that is already in use rejects the reload and nothing changes. Zero-downtime *binary* upgrades are the v0.9 track H-PERF-04: the running process hands its listening sockets to the new binary (peer handover, [ADR-0031](decisions/0031-v0-9-scale.md)); there is no permanent supervisor.
 - **Triggers:** file watch (notify, debounced), `SIGHUP`, `rdock reload`, `POST /api/v1/config/apply`, provider events. `rdock validate` runs the same pipeline up to *Compile* and exits non-zero on error with the diagnostics list.
 
 ## 6. Request lifecycle (Pingora hooks)
@@ -436,9 +436,9 @@ labels:
 
 ## 18. HTTP/3 track (P3, experimental)
 
-- Cargo feature `http3`; build variant with BoringSSL (`pingora` `boringssl` feature) + `tokio-quiche`. The default build stays rustls-only.
-- Ingress first: a UDP socket on the same port as the TLS listener, QUIC handshake with the same cert index. Pingora's server `Session` is a closed H1/H2 type, so feeding h3 into `ProxyHttp` needs either a maintained `pingora-core` patch (what PR #514 did) or an h3 front-end forwarding over an internal h2c hop into the normal pipeline; the track starts with the hop (no fork) and measures its cost. `Alt-Svc: h3=":443"` injected by `rdock-proxy`. Upstream HTTP/3 is out of scope until Pingora provides a connector.
-- Ships as "experimental" until h3i/quiche interop tests and soak tests pass.
+- Cargo feature `http3` on `quinn`, `h3` and `h3-quinn` with the listener's own rustls configuration ([ADR-0032](decisions/0032-http3-on-quinn-and-h3.md)); off by default and not in release binaries while experimental. One artifact, no BoringSSL.
+- Ingress first: a UDP socket on the same address as the `https` listener, QUIC handshake with the same certificate resolver. An HTTP/3 request stream enters the normal pipeline as a Pingora custom session (`Session` has had a `Custom` variant since 0.7.0; the trait is hidden API); if that spike fails, an in-process duplex stream carrying a validated HTTP/1.1 request is the fallback, not a socket hop. We validate pseudo-headers, fields and `Content-Length` ourselves and always set `max_header_size`. `Alt-Svc` is added by `rdock-proxy` when `advertise` is on. Upstream HTTP/3 is out of scope until Pingora provides a connector.
+- Ships as "experimental" until an `h3` release contains the unreleased fixes, an interop run passes and a soak passes (ADR-0032).
 
 ## 19. HTTP cache (F-WEB-03, ADR-0030)
 

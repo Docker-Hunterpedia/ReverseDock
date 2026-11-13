@@ -144,8 +144,8 @@ Tracked as W-SWM-01…03 below.
 - [ ] H-PERF-01 Tunable Tokio runtime (threads per listener, pinning), `SO_REUSEPORT`, socket buffers
 - [ ] H-PERF-02 TLS handshake offload pool, session resumption/tickets with key rotation
 - [ ] H-PERF-03 HTTP/2 stream/window tuning; bounded queues and backpressure end-to-end
-- [ ] H-PERF-04 Zero-downtime binary upgrade **and** listener-set changes: supervisor/worker model on Pingora's fd transfer, admin socket handed over, verified with long-lived connections (until then listener changes need a restart — ADR-0008)
-- [ ] H-PERF-05 **HTTP/3 track** (ingress first) on `tokio-quiche`, feature-gated, BoringSSL build variant
+- [ ] H-PERF-04 Zero-downtime binary upgrade: the running process hands its listening sockets and admin sockets to the new binary (peer handover, ADR-0031), verified with long-lived connections; listener-set changes already apply in process (ADR-0012)
+- [ ] H-PERF-05 **HTTP/3 track** (ingress first) on `quinn` and `h3` with our rustls configuration, feature-gated and experimental (ADR-0032)
 - [ ] H-PERF-06 NUMA/worker/buffer sizing guidance; allocator choice (`mimalloc`/`jemalloc`) benchmarked
 - [ ] H-PERF-07 eBPF/kernel-assisted experiments only with benchmark evidence
 

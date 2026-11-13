@@ -9,9 +9,9 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0003](0003-config-model-superset-of-traefik.md) | Internal model is a superset of Traefik's dynamic config; YAML/JSON canonical with JSON Schema |
 | [0004](0004-embedded-spa-dashboard.md) | Dashboard is a static SPA embedded in the binary (no Node runtime) |
 | [0005](0005-license-apache2-dco.md) | Apache-2.0 with DCO, no CLA, no open-core |
-| [0006](0006-http3-separate-track.md) | HTTP/3 is a separate, feature-gated track on tokio-quiche |
+| [0006](0006-http3-separate-track.md) | ~~HTTP/3 is a separate, feature-gated track on tokio-quiche~~ superseded by 0032 |
 | [0007](0007-admin-api-separate-listener.md) | Admin API is an axum server on its own localhost listener |
-| [0008](0008-listener-changes-via-self-upgrade.md) | ~~Listener set changes need a (supervised) restart~~ superseded by 0012 |
+| [0008](0008-listener-changes-via-self-upgrade.md) | ~~Listener set changes need a (supervised) restart~~ superseded by 0012 and 0031 |
 | [0009](0009-provider-ownership-and-merge.md) | Provider-namespaced ownership and deterministic merge rules |
 | [0010](0010-retry-semantics.md) | ~~Status-code retries wait for upstream Pingora support~~ superseded by 0015 |
 | [0011](0011-yaml-parser-and-msrv.md) | YAML is parsed with serde-saphyr (YAML 1.2 booleans); MSRV is 1.89 |
@@ -34,3 +34,5 @@ Format: Context → Decision → Consequences. Status is `accepted` unless noted
 | [0028](0028-default-connect-retries.md) | A service without `retries` retries failed connections on another backend (the `retries: {}` defaults); `attempts: 0` turns it off |
 | [0029](0029-kubernetes-gateway-api.md) | v0.7: Gateway API controller in the same binary, one Service per Gateway in front of a shared data plane, providers contribute listeners and certificates, own Lease leader election, Ingress as a translation |
 | [0030](0030-v0-8-cache-extensibility-gateway.md) | v0.8: HTTP cache on pingora-cache with our own stores and safe defaults, phased pipeline with compiled-in plugins and HTTP agents (fail closed), consumers and API keys, OIDC login, UDP routes, held request bodies; what waits |
+| [0031](0031-v0-9-scale.md) | v0.9: binary upgrade by peer handover, a control plane in the same binary with data planes that issue certificates under a lease, latency-aware balancing, edge security matchers, listener sockets, shared TLS tickets, distributed limits, tenants; what waits |
+| [0032](0032-http3-on-quinn-and-h3.md) | HTTP/3 ingress on quinn and h3 with our rustls configuration, experimental and feature-gated, as a Pingora custom session; supersedes 0006 |
