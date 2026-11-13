@@ -369,6 +369,15 @@ mod tests {
         }
     }
 
+    /// The input the fuzzer crashed on in CI: an integer with 88 continuation bytes that add
+    /// nothing. It is refused, not a valid head, so it is not in the seed corpus.
+    #[test]
+    fn http3_request_refuses_an_overlong_integer() {
+        let input = [vec![0, 0xff], vec![0x80; 88], vec![0xff]].concat();
+        super::http3_request(&input);
+        assert!(rdock_proxy::http3::request::map(&input, 64 * 1024).is_err());
+    }
+
     /// A deterministic mutation smoke run on stable (the real fuzzing needs nightly).
     #[test]
     fn http3_request_mutations() {
