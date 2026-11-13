@@ -1,0 +1,150 @@
+# HTTP cache conformance (ADR-0030, "Proof"): the public caching test suite http-tests/cache-tests
+# (RFC 9111 and RFC 9213, by Mark Nottingham) run against rdock's `cache` middleware at its safe
+# defaults. GATED, but NOT (yet) a required check: a maintainer adds `http-cache` to the "Protect
+# main" ruleset when it has been stable. The job fails when a test of kind "required" fails that is
+# not on tests/conformance/http-cache/allowlist.json (each entry: test id and the reason), when an
+# allow-listed test passes (a stale entry), or when it cannot do its work (the build,
+# `rdock validate`, the origin or rdock not starting, no results). Optional and check tests, and
+# setup, harness and dependency failures, are information only. The results and logs are uploaded
+# as an artifact; the step summary has the table and the lists.
+# Reproduce locally and read the results: tests/conformance/http-cache/README.md.
+name: cache
+
+on:
+  pull_request:
+    paths:
+      - crates/rdock-cache/**
+      - crates/rdock-proxy/**
+      - crates/rdock-middleware/**
+      - Cargo.lock
+      - tests/conformance/http-cache/**
+      - .github/workflows/cache.yml
+  schedule:
+    - cron: "41 3 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cache-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+env:
+  CARGO_TERM_COLOR: always
+  # The reviewed revision of the suite (main of http-tests/cache-tests on 2026-11-12, "update
+  # results", 2026-11-04). Update it with a pull request after looking at what changed.
+  CACHE_TESTS_REV: 7e2c53785f41eedc57aa73c8cc19a6729eef39ed
+  HARNESS: tests/conformance/http-cache
+
+jobs:
+  http-cache:
+    name: http-cache
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: http-tests/cache-tests
+          ref: ${{ env.CACHE_TESTS_REV }}
+          path: cache-tests
+          persist-credentials: false
+      # The suite asks for Node.js 22.19.0 or greater (its package.json "engines"), but on 22.19.0
+      # its command ended with exit status 13 and no results even against its own origin; 24 works.
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Build rdock
+        run: cargo build --locked -p rdock
+      - name: The configuration validates
+        run: target/debug/rdock validate "$HARNESS/rdock.yaml"
+      - name: Install the suite (dependencies only, no install scripts)
+        working-directory: cache-tests
+        run: npm install --no-audit --no-fund --ignore-scripts
+      - name: Start the suite's origin server (:8000)
+        working-directory: cache-tests
+        run: |
+          mkdir -p "$RUNNER_TEMP/out"
+          npm run --silent server > "$RUNNER_TEMP/out/origin.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 60); do
+            curl -s -o /dev/null http://127.0.0.1:8000/ && exit 0
+            kill -0 "$pid" 2> /dev/null || { echo "::error::the origin server exited during start"; cat "$RUNNER_TEMP/out/origin.log"; exit 1; }
+            sleep 0.5
+          done
+          echo "::error::the origin server did not answer on :8000"
+          cat "$RUNNER_TEMP/out/origin.log"
+          exit 1
+      - name: Start rdock (:8002, admin on 127.0.0.1:2080)
+        run: |
+          RDOCK_DATA_DIR="$(mktemp -d)"
+          export RDOCK_DATA_DIR
+          target/debug/rdock run --config "$HARNESS/rdock.yaml" --no-watch > "$RUNNER_TEMP/out/rdock.log" 2>&1 &
+          pid=$!
+          for _ in $(seq 1 60); do
+            if curl -sf http://127.0.0.1:2080/healthz > /dev/null && curl -s -o /dev/null http://127.0.0.1:8002/; then
+              exit 0
+            fi
+            kill -0 "$pid" 2> /dev/null || { echo "::error::rdock exited during start"; cat "$RUNNER_TEMP/out/rdock.log"; exit 1; }
+            sleep 0.5
+          done
+          echo "::error::rdock did not become ready"
+          cat "$RUNNER_TEMP/out/rdock.log"
+          exit 1
+      # A control: the suite against its own origin, no proxy. If this ends without results
+      # too, the harness is at fault, not rdock.
+      - name: Control run against the origin (no cache)
+        working-directory: cache-tests
+        run: |
+          rc=0
+          timeout 15m npm run --silent cli --base=http://127.0.0.1:8000 \
+            > "$RUNNER_TEMP/out/control.json" 2> "$RUNNER_TEMP/out/control.err" || rc=$?
+          echo "control run: exit status $rc, $(wc -c < "$RUNNER_TEMP/out/control.json") bytes of results"
+          tail -n 20 "$RUNNER_TEMP/out/control.err" || true
+      # The suite's exit status is captured, not propagated: the gate reads the results instead.
+      - name: Run the suite against rdock
+        working-directory: cache-tests
+        run: |
+          rc=0
+          timeout 30m npm run --silent cli --base=http://127.0.0.1:8002 \
+            > "$RUNNER_TEMP/out/results.json" 2> "$RUNNER_TEMP/out/cli.err" || rc=$?
+          echo "$rc" > "$RUNNER_TEMP/out/cli.exit"
+          echo "The suite's command exited with status $rc (informational)."
+          tail -n 40 "$RUNNER_TEMP/out/cli.err" || true
+          # A run without results did no work; that is a broken harness, not a failing test.
+          if ! node -e 'JSON.parse(require("node:fs").readFileSync(process.argv[1], "utf8"))' "$RUNNER_TEMP/out/results.json"; then
+            echo "::error::the suite produced no results"
+            exit 1
+          fi
+      # The gate: exits 1 for a required failure that is not allow-listed or a stale entry.
+      - name: Summarise and apply the gate
+        run: |
+          rc=0
+          node "$HARNESS/summarize.mjs" "$RUNNER_TEMP/out/results.json" cache-tests \
+            "$(cat "$RUNNER_TEMP/out/cli.exit")" "$HARNESS/allowlist.json" \
+            > "$RUNNER_TEMP/out/summary.md" || rc=$?
+          cat "$RUNNER_TEMP/out/summary.md"
+          if [ "$rc" -ne 0 ]; then
+            echo "::error::http-cache gate failed (see the summary above and $HARNESS/allowlist.json)"
+          fi
+          exit "$rc"
+      - name: rdock log (tail)
+        if: always()
+        run: tail -n 50 "$RUNNER_TEMP/out/rdock.log" || true
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: http-cache-results
+          path: ${{ runner.temp }}/out/
+          if-no-files-found: warn
+          retention-days: 30

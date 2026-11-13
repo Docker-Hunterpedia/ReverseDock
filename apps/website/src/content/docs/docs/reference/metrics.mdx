@@ -122,6 +122,38 @@ valid ClientHello of at most 16 KiB), `denied` (`ip_allow`, `ip_deny`), `in_flig
 and `connect_failed`. Failed handshakes of terminating routes count in
 `rdock_tls_handshake_errors_total`.
 
+## UDP routes
+
+<Status planned="v0.8" /> Metrics of [UDP routes](/docs/guides/udp-routes/).
+
+### `rdock_udp_sessions`
+
+**Gauge.** Open sessions (one per client address and port) of UDP routes. Labels: `listener` and
+`route`.
+
+### `rdock_udp_datagrams_total`
+
+**Counter.** Datagrams relayed by UDP routes. Labels: `route` and `direction`: `in` (from the
+client to the backend) and `out` (from the backend to the client).
+
+### `rdock_udp_bytes_total`
+
+**Counter.** Bytes relayed by UDP routes. Labels: `route` and `direction`, as above.
+
+### `rdock_udp_dropped_total`
+
+**Counter.** Datagrams a `udp` listener dropped instead of relaying them; none is ever answered.
+Labels: `listener` and `reason`: `no_route`, `denied` (`ip_allow`, `ip_deny`), `session_limit`
+and `client_limit` (the listener's session caps), `no_backend`, `socket_error`, `queue_full` (a
+session's queue or the listener's socket was full), `oversize` (too large for the destination's
+address family), `backend_unreachable` (the backend answered with ICMP "port unreachable") and
+`closing` (a new client of a listener that is being removed).
+
+### `rdock_udp_session_ends_total`
+
+**Counter.** UDP sessions that ended. Labels: `route` and `reason`: `idle`, `responses`,
+`backend_unreachable`, `error` and `closed` (the listener was removed or rdock stopped).
+
 ## Backends <Status since="v0.4" />
 
 ### `rdock_backend_requests_total`
@@ -160,6 +192,168 @@ it out. Labels: `service`, `backend`.
 
 Backend addresses come from your configuration and its DNS answers, so their number stays
 bounded by your pools.
+
+## HTTP cache
+
+<Status planned="v0.8" /> Metrics of the [HTTP cache](/docs/guides/caching/). Store and route
+names come from the configuration.
+
+### `rdock_cache_requests_total`
+
+**Counter.** Requests on caching routes, counted when the response is finished. Labels: `store`,
+`route` and `status`: `hit` (answered from the store), `stale` (a stale copy served because the
+origin failed, `stale-if-error`), `revalidated` (the origin confirmed a stale copy with `304`),
+`expired` (a stale copy was replaced, or the client asked for a fresh one), `miss` and `bypass`
+(the cache was not used: another method, a request body, a `bypass` rule, a mirrored request, or
+an answer a middleware gave before the cache).
+
+### `rdock_cache_objects`
+
+**Gauge.** Objects in a store. Label: `store`.
+
+### `rdock_cache_bytes`
+
+**Gauge.** Bytes in a store: bodies, headers and bookkeeping (file sizes for a disk store).
+Label: `store`.
+
+### `rdock_cache_evictions_total`
+
+**Counter.** Objects removed to stay within a store's limits. Labels: `store` and `reason`:
+`size` (`max_size`) or `count` (`max_objects`, disk stores).
+
+### `rdock_cache_lock_waits_total`
+
+**Counter.** Requests that waited for another request to fill the cache (request coalescing).
+Label: `store`.
+
+### `rdock_cache_dropped_total`
+
+**Counter.** Disk-store objects removed by the start-up walk. Labels: `store` and `reason`:
+`corrupt` (a checksum, length or format that does not check out) or `partial` (a temporary file
+an interrupted fill left behind).
+
+## Consumers and metering
+
+<Status planned="v0.8" /> Metrics of [consumers](/docs/guides/api-keys/) and
+[usage metering](/docs/guides/usage-metering/).
+
+### `rdock_consumer_requests_total`
+
+**Counter.** Finished requests that have a consumer. Labels: `consumer`, `route` and
+`status_class` (`2xx`…). Consumer names come from the configuration or from identities
+(Cloudflare Access, OIDC logins, JWT claims), so the label is capped: the first 1,000 distinct consumers seen get their own series,
+later ones are counted under `consumer="_other"`. Per-consumer numbers beyond that belong in
+usage metering.
+
+### `rdock_quota_overflows_total`
+
+**Counter.** Requests a [`quota`](/docs/guides/quotas/) counted on a shared counter because the
+quota already tracked 100,000 keys of their kind. Labels: `middleware` and `class`: `anonymous`
+(client addresses) or `token` (consumers named by a token issuer). Consumers defined in
+`consumers` never overflow.
+
+### `rdock_metering_events_total`
+
+**Counter.** Metering events by `sink` (`webhook`, `otlp`) and `result`: `sent` (the receiver
+accepted the batch) or `failed` (dropped after the last attempt or a refusal).
+
+### `rdock_metering_dropped_total`
+
+**Counter.** Metering events dropped, by `sink` and `reason`: `queue_full` (the sink's queue was
+full when the request finished) or `undeliverable` (the batch failed every attempt or was
+refused).
+
+## OIDC login
+
+<Status planned="v0.8" /> Metrics of [`oidc`](/docs/guides/oidc-login/). Middleware names come from
+the configuration.
+
+### `rdock_oidc_logins_total`
+
+**Counter.** Logins finished at the callback, or refused before reaching the provider. Labels:
+`middleware` and `result`: `success`, `denied` (refused by `allowed`), `failed` (a wrong or
+expired state, an ID token that failed a check, a session too large for the cookies),
+`provider_error` (the provider answered `error=` or the token request failed) or `unavailable`
+(the provider's configuration could not be read, `503`).
+
+### `rdock_oidc_refreshes_total`
+
+**Counter.** Session refreshes with the refresh token. Labels: `middleware` and `result`:
+`success` or `failed` (the request then needs a new login).
+
+### `rdock_oidc_provider_errors_total`
+
+**Counter.** Failed requests to the OpenID provider. Labels: `middleware` and `operation`:
+`discovery`, `jwks`, `token` (code exchange) or `refresh`.
+
+## Validation, transformation and secrets
+
+<Status planned="v0.8" /> Metrics of [`validate`](/docs/guides/request-validation/),
+[`transform`](/docs/guides/transforming-requests/) and
+[`${vault:…}` references](/docs/guides/secrets/#vault-and-openbao). Middleware names come from
+the configuration.
+
+### `rdock_validation_requests_total`
+
+**Counter.** Requests checked by `validate` middlewares. Labels: `middleware` and `result`:
+`valid`, `invalid` (refused with `validation-failed`), `reported` (invalid, let through in
+`mode: report`), `unknown_operation` (no operation of the OpenAPI document matched) or
+`unsupported_media_type`.
+
+### `rdock_transform_skipped_total`
+
+**Counter.** Response bodies a `transform` middleware with `response.body.patch` left unchanged.
+Labels: `middleware` and `reason`: `status` (not a 2xx with a body, or 206), `not_json`,
+`encoded` (the backend compressed it), `too_large` (over `max_body`), `invalid_json`, or
+`patch_failed` (a `test` failed or a location is missing).
+
+### `rdock_vault_refresh_failures_total`
+
+**Counter.** Reads of `${vault:…}` references that failed while a value from an earlier read
+stayed in use (Vault is then degraded in `rdock status`). No labels.
+
+## Plugins and agents
+
+<Status planned="v0.8" /> Metrics of [native plugins](/docs/guides/plugins/),
+[WASM plugins](/docs/guides/wasm-plugins/) and [agents](/docs/guides/agents/). Plugin and middleware names come from the binary and the
+configuration.
+
+### `rdock_plugin_panics_total`
+
+**Counter.** Panics caught in a native plugin's hooks. Each answered its request with `500` (a
+panic in `response_body` lets the chunk pass unchanged, one in `log` only counts). Label:
+`plugin` (the registered name).
+
+### `rdock_wasm_failures_total`
+
+**Counter.** Failed calls into [WASM plugins](/docs/guides/wasm-plugins/) (experimental; zero in
+builds without the `wasm` feature). Each followed the middleware's `on_error`. Labels:
+`middleware` (its name) and `reason`: `fuel` (ran out of fuel), `timeout` (past its deadline),
+`memory` (grew past its limit), `trap` (the plugin crashed, or its instance could not be
+created) and `invalid` (an edit or reply rdock refuses, such as setting `content-length`).
+
+### `rdock_agent_requests_total`
+
+**Counter.** Decisions of `agent` middlewares. Labels: `agent` (the middleware's name) and
+`result`: `allow`, `deny` (the agent refused, or answered a non-2xx in `forward`), `error` (no
+connection, an answer that is not a verdict), `timeout`, `breaker_open` (not called because the
+breaker is open) and `oversize` (a body over `max_body` refused with `413`). `error`, `timeout`
+and `breaker_open` follow `on_error`.
+
+### `rdock_agent_duration_seconds`
+
+**Histogram.** Time an agent took to answer (calls made, not those the breaker skipped). Label:
+`agent`. Buckets from 1 ms to 5 s.
+
+### `rdock_agent_breaker_open`
+
+**Gauge.** `1` while an agent's circuit breaker is open, else `0`. Label: `agent`.
+
+### `rdock_agent_ignored_headers_total`
+
+**Counter.** Request headers an agent asked to set that were not applied. Labels: `agent` and
+`reason`: `not_allowed` (not in `response_headers`), `invalid` (not a valid header) or
+`too_late` (the verdict came with the body, after the request head had gone to the backend).
 
 ## Configuration
 

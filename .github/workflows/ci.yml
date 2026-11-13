@@ -1,5 +1,5 @@
 # Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker,
-# clients. semgrep reports only.
+# clients. semgrep, waf-example and wasm report only.
 name: ci
 
 on:
@@ -147,6 +147,30 @@ jobs:
       - name: Check with the minimum supported Rust version
         run: just msrv
 
+  # WASM plugins (experimental, cargo feature `wasm`, ADR-0030): not required, and kept out of
+  # the `rust` job so the default build and its time are unaffected.
+  wasm:
+    name: wasm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: wasm
+          workspaces: |
+            .
+            examples/plugins/wasm-header
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
+        with:
+          tool: just
+      - name: Clippy, the example guest, WASM tests and MSRV with the feature
+        run: just wasm
+
   deny:
     name: deny
     runs-on: ubuntu-24.04
@@ -227,6 +251,91 @@ jobs:
           path: apps/dashboard/e2e/screenshots/
           retention-days: 14
 
+  # The Terraform/OpenTofu provider (F-MGMT-02, clients/terraform). Not a required check. The
+  # provider's CLI-driven tests run against its in-process fake of the admin API with Terraform
+  # and with OpenTofu, then against a real rdock built from this commit with both.
+  terraform-provider:
+    name: terraform-provider
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: clients/terraform/go.mod
+          cache-dependency-path: |
+            clients/terraform/go.sum
+            clients/go/go.sum
+      # The wrappers are off: the tests call the binaries through terraform-exec, which needs
+      # their real output.
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: 1.17.2
+          terraform_wrapper: false
+      - uses: opentofu/setup-opentofu@a1320f892987e89d278cc92dc5adc984fb93aca4 # v2.0.2
+        with:
+          tofu_version: 1.13.9
+          tofu_wrapper: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Vet, gofmt, tidy, unit tests, generated docs up to date
+        working-directory: clients/terraform
+        run: make check
+      - name: Examples validate with Terraform and OpenTofu (provider as a development override)
+        working-directory: clients/terraform
+        run: |
+          make build
+          cat > "$RUNNER_TEMP/dev.tfrc" <<EOF
+          provider_installation {
+            dev_overrides { "Docker-Hunterpedia/reversedock" = "$PWD" }
+            direct {}
+          }
+          EOF
+          export TF_CLI_CONFIG_FILE="$RUNNER_TEMP/dev.tfrc"
+          for cli in terraform tofu; do
+            for dir in examples/provider examples/complete examples/import; do
+              "$cli" -chdir="$dir" validate
+            done
+          done
+      - name: CLI-driven tests against the fake admin API (Terraform, then OpenTofu)
+        working-directory: clients/terraform
+        run: |
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test ./... -count=1 -timeout 20m
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v tofu)" TF_ACC_PROVIDER_HOST=registry.opentofu.org \
+            go test ./... -count=1 -timeout 20m
+      - name: Build rdock
+        run: cargo build --locked -p rdock
+      - name: CLI-driven tests against a real rdock (Terraform, then OpenTofu)
+        run: |
+          RDOCK_DATA_DIR="$(mktemp -d)"
+          export RDOCK_DATA_DIR
+          config="$PWD/clients/terraform/testdata/rdock.yaml"
+          log="$RUNNER_TEMP/rdock.log"
+          target/debug/rdock run --config "$config" > "$log" 2>&1 &
+          pid=$!
+          trap 'kill "$pid" 2>/dev/null || true; cat "$log"' EXIT
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:12080/healthz > /dev/null && break
+            kill -0 "$pid" || { echo "::error::rdock exited during start"; exit 1; }
+            sleep 0.5
+          done
+          curl -sf http://127.0.0.1:12080/healthz
+          # Over the admin socket in $RDOCK_DATA_DIR, which needs no token and no user. The
+          # token is the first line of the output; the second line is a reminder.
+          output="$(target/debug/rdock tokens create terraform-acc --role operator --days 1 --config "$config")"
+          token="$(printf '%s\n' "$output" | sed -n 1p)"
+          # The token is valid for one day on this job's own rdock, which listens on loopback and
+          # ends with the job. It is never printed.
+          export RDOCK_ADMIN_URL=http://127.0.0.1:12080
+          export RDOCK_ADMIN_TOKEN="$token"
+          cd clients/terraform
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v terraform)" go test ./... -count=1 -timeout 20m
+          TF_ACC=1 TF_ACC_TERRAFORM_PATH="$(command -v tofu)" TF_ACC_PROVIDER_HOST=registry.opentofu.org \
+            go test ./... -count=1 -timeout 20m
+
   docker:
     name: docker
     runs-on: ubuntu-24.04
@@ -241,7 +350,7 @@ jobs:
         run: |
           docker run --rm rdock:ci version
           docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate --strict /cfg/rdock.quickstart.yaml
-          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml
+          docker run --rm -v "$PWD/examples/config:/cfg:ro" rdock:ci validate /cfg/rdock.full.yaml /cfg/rdock.tcp.yaml /cfg/rdock.udp.yaml
       - name: Docker provider examples (deploy/docker/examples)
         run: |
           for dir in deploy/docker/examples/*/; do
@@ -259,6 +368,127 @@ jobs:
           docker exec rdock-smoke /usr/local/bin/rdock healthcheck
           docker stop rdock-smoke
           test "$(docker inspect rdock-smoke --format '{{.State.ExitCode}}')" = 0 || { docker logs rdock-smoke; exit 1; }
+
+  # The roadmap's WAF proof (ADR-0030): the CRS project's ModSecurity image as an rdock
+  # `forward` agent in examples/waf; a clean request passes, attacks get 403, a stopped WAF
+  # fails closed. Not a required check: it pulls third-party images from Docker Hub.
+  waf-example:
+    name: waf-example
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image (as the docker job does)
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag rdock:ci .
+      - name: The example configuration validates
+        run: docker run --rm -v "$PWD/examples/waf:/cfg:ro" rdock:ci validate /cfg/rdock.yaml
+      - name: Smoke test (Compose; CRS WAF as a forward agent)
+        run: ./examples/waf/smoke.sh
+        env:
+          RDOCK_IMAGE: rdock:ci
+
+  openbao:
+    name: openbao
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      # Started by a step rather than as a service container: a service's environment is fixed
+      # before any step runs, and the dev root token must be generated in this job. It is a
+      # throw-away for a dev server on loopback that ends with the job, and it is never printed.
+      - name: Start OpenBao 2.7.2 in dev mode (KV v2 at secret/)
+        run: |
+          token="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          docker run -d --name openbao --network host \
+            -e BAO_DEV_ROOT_TOKEN_ID="$token" -e BAO_DEV_LISTEN_ADDRESS=127.0.0.1:8200 \
+            openbao/openbao@sha256:5046911075e137e154ce49ab051502f4ec7cf367d484ae4a4dce665d9b90561f \
+            server -dev > /dev/null
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:8200/v1/sys/health > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:8200/v1/sys/health > /dev/null
+          echo "RDOCK_OPENBAO_TOKEN=$token" >> "$GITHUB_ENV"
+      - name: "${vault:…} against a real OpenBao (e2e_vault.rs, ignored elsewhere)"
+        run: cargo test --locked -p rdock --test e2e_vault -- --ignored --nocapture
+        env:
+          RDOCK_OPENBAO_ADDR: http://127.0.0.1:8200
+      - name: OpenBao log (without the dev server's token and unseal key lines)
+        if: failure()
+        run: docker logs openbao 2>&1 | grep -v -i -e 'root token' -e 'unseal key' | tail -n 100
+
+  oidc-dex:
+    name: oidc-dex
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+      - name: Install htpasswd (bcrypt for Dex's static password)
+        run: sudo apt-get install -y --no-install-recommends apache2-utils
+      # Started by a step, like `openbao`: the client secret and the user's password are
+      # generated in this job, for a Dex on loopback that ends with the job, and never printed.
+      - name: Start Dex v2.46.1 (static client, static password user, memory storage)
+        run: |
+          secret="$(head -c 24 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          password="$(head -c 18 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+          hash="$(htpasswd -nbBC 10 "" "$password" | tr -d ':\n')"
+          # Go's bcrypt reads `$2a$`; htpasswd writes the same hash as `$2y$`.
+          hash="\$2a${hash#\$2y}"
+          mkdir -p "$RUNNER_TEMP/dex"
+          cat > "$RUNNER_TEMP/dex/config.yaml" <<EOF
+          issuer: http://127.0.0.1:5556/dex
+          storage:
+            type: memory
+          web:
+            http: 127.0.0.1:5556
+          oauth2:
+            skipApprovalScreen: true
+          enablePasswordDB: true
+          staticClients:
+            - id: rdock-ci
+              name: rdock CI
+              secret: ${secret}
+              redirectURIs: ["https://app.test/_rdock/oidc/callback"]
+          staticPasswords:
+            - email: ci@example.com
+              hash: "${hash}"
+              username: ci
+              userID: 6d5c6b0e-7f4a-4e57-9a43-3c2b6f1d2e10
+          EOF
+          chmod 644 "$RUNNER_TEMP/dex/config.yaml"
+          docker run -d --name dex --network host -v "$RUNNER_TEMP/dex:/etc/dex/cfg:ro" \
+            ghcr.io/dexidp/dex@sha256:65b72ca0f4b0bf6d4ada84ec21da8851782563404ac7b8f926923d27ceced9ab \
+            dex serve /etc/dex/cfg/config.yaml > /dev/null
+          for _ in $(seq 1 60); do
+            curl -sf http://127.0.0.1:5556/dex/.well-known/openid-configuration > /dev/null && break
+            sleep 1
+          done
+          curl -sf http://127.0.0.1:5556/dex/.well-known/openid-configuration > /dev/null
+          {
+            echo "RDOCK_DEX_CLIENT_SECRET=$secret"
+            echo "RDOCK_DEX_PASSWORD=$password"
+          } >> "$GITHUB_ENV"
+      - name: "oidc against a real Dex (e2e_oidc.rs, ignored elsewhere)"
+        run: cargo test --locked -p rdock --test e2e_oidc -- --ignored --nocapture
+        env:
+          RDOCK_DEX_ISSUER: http://127.0.0.1:5556/dex
+          RDOCK_DEX_CLIENT_ID: rdock-ci
+          RDOCK_DEX_USER: ci@example.com
+      - name: Dex log
+        if: failure()
+        run: docker logs dex 2>&1 | tail -n 100
 
   semgrep:
     name: semgrep

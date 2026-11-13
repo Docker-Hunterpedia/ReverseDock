@@ -18,7 +18,10 @@ use crate::{COMMIT, LogFormatArg, RunArgs, VERSION};
 /// The socket zero-config mode reads containers from (`providers.docker`'s default).
 const DOCKER_SOCKET: &str = "/var/run/docker.sock";
 
-pub(crate) fn run(args: &RunArgs) -> anyhow::Result<ExitCode> {
+pub(crate) fn run(
+    args: &RunArgs,
+    plugins: &Arc<rdock_plugin_api::Registry>,
+) -> anyhow::Result<ExitCode> {
     let format = match args.log_format {
         LogFormatArg::Auto => LogFormat::Auto,
         LogFormatArg::Json => LogFormat::Json,
@@ -30,7 +33,7 @@ pub(crate) fn run(args: &RunArgs) -> anyhow::Result<ExitCode> {
         .thread_name("rdock")
         .build()
         .context("starting the async runtime")?;
-    runtime.block_on(serve(args))
+    runtime.block_on(serve(args, plugins))
 }
 
 /// Raises the soft open-file limit to the hard one, as Go programs do at start (Go 1.19
@@ -114,7 +117,30 @@ impl Signals {
     }
 }
 
-async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
+/// The data plane with its persistent sticky-cookie key and the spool for held request bodies
+/// (emptied here of whatever an earlier run left).
+fn data_plane(
+    data_dir: &Path,
+    metrics: Metrics,
+    plugins: &Arc<rdock_plugin_api::Registry>,
+) -> anyhow::Result<Arc<DataPlane>> {
+    let plane = DataPlane::new(metrics, Runtime::empty())
+        .with_sticky_key(sticky_key(data_dir)?)
+        .with_plugins(plugins.clone());
+    let spool = data_dir.join("spool");
+    // Disk cache stores without a `path` live under `<data dir>/cache/<name>` (F-WEB-03).
+    plane.set_cache_dir(data_dir.join("cache"));
+    plane.set_quota_dir(data_dir.join("quota"));
+    plane
+        .open_spool(&spool)
+        .with_context(|| format!("opening the spool directory {}", spool.display()))?;
+    Ok(Arc::new(plane))
+}
+
+async fn serve(
+    args: &RunArgs,
+    plugins: &Arc<rdock_plugin_api::Registry>,
+) -> anyhow::Result<ExitCode> {
     // Before anything else: the default action of SIGHUP would end the process.
     let mut signals = Signals::install()?;
     raise_open_file_limit();
@@ -135,13 +161,11 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         return Ok(ExitCode::from(1));
     }
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
-    let plane = Arc::new(
-        DataPlane::new(metrics, Runtime::empty()).with_sticky_key(sticky_key(&args.data_dir)?),
-    );
+    let plane = data_plane(&args.data_dir, metrics, plugins)?;
     let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
     tokio::spawn(engine.clone().watch_thresholds());
 
-    log_start(&source);
+    log_start(&source, plugins);
     engine.restore_snapshots();
     let report = match engine.boot().await {
         Ok(report) => report,
@@ -173,6 +197,10 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
         &stop.subscribe(),
         &on_snapshot,
     );
+    // Provider listeners left out because their address was in use are retried until they bind.
+    tokio::spawn(engine.clone().retry_unbound(stop.subscribe()));
+    // `${vault:…}` references are read again every `secrets.vault.refresh`.
+    tokio::spawn(engine.clone().refresh_vault(stop.subscribe()));
     let mut watcher = (!args.no_watch)
         .then(|| start_watcher(&engine, on_change))
         .flatten();
@@ -217,7 +245,11 @@ async fn serve(args: &RunArgs) -> anyhow::Result<ExitCode> {
     Ok(ExitCode::SUCCESS)
 }
 
-fn log_start(source: &Source) {
+fn log_start(source: &Source, plugins: &rdock_plugin_api::Registry) {
+    if !plugins.is_empty() {
+        let names: Vec<&str> = plugins.names().collect();
+        tracing::info!(plugins = %names.join(", "), api = rdock_plugin_api::API_VERSION, "native plugins compiled in");
+    }
     tracing::info!(version = VERSION, commit = COMMIT, config = %source.describe(), "starting rdock");
     if *source == Source::ZeroConfig {
         tracing::info!(

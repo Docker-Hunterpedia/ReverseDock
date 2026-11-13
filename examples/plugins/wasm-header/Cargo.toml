@@ -1,0 +1,25 @@
+[package]
+name = "rdock-wasm-header"
+description = "Example WASM plugin for ReverseDock (experimental): sets a request and a response header and blocks one path"
+version = "0.1.0"
+edition = "2024"
+license = "Apache-2.0"
+publish = false
+
+# Built for `wasm32-wasip2`, whose linker turns the module into a component; outside the
+# repository's workspace because it is never built for the host. The `no_std` crate imports
+# no WASI interface, which rdock refuses.
+[workspace]
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+# Guest bindings for the `rdock:plugin/filter` world; macros only, no std, no async.
+wit-bindgen = { version = "0.46.0", default-features = false, features = ["macros"] }
+
+[profile.release]
+opt-level = "s"
+panic = "abort"
+codegen-units = 1
+strip = true

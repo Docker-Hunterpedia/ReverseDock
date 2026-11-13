@@ -203,7 +203,26 @@ async fn docker_containers_are_routed_and_socket_loss_keeps_traffic() {
     let removed = start.elapsed();
     eprintln!("route removed {removed:?} after the container stopped");
     assert!(removed < Duration::from_secs(1), "took {removed:?}");
-    wait_for(addr, &host, 404, Duration::from_secs(10)).await;
+    // The route is gone from the provider; the data plane follows with the next reload. A
+    // request that was matched just before the swap still belongs to the old route and spends
+    // seconds trying to connect to the stopped container, so no single request may take the
+    // whole deadline: one that has not answered in a second counts as "not yet". On failure,
+    // say what the proxy answered and show its log.
+    let start = Instant::now();
+    loop {
+        let status = tokio::time::timeout(Duration::from_secs(1), status_of(addr, &host))
+            .await
+            .unwrap_or(0);
+        if status == 404 {
+            break;
+        }
+        assert!(
+            start.elapsed() < Duration::from_secs(10),
+            "{host} answered {status}, not 404, 10 s after its route was removed:\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
 
     forwarder.cut();
     rdock.stop(Duration::from_secs(10));

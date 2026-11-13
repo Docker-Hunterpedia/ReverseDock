@@ -9,3 +9,9 @@ Test harness for the end-to-end suites in `crates/rdock/tests/`: a backend that 
 `proxy_protocol`: PROXY protocol v1 and v2 headers for tests, and `haproxy`: HAProxy in Docker as an independent `send-proxy`/`send-proxy-v2` sender (v0.6).
 
 `tcp`: a plain TCP echo backend that can read a PROXY protocol header first, for TCP routes (v0.6). `postgres`: PostgreSQL 17 with TLS in Docker and `psql` from the same image.
+
+`udp`: a UDP echo backend that names itself and can answer more than once, a DNS-shaped backend, a port where nothing listens, and client helpers, for UDP routes (v0.8).
+
+`origin`: a scripted origin for cache tests: per-path status, headers, body (repeated for large objects), delays before the head and between chunks, `304` for a matching `If-None-Match`, a dropped connection, and a stop that refuses further connects; every request is counted and recorded (v0.8).
+
+`agent`: a scriptable stub agent (plain or TLS) for the `agent` middleware's tests: it records each request (method, target, headers, body, time) and answers what its handler returns, optionally after a delay (v0.8).

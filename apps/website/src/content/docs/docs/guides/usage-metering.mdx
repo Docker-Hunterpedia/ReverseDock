@@ -1,0 +1,98 @@
+---
+title: Usage metering
+description: Send one CloudEvents or OTLP log event per API request with a consumer, in batches, at least once, without ever slowing requests down.
+sidebar:
+  order: 28
+---
+
+import Status from '../../../../components/Status.astro';
+
+`observability.metering` <Status planned="v0.8" /> sends one event for every finished request that
+has a [consumer](/docs/guides/api-keys/), for usage analytics, showback or feeding a metering
+service such as OpenMeter or an OpenTelemetry Collector.
+
+**Not billing-grade.** Events are counted per instance, and they can be lost: when the process
+crashes, and when a sink's queue is full. Use them for analytics, or put a receiver that stores
+and deduplicates them between ReverseDock and anything that bills.
+
+## Configure it
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+observability:
+  metering:
+    webhook:
+      url: https://meter.example.com/api/v1/events
+      type: dev.reversedock.request.v1
+      secret: "${file:/run/secrets/metering_whsec}"
+      token: "${file:/run/secrets/metering_token}"
+    otlp:
+      endpoint: http://otel-collector:4318
+    max_batch: 500
+    flush_interval: 5s
+    queue: 10000
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `webhook.url` | | Receives `POST` batches as `application/cloudevents-batch+json`. |
+| `webhook.type` | `dev.reversedock.request.v1` | The events' CloudEvents `type`. |
+| `webhook.source` | `rdock/<host name>` | The events' `source`. |
+| `webhook.secret` | none | A Standard Webhooks secret (`whsec_…`) reference: requests carry `webhook-id`, `webhook-timestamp` and `webhook-signature`, as alert webhooks do. |
+| `webhook.token` | none | A reference to a bearer token for `Authorization`. |
+| `webhook.allow_private_targets` | `false` | Allow a receiver on a private or loopback address. |
+| `otlp.endpoint` | | An OTLP/HTTP collector; `/v1/logs` is added. JSON encoding. |
+| `otlp.token`, `otlp.allow_private_targets` | none, `true` | As for the webhook; collectors usually run on private addresses. |
+| `max_batch` | `500` | Events per request to a sink, at most (1 to 10,000). |
+| `flush_interval` | `5s` | Longest an event waits before its batch is sent. |
+| `queue` | `10000` | Events waiting per sink; more are dropped and counted. |
+| `all_requests` | `false` | Also meter requests without a consumer. |
+
+Secrets are references only (`${file:…}` or `${env:…}`); `rdock validate` refuses a value
+written in place.
+
+## The event
+
+```json
+{
+  "specversion": "1.0",
+  "id": "019a7c1e-2f4b-7c3d-9e8f-0a1b2c3d4e5f",
+  "source": "rdock/edge-1",
+  "type": "dev.reversedock.request.v1",
+  "time": "2026-11-12T09:30:00.123Z",
+  "subject": "acme",
+  "datacontenttype": "application/json",
+  "data": {
+    "consumer": "acme", "groups": ["gold"], "key_id": "f3Kq9ZpL2mXa",
+    "route": "api", "service": "api", "method": "GET", "status": 200,
+    "bytes_in": 0, "bytes_out": 512, "duration_ms": 3.2, "cache_status": null
+  }
+}
+```
+
+`id` is a UUIDv7, unique and ordered by time. No path, query, header or client address is
+included. The OTLP sink sends the same fields as log record attributes (`rdock.consumer`,
+`rdock.key_id`, `rdock.route`, `http.response.status_code`…).
+
+## Delivery
+
+- **Never in the way of a request.** The request only puts its event in each sink's queue; when
+  the queue is full the event is dropped and counted in
+  [`rdock_metering_dropped_total{reason="queue_full"}`](/docs/reference/metrics/#rdock_metering_dropped_total).
+  A receiver that hangs fills the queue; requests do not wait.
+- **At least once.** A batch that fails with a network error, a timeout, `408`, `429` or a `5xx`
+  is sent again (six attempts, pauses doubling from 0.5 s to at most 30 s), with the same event
+  IDs and the same `webhook-id`. Receivers deduplicate on `source` and `id`, as CloudEvents 1.0.2
+  allows ([spec](https://github.com/cloudevents/spec/blob/v1.0.2/cloudevents/spec.md), checked
+  2026-11-11). Another `4xx`, or the last failed attempt, drops the batch
+  (`reason="undeliverable"`).
+- **No disk spool** in v0.8: events in the queue are lost if the process ends abruptly. A reload
+  lets the previous configuration's sinks send what they hold.
+- Redirects are not followed; private addresses are refused unless allowed.
+
+## Related
+
+- [API keys and consumers](/docs/guides/api-keys/)
+- [Logs and metrics](/docs/guides/logs-and-metrics/)

@@ -64,8 +64,7 @@ pub struct TCPRouteSpec {
     pub rules: Vec<L4RouteRule>,
 }
 
-/// `gateway.networking.k8s.io/v1` UDPRoute (UDP is planned for v0.8; the listener reports
-/// `UnsupportedProtocol`).
+/// `gateway.networking.k8s.io/v1` UDPRoute: relays the datagrams of `UDP` listeners.
 #[derive(CustomResource, Clone, Debug, Default, PartialEq, Deserialize, Serialize, JsonSchema)]
 #[kube(
     group = "gateway.networking.k8s.io",

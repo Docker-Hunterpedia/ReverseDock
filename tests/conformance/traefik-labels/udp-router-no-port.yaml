@@ -1,0 +1,18 @@
+description: "A UDP service needs a port label: Docker lists exposed UDP ports apart from TCP ones, and a TCP port is no guess for UDP."
+settings:
+  entrypoints: { dns: "dns-udp" }
+containers:
+  - name: "dns"
+    labels:
+      traefik.enable: "true"
+      traefik.udp.routers.dns.entrypoints: "dns"
+    networks:
+      web: "172.18.0.7"
+    ports:
+      - 53
+expect:
+  # The route is kept and left out when the configurations are merged: its service is missing.
+  udp_routes:
+    dns: { listeners: ["dns-udp"], service: "dns" }
+  diagnostics:
+    - "docker.dns: UDP service `dns` names no port; the service is ignored"

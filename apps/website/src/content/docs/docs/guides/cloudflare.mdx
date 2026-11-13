@@ -106,6 +106,65 @@ services:
 
 In the Cloudflare dashboard, add a public hostname for the tunnel with the service `http://rdock:80`. `cloudflared` passes Cloudflare's `CF-Connecting-IP` header on; trusting the Docker network range makes ReverseDock use it. The complete example is in [`deploy/docker/examples/cloudflare-tunnel`](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/deploy/docker/examples/cloudflare-tunnel).
 
+## Cloudflare Access
+
+<Status planned="v0.8" /> When Cloudflare Access protects an application, Cloudflare adds a signed
+JWT to every request it lets through. `type: cloudflare_access` checks it, so a request that
+reaches your origin some other way is refused. Facts below are from Cloudflare's documentation,
+[Validate JWTs](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/validating-json/)
+(updated 2026-11-02) and
+[Application token](https://developers.cloudflare.com/cloudflare-one/access-controls/applications/http-apps/authorization-cookie/application-token/)
+(updated 2026-06-25), checked 2026-11-11.
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+routes:
+  internal:
+    match: "Host(`internal.example.com`)"
+    service: internal
+    middlewares: [access]
+
+middlewares:
+  access:
+    type: cloudflare_access
+    team: acme                        # or acme.cloudflareaccess.com
+    audience: 4714c1358e65fe4b408ad6d432a5f878f08194bdb4752441fd56faefa9b2b6f2
+    claims_to_headers:
+      email: X-Auth-Email
+      common_name: X-Auth-Service-Token
+
+services:
+  internal:
+    backends: [{ address: "internal:8080" }]
+```
+
+It is a preset over the [`jwt`](/docs/guides/jwt/) middleware:
+
+- **Keys** from `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs`, fetched in the
+  background, cached for 10 minutes and fetched again at once (at most every 30 s) when a token
+  names an unknown key. Cloudflare rotates the key every 6 weeks and keeps the previous one valid
+  for 7 days, so a rotation never refuses a request.
+- **Issuer** `https://<team>.cloudflareaccess.com`, **algorithm** RS256 only, `exp` required.
+- **`audience` is required**: the Application Audience (AUD) tag (Zero Trust → Access controls →
+  Applications → the application → Additional settings). Without it, a token of any other Access
+  application of the same team would pass. List several tags to accept several applications.
+- **Token** from the `Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie. The
+  header wins when both are present, as Cloudflare advises (the cookie is not always passed). The
+  token stays in the request for backends that check it again.
+
+The request's **consumer** is the user's `email`. A **service token** (machine-to-machine access)
+has an empty `sub` and no email; its consumer is its `common_name` (the Client ID), in the group
+`service-token`, so rate limits, quotas, metering and the access log tell users and services
+apart. Both are keyed on the team: a service token never counts, caches or gets groups as a user
+or as a `consumers.<name>` entry with the same name. Map `common_name` in `claims_to_headers` to pass it on. Custom identity-provider claims
+arrive under `custom`, best effort; groups can be missing there.
+
+Pair it with `security.trusted_proxies: [cloudflare]` (real client IPs) and Authenticated Origin
+Pulls: the JWT proves Access let the request through, the other two prove it came through
+Cloudflare at all.
+
 ## Related
 
 - [Automatic HTTPS](/docs/guides/automatic-https/)

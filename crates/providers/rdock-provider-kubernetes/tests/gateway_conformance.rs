@@ -23,7 +23,7 @@ use gateway_support::{
     assert_gateway_ready, assert_listener, assert_resolved, backends, gateway, get, listener,
     parent, parents,
 };
-use rdock_provider_kubernetes::translate::RouteKind::{self, Grpc, Http, Tcp, Tls, Udp};
+use rdock_provider_kubernetes::translate::RouteKind::{self, Grpc, Http, Tcp, Tls};
 
 const SAME: (&str, &str) = (INFRA, "same-namespace");
 
@@ -1477,31 +1477,7 @@ fn tls_route_listener_terminate_not_supported() {
 }
 
 // ---------------------------------------------------------------------------------------
-// UDPRoute: not supported until v0.8.
-
-#[test]
-fn udp_routes_are_not_accepted() {
-    let r = router(&["udproute-simple"]);
-    let t = &r.translation;
-    for (route, entries) in &t.status.routes {
-        if route.kind == Udp {
-            for p in entries {
-                let accepted = p.conditions.iter().find(|c| c.kind == "Accepted").unwrap();
-                assert!(!accepted.status, "{p:?}");
-            }
-        }
-    }
-    for gw in t.status.gateways.values() {
-        for l in &gw.listeners {
-            if l.conditions
-                .iter()
-                .any(|c| c.reason == "UnsupportedProtocol")
-            {
-                assert_eq!(l.supported_kinds.len(), 0);
-            }
-        }
-    }
-}
+// UDPRoute: tests/gateway_udp.rs.
 
 #[allow(dead_code)]
 fn unused(_: RouteKind, _: &str) -> (RouteKind, &str) {

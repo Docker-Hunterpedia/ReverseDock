@@ -1,0 +1,41 @@
+# yaml-language-server: $schema=../../../schema/rdock.v1.json
+#
+# ReverseDock in front of the origin server of http-tests/cache-tests, with the cache middleware
+# at its SAFE DEFAULTS (ADR-0030): no `default_ttl`, no heuristic freshness, `Set-Cookie` and
+# `Authorization` refused, request directives honoured. The result of the suite therefore
+# describes the shipped behaviour. Nothing here is a tuning for the suite.
+#
+# Ports follow the suite's own convention (docker/ in its repository: the origin on 8000, each
+# proxy on the next free port of the 8000 series; nginx uses 8002). Everything is on loopback.
+# README.md in this directory explains the job.
+acme: false
+
+listeners:
+  web: { address: "127.0.0.1:8002" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+caches:
+  suite: { type: memory, max_size: 256MiB }
+
+middlewares:
+  cache:
+    type: cache
+    store: suite
+
+routes:
+  # The suite addresses its tests by path under a per-run identifier; every request goes through
+  # the cache, whatever its Host header.
+  everything:
+    match: "PathPrefix(`/`)"
+    service: origin
+    middlewares: [cache]
+
+services:
+  origin:
+    backends: [{ address: "127.0.0.1:8000" }]
+
+admin:
+  listener: 127.0.0.1:2080

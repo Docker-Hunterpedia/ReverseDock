@@ -225,6 +225,12 @@ type Code struct {
 	Code string `json:"code"`
 }
 
+// ConsumerSpec A consumer as the API defines it.
+type ConsumerSpec struct {
+	// Groups Groups, in order of precedence.
+	Groups *[]string `json:"groups,omitempty"`
+}
+
 // CreatedToken A new token: the value is shown only in this answer.
 type CreatedToken struct {
 	AllowedFrom  []string `json:"allowed_from"`
@@ -275,6 +281,18 @@ type Listed struct {
 	User        string  `json:"user"`
 }
 
+// NewKey A key to mint.
+type NewKey struct {
+	// Expires When the key expires, RFC 3339.
+	Expires *string `json:"expires,omitempty"`
+
+	// ExpiresInDays Days until the key expires (1–3650); never when neither this nor `expires` is set.
+	ExpiresInDays *int32 `json:"expires_in_days,omitempty"`
+
+	// Note What the key is for.
+	Note *string `json:"note,omitempty"`
+}
+
 // NewUser defines model for NewUser.
 type NewUser struct {
 	Name     string `json:"name"`
@@ -297,6 +315,28 @@ type Owned struct {
 type PasswordChange struct {
 	Current string `json:"current"`
 	New     string `json:"new"`
+}
+
+// PurgeRequest What a purge removes; set exactly one field.
+type PurgeRequest struct {
+	// All Everything in the store.
+	All *bool `json:"all,omitempty"`
+
+	// Prefix Every object whose URL starts with this absolute URL.
+	Prefix *string `json:"prefix,omitempty"`
+
+	// Tag Every object with this tag (from `Cache-Tag` or `Surrogate-Key`).
+	Tag *string `json:"tag,omitempty"`
+
+	// Url Every variant of this absolute URL (`https://app.example.com/a?b=1`).
+	Url *string `json:"url,omitempty"`
+}
+
+// Purged The result of a purge.
+type Purged struct {
+	// Purged Objects removed. Fills in progress that the purge covers are discarded too.
+	Purged int64  `json:"purged"`
+	Store  string `json:"store"`
 }
 
 // Reauth defines model for Reauth.
@@ -441,6 +481,30 @@ type RollbackParams struct {
 // ValidateJSONBody defines parameters for Validate.
 type ValidateJSONBody = map[string]interface{}
 
+// DeleteConsumerParams defines parameters for DeleteConsumer.
+type DeleteConsumerParams struct {
+	// IfMatch The current `ETag`
+	IfMatch string `json:"If-Match"`
+}
+
+// PutConsumerParams defines parameters for PutConsumer.
+type PutConsumerParams struct {
+	// IfMatch The `ETag` from `GET /api/v1/config/api` or `GET /api/v1/consumers`
+	IfMatch string `json:"If-Match"`
+}
+
+// CreateConsumerKeyParams defines parameters for CreateConsumerKey.
+type CreateConsumerKeyParams struct {
+	// IfMatch The current `ETag`
+	IfMatch string `json:"If-Match"`
+}
+
+// RevokeConsumerKeyParams defines parameters for RevokeConsumerKey.
+type RevokeConsumerKeyParams struct {
+	// IfMatch The current `ETag`
+	IfMatch string `json:"If-Match"`
+}
+
 // EventsParams defines parameters for Events.
 type EventsParams struct {
 	// Route Only this route
@@ -495,6 +559,12 @@ type MetricsSummaryParams struct {
 	Window *int64 `form:"window,omitempty" json:"window,omitempty"`
 }
 
+// ResetQuotaParams defines parameters for ResetQuota.
+type ResetQuotaParams struct {
+	// Middleware Only this `quota` middleware's counters.
+	Middleware *string `form:"middleware,omitempty" json:"middleware,omitempty"`
+}
+
 // ExplainJSONBody defines parameters for Explain.
 type ExplainJSONBody = map[string]interface{}
 
@@ -546,6 +616,9 @@ type DrainJSONRequestBody = BackendRef
 // UndrainJSONRequestBody defines body for Undrain for application/json ContentType.
 type UndrainJSONRequestBody = BackendRef
 
+// PurgeCacheJSONRequestBody defines body for PurgeCache for application/json ContentType.
+type PurgeCacheJSONRequestBody = PurgeRequest
+
 // PatchApiApplicationJSONPatchPlusJSONRequestBody defines body for PatchApi for application/json-patch+json ContentType.
 type PatchApiApplicationJSONPatchPlusJSONRequestBody = PatchApiApplicationJSONPatchPlusJSONBody
 
@@ -563,6 +636,12 @@ type RollbackJSONRequestBody = Rollback
 
 // ValidateJSONRequestBody defines body for Validate for application/json ContentType.
 type ValidateJSONRequestBody = ValidateJSONBody
+
+// PutConsumerJSONRequestBody defines body for PutConsumer for application/json ContentType.
+type PutConsumerJSONRequestBody = ConsumerSpec
+
+// CreateConsumerKeyJSONRequestBody defines body for CreateConsumerKey for application/json ContentType.
+type CreateConsumerKeyJSONRequestBody = NewKey
 
 // ExplainJSONRequestBody defines body for Explain for application/json ContentType.
 type ExplainJSONRequestBody = ExplainJSONBody
@@ -859,6 +938,31 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/backends/undrain (the `Undrain` operationId).
 	Undrain(ctx context.Context, body UndrainJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListCaches Every cache store with its objects, bytes, limits and counters
+	//
+	// Every cache store with its objects, bytes, limits and counters.
+	//
+	// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+	ListCaches(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PurgeCacheWithBody Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCacheWithBody(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PurgeCache Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCache(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// Certificates Configured certificates (key passwords masked) and the state of automatic ones
 	//
 	// Configured certificates (key passwords masked) and the state of automatic ones.
@@ -1007,6 +1111,70 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/config/validate (the `Validate` operationId).
 	Validate(ctx context.Context, body ValidateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ListConsumers Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only
+	//
+	// Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only.
+	//
+	// Corresponds with GET /api/v1/consumers (the `ListConsumers` operationId).
+	ListConsumers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// DeleteConsumer (operator): removes an API-owned consumer and the keys the API minted for it
+	//
+	// (operator): removes an API-owned consumer and the keys the API minted for it.
+	//
+	// Corresponds with DELETE /api/v1/consumers/{name} (the `DeleteConsumer` operationId).
+	DeleteConsumer(ctx context.Context, name string, params *DeleteConsumerParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetConsumer One consumer
+	//
+	// One consumer.
+	//
+	// Corresponds with GET /api/v1/consumers/{name} (the `GetConsumer` operationId).
+	GetConsumer(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutConsumerWithBody (operator): creates or changes an API-owned consumer's groups; its keys stay
+	//
+	// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+	PutConsumerWithBody(ctx context.Context, name string, params *PutConsumerParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PutConsumer (operator): creates or changes an API-owned consumer's groups; its keys stay
+	//
+	// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+	PutConsumer(ctx context.Context, name string, params *PutConsumerParams, body PutConsumerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConsumerKeyWithBody (operator): mints an API key for a consumer of the file or the API
+	//
+	// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+	CreateConsumerKeyWithBody(ctx context.Context, name string, params *CreateConsumerKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateConsumerKey (operator): mints an API key for a consumer of the file or the API
+	//
+	// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+	CreateConsumerKey(ctx context.Context, name string, params *CreateConsumerKeyParams, body CreateConsumerKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeConsumerKey (operator): revokes a key the API minted
+	//
+	// (operator): revokes a key the API minted. It stops working with the configuration this applies. Keys of the configuration file are removed there.
+	//
+	// Corresponds with DELETE /api/v1/consumers/{name}/keys/{id} (the `RevokeConsumerKey` operationId).
+	RevokeConsumerKey(ctx context.Context, name string, id string, params *RevokeConsumerKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// Events Reloads, backend health, certificate and admin events
 	//
 	// Reloads, backend health, certificate and admin events.
@@ -1041,6 +1209,27 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/v1/providers (the `Providers` operationId).
 	Providers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListQuotas Every `quota` middleware of this instance with its window and the counts of the current window
+	//
+	// Every `quota` middleware of this instance with its window and the counts of the current window.
+	//
+	// Corresponds with GET /api/v1/quota (the `ListQuotas` operationId).
+	ListQuotas(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResetQuota (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only
+	//
+	// (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only. Audited.
+	//
+	// Corresponds with DELETE /api/v1/quota/{consumer} (the `ResetQuota` operationId).
+	ResetQuota(ctx context.Context, consumer string, params *ResetQuotaParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetQuota One consumer's counts in every quota
+	//
+	// One consumer's counts in every quota.
+	//
+	// Corresponds with GET /api/v1/quota/{consumer} (the `GetQuota` operationId).
+	GetQuota(ctx context.Context, consumer string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExplainWithBody How a request would be routed, never sent (viewer role)
 	//
@@ -1688,6 +1877,61 @@ func (c *Client) Undrain(ctx context.Context, body UndrainJSONRequestBody, reqEd
 	return c.Client.Do(req)
 }
 
+// ListCaches Every cache store with its objects, bytes, limits and counters
+//
+// Every cache store with its objects, bytes, limits and counters.
+//
+// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+func (c *Client) ListCaches(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListCachesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PurgeCacheWithBody Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *Client) PurgeCacheWithBody(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPurgeCacheRequestWithBody(c.Server, store, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PurgeCache Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *Client) PurgeCache(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPurgeCacheRequest(c.Server, store, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // Certificates Configured certificates (key passwords masked) and the state of automatic ones
 //
 // Configured certificates (key passwords masked) and the state of automatic ones.
@@ -2016,6 +2260,150 @@ func (c *Client) Validate(ctx context.Context, body ValidateJSONRequestBody, req
 	return c.Client.Do(req)
 }
 
+// ListConsumers Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only
+//
+// Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only.
+//
+// Corresponds with GET /api/v1/consumers (the `ListConsumers` operationId).
+func (c *Client) ListConsumers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListConsumersRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// DeleteConsumer (operator): removes an API-owned consumer and the keys the API minted for it
+//
+// (operator): removes an API-owned consumer and the keys the API minted for it.
+//
+// Corresponds with DELETE /api/v1/consumers/{name} (the `DeleteConsumer` operationId).
+func (c *Client) DeleteConsumer(ctx context.Context, name string, params *DeleteConsumerParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewDeleteConsumerRequest(c.Server, name, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetConsumer One consumer
+//
+// One consumer.
+//
+// Corresponds with GET /api/v1/consumers/{name} (the `GetConsumer` operationId).
+func (c *Client) GetConsumer(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetConsumerRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutConsumerWithBody (operator): creates or changes an API-owned consumer's groups; its keys stay
+//
+// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+func (c *Client) PutConsumerWithBody(ctx context.Context, name string, params *PutConsumerParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutConsumerRequestWithBody(c.Server, name, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PutConsumer (operator): creates or changes an API-owned consumer's groups; its keys stay
+//
+// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+func (c *Client) PutConsumer(ctx context.Context, name string, params *PutConsumerParams, body PutConsumerJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPutConsumerRequest(c.Server, name, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConsumerKeyWithBody (operator): mints an API key for a consumer of the file or the API
+//
+// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+func (c *Client) CreateConsumerKeyWithBody(ctx context.Context, name string, params *CreateConsumerKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConsumerKeyRequestWithBody(c.Server, name, params, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateConsumerKey (operator): mints an API key for a consumer of the file or the API
+//
+// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+func (c *Client) CreateConsumerKey(ctx context.Context, name string, params *CreateConsumerKeyParams, body CreateConsumerKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateConsumerKeyRequest(c.Server, name, params, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeConsumerKey (operator): revokes a key the API minted
+//
+// (operator): revokes a key the API minted. It stops working with the configuration this applies. Keys of the configuration file are removed there.
+//
+// Corresponds with DELETE /api/v1/consumers/{name}/keys/{id} (the `RevokeConsumerKey` operationId).
+func (c *Client) RevokeConsumerKey(ctx context.Context, name string, id string, params *RevokeConsumerKeyParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeConsumerKeyRequest(c.Server, name, id, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // Events Reloads, backend health, certificate and admin events
 //
 // Reloads, backend health, certificate and admin events.
@@ -2091,6 +2479,57 @@ func (c *Client) MetricsSummary(ctx context.Context, params *MetricsSummaryParam
 // Corresponds with GET /api/v1/providers (the `Providers` operationId).
 func (c *Client) Providers(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewProvidersRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListQuotas Every `quota` middleware of this instance with its window and the counts of the current window
+//
+// Every `quota` middleware of this instance with its window and the counts of the current window.
+//
+// Corresponds with GET /api/v1/quota (the `ListQuotas` operationId).
+func (c *Client) ListQuotas(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListQuotasRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResetQuota (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only
+//
+// (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only. Audited.
+//
+// Corresponds with DELETE /api/v1/quota/{consumer} (the `ResetQuota` operationId).
+func (c *Client) ResetQuota(ctx context.Context, consumer string, params *ResetQuotaParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResetQuotaRequest(c.Server, consumer, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetQuota One consumer's counts in every quota
+//
+// One consumer's counts in every quota.
+//
+// Corresponds with GET /api/v1/quota/{consumer} (the `GetQuota` operationId).
+func (c *Client) GetQuota(ctx context.Context, consumer string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetQuotaRequest(c.Server, consumer)
 	if err != nil {
 		return nil, err
 	}
@@ -3156,6 +3595,80 @@ func NewUndrainRequestWithBody(server string, contentType string, body io.Reader
 	return req, nil
 }
 
+// NewListCachesRequest constructs an http.Request for the ListCaches method
+func NewListCachesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cache")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPurgeCacheRequest calls the generic PurgeCache builder with application/json body
+func NewPurgeCacheRequest(server string, store string, body PurgeCacheJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPurgeCacheRequestWithBody(server, store, "application/json", bodyReader)
+}
+
+// NewPurgeCacheRequestWithBody constructs an http.Request for the PurgeCache method, with any body, and a specified content type
+func NewPurgeCacheRequestWithBody(server string, store string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "store", store, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cache/%s/purge", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewCertificatesRequest constructs an http.Request for the Certificates method
 func NewCertificatesRequest(server string) (*http.Request, error) {
 	var err error
@@ -3615,6 +4128,288 @@ func NewValidateRequestWithBody(server string, contentType string, body io.Reade
 	return req, nil
 }
 
+// NewListConsumersRequest constructs an http.Request for the ListConsumers method
+func NewListConsumersRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/consumers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewDeleteConsumerRequest constructs an http.Request for the DeleteConsumer method
+func NewDeleteConsumerRequest(server string, name string, params *DeleteConsumerParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/consumers/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("If-Match", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewGetConsumerRequest constructs an http.Request for the GetConsumer method
+func NewGetConsumerRequest(server string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/consumers/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPutConsumerRequest calls the generic PutConsumer builder with application/json body
+func NewPutConsumerRequest(server string, name string, params *PutConsumerParams, body PutConsumerJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPutConsumerRequestWithBody(server, name, params, "application/json", bodyReader)
+}
+
+// NewPutConsumerRequestWithBody constructs an http.Request for the PutConsumer method, with any body, and a specified content type
+func NewPutConsumerRequestWithBody(server string, name string, params *PutConsumerParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/consumers/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPut, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("If-Match", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewCreateConsumerKeyRequest calls the generic CreateConsumerKey builder with application/json body
+func NewCreateConsumerKeyRequest(server string, name string, params *CreateConsumerKeyParams, body CreateConsumerKeyJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateConsumerKeyRequestWithBody(server, name, params, "application/json", bodyReader)
+}
+
+// NewCreateConsumerKeyRequestWithBody constructs an http.Request for the CreateConsumerKey method, with any body, and a specified content type
+func NewCreateConsumerKeyRequestWithBody(server string, name string, params *CreateConsumerKeyParams, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/consumers/%s/keys", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("If-Match", headerParam0)
+
+	}
+
+	return req, nil
+}
+
+// NewRevokeConsumerKeyRequest constructs an http.Request for the RevokeConsumerKey method
+func NewRevokeConsumerKeyRequest(server string, name string, id string, params *RevokeConsumerKeyParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	var pathParam1 string
+
+	pathParam1, err = runtime.StyleParamWithOptions("simple", false, "id", id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/consumers/%s/keys/%s", pathParam0, pathParam1)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+
+		var headerParam0 string
+
+		headerParam0, err = runtime.StyleParamWithOptions("simple", false, "If-Match", params.IfMatch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+		if err != nil {
+			return nil, err
+		}
+
+		req.Header.Set("If-Match", headerParam0)
+
+	}
+
+	return req, nil
+}
+
 // NewEventsRequest constructs an http.Request for the Events method
 func NewEventsRequest(server string, params *EventsParams) (*http.Request, error) {
 	var err error
@@ -3964,6 +4759,128 @@ func NewProvidersRequest(server string) (*http.Request, error) {
 	}
 
 	operationPath := fmt.Sprintf("/api/v1/providers")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListQuotasRequest constructs an http.Request for the ListQuotas method
+func NewListQuotasRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/quota")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResetQuotaRequest constructs an http.Request for the ResetQuota method
+func NewResetQuotaRequest(server string, consumer string, params *ResetQuotaParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "consumer", consumer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/quota/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Middleware != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "middleware", *params.Middleware, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetQuotaRequest constructs an http.Request for the GetQuota method
+func NewGetQuotaRequest(server string, consumer string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "consumer", consumer, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/quota/%s", pathParam0)
 	if operationPath[0] == '/' {
 		operationPath = "." + operationPath
 	}
@@ -4910,6 +5827,33 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/backends/undrain (the `Undrain` operationId).
 	UndrainWithResponse(ctx context.Context, body UndrainJSONRequestBody, reqEditors ...RequestEditorFn) (*UndrainResponse, error)
 
+	// ListCachesWithResponse Every cache store with its objects, bytes, limits and counters
+	//
+	// Every cache store with its objects, bytes, limits and counters.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+	ListCachesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCachesResponse, error)
+
+	// PurgeCacheWithBodyWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCacheWithBodyWithResponse(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error)
+
+	// PurgeCacheWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+	//
+	// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+	PurgeCacheWithResponse(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error)
+
 	// CertificatesWithResponse Configured certificates (key passwords masked) and the state of automatic ones
 	//
 	// Configured certificates (key passwords masked) and the state of automatic ones.
@@ -5072,6 +6016,78 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/config/validate (the `Validate` operationId).
 	ValidateWithResponse(ctx context.Context, body ValidateJSONRequestBody, reqEditors ...RequestEditorFn) (*ValidateResponse, error)
 
+	// ListConsumersWithResponse Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only
+	//
+	// Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/consumers (the `ListConsumers` operationId).
+	ListConsumersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListConsumersResponse, error)
+
+	// DeleteConsumerWithResponse (operator): removes an API-owned consumer and the keys the API minted for it
+	//
+	// (operator): removes an API-owned consumer and the keys the API minted for it.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/consumers/{name} (the `DeleteConsumer` operationId).
+	DeleteConsumerWithResponse(ctx context.Context, name string, params *DeleteConsumerParams, reqEditors ...RequestEditorFn) (*DeleteConsumerResponse, error)
+
+	// GetConsumerWithResponse One consumer
+	//
+	// One consumer.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/consumers/{name} (the `GetConsumer` operationId).
+	GetConsumerWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*GetConsumerResponse, error)
+
+	// PutConsumerWithBodyWithResponse (operator): creates or changes an API-owned consumer's groups; its keys stay
+	//
+	// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+	PutConsumerWithBodyWithResponse(ctx context.Context, name string, params *PutConsumerParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutConsumerResponse, error)
+
+	// PutConsumerWithResponse (operator): creates or changes an API-owned consumer's groups; its keys stay
+	//
+	// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+	PutConsumerWithResponse(ctx context.Context, name string, params *PutConsumerParams, body PutConsumerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutConsumerResponse, error)
+
+	// CreateConsumerKeyWithBodyWithResponse (operator): mints an API key for a consumer of the file or the API
+	//
+	// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+	CreateConsumerKeyWithBodyWithResponse(ctx context.Context, name string, params *CreateConsumerKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConsumerKeyResponse, error)
+
+	// CreateConsumerKeyWithResponse (operator): mints an API key for a consumer of the file or the API
+	//
+	// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+	CreateConsumerKeyWithResponse(ctx context.Context, name string, params *CreateConsumerKeyParams, body CreateConsumerKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConsumerKeyResponse, error)
+
+	// RevokeConsumerKeyWithResponse (operator): revokes a key the API minted
+	//
+	// (operator): revokes a key the API minted. It stops working with the configuration this applies. Keys of the configuration file are removed there.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/consumers/{name}/keys/{id} (the `RevokeConsumerKey` operationId).
+	RevokeConsumerKeyWithResponse(ctx context.Context, name string, id string, params *RevokeConsumerKeyParams, reqEditors ...RequestEditorFn) (*RevokeConsumerKeyResponse, error)
+
 	// EventsWithResponse Reloads, backend health, certificate and admin events
 	//
 	// Reloads, backend health, certificate and admin events.
@@ -5116,6 +6132,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with GET /api/v1/providers (the `Providers` operationId).
 	ProvidersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ProvidersResponse, error)
+
+	// ListQuotasWithResponse Every `quota` middleware of this instance with its window and the counts of the current window
+	//
+	// Every `quota` middleware of this instance with its window and the counts of the current window.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/quota (the `ListQuotas` operationId).
+	ListQuotasWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListQuotasResponse, error)
+
+	// ResetQuotaWithResponse (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only
+	//
+	// (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only. Audited.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/quota/{consumer} (the `ResetQuota` operationId).
+	ResetQuotaWithResponse(ctx context.Context, consumer string, params *ResetQuotaParams, reqEditors ...RequestEditorFn) (*ResetQuotaResponse, error)
+
+	// GetQuotaWithResponse One consumer's counts in every quota
+	//
+	// One consumer's counts in every quota.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/quota/{consumer} (the `GetQuota` operationId).
+	GetQuotaWithResponse(ctx context.Context, consumer string, reqEditors ...RequestEditorFn) (*GetQuotaResponse, error)
 
 	// ExplainWithBodyWithResponse How a request would be routed, never sent (viewer role)
 	//
@@ -6639,6 +7682,165 @@ func (r UndrainResponse) ContentType() string {
 	return ""
 }
 
+// ListCachesResponse429Headers the declared response headers of an HTTP 429 response for ListCaches
+type ListCachesResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListCachesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListCachesResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListCachesResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListCachesResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListCachesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListCachesResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListCachesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListCachesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListCachesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListCachesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PurgeCacheResponse429Headers the declared response headers of an HTTP 429 response for PurgeCache
+type PurgeCacheResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PurgeCacheResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *Purged
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorBody
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ConfigBusy
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *ErrorBody
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PurgeCacheResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PurgeCacheResponse) GetJSON200() *Purged {
+	return r.JSON200
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PurgeCacheResponse) GetJSON400() *ErrorBody {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PurgeCacheResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PurgeCacheResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PurgeCacheResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PurgeCacheResponse) GetJSON429() *ConfigBusy {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r PurgeCacheResponse) GetJSON500() *ErrorBody {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r PurgeCacheResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PurgeCacheResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PurgeCacheResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PurgeCacheResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // CertificatesResponse429Headers the declared response headers of an HTTP 429 response for Certificates
 type CertificatesResponse429Headers struct {
 	RetryAfter *int
@@ -7635,6 +8837,490 @@ func (r ValidateResponse) ContentType() string {
 	return ""
 }
 
+// ListConsumersResponse429Headers the declared response headers of an HTTP 429 response for ListConsumers
+type ListConsumersResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListConsumersResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListConsumersResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListConsumersResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListConsumersResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListConsumersResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListConsumersResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListConsumersResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListConsumersResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListConsumersResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListConsumersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// DeleteConsumerResponse429Headers the declared response headers of an HTTP 429 response for DeleteConsumer
+type DeleteConsumerResponse429Headers struct {
+	RetryAfter *int
+}
+
+type DeleteConsumerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON412 the response for an HTTP 412 `application/json` response
+	JSON412 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ConfigBusy
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *DeleteConsumerResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r DeleteConsumerResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r DeleteConsumerResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r DeleteConsumerResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r DeleteConsumerResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON412 returns the response for an HTTP 412 `application/json` response
+func (r DeleteConsumerResponse) GetJSON412() *ErrorBody {
+	return r.JSON412
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r DeleteConsumerResponse) GetJSON429() *ConfigBusy {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r DeleteConsumerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r DeleteConsumerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r DeleteConsumerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r DeleteConsumerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetConsumerResponse429Headers the declared response headers of an HTTP 429 response for GetConsumer
+type GetConsumerResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetConsumerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetConsumerResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetConsumerResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetConsumerResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetConsumerResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetConsumerResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetConsumerResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r GetConsumerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetConsumerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetConsumerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetConsumerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PutConsumerResponse429Headers the declared response headers of an HTTP 429 response for PutConsumer
+type PutConsumerResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PutConsumerResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorBody
+	// JSON412 the response for an HTTP 412 `application/json` response
+	JSON412 *ErrorBody
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *map[string]interface{}
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ConfigBusy
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PutConsumerResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r PutConsumerResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PutConsumerResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PutConsumerResponse) GetJSON403() *ErrorBody {
+	return r.JSON403
+}
+
+// GetJSON412 returns the response for an HTTP 412 `application/json` response
+func (r PutConsumerResponse) GetJSON412() *ErrorBody {
+	return r.JSON412
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PutConsumerResponse) GetJSON422() *map[string]interface{} {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PutConsumerResponse) GetJSON429() *ConfigBusy {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r PutConsumerResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PutConsumerResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PutConsumerResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PutConsumerResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateConsumerKeyResponse429Headers the declared response headers of an HTTP 429 response for CreateConsumerKey
+type CreateConsumerKeyResponse429Headers struct {
+	RetryAfter *int
+}
+
+type CreateConsumerKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON412 the response for an HTTP 412 `application/json` response
+	JSON412 *ErrorBody
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *map[string]interface{}
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ConfigBusy
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *CreateConsumerKeyResponse429Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON201() *map[string]interface{} {
+	return r.JSON201
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON412 returns the response for an HTTP 412 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON412() *ErrorBody {
+	return r.JSON412
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON422() *map[string]interface{} {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON429() *ConfigBusy {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateConsumerKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateConsumerKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateConsumerKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateConsumerKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RevokeConsumerKeyResponse429Headers the declared response headers of an HTTP 429 response for RevokeConsumerKey
+type RevokeConsumerKeyResponse429Headers struct {
+	RetryAfter *int
+}
+
+type RevokeConsumerKeyResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorBody
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON412 the response for an HTTP 412 `application/json` response
+	JSON412 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *ConfigBusy
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *RevokeConsumerKeyResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON403() *ErrorBody {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON412 returns the response for an HTTP 412 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON412() *ErrorBody {
+	return r.JSON412
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON429() *ConfigBusy {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeConsumerKeyResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeConsumerKeyResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeConsumerKeyResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeConsumerKeyResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 type EventsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
@@ -7946,6 +9632,213 @@ func (r ProvidersResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r ProvidersResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListQuotasResponse429Headers the declared response headers of an HTTP 429 response for ListQuotas
+type ListQuotasResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListQuotasResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListQuotasResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListQuotasResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListQuotasResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListQuotasResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListQuotasResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListQuotasResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListQuotasResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListQuotasResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListQuotasResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ResetQuotaResponse429Headers the declared response headers of an HTTP 429 response for ResetQuota
+type ResetQuotaResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ResetQuotaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ResetQuotaResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResetQuotaResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResetQuotaResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResetQuotaResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ResetQuotaResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ResetQuotaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResetQuotaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResetQuotaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResetQuotaResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetQuotaResponse429Headers the declared response headers of an HTTP 429 response for GetQuota
+type GetQuotaResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetQuotaResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetQuotaResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetQuotaResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetQuotaResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetQuotaResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetQuotaResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r GetQuotaResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetQuotaResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetQuotaResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetQuotaResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -9583,6 +11476,51 @@ func (c *ClientWithResponses) UndrainWithResponse(ctx context.Context, body Undr
 	return ParseUndrainResponse(rsp)
 }
 
+// ListCachesWithResponse Every cache store with its objects, bytes, limits and counters
+//
+// Every cache store with its objects, bytes, limits and counters.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/cache (the `ListCaches` operationId).
+func (c *ClientWithResponses) ListCachesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListCachesResponse, error) {
+	rsp, err := c.ListCaches(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListCachesResponse(rsp)
+}
+
+// PurgeCacheWithBodyWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *ClientWithResponses) PurgeCacheWithBodyWithResponse(ctx context.Context, store string, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error) {
+	rsp, err := c.PurgeCacheWithBody(ctx, store, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePurgeCacheResponse(rsp)
+}
+
+// PurgeCacheWithResponse Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)
+//
+// Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role). Audited; shares the configuration-work rate limit, because purging everything sends every following request to the origins.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cache/{store}/purge (the `PurgeCache` operationId).
+func (c *ClientWithResponses) PurgeCacheWithResponse(ctx context.Context, store string, body PurgeCacheJSONRequestBody, reqEditors ...RequestEditorFn) (*PurgeCacheResponse, error) {
+	rsp, err := c.PurgeCache(ctx, store, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePurgeCacheResponse(rsp)
+}
+
 // CertificatesWithResponse Configured certificates (key passwords masked) and the state of automatic ones
 //
 // Configured certificates (key passwords masked) and the state of automatic ones.
@@ -9853,6 +11791,126 @@ func (c *ClientWithResponses) ValidateWithResponse(ctx context.Context, body Val
 	return ParseValidateResponse(rsp)
 }
 
+// ListConsumersWithResponse Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only
+//
+// Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/consumers (the `ListConsumers` operationId).
+func (c *ClientWithResponses) ListConsumersWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListConsumersResponse, error) {
+	rsp, err := c.ListConsumers(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListConsumersResponse(rsp)
+}
+
+// DeleteConsumerWithResponse (operator): removes an API-owned consumer and the keys the API minted for it
+//
+// (operator): removes an API-owned consumer and the keys the API minted for it.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/consumers/{name} (the `DeleteConsumer` operationId).
+func (c *ClientWithResponses) DeleteConsumerWithResponse(ctx context.Context, name string, params *DeleteConsumerParams, reqEditors ...RequestEditorFn) (*DeleteConsumerResponse, error) {
+	rsp, err := c.DeleteConsumer(ctx, name, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseDeleteConsumerResponse(rsp)
+}
+
+// GetConsumerWithResponse One consumer
+//
+// One consumer.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/consumers/{name} (the `GetConsumer` operationId).
+func (c *ClientWithResponses) GetConsumerWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*GetConsumerResponse, error) {
+	rsp, err := c.GetConsumer(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetConsumerResponse(rsp)
+}
+
+// PutConsumerWithBodyWithResponse (operator): creates or changes an API-owned consumer's groups; its keys stay
+//
+// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+func (c *ClientWithResponses) PutConsumerWithBodyWithResponse(ctx context.Context, name string, params *PutConsumerParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PutConsumerResponse, error) {
+	rsp, err := c.PutConsumerWithBody(ctx, name, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutConsumerResponse(rsp)
+}
+
+// PutConsumerWithResponse (operator): creates or changes an API-owned consumer's groups; its keys stay
+//
+// (operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with PUT /api/v1/consumers/{name} (the `PutConsumer` operationId).
+func (c *ClientWithResponses) PutConsumerWithResponse(ctx context.Context, name string, params *PutConsumerParams, body PutConsumerJSONRequestBody, reqEditors ...RequestEditorFn) (*PutConsumerResponse, error) {
+	rsp, err := c.PutConsumer(ctx, name, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePutConsumerResponse(rsp)
+}
+
+// CreateConsumerKeyWithBodyWithResponse (operator): mints an API key for a consumer of the file or the API
+//
+// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+func (c *ClientWithResponses) CreateConsumerKeyWithBodyWithResponse(ctx context.Context, name string, params *CreateConsumerKeyParams, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateConsumerKeyResponse, error) {
+	rsp, err := c.CreateConsumerKeyWithBody(ctx, name, params, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConsumerKeyResponse(rsp)
+}
+
+// CreateConsumerKeyWithResponse (operator): mints an API key for a consumer of the file or the API
+//
+// (operator): mints an API key for a consumer of the file or the API. The clear-text key is in this answer only; what is stored is its ID and the SHA-256 of its secret.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/consumers/{name}/keys (the `CreateConsumerKey` operationId).
+func (c *ClientWithResponses) CreateConsumerKeyWithResponse(ctx context.Context, name string, params *CreateConsumerKeyParams, body CreateConsumerKeyJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateConsumerKeyResponse, error) {
+	rsp, err := c.CreateConsumerKey(ctx, name, params, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateConsumerKeyResponse(rsp)
+}
+
+// RevokeConsumerKeyWithResponse (operator): revokes a key the API minted
+//
+// (operator): revokes a key the API minted. It stops working with the configuration this applies. Keys of the configuration file are removed there.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/consumers/{name}/keys/{id} (the `RevokeConsumerKey` operationId).
+func (c *ClientWithResponses) RevokeConsumerKeyWithResponse(ctx context.Context, name string, id string, params *RevokeConsumerKeyParams, reqEditors ...RequestEditorFn) (*RevokeConsumerKeyResponse, error) {
+	rsp, err := c.RevokeConsumerKey(ctx, name, id, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeConsumerKeyResponse(rsp)
+}
+
 // EventsWithResponse Reloads, backend health, certificate and admin events
 //
 // Reloads, backend health, certificate and admin events.
@@ -9926,6 +11984,51 @@ func (c *ClientWithResponses) ProvidersWithResponse(ctx context.Context, reqEdit
 		return nil, err
 	}
 	return ParseProvidersResponse(rsp)
+}
+
+// ListQuotasWithResponse Every `quota` middleware of this instance with its window and the counts of the current window
+//
+// Every `quota` middleware of this instance with its window and the counts of the current window.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/quota (the `ListQuotas` operationId).
+func (c *ClientWithResponses) ListQuotasWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListQuotasResponse, error) {
+	rsp, err := c.ListQuotas(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListQuotasResponse(rsp)
+}
+
+// ResetQuotaWithResponse (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only
+//
+// (operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only. Audited.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/quota/{consumer} (the `ResetQuota` operationId).
+func (c *ClientWithResponses) ResetQuotaWithResponse(ctx context.Context, consumer string, params *ResetQuotaParams, reqEditors ...RequestEditorFn) (*ResetQuotaResponse, error) {
+	rsp, err := c.ResetQuota(ctx, consumer, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResetQuotaResponse(rsp)
+}
+
+// GetQuotaWithResponse One consumer's counts in every quota
+//
+// One consumer's counts in every quota.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/quota/{consumer} (the `GetQuota` operationId).
+func (c *ClientWithResponses) GetQuotaWithResponse(ctx context.Context, consumer string, reqEditors ...RequestEditorFn) (*GetQuotaResponse, error) {
+	rsp, err := c.GetQuota(ctx, consumer, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetQuotaResponse(rsp)
 }
 
 // ExplainWithBodyWithResponse How a request would be routed, never sent (viewer role)
@@ -11425,6 +13528,147 @@ func ParseUndrainResponse(rsp *http.Response) (*UndrainResponse, error) {
 	return response, nil
 }
 
+// ParseListCachesResponse parses an HTTP response from a ListCachesWithResponse call
+func ParseListCachesResponse(rsp *http.Response) (*ListCachesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListCachesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListCachesResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePurgeCacheResponse parses an HTTP response from a PurgeCacheWithResponse call
+func ParsePurgeCacheResponse(rsp *http.Response) (*PurgeCacheResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PurgeCacheResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest Purged
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ConfigBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PurgeCacheResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseCertificatesResponse parses an HTTP response from a CertificatesWithResponse call
 func ParseCertificatesResponse(rsp *http.Response) (*CertificatesResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12328,6 +14572,436 @@ func ParseValidateResponse(rsp *http.Response) (*ValidateResponse, error) {
 	return response, nil
 }
 
+// ParseListConsumersResponse parses an HTTP response from a ListConsumersWithResponse call
+func ParseListConsumersResponse(rsp *http.Response) (*ListConsumersResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListConsumersResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListConsumersResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseDeleteConsumerResponse parses an HTTP response from a DeleteConsumerWithResponse call
+func ParseDeleteConsumerResponse(rsp *http.Response) (*DeleteConsumerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &DeleteConsumerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ConfigBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers DeleteConsumerResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetConsumerResponse parses an HTTP response from a GetConsumerWithResponse call
+func ParseGetConsumerResponse(rsp *http.Response) (*GetConsumerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetConsumerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetConsumerResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePutConsumerResponse parses an HTTP response from a PutConsumerWithResponse call
+func ParsePutConsumerResponse(rsp *http.Response) (*PutConsumerResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PutConsumerResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ConfigBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PutConsumerResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateConsumerKeyResponse parses an HTTP response from a CreateConsumerKeyWithResponse call
+func ParseCreateConsumerKeyResponse(rsp *http.Response) (*CreateConsumerKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateConsumerKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ConfigBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers CreateConsumerKeyResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRevokeConsumerKeyResponse parses an HTTP response from a RevokeConsumerKeyWithResponse call
+func ParseRevokeConsumerKeyResponse(rsp *http.Response) (*RevokeConsumerKeyResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeConsumerKeyResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 412:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON412 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest ConfigBusy
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers RevokeConsumerKeyResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
 // ParseEventsResponse parses an HTTP response from a EventsWithResponse call
 func ParseEventsResponse(rsp *http.Response) (*EventsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -12581,6 +15255,186 @@ func ParseProvidersResponse(rsp *http.Response) (*ProvidersResponse, error) {
 	switch {
 	case rsp.StatusCode == 429:
 		var headers ProvidersResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListQuotasResponse parses an HTTP response from a ListQuotasWithResponse call
+func ParseListQuotasResponse(rsp *http.Response) (*ListQuotasResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListQuotasResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListQuotasResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseResetQuotaResponse parses an HTTP response from a ResetQuotaWithResponse call
+func ParseResetQuotaResponse(rsp *http.Response) (*ResetQuotaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResetQuotaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ResetQuotaResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetQuotaResponse parses an HTTP response from a GetQuotaWithResponse call
+func ParseGetQuotaResponse(rsp *http.Response) (*GetQuotaResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetQuotaResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetQuotaResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

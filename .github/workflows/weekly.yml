@@ -1,9 +1,9 @@
 # Weekly checks that do not depend on a pull request. Not required checks.
 #   advisories    fails when a new RustSec advisory affects the lockfile (pull requests only
 #                 see advisories published before they ran).
-#   tokio-canary  builds and tests against the newest tokio, past the `<1.54` cap in Cargo.toml.
-#                 It stays green either way and reports in the job summary whether the cap can
-#                 be lifted (docs/06-repo-layout.md §2).
+#   tokio-canary  builds and tests against the newest tokio 1.x, ahead of the lockfile (Pingora
+#                 0.9.0 broke on tokio 1.54; the cap went with Pingora 0.9.1). It stays green
+#                 either way and reports in the job summary (docs/06-repo-layout.md §2).
 name: weekly
 
 on:
@@ -55,10 +55,8 @@ jobs:
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2.87.31
         with:
           tool: cargo-nextest
-      - name: Lift the tokio cap
+      - name: Move to the newest tokio
         run: |
-          sed -i 's/^tokio = { version = ">=1.53.3, <1.54",/tokio = { version = "1",/' Cargo.toml
-          grep -q '^tokio = { version = "1",' Cargo.toml
           cargo update -p tokio
           cargo tree -i tokio --depth 0
       - name: Tests with the newest tokio
@@ -71,8 +69,9 @@ jobs:
         run: |
           version=$(cargo tree -i tokio --depth 0 | head -1)
           if [ "$OUTCOME" = success ]; then
-            echo "::notice::All tests pass with $version: the tokio cap can be lifted."
-            echo "All tests pass with **$version**. The \`<1.54\` cap in Cargo.toml and the Dependabot ignore can be lifted." >> "$GITHUB_STEP_SUMMARY"
+            echo "::notice::All tests pass with $version."
+            echo "All tests pass with **$version**." >> "$GITHUB_STEP_SUMMARY"
           else
-            echo "Tests still fail with **$version**; keep the tokio cap." >> "$GITHUB_STEP_SUMMARY"
+            echo "::warning::Tests fail with $version; do not move the lockfile to it yet."
+            echo "Tests fail with **$version**; do not move the lockfile to it yet." >> "$GITHUB_STEP_SUMMARY"
           fi

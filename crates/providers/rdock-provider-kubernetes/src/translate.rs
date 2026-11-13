@@ -194,6 +194,18 @@ impl Translation {
             &mut clashes,
         );
         extend(
+            &mut self.fragment.udp_routes,
+            fragment.udp_routes,
+            "udp_routes",
+            &mut clashes,
+        );
+        extend(
+            &mut self.fragment.udp_services,
+            fragment.udp_services,
+            "udp_services",
+            &mut clashes,
+        );
+        extend(
             &mut self.fragment.listeners,
             fragment.listeners,
             "listeners",
@@ -427,8 +439,10 @@ pub struct DesiredService {
     pub name: String,
     /// The Gateway it serves (`namespace`, `name`).
     pub gateway: ObjectKey,
-    /// The listener ports the Gateway wants, sorted and unique.
+    /// The TCP listener ports the Gateway wants (every protocol but `UDP`), sorted and unique.
     pub ports: Vec<u16>,
+    /// The UDP listener ports the Gateway wants, sorted and unique.
+    pub udp_ports: Vec<u16>,
     /// Labels: [`GATEWAY_NAME_LABEL`] ([`gateway_label_value`]), [`GATEWAY_NAMESPACE_LABEL`],
     /// [`MANAGED_BY_LABEL`] and the Gateway's `spec.infrastructure.labels`.
     pub labels: BTreeMap<String, String>,

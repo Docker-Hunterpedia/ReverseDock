@@ -1,0 +1,135 @@
+// The host ABI of ReverseDock's WASM plugins (ADR-0030). EXPERIMENTAL: the package carries a
+// 0.x version and may change in any release.
+//
+// A plugin is a WebAssembly component that targets the `filter` world. It mirrors the native
+// `Plugin` trait's head phases: `on-request` sees the request head before routing to a
+// backend, `on-response` sees the response head before it leaves. Bodies are not visible in
+// 0.1. Every request gets a fresh instance, kept for that request's response phase and then
+// dropped, so nothing a plugin stores survives from one request to the next.
+//
+// Imports are capabilities the host links only when the middleware's `capabilities` grant
+// them (`config` is always available). A component that imports anything else, any WASI
+// interface included, is refused when the configuration is loaded.
+package rdock:plugin@0.1.0;
+
+/// Types shared by the hooks.
+interface types {
+    /// A header field. Names arrive in lower case; values are bytes (usually ASCII text).
+    record header {
+        name: string,
+        value: list<u8>,
+    }
+
+    /// What the proxy knows about the request.
+    record facts {
+        /// The client's address as the proxy determined it (trusted proxies applied).
+        client-ip: string,
+        /// The name of the matched route.
+        route: string,
+        /// The request ID (`X-Request-Id`).
+        request-id: string,
+        /// Whether the client connection uses TLS.
+        tls: bool,
+        /// The consumer an earlier middleware authenticated, if any.
+        consumer: option<string>,
+    }
+
+    /// The request head.
+    record request {
+        method: string,
+        /// The path, percent-encoded as received.
+        path: string,
+        /// The query without `?`, if there is one.
+        query: option<string>,
+        headers: list<header>,
+    }
+
+    /// A change to the request head. Framing and forwarding headers (`content-length`,
+    /// `transfer-encoding`, `host`, hop-by-hop headers) cannot be changed; an edit that tries
+    /// is an error and the middleware's `on_error` applies.
+    variant request-edit {
+        set-header(header),
+        append-header(header),
+        remove-header(string),
+        set-path(string),
+        set-query(option<string>),
+    }
+
+    /// A response the plugin sends instead of passing the request on.
+    record reply {
+        status: u16,
+        headers: list<header>,
+        body: list<u8>,
+    }
+
+    /// The outcome of `on-request`.
+    variant request-action {
+        /// Pass the request on, after these edits (in order).
+        %continue(list<request-edit>),
+        /// Answer the client; the request goes no further.
+        respond(reply),
+    }
+
+    /// The response head.
+    record response {
+        status: u16,
+        headers: list<header>,
+    }
+
+    /// A change to the response head. Framing headers cannot be changed.
+    variant response-edit {
+        set-header(header),
+        append-header(header),
+        remove-header(string),
+        set-status(u16),
+    }
+}
+
+/// Log lines, written to rdock's log with the middleware's name (capability `log`).
+interface log {
+    enum level {
+        error,
+        warn,
+        info,
+        debug,
+        trace,
+    }
+
+    /// Writes one line. Lines longer than 1 KiB are cut.
+    write: func(level: level, message: string);
+}
+
+/// The wall clock (capability `clock`).
+interface clock {
+    /// Milliseconds since the Unix epoch.
+    now-ms: func() -> u64;
+}
+
+/// Randomness from the operating system's generator (capability `random`).
+interface random {
+    /// 64 random bits.
+    next-u64: func() -> u64;
+}
+
+/// The plugin's own settings (always available).
+interface config {
+    /// The middleware's `config` map, as JSON text.
+    get: func() -> string;
+}
+
+/// What a ReverseDock filter plugin imports and exports.
+world filter {
+    import log;
+    import clock;
+    import random;
+    import config;
+
+    use types.{facts, request, request-action, response, response-edit};
+
+    /// Called with the request head; decides whether the request continues.
+    export on-request: func(facts: facts, request: request) -> request-action;
+
+    /// Called with the response head (the backend's, or a reply from a middleware after this
+    /// one); returns edits to apply in order.
+    export on-response: func(facts: facts, response: response) -> list<response-edit>;
+}

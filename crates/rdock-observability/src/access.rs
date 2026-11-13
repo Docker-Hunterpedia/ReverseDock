@@ -69,6 +69,12 @@ pub struct AccessRecord {
     /// User authenticated by a middleware.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user: Option<String>,
+    /// Consumer the request was attributed to by an authenticating middleware (v0.8).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub consumer: Option<String>,
+    /// Public ID of the API key that authenticated the request (never the key).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub key_id: Option<String>,
     /// `User-Agent`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub user_agent: Option<String>,
@@ -81,6 +87,10 @@ pub struct AccessRecord {
     /// Error that ended the request, if any.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub error: Option<String>,
+    /// What the HTTP cache did (`hit`, `stale`, `revalidated`, `expired`, `miss`, `bypass`),
+    /// on caching routes only.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub cache_status: Option<String>,
 }
 
 /// The access-log writer.
@@ -178,7 +188,7 @@ fn write_lines(receiver: &Receiver<Vec<u8>>) {
 }
 
 fn text_line(r: &AccessRecord) -> String {
-    format!(
+    let line = format!(
         "{} {} \"{} {} {}\" {} {} {:.1}ms route={} service={} upstream={} id={}",
         r.ts,
         r.client_ip,
@@ -192,7 +202,11 @@ fn text_line(r: &AccessRecord) -> String {
         r.service.as_deref().unwrap_or("-"),
         r.upstream.as_deref().unwrap_or("-"),
         r.request_id
-    )
+    );
+    match &r.cache_status {
+        Some(cache) => format!("{line} cache={cache}"),
+        None => line,
+    }
 }
 
 /// `SystemTime` as RFC 3339 in UTC with milliseconds, e.g. `2026-10-26T16:13:05.123Z`.

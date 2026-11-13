@@ -1,0 +1,48 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# DNS on TCP and UDP 53 of one address, and a WireGuard port with sticky sessions.
+listeners:
+  dns:     { address: "192.0.2.10:53", protocol: udp, sessions: { max: 8192, max_per_client: 256 } }
+  dns-tcp: { address: "192.0.2.10:53", protocol: tcp }
+  vpn:     { address: "192.0.2.10:51820", protocol: udp }
+
+middlewares:
+  lan: { type: ip_allow, cidrs: [10.0.0.0/8, 192.168.0.0/16] }
+
+udp_routes:
+  dns:
+    listeners: [dns]
+    service: resolvers
+    middlewares: [lan]
+  vpn:
+    listeners: [vpn]
+    service: wireguard
+
+udp_services:
+  resolvers:
+    backends:
+      - { address: "10.0.0.53:53" }
+      - { address: "10.0.0.54:53" }
+    responses: 1
+    timeouts: { idle: 10s }
+    health:
+      tcp_check: { port: 53 }
+  wireguard:
+    backends:
+      - { address: "10.0.0.80:51820" }
+      - { address: "10.0.0.81:51820", backup: true }
+    load_balancer: { policy: ip_hash }
+    timeouts: { idle: 3m }
+
+tcp_routes:
+  dns:
+    match: "HostSNI(`*`)"
+    listeners: [dns-tcp]
+    service: resolvers-tcp
+    middlewares: [lan]
+
+tcp_services:
+  resolvers-tcp:
+    backends:
+      - { address: "10.0.0.53:53" }
+      - { address: "10.0.0.54:53" }

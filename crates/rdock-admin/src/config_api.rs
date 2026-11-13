@@ -35,7 +35,7 @@ pub(crate) fn work_limiter() -> rdock_limits::RateLimiter {
 }
 
 /// Takes one unit of the configuration-work budget; when it is spent, how long to wait.
-fn over_budget(state: &State) -> Option<Duration> {
+pub(crate) fn over_budget(state: &State) -> Option<Duration> {
     match state.config_work.check(&(), std::time::Instant::now()) {
         rdock_limits::Decision::Allow => None,
         rdock_limits::Decision::Deny { retry_after } => Some(retry_after),
@@ -181,7 +181,7 @@ pub(crate) fn masked(mut value: Value, root: &[&str]) -> Value {
     value
 }
 
-/// Which provider owns each route, service, middleware, TCP route and TCP service
+/// Which provider owns each route, service, middleware, TCP and UDP route and service
 /// (`name@provider`, else `file`).
 pub(crate) fn owners(config: &Value) -> Value {
     let mut out = Map::new();
@@ -191,6 +191,8 @@ pub(crate) fn owners(config: &Value) -> Value {
         "middlewares",
         "tcp_routes",
         "tcp_services",
+        "udp_routes",
+        "udp_services",
     ] {
         let names = config[section].as_object().map(|m| {
             m.keys()
@@ -240,7 +242,7 @@ fn merge_patch(target: &mut Value, patch: &Value) {
     }
 }
 
-fn with_etag(mut response: Response, etag: &str) -> Response {
+pub(crate) fn with_etag(mut response: Response, etag: &str) -> Response {
     if let Ok(value) = HeaderValue::from_str(etag) {
         response.headers_mut().insert(header::ETAG, value);
     }
@@ -286,6 +288,27 @@ pub(crate) async fn write(
     if_match: String,
     action: &'static str,
 ) -> Response {
+    write_as(
+        state,
+        caller,
+        candidate,
+        if_match,
+        (action, None),
+        |report, etag| with_etag(axum::Json(report).into_response(), etag),
+    )
+    .await
+}
+
+/// [`write`] with the audited resource and the answer to an applied write chosen by the
+/// caller (the reload report and the new `ETag` are passed to `applied`).
+pub(crate) async fn write_as(
+    state: &State,
+    caller: &Caller,
+    candidate: Value,
+    if_match: String,
+    (action, resource): (&'static str, Option<String>),
+    applied: impl FnOnce(Value, &str) -> Response,
+) -> Response {
     if let Some(wait) = over_budget(state) {
         return crate::auth::too_many(wait);
     }
@@ -309,14 +332,16 @@ pub(crate) async fn write(
         ApiWrite::Applied { report, etag } => {
             state.audit.record(Event {
                 config: Some((before, hash_of(&etag))),
+                resource,
                 ..caller.event(action)
             });
-            with_etag(axum::Json(report).into_response(), &etag)
+            with_etag(applied(report, &etag), &etag)
         }
         ApiWrite::Rejected { report } => {
             state.audit.record(Event {
                 outcome: Outcome::Failed,
                 reason: Some("the configuration was rejected".into()),
+                resource,
                 ..caller.event(action)
             });
             (StatusCode::UNPROCESSABLE_ENTITY, axum::Json(report)).into_response()

@@ -25,7 +25,7 @@ This document replaces the original research notes (kept verbatim in [`research/
 
 From the Pingora 0.9.0 sources, compile and runtime probes ([API notes](research/v0.1-pingora-0.9-api.md), [crates](research/v0.1-crates.md), [security](research/v0.1-security.md), [Traefik semantics](research/v0.1-traefik-semantics.md)):
 
-- **tokio ≥ 1.54 breaks Pingora 0.9.0**: every accepted connection panics (zero-capacity `BufStream`, tokio#8494). The workspace caps tokio at `<1.54` (1.53.3 has no open advisory) and Dependabot ignores newer versions.
+- **tokio ≥ 1.54 breaks Pingora 0.9.0**: every accepted connection panics (zero-capacity `BufStream`, tokio#8494). The workspace capped tokio at `<1.54` until Pingora 0.9.1 (2026-11-03, pingora#1059) fixed it; since v0.8 the workspace is on Pingora 0.9.1 and tokio 1.54.1 ([v0.8 research §4.10](research/v0.8-cache-extensibility.md)).
 - **CMake and a C compiler are required** (zlib-ng via `flate2`, ring, zstd).
 - `HttpPeer::new` resolves names synchronously and panics on failure; the upstream pool key ignores the CA, so different trust settings need different `group_key`s; upstream defaults are HTTP/1.1, one h2 stream per connection and no timeouts.
 - Returning a retryable error from `upstream_response_filter` retries on status codes without a fork (ADR-0015).

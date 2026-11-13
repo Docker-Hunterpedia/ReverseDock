@@ -42,6 +42,10 @@ services:
             backends: &rdock_balancer::Registry::default(),
             sticky_key: b"test",
             live: &rdock_observability::live::Live::default(),
+            caches: None,
+            plugins: &rdock_plugin_api::Registry::new(),
+            metrics: None,
+            quotas: None,
         },
     );
     let runtime = compiled.runtime.expect("compiles");

@@ -2,7 +2,7 @@
 title: listeners
 description: "Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS) are used."
 sidebar:
-  order: 6
+  order: 8
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -32,17 +32,17 @@ Protocol. Inferred when omitted: `https` if `tls` is set, otherwise `http`.
 - `http`: Plain HTTP/1.1 and h2c.
 - `https`: HTTP over TLS (HTTP/1.1 and HTTP/2).
 - `tcp`: Raw TCP, optionally with TLS termination or SNI passthrough.
-- `udp`: UDP datagrams.
-
-:::note[Planned for v0.8]
-UDP listeners (`udp`): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.8.
-:::
+- `udp`: UDP datagrams, relayed per client address (a session) to a UDP service.
 
 ## `listeners.<name>.proxy_protocol`
 
 **Type:** object
 
 Accept the PROXY protocol (v1 or v2) from these sources only.
+
+:::note[Planned for a later version]
+PROXY protocol on UDP listeners: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ### `listeners.<name>.proxy_protocol.optional`
 
@@ -55,6 +55,24 @@ Also accept connections from `trusted` sources that send no header. Off by defau
 **Type:** list of [`IpNetwork`](/docs/reference/configuration/#ipnetwork) · **Required**
 
 Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are rejected when they send one.
+
+## `listeners.<name>.sessions`
+
+**Type:** object
+
+`udp` listeners: how many sessions (client address and port, each with its own upstream socket) may exist at once. Capped by default even when omitted.
+
+### `listeners.<name>.sessions.max`
+
+**Type:** [`SessionLimit`](/docs/reference/configuration/#sessionlimit) · **Default:** `4096`
+
+Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluster at 1,024 by default (`max_connections` circuit breaker, checked 2026-11-11 in docs/research/v0.8-cache-extensibility.md §5.1); a listener here stands for a cluster and may serve several clients' DNS bursts, and 4,096 sockets stay far below the container default of 1,048,576 open files. `unlimited` removes the cap.
+
+### `listeners.<name>.sessions.max_per_client`
+
+**Type:** [`SessionLimit`](/docs/reference/configuration/#sessionlimit) · **Default:** `64`
+
+Sessions per client IP address (any source port). Default 64, so one source (or one forged address) can take at most 1/64 of the listener's default budget; a resolver that forwards many parallel queries from one address may need more. `unlimited` removes the cap.
 
 ## `listeners.<name>.starttls`
 

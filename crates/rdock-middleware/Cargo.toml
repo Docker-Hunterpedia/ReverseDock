@@ -13,6 +13,7 @@ publish.workspace = true
 [dependencies]
 arc-swap.workspace = true
 rdock-config.workspace = true
+rdock-credentials.workspace = true
 ring.workspace = true
 serde.workspace = true
 serde_json.workspace = true
@@ -25,17 +26,30 @@ base64.workspace = true
 bcrypt.workspace = true
 bytes.workspace = true
 flate2.workspace = true
+# `catch_unwind` on plugin futures (panic isolation, ADR-0030) needs the `std` feature.
+futures-util = { workspace = true, features = ["std"] }
 http.workspace = true
 http-range-header.workspace = true
 httpdate.workspace = true
+# Request validation (F-GW-03): no default features, so no HTTP or file reference resolver.
+jsonschema.workspace = true
 md-5.workspace = true
 mime_guess.workspace = true
 percent-encoding.workspace = true
 pingora.workspace = true
 rdock-limits.workspace = true
 rdock-model.workspace = true
+rdock-observability.workspace = true
+rdock-plugin-api.workspace = true
 rdock-rules.workspace = true
+# WASM plugins (ADR-0030): the signature checks always, the wasmtime host with `wasm`.
+rdock-wasm.workspace = true
 regex.workspace = true
+# CA bundles and client certificates for subrequests (agents) and services, checked before
+# Pingora sees them.
+rustls.workspace = true
+rustls-pki-types.workspace = true
+x509-parser.workspace = true
 sha1.workspace = true
 subtle.workspace = true
 thiserror.workspace = true
@@ -43,7 +57,12 @@ tokio.workspace = true
 tracing.workspace = true
 url.workspace = true
 
+[features]
+# Sandboxed WASM plugins on wasmtime (experimental, off by default).
+wasm = ["rdock-wasm/wasm"]
+
 [dev-dependencies]
+rdock-wasm = { workspace = true, features = ["testing"] }
 tempfile.workspace = true
 
 [lints]

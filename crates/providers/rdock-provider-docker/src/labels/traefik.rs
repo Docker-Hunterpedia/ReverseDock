@@ -24,8 +24,8 @@ pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: 
         split(rest).and_then(|(name, field)| middleware(draft, name, field, value))
     } else if let Some(rest) = key.strip_prefix("traefik.tcp.") {
         super::traefik_tcp::label(scope, draft, rest, value)
-    } else if key.starts_with("traefik.udp.") {
-        Err("UDP routing is not supported in this version (planned for v0.8)".to_owned())
+    } else if let Some(rest) = key.strip_prefix("traefik.udp.") {
+        super::traefik_udp::label(scope, draft, rest, value)
     } else {
         Err(unsupported())
     };

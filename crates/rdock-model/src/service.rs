@@ -1,4 +1,4 @@
-//! HTTP and TCP services: backend pools, balancing, health, retries and timeouts.
+//! HTTP, TCP and UDP services: backend pools, balancing, health, retries and timeouts.
 
 use std::path::PathBuf;
 
@@ -475,4 +475,149 @@ pub enum ProxyProtocolVersion {
     V1,
     /// Binary format.
     V2,
+}
+
+/// A UDP service: backends that receive the datagrams of UDP routes. Each session (one client
+/// address and port) gets its own connected socket to one backend, chosen when the session
+/// starts.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+pub struct UdpService {
+    /// Backend servers (`host:port`; Unix sockets are not supported). `weight` sets each
+    /// one's share of new sessions; `backup` ones get sessions only when no other is up.
+    pub backends: Vec<Backend>,
+    /// How a new session's backend is chosen.
+    #[serde(default)]
+    pub load_balancer: UdpLoadBalancer,
+    /// Session timeouts.
+    #[serde(default)]
+    pub timeouts: UdpTimeouts,
+    /// End a session after this many datagrams from the backend (NGINX `proxy_responses`).
+    /// `1` suits request-and-answer protocols such as DNS: the socket is released as soon as
+    /// the answer is relayed. Omitted, a session ends only when idle.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub responses: Option<u32>,
+    /// Detach a session from its client address after this many datagrams from the client
+    /// (NGINX `proxy_requests`): the next datagram opens a new session, possibly to another
+    /// backend, while the detached one still relays its replies until `responses` or `idle`
+    /// ends it. `1` balances every datagram on its own.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub requests: Option<u32>,
+    /// Backend health: passive ejection on ICMP "port unreachable", optional TCP probes.
+    #[serde(default)]
+    pub health: UdpHealth,
+}
+
+/// Timeouts of a UDP service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UdpTimeouts {
+    /// A session with no datagram in either direction for this long is closed and its socket
+    /// released. Default 60 s, Envoy's `udp_proxy` default; Traefik uses 3 s and NGINX
+    /// 10 minutes (sources in docs/research/v0.8-cache-extensibility.md §5.1, checked
+    /// 2026-11-11).
+    pub idle: Duration,
+}
+
+impl Default for UdpTimeouts {
+    fn default() -> Self {
+        Self {
+            idle: Duration::from_secs(60),
+        }
+    }
+}
+
+/// Backend selection for new UDP sessions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UdpLoadBalancer {
+    /// Selection policy.
+    pub policy: UdpLbPolicy,
+}
+
+/// How a UDP session's backend is chosen.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum UdpLbPolicy {
+    /// Weighted round-robin.
+    #[default]
+    RoundRobin,
+    /// Weighted random.
+    Random,
+    /// Fewest open sessions relative to the weight.
+    LeastSessions,
+    /// Consistent hash of the client IP: every session of a client goes to the same backend
+    /// while it is up.
+    IpHash,
+}
+
+/// Health of the backends of a UDP service.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UdpHealth {
+    /// Ejection after ICMP "port unreachable" answers (seen as refused sends or receives on a
+    /// session's connected socket). On by default.
+    pub passive: UdpPassiveHealth,
+    /// Periodic TCP connection probes, for backends that also listen on TCP (a DNS server
+    /// does on port 53). Off by default: a generic UDP probe cannot tell a healthy server
+    /// from one that drops datagrams.
+    pub tcp_check: Option<UdpTcpCheck>,
+    /// What happens when no backend is healthy.
+    pub when_all_down: WhenAllDown,
+}
+
+/// Passive health of a UDP service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UdpPassiveHealth {
+    /// Count refusals and eject backends. `false` only ends the affected session.
+    pub enabled: bool,
+    /// Refusals within `window` that eject a backend.
+    pub failures: u32,
+    /// Sliding window for counting refusals.
+    pub window: Duration,
+    /// How long an ejected backend gets no new sessions before one session tries it again;
+    /// doubled for each ejection in a row, up to 5 minutes.
+    pub ejection: Duration,
+    /// Largest share of the pool ejected at once, in percent.
+    pub max_ejection_percent: u32,
+}
+
+impl Default for UdpPassiveHealth {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            failures: 3,
+            window: Duration::from_secs(30),
+            ejection: Duration::from_secs(30),
+            max_ejection_percent: 50,
+        }
+    }
+}
+
+/// TCP probes of the backends of a UDP service.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct UdpTcpCheck {
+    /// TCP port to connect to; the backend's port when omitted.
+    pub port: Option<u16>,
+    /// Time between probes.
+    pub interval: Duration,
+    /// Probe timeout.
+    pub timeout: Duration,
+    /// Consecutive successes before a backend is healthy.
+    pub healthy: u32,
+    /// Consecutive failures before a backend is unhealthy.
+    pub unhealthy: u32,
+}
+
+impl Default for UdpTcpCheck {
+    fn default() -> Self {
+        Self {
+            port: None,
+            interval: Duration::from_secs(10),
+            timeout: Duration::from_secs(2),
+            healthy: 2,
+            unhealthy: 3,
+        }
+    }
 }

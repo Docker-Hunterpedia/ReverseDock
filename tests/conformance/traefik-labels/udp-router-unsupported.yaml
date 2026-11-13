@@ -1,0 +1,24 @@
+description: "Traefik UDP routers have entry points and a service only; other `traefik.udp.*` labels are reported, and a router without entrypoints is ignored."
+containers:
+  - name: "wg"
+    labels:
+      traefik.enable: "true"
+      traefik.udp.routers.vpn.rule: "HostSNI(`*`)"
+      traefik.udp.routers.vpn.priority: "5"
+      traefik.udp.services.vpn.loadbalancer.server.port: "51820"
+      traefik.udp.services.vpn.loadbalancer.servers.weight: "2"
+      traefik.udp.middlewares.allow.ipallowlist.sourcerange: "10.0.0.0/8"
+    networks:
+      web: "172.18.0.6"
+expect:
+  udp_services:
+    vpn:
+      backends:
+        - address: "172.18.0.6:51820"
+          weight: 1
+          backup: false
+  diagnostics:
+    - "traefik.udp.middlewares.allow.ipallowlist.sourcerange\"]: not in the supported Traefik label subset"
+    - "traefik.udp.routers.vpn.priority\"]: not in the supported Traefik label subset"
+    - "traefik.udp.routers.vpn.rule\"]: not in the supported Traefik label subset"
+    - "traefik.udp.services.vpn.loadbalancer.servers.weight\"]: not in the supported Traefik label subset"

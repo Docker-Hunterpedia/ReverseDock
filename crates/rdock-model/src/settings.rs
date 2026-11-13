@@ -316,6 +316,9 @@ pub struct Observability {
     /// Where certificate alerts (renewal failures, near expiry) are sent besides the log,
     /// the metrics and `rdock status`.
     pub alerts: Alerts,
+    /// Usage events per request with a consumer, for analytics and showback (F-GW-05).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metering: Option<crate::gateway::Metering>,
 }
 
 /// Alert delivery.

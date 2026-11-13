@@ -1,0 +1,28 @@
+description: "A Traefik UDP router relays the entry point's datagrams to the container's UDP port; it needs entrypoints and a port label."
+settings:
+  entrypoints: { dns: "dns-udp" }
+containers:
+  - name: "coredns"
+    labels:
+      traefik.enable: "true"
+      traefik.udp.routers.dns.entrypoints: "dns"
+      traefik.udp.routers.dns.service: "dns"
+      traefik.udp.services.dns.loadbalancer.server.port: "53"
+    networks:
+      web: "172.18.0.5"
+    ports:
+      - 8080
+expect:
+  udp_routes:
+    dns:
+      listeners: ["dns-udp"]
+      service: "dns"
+      priority: 0
+      middlewares: []
+      enabled: true
+  udp_services:
+    dns:
+      backends:
+        - address: "172.18.0.5:53"
+          weight: 1
+          backup: false

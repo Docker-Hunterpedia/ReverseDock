@@ -1,7 +1,7 @@
 [workspace]
 resolver = "3"
 # Fuzz targets live in their own workspace (nightly, cargo-fuzz, libFuzzer's licence).
-exclude = ["tests/fuzz"]
+exclude = ["tests/fuzz", "examples/plugins/wasm-header"]
 members = [
   "crates/rdock",
   "crates/rdock-model",
@@ -11,11 +11,15 @@ members = [
   "crates/rdock-tls",
   "crates/rdock-acme",
   "crates/rdock-balancer",
+  "crates/rdock-cache",
   "crates/rdock-middleware",
+  "crates/rdock-plugin-api",
+  "crates/rdock-wasm",
   "crates/rdock-limits",
   "crates/rdock-observability",
   "crates/rdock-admin",
   "crates/rdock-cloudflare",
+  "crates/rdock-credentials",
   "crates/rdock-dns-providers",
   "crates/rdock-migrate",
   "crates/rdock-testkit",
@@ -24,6 +28,11 @@ members = [
   "crates/providers/rdock-provider-swarm",
   "crates/providers/rdock-provider-kubernetes",
   "crates/providers/rdock-provider-api",
+  # Native plugin SDK examples and the template (ADR-0030); built and tested in CI.
+  "examples/plugins/header-rewrite",
+  "examples/plugins/ip-blocklist",
+  "examples/plugins/custom-rdock",
+  "examples/plugins/template",
 ]
 
 [workspace.package]
@@ -40,15 +49,19 @@ publish = false
 # Internal crates
 rdock-admin = { path = "crates/rdock-admin" }
 rdock-balancer = { path = "crates/rdock-balancer" }
+rdock-cache = { path = "crates/rdock-cache" }
 rdock-cloudflare = { path = "crates/rdock-cloudflare" }
 rdock-acme = { path = "crates/rdock-acme" }
 rdock-config = { path = "crates/rdock-config" }
+rdock-credentials = { path = "crates/rdock-credentials" }
 rdock-dns-providers = { path = "crates/rdock-dns-providers" }
 rdock-limits = { path = "crates/rdock-limits" }
 rdock-middleware = { path = "crates/rdock-middleware" }
 rdock-migrate = { path = "crates/rdock-migrate" }
 rdock-model = { path = "crates/rdock-model" }
 rdock-observability = { path = "crates/rdock-observability" }
+rdock-plugin-api = { path = "crates/rdock-plugin-api" }
+rdock-wasm = { path = "crates/rdock-wasm" }
 rdock-provider-docker = { path = "crates/providers/rdock-provider-docker" }
 rdock-provider-file = { path = "crates/providers/rdock-provider-file" }
 rdock-provider-kubernetes = { path = "crates/providers/rdock-provider-kubernetes" }
@@ -67,6 +80,9 @@ similar = "3.2.1"
 # Alert e-mail (ADR-0024): no default features, which would pull native-tls (OpenSSL).
 lettre = { version = "0.11.23", default-features = false, features = ["smtp-transport", "pool", "hostname", "builder", "tokio1", "tokio1-rustls", "ring", "rustls-platform-verifier", "tracing"] }
 json-patch = { version = "4.2.0", default-features = false }
+# JSON Schema 2020-12 for `validate` (F-GW-03, ADR-0030) and schema tests. No default features:
+# no HTTP or file resolver (no reqwest, rustls or tokio), so a schema can never fetch anything.
+jsonschema = { version = "0.60.1", default-features = false }
 # The checksum in API tokens (ADR-0024); already in the tree through flate2.
 crc32fast = "1.5.0"
 regex = "1.13.1"
@@ -78,11 +94,14 @@ serde_path_to_error = "0.1.20"
 thiserror = "2.0.21"
 url = "2.5.8"
 
-# Data plane (Pingora 0.9.0 and the crates it already brings in, at the same versions)
-pingora = { version = "0.9.0", default-features = false, features = ["proxy", "rustls"] }
-# Pingora 0.9.0 panics on every accepted connection with tokio >= 1.54 (zero-capacity BufStream,
-# tokio#8494); 1.53.3 has no open advisory. Keep this cap until Pingora ships a fix.
-tokio = { version = ">=1.53.3, <1.54", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+# Data plane (Pingora 0.9.1, released 2026-11-03, and the crates it already brings in, at the same
+# versions). 0.9.1 replaces the zero-capacity `BufStream` that panicked on every accepted connection
+# with tokio >= 1.54 (tokio#8494, pingora#1059), so the `<1.54` cap is gone (checked 2026-11-11 with
+# the whole suite and `e2e_proxy::tokio_1_54_regression_*`).
+# `cache` only re-exports pingora-cache, which pingora-proxy already builds (ADR-0030, F-WEB-03).
+pingora = { version = "0.9.1", default-features = false, features = ["proxy", "rustls", "cache"] }
+# tokio 1.54.1 (1.54.0 is yanked) declares rust-version 1.85, within our MSRV.
+tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 arc-swap = "1.9.3"
 async-trait = "0.1.92"
 bytes = "1.12.1"
@@ -164,7 +183,6 @@ hyper = { version = "1.12.0", features = ["client", "http1", "http2", "server"] 
 hyper-util = { version = "0.1.21", features = ["client", "client-legacy", "http1", "http2", "server-auto", "service", "tokio"] }
 # HTTPS client for webhooks and DNS APIs, the same build instant-acme uses (ring, OS roots).
 hyper-rustls = { version = "0.27.10", default-features = false, features = ["http1", "http2", "native-tokio", "ring", "rustls-platform-verifier", "tls12"] }
-jsonschema = { version = "0.60.1", default-features = false }
 predicates = "3.1.4"
 proptest = "1.12.0"
 # DNS-01 propagation checks (ADR-0020); no DNSSEC or encrypted transports needed.

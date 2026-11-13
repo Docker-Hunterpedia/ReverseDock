@@ -67,6 +67,11 @@ pub struct Inventory {
     /// Gateway API kinds whose CRD is not installed (e.g. `TLSRoute`); they are skipped, not
     /// fatal.
     pub missing_kinds: BTreeSet<String>,
+    /// Internal listeners (fragment names, without `@kubernetes`) that this replica's data
+    /// plane left out because their port could not be bound; it retries them. Not a cluster
+    /// object: the runtime fills it in before translating. Their Gateway listeners report
+    /// `Programmed=False/Pending` meanwhile.
+    pub unbound_listeners: BTreeSet<String>,
 }
 
 impl Inventory {
@@ -129,9 +134,12 @@ pub struct GatewayService {
     pub namespace: String,
     /// Name of the Service ([`crate::translate::gateway_service_name`]).
     pub name: String,
-    /// Listener port (the Service's `port`) → internal port (its `targetPort`), which every
-    /// replica opens as a listener.
+    /// TCP listener port (the Service's `port`) → internal port (its `targetPort`), which
+    /// every replica opens as a listener. Every Gateway protocol but `UDP` is served over TCP.
     pub ports: BTreeMap<u16, u16>,
+    /// UDP listener port → internal port. A TCP and a UDP listener may share a port number;
+    /// each gets its own internal port.
+    pub udp_ports: BTreeMap<u16, u16>,
     /// The Service's addresses: load-balancer ingress (IPs and host names), or its cluster
     /// IP for `ClusterIP`; they become the Gateway's `status.addresses`.
     pub addresses: Vec<GatewayStatusAddress>,

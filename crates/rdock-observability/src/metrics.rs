@@ -42,6 +42,20 @@ pub struct Metrics {
     /// Connections a `tcp` listener closed without relaying them, by listener and reason
     /// (`no_route`, `bad_client_hello`, `denied`, `in_flight`, `no_backend`, `connect_failed`).
     pub tcp_rejected: IntCounterVec,
+    /// Open UDP sessions by listener and route.
+    pub udp_sessions: IntGaugeVec,
+    /// Datagrams relayed by UDP routes, by route and direction (`in` from the client, `out`
+    /// to it).
+    pub udp_datagrams: IntCounterVec,
+    /// Bytes relayed by UDP routes, by route and direction.
+    pub udp_bytes: IntCounterVec,
+    /// Datagrams a `udp` listener dropped, by listener and reason (`no_route`, `denied`,
+    /// `session_limit`, `client_limit`, `no_backend`, `socket_error`, `queue_full`,
+    /// `oversize`, `backend_unreachable`, `closing`).
+    pub udp_dropped: IntCounterVec,
+    /// UDP sessions that ended, by route and reason (`idle`, `responses`,
+    /// `backend_unreachable`, `error`, `closed`).
+    pub udp_session_ends: IntCounterVec,
     /// Generation of the configuration in use.
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
@@ -67,7 +81,68 @@ pub struct Metrics {
     /// Mirrored copies by target service and outcome (`sent`, `failed`, `dropped`,
     /// `too_large`, `no_backend`).
     pub mirrors: IntCounterVec,
+    /// Panics caught in native plugin hooks, by plugin name (ADR-0030).
+    pub plugin_panics: IntCounterVec,
+    /// Failed calls into WASM plugins by middleware and reason (`fuel`, `timeout`, `memory`,
+    /// `trap`, `invalid`) (ADR-0030).
+    pub wasm_failures: IntCounterVec,
+    /// Agent calls by middleware and result (`allow`, `deny`, `error`, `timeout`,
+    /// `breaker_open`, `skipped`, `oversize`).
+    pub agent_requests: IntCounterVec,
+    /// Duration of agent calls by middleware.
+    pub agent_duration: HistogramVec,
+    /// Whether an agent's circuit breaker is open (1) or closed (0), by middleware.
+    pub agent_breaker_open: IntGaugeVec,
+    /// Headers an agent asked to set that were not applied, by middleware and reason
+    /// (`not_allowed`, `too_late`, `invalid`).
+    pub agent_ignored_headers: IntCounterVec,
+    /// Requests on caching routes by store, route and outcome (`hit`, `stale`,
+    /// `revalidated`, `expired`, `miss`, `bypass`).
+    pub cache_requests: IntCounterVec,
+    /// Objects in each cache store.
+    pub cache_objects: IntGaugeVec,
+    /// Bytes in each cache store.
+    pub cache_bytes: IntGaugeVec,
+    /// Cache objects evicted by store and reason (`size`, `count`).
+    pub cache_evictions: IntCounterVec,
+    /// Requests that waited for another request to fill the cache, by store.
+    pub cache_lock_waits: IntCounterVec,
+    /// Disk cache objects dropped at start by store and reason (`corrupt`, `partial`).
+    pub cache_dropped: IntCounterVec,
+    /// Requests with a consumer, by consumer, route and status class (F-GW-01). At most
+    /// `MAX_CONSUMER_LABELS` consumers get their own series; the rest share `_other`.
+    pub consumer_requests: IntCounterVec,
+    consumers_seen: std::sync::Arc<std::sync::Mutex<std::collections::HashSet<String>>>,
+    /// Metering events delivered or given up, by sink and result (`sent`, `failed`).
+    pub metering_events: IntCounterVec,
+    /// Metering events dropped by sink and reason (`queue_full`, `undeliverable`).
+    pub metering_dropped: IntCounterVec,
+    /// Requests checked by `validate`, by middleware and result (`valid`, `invalid`,
+    /// `reported`, `unknown_operation`, `unsupported_media_type`).
+    pub validation_requests: IntCounterVec,
+    /// Bodies `transform` left unchanged, by middleware and reason (`not_json`, `encoded`,
+    /// `too_large`, `status`, `invalid_json`, `patch_failed`).
+    pub transform_skipped: IntCounterVec,
+    /// Failed reads of `${vault:…}` references after the first (the last value stays in use).
+    pub vault_refresh_failures: prometheus::IntCounter,
+    /// OIDC logins by middleware and result (`success`, `denied`, `failed`,
+    /// `provider_error`, `unavailable`).
+    pub oidc_logins: IntCounterVec,
+    /// `rdock_quota_overflows_total{middleware,class}`: requests counted on a shared counter
+    /// because their class of quota keys was full.
+    pub quota_overflows: IntCounterVec,
+    /// OIDC session refreshes by middleware and result (`success`, `failed`).
+    pub oidc_refreshes: IntCounterVec,
+    /// Failed requests to OIDC providers by middleware and operation (`discovery`, `jwks`,
+    /// `token`, `refresh`).
+    pub oidc_provider_errors: IntCounterVec,
 }
+
+/// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
+/// are counted under `OTHER_CONSUMERS`, so a large consumer base cannot blow up the metrics.
+pub const MAX_CONSUMER_LABELS: usize = 1000;
+/// The `consumer` label of consumers past [`MAX_CONSUMER_LABELS`].
+pub const OTHER_CONSUMERS: &str = "_other";
 
 /// Creates `metric` and registers it in `registry`.
 fn registered<M: prometheus::core::Collector + Clone + 'static>(
@@ -170,6 +245,36 @@ impl Metrics {
             "TCP connections closed without being relayed.",
             &["listener", "reason"],
         )?;
+        let udp_sessions = gauges(
+            &registry,
+            "rdock_udp_sessions",
+            "Open sessions of UDP routes.",
+            &["listener", "route"],
+        )?;
+        let udp_datagrams = counters(
+            &registry,
+            "rdock_udp_datagrams_total",
+            "Datagrams relayed by UDP routes (`in` from the client, `out` to the client).",
+            &["route", "direction"],
+        )?;
+        let udp_bytes = counters(
+            &registry,
+            "rdock_udp_bytes_total",
+            "Bytes relayed by UDP routes (`in` from the client, `out` to the client).",
+            &["route", "direction"],
+        )?;
+        let udp_dropped = counters(
+            &registry,
+            "rdock_udp_dropped_total",
+            "Datagrams a UDP listener dropped instead of relaying them.",
+            &["listener", "reason"],
+        )?;
+        let udp_session_ends = counters(
+            &registry,
+            "rdock_udp_session_ends_total",
+            "UDP sessions that ended, by why.",
+            &["route", "reason"],
+        )?;
         let config_generation = registered(
             &registry,
             IntGauge::new(
@@ -256,6 +361,49 @@ impl Metrics {
             "Copies of requests sent to mirror services.",
             &["service", "outcome"],
         )?;
+        let plugin_panics = counters(
+            &registry,
+            "rdock_plugin_panics_total",
+            "Panics caught in native plugin hooks; each answered its request with 500.",
+            &["plugin"],
+        )?;
+        let wasm_failures = counters(
+            &registry,
+            "rdock_wasm_failures_total",
+            "Failed calls into WASM plugins; each followed the middleware's on_error.",
+            &["middleware", "reason"],
+        )?;
+        let agent_requests = counters(
+            &registry,
+            "rdock_agent_requests_total",
+            "Calls to out-of-process agents, by result.",
+            &["agent", "result"],
+        )?;
+        let agent_duration = registered(
+            &registry,
+            HistogramVec::new(
+                HistogramOpts::new(
+                    "rdock_agent_duration_seconds",
+                    "Time an agent took to answer.",
+                )
+                .buckets(vec![
+                    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+                ]),
+                &["agent"],
+            ),
+        )?;
+        let agent_breaker_open = gauges(
+            &registry,
+            "rdock_agent_breaker_open",
+            "Whether an agent's circuit breaker is open (1) or closed (0).",
+            &["agent"],
+        )?;
+        let agent_ignored_headers = counters(
+            &registry,
+            "rdock_agent_ignored_headers_total",
+            "Headers an agent asked to set on the request that were not applied, by reason.",
+            &["agent", "reason"],
+        )?;
         let build_info = gauges(
             &registry,
             "rdock_build_info",
@@ -263,7 +411,121 @@ impl Metrics {
             &["version", "commit"],
         )?;
         build_info.with_label_values(&[version, commit]).set(1);
+        let cache_requests = counters(
+            &registry,
+            "rdock_cache_requests_total",
+            "Requests on caching routes, by outcome.",
+            &["store", "route", "status"],
+        )?;
+        let cache_objects = gauges(
+            &registry,
+            "rdock_cache_objects",
+            "Objects in a cache store.",
+            &["store"],
+        )?;
+        let cache_bytes = gauges(
+            &registry,
+            "rdock_cache_bytes",
+            "Bytes in a cache store.",
+            &["store"],
+        )?;
+        let cache_evictions = counters(
+            &registry,
+            "rdock_cache_evictions_total",
+            "Cache objects evicted to stay within a store's limits.",
+            &["store", "reason"],
+        )?;
+        let cache_lock_waits = counters(
+            &registry,
+            "rdock_cache_lock_waits_total",
+            "Requests that waited for another request to fill the cache.",
+            &["store"],
+        )?;
+        let cache_dropped = counters(
+            &registry,
+            "rdock_cache_dropped_total",
+            "Disk cache objects dropped at start because they were damaged or incomplete.",
+            &["store", "reason"],
+        )?;
+        let consumer_requests = counters(
+            &registry,
+            "rdock_consumer_requests_total",
+            "Requests attributed to a consumer, by consumer, route and status class.",
+            &["consumer", "route", "status_class"],
+        )?;
+        let metering_events = counters(
+            &registry,
+            "rdock_metering_events_total",
+            "Usage metering events by sink and result (sent, failed).",
+            &["sink", "result"],
+        )?;
+        let metering_dropped = counters(
+            &registry,
+            "rdock_metering_dropped_total",
+            "Usage metering events dropped, by sink and reason (queue_full, undeliverable).",
+            &["sink", "reason"],
+        )?;
+        let validation_requests = counters(
+            &registry,
+            "rdock_validation_requests_total",
+            "Requests checked by validate middlewares, by result.",
+            &["middleware", "result"],
+        )?;
+        let transform_skipped = counters(
+            &registry,
+            "rdock_transform_skipped_total",
+            "Bodies a transform middleware left unchanged, by reason.",
+            &["middleware", "reason"],
+        )?;
+        let vault_refresh_failures = registered(
+            &registry,
+            prometheus::IntCounter::new(
+                "rdock_vault_refresh_failures_total",
+                "Failed refreshes of Vault references; the last values stay in use.",
+            ),
+        )?;
+        let quota_overflows = counters(
+            &registry,
+            "rdock_quota_overflows_total",
+            "Requests a quota counted on a shared counter because its keys of that class were full, by middleware and class.",
+            &["middleware", "class"],
+        )?;
+        let oidc_logins = counters(
+            &registry,
+            "rdock_oidc_logins_total",
+            "OIDC logins completed or refused, by middleware and result.",
+            &["middleware", "result"],
+        )?;
+        let oidc_refreshes = counters(
+            &registry,
+            "rdock_oidc_refreshes_total",
+            "OIDC session refreshes, by middleware and result.",
+            &["middleware", "result"],
+        )?;
+        let oidc_provider_errors = counters(
+            &registry,
+            "rdock_oidc_provider_errors_total",
+            "Failed requests to OIDC providers, by middleware and operation.",
+            &["middleware", "operation"],
+        )?;
         Ok(Self {
+            quota_overflows,
+            oidc_logins,
+            oidc_refreshes,
+            oidc_provider_errors,
+            validation_requests,
+            transform_skipped,
+            vault_refresh_failures,
+            consumer_requests,
+            consumers_seen: std::sync::Arc::default(),
+            metering_events,
+            metering_dropped,
+            cache_requests,
+            cache_objects,
+            cache_bytes,
+            cache_evictions,
+            cache_lock_waits,
+            cache_dropped,
             registry,
             feeds: crate::feed::Feeds::default(),
             alerts_sent,
@@ -277,6 +539,11 @@ impl Metrics {
             tcp_connections,
             tcp_bytes,
             tcp_rejected,
+            udp_sessions,
+            udp_datagrams,
+            udp_bytes,
+            udp_dropped,
+            udp_session_ends,
             config_generation,
             config_reloads,
             cert_expiry,
@@ -289,6 +556,12 @@ impl Metrics {
             backend_requests,
             upstream_duration,
             mirrors,
+            plugin_panics,
+            wasm_failures,
+            agent_requests,
+            agent_duration,
+            agent_breaker_open,
+            agent_ignored_headers,
         })
     }
 
@@ -312,6 +585,27 @@ impl Metrics {
         self.duration
             .with_label_values(&[listener, route])
             .observe(seconds);
+    }
+
+    /// Counts one finished request of `consumer` on `route`.
+    pub fn observe_consumer(&self, consumer: &str, route: &str, status: u16) {
+        let label = {
+            let mut seen = self
+                .consumers_seen
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner);
+            if seen.contains(consumer) {
+                consumer
+            } else if seen.len() < MAX_CONSUMER_LABELS {
+                seen.insert(consumer.to_owned());
+                consumer
+            } else {
+                OTHER_CONSUMERS
+            }
+        };
+        self.consumer_requests
+            .with_label_values(&[label, route, status_class(status)])
+            .inc();
     }
 
     /// The Prometheus text exposition of every metric.

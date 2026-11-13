@@ -28,6 +28,9 @@ Commands:
   users        Manage dashboard users
   tokens       Manage API tokens
   backends     Show backends and drain them
+  cache        Show HTTP cache stores and purge them (this instance only)
+  consumers    Manage consumers (API clients) and their quota counters
+  keys         Mint, revoke and hash consumers' API keys
   routes       Explain routing decisions
   schema       Print the JSON Schema of rdock.yaml
   version      Print version and build information
@@ -276,6 +279,62 @@ Commands:
   drain    Stop sending new requests to a backend; open ones finish
   undrain  Put a drained backend back in rotation
   help     Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock cache`
+
+```text
+Show HTTP cache stores and purge them (this instance only)
+
+Usage: rdock cache <COMMAND>
+
+Commands:
+  list   List the cache stores with their objects, bytes and counters
+  purge  Remove objects from a store of this instance: by URL, URL prefix, tag, or all
+  help   Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock consumers`
+
+```text
+Manage consumers (API clients) and their quota counters
+
+Usage: rdock consumers <COMMAND>
+
+Commands:
+  list         List consumers with their groups and keys (IDs, expiry, notes)
+  set          Create or change a consumer kept by the admin API
+  delete       Remove a consumer kept by the admin API, with the keys minted for it
+  quota        Show this instance's quota counters, of one consumer or all
+  reset-quota  Forget a consumer's quota counters on this instance
+  help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock keys`
+
+```text
+Mint, revoke and hash consumers' API keys
+
+Usage: rdock keys <COMMAND>
+
+Commands:
+  create    Mint an API key for a consumer and print it once
+  revoke    Revoke a key the admin API minted
+  hash      Print the `id` and `hash` of a key read from standard input, for `consumers.<name>.keys` or a keys file (`id:hash`). Works offline; the key is not stored
+  generate  Generate a key offline and print it with its `id` and `hash`, for configurations kept in files
+  help      Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

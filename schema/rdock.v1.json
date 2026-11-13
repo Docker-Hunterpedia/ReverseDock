@@ -64,6 +64,14 @@
         "trust_forwarded_on_loopback": false
       }
     },
+    "caches": {
+      "description": "HTTP cache stores, used by `cache` middlewares.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/CacheStore"
+      },
+      "default": {}
+    },
     "certificates": {
       "description": "Certificates you provide yourself.",
       "type": "object",
@@ -71,6 +79,13 @@
         "$ref": "#/$defs/Certificate"
       },
       "default": {}
+    },
+    "consumers": {
+      "description": "API clients and users that requests are attributed to, with their API keys (stored\nhashed). The `api` provider may add consumers and keys (`rdock consumers`).",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Consumer"
+      }
     },
     "defaults": {
       "description": "Defaults applied to routes that do not set a value.",
@@ -155,6 +170,10 @@
       },
       "default": {}
     },
+    "secrets": {
+      "description": "External secret stores that secret fields can reference (`${vault:…}`).",
+      "$ref": "#/$defs/Secrets"
+    },
     "security": {
       "description": "Client IP trust and request limits.",
       "$ref": "#/$defs/Security",
@@ -192,6 +211,22 @@
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/TcpService"
+      },
+      "default": {}
+    },
+    "udp_routes": {
+      "description": "UDP routes: which `udp` listener's datagrams go to which UDP service.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/UdpRoute"
+      },
+      "default": {}
+    },
+    "udp_services": {
+      "description": "UDP backend pools.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/UdpService"
       },
       "default": {}
     },
@@ -716,6 +751,93 @@
       },
       "additionalProperties": false
     },
+    "AgentBreaker": {
+      "description": "An agent's circuit breaker: after `failures` failed calls in a row, the most recent within\n`window` of the first, the agent is not called for `open_for`; `on_error` applies at once\nmeanwhile. Then one call is tried: success closes the breaker, failure opens it again.",
+      "type": "object",
+      "properties": {
+        "failures": {
+          "description": "Failed calls in a row that open the breaker; `0` turns it off.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "open_for": {
+          "description": "How long the breaker stays open.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "window": {
+          "description": "The failures must fall within this time.",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "AgentOnError": {
+      "description": "What an agent failure does to the request.",
+      "oneOf": [
+        {
+          "description": "Refuse the request (fail closed).",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Let the request through unchecked (fail open); counted and logged.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
+    "AgentOversize": {
+      "description": "What a body longer than `max_body` does.",
+      "oneOf": [
+        {
+          "description": "Refuse the request with `413`.",
+          "type": "string",
+          "const": "reject"
+        },
+        {
+          "description": "Ask the agent without the body.",
+          "type": "string",
+          "const": "skip"
+        }
+      ]
+    },
+    "AgentProtocol": {
+      "description": "How a request is described to an agent.",
+      "oneOf": [
+        {
+          "description": "POST a JSON document describing the request; the agent answers a JSON verdict\n(`schema/agent.v1.json`).",
+          "type": "string",
+          "const": "rdock"
+        },
+        {
+          "description": "Replay the request to the agent (same method, path, query, allowed headers and body);\na 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image\nunderstands.",
+          "type": "string",
+          "const": "forward"
+        },
+        {
+          "description": "Envoy's gRPC external processing (planned for a later version).",
+          "type": "string",
+          "const": "ext_proc"
+        },
+        {
+          "description": "Envoy's gRPC external authorization (planned for a later version).",
+          "type": "string",
+          "const": "ext_authz"
+        },
+        {
+          "description": "HAProxy's stream processing offload protocol (planned for a later version).",
+          "type": "string",
+          "const": "spop"
+        }
+      ]
+    },
     "AlertChannel": {
       "description": "One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as\n`${file:…}` or `${env:…}` references.",
       "oneOf": [
@@ -1052,6 +1174,54 @@
         "^x-": {}
       }
     },
+    "Anonymous": {
+      "description": "What an authenticating middleware does with a request that carries no credential.",
+      "oneOf": [
+        {
+          "description": "Answer `401`.",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Continue without a consumer.",
+          "type": "string",
+          "const": "allow"
+        }
+      ]
+    },
+    "ApiKeyEntry": {
+      "description": "One API key of a consumer: `rdk_<id>_<secret><checksum>` is the key, and only `id` and the\nSHA-256 of the secret are stored.",
+      "type": "object",
+      "properties": {
+        "expires": {
+          "description": "When the key stops working: an RFC 3339 time, e.g. `2027-01-01T00:00:00Z`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "hash": {
+          "description": "SHA-256 of the key's secret (the 32 characters after the ID's `_`, without the\n6-character checksum), as 64 lower-case hex digits. `rdock keys hash` prints it.",
+          "type": "string"
+        },
+        "id": {
+          "description": "The key's public ID: the 12 characters after `rdk_`.",
+          "type": "string"
+        },
+        "note": {
+          "description": "What the key is for.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "hash"
+      ]
+    },
     "Argon2Cost": {
       "description": "Argon2id parameters. The default is the OWASP minimum, m=19456 KiB, t=2, p=1 (Password\nStorage Cheat Sheet, checked 2026-10-31).",
       "type": "object",
@@ -1080,6 +1250,22 @@
       },
       "additionalProperties": false
     },
+    "Audience": {
+      "description": "One value or a list of values.",
+      "anyOf": [
+        {
+          "description": "One value.",
+          "type": "string"
+        },
+        {
+          "description": "Several values.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      ]
+    },
     "AuditForward": {
       "description": "Where audit records are forwarded.",
       "type": "object",
@@ -1105,6 +1291,21 @@
       "additionalProperties": false,
       "required": [
         "syslog"
+      ]
+    },
+    "AuthorizationRule": {
+      "description": "What to do with responses to requests that carry `Authorization`.",
+      "oneOf": [
+        {
+          "description": "Store only `public`, `s-maxage` or `must-revalidate` responses (RFC 9111 §3.5).",
+          "type": "string",
+          "const": "refuse"
+        },
+        {
+          "description": "Store them like other responses.",
+          "type": "string",
+          "const": "store"
+        }
       ]
     },
     "AzureDnsProvider": {
@@ -1247,6 +1448,21 @@
         "srv://_http._tcp.api.example.com"
       ]
     },
+    "BodyTransform": {
+      "description": "Body changes of `transform`.",
+      "type": "object",
+      "properties": {
+        "patch": {
+          "description": "A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and\n`test` with JSON Pointers (RFC 6901), applied in order, all or nothing.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "$ref": "#/$defs/PatchOp"
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "ByteSize": {
       "description": "Size in bytes, optionally with a unit (KB = 1000, KiB = 1024).",
       "anyOf": [
@@ -1275,6 +1491,70 @@
         {
           "description": "Any RFC 8555 ACME directory.",
           "$ref": "#/$defs/HttpUrl"
+        }
+      ]
+    },
+    "CacheStore": {
+      "description": "A cache store: where cached responses live. Stores are created once per process; adding\none applies on reload, changing or removing one takes effect after a restart.",
+      "oneOf": [
+        {
+          "description": "Responses in memory, evicted least recently used first beyond `max_size`.",
+          "type": "object",
+          "properties": {
+            "max_size": {
+              "description": "Bytes kept, bodies and headers together.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "256MiB"
+            },
+            "type": {
+              "type": "string",
+              "const": "memory"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Responses on disk, one file per object, evicted least recently used first beyond\n`max_size` or `max_objects`. Objects survive restarts.",
+          "type": "object",
+          "properties": {
+            "max_objects": {
+              "description": "Objects kept on disk (one file each).",
+              "type": "integer",
+              "format": "uint64",
+              "default": 1000000,
+              "minimum": 0
+            },
+            "max_size": {
+              "description": "Bytes kept on disk (file sizes).",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1GiB"
+            },
+            "path": {
+              "description": "Directory of the store, absolute; `<data dir>/cache/<name>` when omitted. Created with\nmode 0700. Anyone who can write it can serve arbitrary content through the cache.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "disk"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
         }
       ]
     },
@@ -1436,6 +1716,34 @@
         }
       ]
     },
+    "Consumer": {
+      "description": "A consumer: an API client or user that requests are attributed to (`consumers.<name>`).\n\nAn authenticating middleware (`api_key`, `oidc`, `cloudflare_access`, `jwt` with\n`consumer_claim`) sets the request's consumer;\nrate limits and quotas can count per consumer, and the access log, metrics, metering and the\ncache key see its name.",
+      "type": "object",
+      "properties": {
+        "groups": {
+          "description": "Groups, in order of precedence: per-group limit overrides use the first listed group\nthat has one, and `api_key.groups` admits a consumer in any of them. In the admin\nAPI's document, an entry without `groups` only adds keys to a consumer of the file.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "keys": {
+          "description": "API keys, stored as their ID and the SHA-256 of their secret; never the key itself.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/ApiKeyEntry"
+          }
+        },
+        "keys_file": {
+          "description": "A file of `id:sha256[:expires]` lines (blank lines and `#` comments ignored), read on\nevery reload and watched like the configuration file.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "Defaults": {
       "description": "Defaults applied to routes.",
       "type": "object",
@@ -1447,6 +1755,10 @@
             "null"
           ],
           "default": null
+        },
+        "errors": {
+          "description": "How answers rdock produces itself (404 without a route, 401/403/429 from middlewares,\n502/503/504) are rendered, for routes that do not set `errors`.",
+          "$ref": "#/$defs/ErrorSettings"
         },
         "listeners": {
           "description": "Listeners used by routes that do not name any.",
@@ -1849,6 +2161,26 @@
         "tcp://socket-proxy:2375"
       ]
     },
+    "ErrorFormat": {
+      "description": "The format of rdock's own error answers.",
+      "oneOf": [
+        {
+          "description": "HTML, or the pre-v0.8 JSON object for clients that ask for JSON.",
+          "type": "string",
+          "const": "html"
+        },
+        {
+          "description": "RFC 9457 problem details unless the client asks for HTML only.",
+          "type": "string",
+          "const": "problem"
+        },
+        {
+          "description": "RFC 9457 problem details for clients that prefer JSON, HTML otherwise.",
+          "type": "string",
+          "const": "auto"
+        }
+      ]
+    },
     "ErrorRateRule": {
       "description": "A 5xx-share threshold.",
       "type": "object",
@@ -1877,6 +2209,21 @@
       "required": [
         "percent"
       ]
+    },
+    "ErrorSettings": {
+      "description": "How rdock renders the answers it produces itself (F-GW-04, ADR-0030). Pages of an `errors`\nmiddleware and a `maintenance` file take precedence where they apply.",
+      "type": "object",
+      "properties": {
+        "format": {
+          "description": "`html`: an HTML page, or a small JSON object for clients that ask for JSON and not\nHTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for\nevery client that accepts JSON, which includes `*/*` and a missing `Accept`; HTML only\nfor clients that ask for HTML and no JSON type (browsers). `auto`: problem details for\nclients that ask for JSON and not HTML, HTML otherwise.",
+          "$ref": "#/$defs/ErrorFormat",
+          "default": "html"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "ExternalAccountBinding": {
       "description": "External account binding credentials.",
@@ -2276,6 +2623,30 @@
         }
       ]
     },
+    "KubernetesAuth": {
+      "description": "Kubernetes login settings.",
+      "type": "object",
+      "properties": {
+        "mount": {
+          "description": "Where the Kubernetes auth method is mounted.",
+          "type": "string",
+          "default": "kubernetes"
+        },
+        "role": {
+          "description": "The Vault role to log in as.",
+          "type": "string"
+        },
+        "token_file": {
+          "description": "The service-account token, read at every login.",
+          "type": "string",
+          "default": "/var/run/secrets/kubernetes.io/serviceaccount/token"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "role"
+      ]
+    },
     "KubernetesGateway": {
       "description": "Gateway API settings of the Kubernetes provider.",
       "type": "object",
@@ -2562,6 +2933,21 @@
         "^x-": {}
       }
     },
+    "LimitHeaders": {
+      "description": "Rate-limit response headers.",
+      "oneOf": [
+        {
+          "description": "None (`Retry-After` is always sent with `429`).",
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "description": "`RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.",
+          "type": "string",
+          "const": "draft"
+        }
+      ]
+    },
     "Limits": {
       "description": "Request size limits. Requests over a limit are answered with 431, 414 or 413.",
       "type": "object",
@@ -2668,6 +3054,17 @@
           ],
           "default": null
         },
+        "sessions": {
+          "description": "`udp` listeners: how many sessions (client address and port, each with its own\nupstream socket) may exist at once. Capped by default even when omitted.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UdpSessions"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "starttls": {
           "description": "`tcp` listeners: answer a protocol's request to start TLS before reading the TLS\nClientHello. Off by default.",
           "anyOf": [
@@ -2730,7 +3127,7 @@
           "const": "tcp"
         },
         {
-          "description": "UDP datagrams.",
+          "description": "UDP datagrams, relayed per client address (a session) to a UDP service.",
           "type": "string",
           "const": "udp"
         }
@@ -2854,6 +3251,130 @@
           "description": "Conditions that must all hold; lists inside one condition are alternatives.",
           "$ref": "#/$defs/StructuredMatch"
         }
+      ]
+    },
+    "Metering": {
+      "description": "Usage metering (`observability.metering`, F-GW-05): one event per request that has a\nconsumer, sent in batches to a webhook (`CloudEvents` 1.0) and/or an OTLP logs endpoint.\n\nEvents wait in a bounded in-memory queue; when it is full the newest are dropped and\ncounted. Delivery is at least once (a retried batch carries the same event IDs). There is\nno disk spool: events still queued are lost on a crash. Per instance; not billing-grade.",
+      "type": "object",
+      "properties": {
+        "all_requests": {
+          "description": "Also meter requests without a consumer.",
+          "type": "boolean",
+          "default": false
+        },
+        "flush_interval": {
+          "description": "Longest an event waits before its batch is sent.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        },
+        "max_batch": {
+          "description": "Events per request to a sink, at most.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 500,
+          "minimum": 0
+        },
+        "otlp": {
+          "description": "OTLP/HTTP logs (JSON encoding).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeteringOtlp"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "queue": {
+          "description": "Events waiting per sink, at most; more are dropped and counted.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 10000,
+          "minimum": 0
+        },
+        "webhook": {
+          "description": "`CloudEvents` over HTTP.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/MeteringWebhook"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "MeteringOtlp": {
+      "description": "The OTLP logs sink.",
+      "type": "object",
+      "properties": {
+        "allow_private_targets": {
+          "description": "Allow a collector on a private, loopback or link-local address (the usual case).",
+          "type": "boolean",
+          "default": true
+        },
+        "endpoint": {
+          "description": "The collector's base URL (`/v1/logs` is added) or the full logs URL.",
+          "$ref": "#/$defs/HttpUrl"
+        },
+        "token": {
+          "description": "A bearer token as a `${file:…}` or `${env:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "endpoint"
+      ]
+    },
+    "MeteringWebhook": {
+      "description": "The `CloudEvents` webhook sink.",
+      "type": "object",
+      "properties": {
+        "allow_private_targets": {
+          "description": "Allow a receiver on a private, loopback or link-local address.",
+          "type": "boolean",
+          "default": false
+        },
+        "secret": {
+          "description": "A Standard Webhooks signing secret (`whsec_…`) as a `${file:…}` or `${env:…}`\nreference: requests carry `webhook-id`, `webhook-timestamp` and `webhook-signature`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "source": {
+          "description": "The events' `source`; `rdock/<host name>` when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "token": {
+          "description": "A bearer token as a `${file:…}` or `${env:…}` reference.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "The events' `type`.",
+          "type": "string",
+          "default": "dev.reversedock.request.v1"
+        },
+        "url": {
+          "description": "Where batches are posted (`application/cloudevents-batch+json`).",
+          "$ref": "#/$defs/HttpUrl"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
       ]
     },
     "Metrics": {
@@ -3306,10 +3827,22 @@
               "default": null,
               "minimum": 0
             },
+            "headers": {
+              "description": "`draft` adds `RateLimit-Policy` and `RateLimit` to responses\n(`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.",
+              "$ref": "#/$defs/LimitHeaders",
+              "default": "off"
+            },
             "key": {
               "description": "What to count by.",
               "$ref": "#/$defs/RateLimitKey",
               "default": "client_ip"
+            },
+            "overrides": {
+              "description": "Group → limit for consumers in that group, with `key: consumer`. The first of the\nconsumer's groups (in its `groups` order) that has an override wins.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/RateOverride"
+              }
             },
             "period": {
               "description": "Period of `average`.",
@@ -3660,10 +4193,24 @@
               },
               "default": {}
             },
+            "consumer_claim": {
+              "description": "A claim that becomes the request's consumer (for `rate_limit` and `quota` with\n`key: consumer`, the cache key and the access log), e.g. `sub` or `email`.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
             "forward_token": {
               "description": "Keep the token in the request to the backend.",
               "type": "boolean",
               "default": true
+            },
+            "groups_claim": {
+              "description": "The claim listing the consumer's groups (a string or an array of strings), with\n`consumer_claim`.",
+              "type": [
+                "string",
+                "null"
+              ]
             },
             "hmac_secret": {
               "description": "Shared secret for HS256/HS384/HS512 tokens, as a `${file:…}` or `${env:…}` reference.",
@@ -3702,6 +4249,11 @@
               "$ref": "#/$defs/Duration",
               "default": "1m"
             },
+            "map_to_consumers": {
+              "description": "With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding\nits groups and sharing its quota, rate-limit and cache identity with its API keys\n(other names stay keyed on the issuer). Off by default: a token's consumer is a\nseparate identity keyed on the token's issuer and the name. Turn it on only when the\nissuer controls the claim.",
+              "type": "boolean",
+              "default": false
+            },
             "token": {
               "description": "Where the token is read from; `Authorization: Bearer` when empty.",
               "$ref": "#/$defs/TokenSource",
@@ -3714,6 +4266,11 @@
             "type": {
               "type": "string",
               "const": "jwt"
+            },
+            "unverified_emails": {
+              "description": "With `consumer_claim: email`: accept an `email` claim that comes without\n`email_verified`. Off: the address names the consumer only with `email_verified:\ntrue`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an\nissuer that lets users set an address they do not own.",
+              "type": "boolean",
+              "default": false
             }
           },
           "additionalProperties": false,
@@ -3790,7 +4347,7 @@
               }
             },
             "directory_redirect": {
-              "description": "Redirect (`308`) a directory path without a trailing slash to the path with one when the\ndirectory has an index file.",
+              "description": "Redirect (`308`) a directory path without a trailing slash to the path with one when the\ndirectory has an index file, or is listed.",
               "type": "boolean",
               "default": true
             },
@@ -3826,7 +4383,7 @@
               }
             },
             "listing": {
-              "description": "Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).",
+              "description": "List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that\nprefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request\nwould be refused are not listed. At most 10,000 entries, sorted by name. A directory\nthat exists is listed instead of getting the `fallback`.",
               "type": "boolean",
               "default": false
             },
@@ -3889,6 +4446,897 @@
             "type",
             "root"
           ]
+        },
+        {
+          "description": "Hold the request body until it is complete (up to `max`) before any of it reaches the\nbackend. The backend connection and the request head are already sent, so this does\nnot shield backend workers from slow uploads; it refuses oversize bodies with `413`\nand lets body middlewares see the whole body.",
+          "type": "object",
+          "properties": {
+            "max": {
+              "description": "Largest body held, at most 64MiB; a longer one is refused with `413`. The route's\n`max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1MiB"
+            },
+            "timeout": {
+              "description": "Longest time from the first body byte to the last; a slower upload is refused with\n`408`. The service's `timeouts.read` also runs while the backend waits for the body.",
+              "$ref": "#/$defs/Duration",
+              "default": "30s"
+            },
+            "type": {
+              "type": "string",
+              "const": "hold_body"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Cache responses in a store named under `caches` (RFC 9111). Only what the origin's\nheaders allow is stored; see `docs/guides/caching`.",
+          "type": "object",
+          "properties": {
+            "authorization": {
+              "description": "Responses to requests that carry `Authorization` to the origin: `refuse` (default)\nstores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC\n9111 §3.5); `store` stores them anyway. The risk of `store` is serving one\ncredential's answer to another.",
+              "$ref": "#/$defs/AuthorizationRule",
+              "default": "refuse"
+            },
+            "background_refresh": {
+              "description": "Refresh stale responses in the background (`stale-while-revalidate`). Not supported\nin this version: `stale-while-revalidate` is treated as plain staleness.",
+              "type": "boolean",
+              "default": false
+            },
+            "bypass": {
+              "description": "Requests that skip the cache entirely.",
+              "type": "object",
+              "properties": {
+                "cookies": {
+                  "description": "Skip when the request has one of these cookies.",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "headers": {
+                  "description": "Skip when the request has one of these headers.",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "cookies": [],
+                "headers": []
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "cache_status": {
+              "description": "Add `Cache-Status` (RFC 9211) to responses.",
+              "type": "boolean",
+              "default": true
+            },
+            "default_ttl": {
+              "description": "Lifetime by status (`\"200\": 5m`) for responses whose origin gives none (no\n`max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or\n`no-cache`. Empty by default: the risk is caching personalised pages the origin did\nnot mark.",
+              "type": "object",
+              "additionalProperties": {
+                "$ref": "#/$defs/Duration"
+              },
+              "default": {}
+            },
+            "heuristic_freshness": {
+              "description": "Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at\nmost a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.",
+              "type": "boolean",
+              "default": false
+            },
+            "key": {
+              "description": "What, besides store, route, scheme, host, path and method, selects a stored response.",
+              "type": "object",
+              "properties": {
+                "consumer": {
+                  "description": "Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,\nelse the `jwt` issuer and subject, else the client certificate's subject.",
+                  "type": "boolean",
+                  "default": false
+                },
+                "headers": {
+                  "description": "Request headers whose values select a response (beyond the origin's `Vary`).",
+                  "type": "array",
+                  "default": [],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "query": {
+                  "description": "How the query string enters the key.",
+                  "$ref": "#/$defs/QueryKey",
+                  "default": "as_sent"
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "consumer": false,
+                "headers": [],
+                "query": "as_sent"
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "lock": {
+              "description": "Request coalescing: one origin fetch per key at a time.",
+              "type": "object",
+              "properties": {
+                "enabled": {
+                  "description": "While one request fetches a key, others wait for its response instead of asking the\norigin too. Off, every miss goes to the origin.",
+                  "type": "boolean",
+                  "default": true
+                },
+                "timeout": {
+                  "description": "Longest wait. After it the waiting request goes to the origin without storing, and\na fetch running that long no longer holds others back.",
+                  "$ref": "#/$defs/Duration",
+                  "default": "5s"
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "enabled": true,
+                "timeout": "5s"
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "max_object_size": {
+              "description": "Largest response body stored; larger ones pass through uncached.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "64MiB"
+            },
+            "remove_targeted": {
+              "description": "Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off\nby default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without\nit would fall back to the less specific `Cache-Control`.",
+              "type": "boolean",
+              "default": false
+            },
+            "request_directives": {
+              "description": "The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default,\nRFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches.\n`only-if-cached` is always honoured.",
+              "$ref": "#/$defs/RequestDirectives",
+              "default": "honour"
+            },
+            "set_cookie": {
+              "description": "Responses that set a cookie: `refuse` (default) never stores them; `strip` stores\nthem without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie.",
+              "$ref": "#/$defs/SetCookie",
+              "default": "refuse"
+            },
+            "shared_across_users": {
+              "description": "The route authenticates requests but its responses are the same for every user, so\none stored copy may be served to all of them. Required (or `key.consumer`) when the\nroute has an authenticating middleware; the risk is serving one user's page to\nanother.",
+              "type": "boolean",
+              "default": false
+            },
+            "stale_if_error": {
+              "description": "Longest time a stale response is served when the origin fails, if the origin allowed\nit with `stale-if-error` (RFC 5861). `0s` turns it off.",
+              "$ref": "#/$defs/Duration",
+              "default": "1d"
+            },
+            "statuses": {
+              "description": "Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300,\n301, 308, 404, 410. 206 and 304 are never stored as such.",
+              "type": [
+                "array",
+                "null"
+              ],
+              "default": null,
+              "items": {
+                "type": "integer",
+                "format": "uint16",
+                "maximum": 65535,
+                "minimum": 0
+              }
+            },
+            "store": {
+              "description": "The store, a name under `caches`.",
+              "type": "string"
+            },
+            "tags": {
+              "description": "Cache tags for purging groups of responses.",
+              "type": "object",
+              "properties": {
+                "headers": {
+                  "description": "Response headers that carry tags (comma or space separated).",
+                  "type": "array",
+                  "default": [
+                    "cache-tag",
+                    "surrogate-key"
+                  ],
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "keep": {
+                  "description": "Pass the tag headers on to clients; by default they are removed.",
+                  "type": "boolean",
+                  "default": false
+                }
+              },
+              "additionalProperties": false,
+              "default": {
+                "headers": [
+                  "cache-tag",
+                  "surrogate-key"
+                ],
+                "keep": false
+              },
+              "patternProperties": {
+                "^x-": {}
+              }
+            },
+            "targeted": {
+              "description": "Targeted cache-control fields honoured, in order (RFC 9213): the first one with a\nvalid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both\ndirections (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600`\nstores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the\norigin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of\nyour own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.",
+              "type": "array",
+              "default": [
+                "CDN-Cache-Control"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "cache"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "store"
+          ]
+        },
+        {
+          "description": "A native plugin compiled into this binary and registered under `name` (ADR-0030). The\nstock `rdock` binary registers none; see `docs/guides/plugins`.",
+          "type": "object",
+          "properties": {
+            "config": {
+              "description": "The plugin's own settings, checked by the plugin when the configuration is validated\nand loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay\nvisible in the configuration API.",
+              "type": "object",
+              "additionalProperties": true,
+              "default": {}
+            },
+            "name": {
+              "description": "The name the plugin is registered under in this binary.",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "plugin"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "name"
+          ]
+        },
+        {
+          "description": "A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world\n`rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with\nminisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.",
+          "type": "object",
+          "properties": {
+            "allow_unsigned": {
+              "description": "UNSAFE: run the module without a signature (the `sha256` pin still applies). A\nsignature that is present must still verify. Logged as a warning at every load.",
+              "type": "boolean",
+              "default": false
+            },
+            "capabilities": {
+              "description": "Host interfaces the plugin may import besides its `config`. A component that imports\none not listed here, or anything else (WASI included), is refused when it is loaded.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "$ref": "#/$defs/WasmCapability"
+              }
+            },
+            "config": {
+              "description": "The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.",
+              "type": "object",
+              "additionalProperties": true,
+              "default": {}
+            },
+            "fuel": {
+              "description": "Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.",
+              "type": "integer",
+              "format": "uint64",
+              "default": 10000000,
+              "minimum": 0
+            },
+            "memory": {
+              "description": "The largest linear memory the plugin may have.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "16MiB"
+            },
+            "on_error": {
+              "description": "What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny`\nanswers `500` (in the response phase, the response is replaced by a `500`), `allow`\npasses the request or response on unchanged. Both are counted and logged.",
+              "$ref": "#/$defs/AgentOnError",
+              "default": "deny"
+            },
+            "path": {
+              "description": "The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration\nis loaded; a reload reads it again.",
+              "type": "string"
+            },
+            "sha256": {
+              "description": "The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it\nfixes which file runs, so a changed file is refused until the pin is updated.",
+              "type": "string"
+            },
+            "signature": {
+              "description": "The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>`\nwrites).",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "timeout": {
+              "description": "Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The\ncall runs on a proxy worker thread, so keep it short.",
+              "$ref": "#/$defs/Duration",
+              "default": "50ms"
+            },
+            "trusted_keys": {
+              "description": "Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file\n(`RWQ…`).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "wasm"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "path",
+            "sha256"
+          ]
+        },
+        {
+          "description": "Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,\nwith its body up to `max_body` (ADR-0030). Fails closed by default.",
+          "type": "object",
+          "properties": {
+            "address": {
+              "description": "The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless\nthe network between rdock and the agent is private.",
+              "$ref": "#/$defs/HttpUrl"
+            },
+            "breaker": {
+              "description": "The circuit breaker that stops calling a failing agent for a while.",
+              "$ref": "#/$defs/AgentBreaker",
+              "default": {
+                "failures": 5,
+                "open_for": "30s",
+                "window": "10s"
+              }
+            },
+            "max_body": {
+              "description": "Largest request body sent to the agent; `0` sends none. The body is held until the\nagent has answered, so none of the body reaches the backend before the verdict; the\nrequest head does: with a body, the backend connection is opened and the head sent\nbefore the body is read (Pingora 0.9.1), and a refusal closes that connection.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "64KiB"
+            },
+            "on_error": {
+              "description": "What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an\nopen breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker\nis open), `allow` lets it through unchecked.",
+              "$ref": "#/$defs/AgentOnError",
+              "default": "deny"
+            },
+            "on_oversize": {
+              "description": "A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without\nthe body (only when the length is declared; a chunked body that grows past\n`max_body` is refused with `413` either way).",
+              "$ref": "#/$defs/AgentOversize",
+              "default": "reject"
+            },
+            "protocol": {
+              "description": "How the request is described to the agent.",
+              "$ref": "#/$defs/AgentProtocol",
+              "default": "rdock"
+            },
+            "request_headers": {
+              "description": "Request headers sent to the agent besides the default set (`accept`,\n`accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,\n`referer`, `user-agent`); `[\"*\"]` sends every header except hop-by-hop ones.\n`authorization`, `cookie` and `proxy-authorization` go only when listed here.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "response_headers": {
+              "description": "Request headers the agent may set on the request that goes to the backend (allowed\nanswers only). Copies sent by the client are removed first. Applied only when the\nverdict comes before the request head leaves, which is the case for requests without\na body (or whose body is not sent to the agent).",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "timeout": {
+              "description": "Time allowed for the agent's whole answer.",
+              "$ref": "#/$defs/Duration",
+              "default": "1s"
+            },
+            "tls": {
+              "description": "TLS to an `https://` agent.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/UpstreamTls"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "agent"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "address"
+          ]
+        },
+        {
+          "description": "Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset\nover `jwt` with the team's keys, issuer and RS256, the token from the\n`Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.",
+          "type": "object",
+          "properties": {
+            "audience": {
+              "description": "The Application Audience (AUD) tag of the Access application, or several. Required:\nwithout it a token of any application of the same team would pass.",
+              "$ref": "#/$defs/Audience"
+            },
+            "certs_url": {
+              "description": "Where the keys are fetched from instead of the team's certs URL: for tests, or an\negress proxy that mirrors it. `https://` (or a loopback address).",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HttpUrl"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "claims_to_headers": {
+              "description": "Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email,\ncommon_name: X-Auth-Service-Token }`. Client-sent copies are removed first.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "team": {
+              "description": "The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).",
+              "type": "string"
+            },
+            "type": {
+              "type": "string",
+              "const": "cloudflare_access"
+            }
+          },
+          "additionalProperties": false,
+          "patternProperties": {
+            "^x-": {}
+          },
+          "required": [
+            "type",
+            "team",
+            "audience"
+          ]
+        },
+        {
+          "description": "Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or\n`X-API-Key`; sets the request's consumer (F-GW-01).",
+          "type": "object",
+          "properties": {
+            "anonymous": {
+              "description": "Requests without a key: `deny` answers `401`; `allow` lets them through without a\nconsumer (an invalid key is still refused).",
+              "$ref": "#/$defs/Anonymous",
+              "default": "deny"
+            },
+            "forward_credential": {
+              "description": "Keep the key in the request to the backend. Off by default: the backend gets the\nconsumer in `X-Consumer-Name`, `X-Consumer-Groups` and `X-Credential-Id` instead.",
+              "type": "boolean",
+              "default": false
+            },
+            "groups": {
+              "description": "Only consumers in one of these groups are let in; others get `403`. Any consumer when\nempty.",
+              "type": "array",
+              "default": [],
+              "items": {
+                "type": "string"
+              }
+            },
+            "headers": {
+              "description": "Request headers the key is read from, in order; the first present wins. A key in\n`Authorization` must follow `Bearer `.",
+              "type": "array",
+              "default": [
+                "Authorization",
+                "X-API-Key"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "query": {
+              "description": "A query parameter the key is also read from, after the headers. Off unless named: keys\nin URLs end up in other systems' logs.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "realm": {
+              "description": "The realm of the `WWW-Authenticate` challenge.",
+              "type": [
+                "string",
+                "null"
+              ],
+              "default": null
+            },
+            "type": {
+              "type": "string",
+              "const": "api_key"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Requests per consumer per calendar window (hour, day, month), persisted across\nrestarts; `429` when used up (F-GW-02).",
+          "type": "object",
+          "properties": {
+            "flush_interval": {
+              "description": "How often counters are written to disk.",
+              "$ref": "#/$defs/Duration",
+              "default": "10s"
+            },
+            "headers": {
+              "description": "`draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of\n`draft-ietf-httpapi-ratelimit-headers-11`. Off by default while the draft changes.",
+              "$ref": "#/$defs/LimitHeaders",
+              "default": "off"
+            },
+            "key": {
+              "description": "What to count by; only `consumer` (the default) is accepted. Requests without a\nconsumer are counted per client IP.",
+              "$ref": "#/$defs/RateLimitKey",
+              "default": "consumer"
+            },
+            "limit": {
+              "description": "Requests allowed per window.",
+              "type": "integer",
+              "format": "uint64",
+              "minimum": 0
+            },
+            "overrides": {
+              "description": "Group → limit, for consumers in that group (the first of the consumer's groups that has\none wins).",
+              "type": "object",
+              "additionalProperties": {
+                "type": "integer",
+                "format": "uint64",
+                "minimum": 0
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "quota"
+            },
+            "window": {
+              "description": "The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).",
+              "$ref": "#/$defs/QuotaWindow"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "limit",
+            "window"
+          ]
+        },
+        {
+          "description": "Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an\nOpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).",
+          "type": "object",
+          "properties": {
+            "base_path": {
+              "description": "With `openapi`: a prefix the document's paths are relative to (`/api` when the\ndocument's server URL is `https://example.com/api`). Requests outside it are unknown\noperations.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "body": {
+              "description": "A schema for the JSON request body. A body with another content type is answered\n`415`, a body that is not JSON `400`, a body over `max_body` `413`."
+            },
+            "body_required": {
+              "description": "With `body`: a request without a body is refused. Off by default, as OpenAPI's\n`requestBody.required`.",
+              "type": "boolean",
+              "default": false
+            },
+            "cookies": {
+              "description": "A schema for the object of request cookies. Converted like `query`."
+            },
+            "formats": {
+              "description": "Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12\ntreats it as an annotation unless asked; rdock asks by default.",
+              "type": "boolean",
+              "default": true
+            },
+            "headers": {
+              "description": "A schema for the object of request headers, keyed by lower-case name. Converted like\n`query`."
+            },
+            "max_body": {
+              "description": "Largest body checked, at most 64MiB; the body is held until it is complete. The\nroute's `max_body` applies when it is smaller.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1MiB"
+            },
+            "max_errors": {
+              "description": "Most errors listed in an answer (1 to 100).",
+              "type": "integer",
+              "format": "uint32",
+              "default": 5,
+              "minimum": 0
+            },
+            "mode": {
+              "description": "`enforce` (the default) refuses invalid requests; `report` only logs and counts them,\nto try a schema on live traffic.",
+              "$ref": "#/$defs/ValidationMode",
+              "default": "enforce"
+            },
+            "openapi": {
+              "description": "An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to\nits operations by method and path template; each operation's parameters and its\n`application/json` request body are checked.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "path": {
+              "description": "Path parameters: a regular expression for the path with named groups, and a schema for\nthe object of the groups' values.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/PathParameters"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "query": {
+              "description": "A schema for the object of query parameters (`{ name: value }`; a repeated name gives\nan array). Values are strings, converted to the `type` the schema declares for the\nproperty (`integer`, `number`, `boolean`, `array`)."
+            },
+            "type": {
+              "type": "string",
+              "const": "validate"
+            },
+            "unknown_operations": {
+              "description": "With `openapi`: requests that match no operation of the document. `deny` (the\ndefault) answers `404` or `405`; `allow` lets them through unchecked.",
+              "$ref": "#/$defs/UnknownOperations",
+              "default": "deny"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)\n(F-GW-04).",
+          "type": "object",
+          "properties": {
+            "max_body": {
+              "description": "Largest body patched, request or response, at most 64MiB (default 1MiB). A larger\nrequest body is refused with `413`; a larger response body passes unchanged.",
+              "$ref": "#/$defs/ByteSize",
+              "default": "1MiB"
+            },
+            "on_error": {
+              "description": "A request patch that cannot be applied (a `test` operation fails, a location is\nmissing): `reject` (the default) answers `422`; `pass` forwards the body unchanged.\nA response patch that fails always leaves the body unchanged (the status is sent).",
+              "$ref": "#/$defs/OnPatchError",
+              "default": "reject"
+            },
+            "on_non_json": {
+              "description": "A request body that is not JSON when `request.body.patch` is set: `pass` (the\ndefault) forwards it unchanged; `reject` answers `415` (wrong content type) or `400`\n(not valid JSON).",
+              "$ref": "#/$defs/OnNonJson",
+              "default": "pass"
+            },
+            "request": {
+              "description": "Changes to the request sent to the backend.",
+              "$ref": "#/$defs/TransformSide",
+              "default": {
+                "body": {
+                  "patch": []
+                },
+                "headers": {
+                  "add": {},
+                  "remove": [],
+                  "set": {}
+                }
+              }
+            },
+            "response": {
+              "description": "Changes to the response sent to the client.",
+              "$ref": "#/$defs/TransformSide",
+              "default": {
+                "body": {
+                  "patch": []
+                },
+                "headers": {
+                  "add": {},
+                  "remove": [],
+                  "set": {}
+                }
+              }
+            },
+            "type": {
+              "type": "string",
+              "const": "transform"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type"
+          ]
+        },
+        {
+          "description": "OpenID Connect login for browsers: authorization code flow with PKCE, a stateless\nencrypted session cookie, claims to headers and to the consumer (F-GW-01).",
+          "type": "object",
+          "properties": {
+            "algorithms": {
+              "description": "ID-token algorithms accepted: those the provider advertises in\n`id_token_signing_alg_values_supported` and that are listed here. HS256/384/512 use\nthe client secret as key and are accepted only when listed explicitly.",
+              "type": "array",
+              "default": [
+                "RS256",
+                "RS384",
+                "RS512",
+                "PS256",
+                "PS384",
+                "PS512",
+                "ES256",
+                "ES384",
+                "EdDSA"
+              ],
+              "items": {
+                "$ref": "#/$defs/JwtAlgorithm"
+              }
+            },
+            "allow_private_targets": {
+              "description": "Allow the provider's endpoints to resolve to private, loopback or link-local\naddresses (an in-cluster Keycloak or Dex). Off by default.",
+              "type": "boolean",
+              "default": false
+            },
+            "allowed": {
+              "description": "Who may log in. Everyone the provider authenticates when all lists are empty;\notherwise a user matching any one entry.",
+              "$ref": "#/$defs/OidcAllowed",
+              "default": {
+                "domains": [],
+                "emails": [],
+                "groups": [],
+                "unverified_emails": false
+              }
+            },
+            "claims_to_headers": {
+              "description": "Request headers set from ID-token claims (`claim: header`). Client-sent copies are\nalways removed first.",
+              "type": "object",
+              "additionalProperties": {
+                "type": "string"
+              },
+              "default": {}
+            },
+            "client_id": {
+              "description": "The client ID registered at the provider.",
+              "type": "string"
+            },
+            "client_secret": {
+              "description": "The client secret, as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Without it\nrdock is a public client and relies on PKCE alone.",
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "consumer_claim": {
+              "description": "The claim that becomes the request's consumer (rate limits, quotas, the cache key,\nthe access log). `sub` is used when the token lacks it, and in place of `email` when\nthe provider has not verified the address (`email_verified` is not `true`; see\n`allowed.unverified_emails`).",
+              "type": "string",
+              "default": "email"
+            },
+            "forward_access_token": {
+              "description": "Pass the access token to the backend in `X-Forwarded-Access-Token`. It is then kept\nin the session cookie, which grows.",
+              "type": "boolean",
+              "default": false
+            },
+            "groups_claim": {
+              "description": "The claim that lists the user's groups (a string or an array of strings).",
+              "type": "string",
+              "default": "groups"
+            },
+            "issuer": {
+              "description": "The provider's issuer URL; its configuration is read from\n`<issuer>/.well-known/openid-configuration`. `https://` (or a loopback address).",
+              "$ref": "#/$defs/HttpUrl"
+            },
+            "leeway": {
+              "description": "Clock skew allowed for `exp`, `iat` and `nbf`.",
+              "$ref": "#/$defs/Duration",
+              "default": "1m"
+            },
+            "logout_path": {
+              "description": "Path that ends the session (`GET`, `HEAD` or `POST`, from the site itself: a request\nanother site triggers is refused with `403`); the provider's `end_session_endpoint` is\ncalled when it advertises one (RP-initiated logout).",
+              "type": "string",
+              "default": "/_rdock/oidc/logout"
+            },
+            "map_to_consumers": {
+              "description": "Treat a consumer name that `consumers` defines as that consumer: the session then\ngets its groups, and shares its quota, rate-limit and cache identity with its API keys\n(other names stay keyed on the issuer). Off by default: an OIDC user is a separate\nidentity, keyed on the issuer and the name, so a user whose claim happens to equal a\nconfigured consumer's name gains nothing from it. Turn it on only when the provider controls the\nclaim (it cannot be chosen by the user).",
+              "type": "boolean",
+              "default": false
+            },
+            "post_logout_path": {
+              "description": "Where the browser lands after logging out (a path on the same host).",
+              "type": "string",
+              "default": "/"
+            },
+            "redirect_path": {
+              "description": "Path of the callback the provider redirects back to. The route must match it.",
+              "type": "string",
+              "default": "/_rdock/oidc/callback"
+            },
+            "redirect_url": {
+              "description": "The full redirect URI registered at the provider, when it cannot be built from the\nrequest (a route without a `Host` rule, a port the browser does not see). Its path\nreplaces `redirect_path`.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/HttpUrl"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "scopes": {
+              "description": "Scopes requested; must include `openid`. Add `offline_access` where the provider needs\nit for refresh tokens.",
+              "type": "array",
+              "default": [
+                "openid",
+                "email",
+                "profile"
+              ],
+              "items": {
+                "type": "string"
+              }
+            },
+            "session": {
+              "description": "The session cookie.",
+              "$ref": "#/$defs/OidcSession"
+            },
+            "token_endpoint_auth": {
+              "description": "How the client authenticates at the token endpoint when it has a secret.",
+              "$ref": "#/$defs/TokenEndpointAuth",
+              "default": "client_secret_basic"
+            },
+            "type": {
+              "type": "string",
+              "const": "oidc"
+            },
+            "unauthenticated": {
+              "description": "Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD`\nasking for `text/html`) to the login and answers `401` to everything else, so API\nand XHR clients never get a redirect; `redirect` always redirects `GET` and `HEAD`;\n`deny` always answers `401`.",
+              "$ref": "#/$defs/Unauthenticated",
+              "default": "auto"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "issuer",
+            "client_id",
+            "session"
+          ]
         }
       ]
     },
@@ -3948,6 +5396,17 @@
             "webhook": null
           }
         },
+        "metering": {
+          "description": "Usage events per request with a consumer, for analytics and showback (F-GW-05).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Metering"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "metrics": {
           "description": "Metrics.",
           "$ref": "#/$defs/Metrics",
@@ -3972,6 +5431,157 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "OidcAllowed": {
+      "description": "Who may log in.",
+      "type": "object",
+      "properties": {
+        "domains": {
+          "description": "E-mail domains (the part after `@` of the verified `email` claim).",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "emails": {
+          "description": "E-mail addresses (the verified `email` claim), compared without case.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "groups": {
+          "description": "Groups from `groups_claim`.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "unverified_emails": {
+          "description": "Also trust an `email` claim that comes without `email_verified` (some providers never\nsend it): for `emails` and `domains`, and as the consumer name when `consumer_claim`\nis `email`. Unsafe with a provider that lets users set an address they do not own.\nOff: only `email_verified: true` counts; `email_verified: false` never does.",
+          "type": "boolean",
+          "default": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "OidcSameSite": {
+      "description": "The `SameSite` attribute of the session cookie.",
+      "oneOf": [
+        {
+          "description": "Sent on same-site requests and top-level navigations from other sites.",
+          "type": "string",
+          "const": "lax"
+        },
+        {
+          "description": "Sent only on same-site requests. Refused: the browser would not send it on the\nredirect back from the provider, and the login would loop.",
+          "type": "string",
+          "const": "strict"
+        },
+        {
+          "description": "Sent on every request (needs `secure`).",
+          "type": "string",
+          "const": "none"
+        }
+      ]
+    },
+    "OidcSession": {
+      "description": "The session cookie of `oidc`.",
+      "type": "object",
+      "properties": {
+        "allow_insecure_cookies": {
+          "description": "Explicit opt-in for `secure: false` (local development without TLS).",
+          "type": "boolean",
+          "default": false
+        },
+        "cookie_name": {
+          "description": "Name of the cookie, without prefix. `__Host-` is prepended when `secure` is on and no\n`domain` is set, `__Secure-` when `secure` is on with a `domain`.",
+          "type": "string",
+          "default": "rdock_oidc"
+        },
+        "domain": {
+          "description": "Share the cookie with subdomains of this domain. Host-only (and `__Host-`) when unset.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key": {
+          "description": "The key that encrypts the cookie (at least 32 bytes), as a `${file:…}`, `${env:…}` or\n`${vault:…}` reference. Every replica needs the same key. Use `keys` to rotate.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_file": {
+          "description": "A file holding the key (read on every reload), instead of `key`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "keys": {
+          "description": "Keys for rotation: the first encrypts, all decrypt. References, as `key`.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "refresh": {
+          "description": "Use the refresh token, when the provider issues one, to renew the session before the\ntokens expire; a failed refresh means a new login.",
+          "type": "boolean",
+          "default": true
+        },
+        "same_site": {
+          "description": "The cookie's `SameSite` attribute.",
+          "$ref": "#/$defs/OidcSameSite",
+          "default": "lax"
+        },
+        "secure": {
+          "description": "Send the cookie over HTTPS only. Turning it off is refused unless every route using\nthe middleware is plain HTTP and `allow_insecure_cookies` is set.",
+          "type": "boolean",
+          "default": true
+        },
+        "ttl": {
+          "description": "Longest session, from login. Without a refresh token the session also ends when the\nID token expires.",
+          "$ref": "#/$defs/Duration",
+          "default": "8h"
+        }
+      },
+      "additionalProperties": false
+    },
+    "OnNonJson": {
+      "description": "What `transform` does with a request body that is not JSON.",
+      "oneOf": [
+        {
+          "description": "Forward it unchanged.",
+          "type": "string",
+          "const": "pass"
+        },
+        {
+          "description": "Answer `415` or `400`.",
+          "type": "string",
+          "const": "reject"
+        }
+      ]
+    },
+    "OnPatchError": {
+      "description": "What `transform` does when a request patch cannot be applied.",
+      "oneOf": [
+        {
+          "description": "Answer `422` (problem type `patch-failed`).",
+          "type": "string",
+          "const": "reject"
+        },
+        {
+          "description": "Forward the body unchanged.",
+          "type": "string",
+          "const": "pass"
+        }
+      ]
     },
     "PassiveHealth": {
       "description": "Ejection of backends that keep failing.",
@@ -4021,6 +5631,165 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "PatchOp": {
+      "description": "One JSON Patch operation (RFC 6902 §4).",
+      "oneOf": [
+        {
+          "description": "Adds `value` at `path`: a new member, an array element inserted before the index (`-`\nappends), or the whole document for `\"\"`. The parent must exist.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "add"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            },
+            "value": {
+              "description": "The value to add."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        },
+        {
+          "description": "Removes the value at `path`, which must exist.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "remove"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path"
+          ]
+        },
+        {
+          "description": "Replaces the value at `path`, which must exist.",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "replace"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            },
+            "value": {
+              "description": "The new value."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        },
+        {
+          "description": "Removes the value at `from` and adds it at `path`. `path` must not be inside `from`.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Where the value is taken from.",
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "move"
+            },
+            "path": {
+              "description": "Where it is put.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "path"
+          ]
+        },
+        {
+          "description": "Copies the value at `from` to `path`.",
+          "type": "object",
+          "properties": {
+            "from": {
+              "description": "Where the value is copied from.",
+              "type": "string"
+            },
+            "op": {
+              "type": "string",
+              "const": "copy"
+            },
+            "path": {
+              "description": "Where the copy is put.",
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "from",
+            "path"
+          ]
+        },
+        {
+          "description": "Fails the patch unless the value at `path` equals `value` (numbers by their numeric\nvalue, objects regardless of member order).",
+          "type": "object",
+          "properties": {
+            "op": {
+              "type": "string",
+              "const": "test"
+            },
+            "path": {
+              "description": "A JSON Pointer (RFC 6901).",
+              "type": "string"
+            },
+            "value": {
+              "description": "The expected value."
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "op",
+            "path",
+            "value"
+          ]
+        }
+      ]
+    },
+    "PathParameters": {
+      "description": "Path parameters of `validate`.",
+      "type": "object",
+      "properties": {
+        "regex": {
+          "description": "A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it\ndoes not match fails validation.",
+          "type": "string"
+        },
+        "schema": {
+          "description": "A schema for the object of the groups' values, converted like `query`."
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "regex",
+        "schema"
+      ]
     },
     "Providers": {
       "description": "Configuration sources besides this file.",
@@ -4120,13 +5889,118 @@
         }
       ]
     },
+    "QueryKey": {
+      "description": "How the query string enters the key. Parameters left out of the key are also removed\nfrom the request sent to the origin.",
+      "oneOf": [
+        {
+          "description": "The query exactly as forwarded.",
+          "type": "string",
+          "const": "as_sent"
+        },
+        {
+          "description": "Parameters sorted by name.",
+          "type": "string",
+          "const": "sorted"
+        },
+        {
+          "description": "Only these parameters (`name` or `prefix*`).",
+          "type": "object",
+          "properties": {
+            "only": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "only"
+          ]
+        },
+        {
+          "description": "All but these parameters (`name` or `prefix*`).",
+          "type": "object",
+          "properties": {
+            "ignore": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "ignore"
+          ]
+        }
+      ]
+    },
+    "QuotaWindow": {
+      "description": "A quota's calendar window, in UTC.",
+      "oneOf": [
+        {
+          "description": "From the start of each hour.",
+          "type": "string",
+          "const": "hour"
+        },
+        {
+          "description": "From 00:00 UTC.",
+          "type": "string",
+          "const": "day"
+        },
+        {
+          "description": "From 00:00 UTC on the 1st.",
+          "type": "string",
+          "const": "month"
+        }
+      ]
+    },
     "RateLimitKey": {
       "type": "string",
       "examples": [
         "client_ip",
         "header:X-Api-Key"
       ],
-      "pattern": "^(client_ip|route|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+      "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+    },
+    "RateOverride": {
+      "description": "A limit for the consumers of one group.",
+      "type": "object",
+      "properties": {
+        "average": {
+          "description": "Requests allowed per `period` on average.",
+          "type": "integer",
+          "format": "uint32",
+          "minimum": 0
+        },
+        "burst": {
+          "description": "Largest burst; defaults to `average`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "default": null,
+          "minimum": 0
+        },
+        "period": {
+          "description": "Period of `average`; defaults to the middleware's.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "average"
+      ]
     },
     "RedirectPrefix": {
       "description": "A path prefix replaced by another (`redirect.prefix`).",
@@ -4162,6 +6036,21 @@
           "description": "`https://`.",
           "type": "string",
           "const": "https"
+        }
+      ]
+    },
+    "RequestDirectives": {
+      "description": "The client's request directives.",
+      "oneOf": [
+        {
+          "description": "Apply them (RFC 9111 §5.2.1).",
+          "type": "string",
+          "const": "honour"
+        },
+        {
+          "description": "Ignore them, except `only-if-cached`.",
+          "type": "string",
+          "const": "ignore"
         }
       ]
     },
@@ -4323,6 +6212,17 @@
           "description": "Set to `false` to keep the route defined but inactive.",
           "type": "boolean",
           "default": true
+        },
+        "errors": {
+          "description": "How rdock renders its own error answers on this route, instead of `defaults.errors`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ErrorSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "listeners": {
           "description": "Listeners the route is attached to. Defaults to `defaults.listeners`.",
@@ -4611,6 +6511,24 @@
         }
       ]
     },
+    "Secrets": {
+      "description": "External secret stores.",
+      "type": "object",
+      "properties": {
+        "vault": {
+          "description": "A `HashiCorp` Vault or `OpenBao` server whose KV version 2 secrets secret fields may\nreference as `${vault:<mount>/<path>#<field>}`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/VaultSettings"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false
+    },
     "Security": {
       "description": "Client IP trust and request limits.",
       "type": "object",
@@ -4779,6 +6697,37 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "SessionLimit": {
+      "description": "A number of sessions (at least 1), or `unlimited`.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        {
+          "type": "string",
+          "enum": [
+            "unlimited"
+          ]
+        }
+      ]
+    },
+    "SetCookie": {
+      "description": "What to do with responses that set a cookie.",
+      "oneOf": [
+        {
+          "description": "Never store them.",
+          "type": "string",
+          "const": "refuse"
+        },
+        {
+          "description": "Store them without `Set-Cookie`.",
+          "type": "string",
+          "const": "strip"
+        }
+      ]
     },
     "SmtpTls": {
       "description": "How the SMTP connection is protected.",
@@ -5315,6 +7264,21 @@
         }
       ]
     },
+    "TokenEndpointAuth": {
+      "description": "Token endpoint client authentication (OpenID Connect Core §9).",
+      "oneOf": [
+        {
+          "description": "HTTP Basic with the client ID and secret.",
+          "type": "string",
+          "const": "client_secret_basic"
+        },
+        {
+          "description": "The client ID and secret in the form body.",
+          "type": "string",
+          "const": "client_secret_post"
+        }
+      ]
+    },
     "TokenSource": {
       "description": "Where a JWT is read from. The first one present wins: header, cookie, query parameter.",
       "type": "object",
@@ -5372,6 +7336,29 @@
         "otlp"
       ]
     },
+    "TransformSide": {
+      "description": "One direction of `transform`.",
+      "type": "object",
+      "properties": {
+        "body": {
+          "description": "Body changes.",
+          "$ref": "#/$defs/BodyTransform",
+          "default": {
+            "patch": []
+          }
+        },
+        "headers": {
+          "description": "Header operations, applied in the order remove, set, add (as `headers` does).",
+          "$ref": "#/$defs/HeaderRules",
+          "default": {
+            "add": {},
+            "remove": [],
+            "set": {}
+          }
+        }
+      },
+      "additionalProperties": false
+    },
     "TrustedProxy": {
       "description": "`cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.",
       "type": "string",
@@ -5407,6 +7394,359 @@
           "description": "HMAC-MD5: refused by validation; RFC 8945 says it must not be used.",
           "type": "string",
           "const": "hmac-md5"
+        }
+      ]
+    },
+    "UdpHealth": {
+      "description": "Health of the backends of a UDP service.",
+      "type": "object",
+      "properties": {
+        "passive": {
+          "description": "Ejection after ICMP \"port unreachable\" answers (seen as refused sends or receives on a\nsession's connected socket). On by default.",
+          "$ref": "#/$defs/UdpPassiveHealth",
+          "default": {
+            "ejection": "30s",
+            "enabled": true,
+            "failures": 3,
+            "max_ejection_percent": 50,
+            "window": "30s"
+          }
+        },
+        "tcp_check": {
+          "description": "Periodic TCP connection probes, for backends that also listen on TCP (a DNS server\ndoes on port 53). Off by default: a generic UDP probe cannot tell a healthy server\nfrom one that drops datagrams.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UdpTcpCheck"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        },
+        "when_all_down": {
+          "description": "What happens when no backend is healthy.",
+          "$ref": "#/$defs/WhenAllDown",
+          "default": "fail_open"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpLbPolicy": {
+      "description": "How a UDP session's backend is chosen.",
+      "oneOf": [
+        {
+          "description": "Weighted round-robin.",
+          "type": "string",
+          "const": "round_robin"
+        },
+        {
+          "description": "Weighted random.",
+          "type": "string",
+          "const": "random"
+        },
+        {
+          "description": "Fewest open sessions relative to the weight.",
+          "type": "string",
+          "const": "least_sessions"
+        },
+        {
+          "description": "Consistent hash of the client IP: every session of a client goes to the same backend\nwhile it is up.",
+          "type": "string",
+          "const": "ip_hash"
+        }
+      ]
+    },
+    "UdpLoadBalancer": {
+      "description": "Backend selection for new UDP sessions.",
+      "type": "object",
+      "properties": {
+        "policy": {
+          "description": "Selection policy.",
+          "$ref": "#/$defs/UdpLbPolicy",
+          "default": "round_robin"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpPassiveHealth": {
+      "description": "Passive health of a UDP service.",
+      "type": "object",
+      "properties": {
+        "ejection": {
+          "description": "How long an ejected backend gets no new sessions before one session tries it again;\ndoubled for each ejection in a row, up to 5 minutes.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "enabled": {
+          "description": "Count refusals and eject backends. `false` only ends the affected session.",
+          "type": "boolean",
+          "default": true
+        },
+        "failures": {
+          "description": "Refusals within `window` that eject a backend.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        },
+        "max_ejection_percent": {
+          "description": "Largest share of the pool ejected at once, in percent.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "window": {
+          "description": "Sliding window for counting refusals.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpRoute": {
+      "description": "A UDP route: the datagrams of its `udp` listeners go to its UDP service. The backend is\nchosen once per session (a client address and port) and kept for the session's life.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Set to `false` to keep the route defined but inactive.",
+          "type": "boolean",
+          "default": true
+        },
+        "listeners": {
+          "description": "`udp` listeners the route is attached to (required).",
+          "type": [
+            "array",
+            "null"
+          ],
+          "default": null,
+          "items": {
+            "type": "string"
+          }
+        },
+        "match": {
+          "description": "Rule made of ``ClientIP(`…`)`` matchers only (with `&&`, `||`, `!`). Omitted, the route\ntakes every datagram of its listeners; a listener has at most one such route.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "middlewares": {
+          "description": "Middlewares checked before a session is created: `ip_allow` and `ip_deny`. A datagram\nthey refuse is dropped without an answer.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "description": "Higher priorities are evaluated first. `0` uses the rule length.",
+          "type": "integer",
+          "format": "int64",
+          "default": 0
+        },
+        "service": {
+          "description": "UDP service (a key of `udp_services`).",
+          "type": "string"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "service"
+      ]
+    },
+    "UdpService": {
+      "description": "A UDP service: backends that receive the datagrams of UDP routes. Each session (one client\naddress and port) gets its own connected socket to one backend, chosen when the session\nstarts.",
+      "type": "object",
+      "properties": {
+        "backends": {
+          "description": "Backend servers (`host:port`; Unix sockets are not supported). `weight` sets each\none's share of new sessions; `backup` ones get sessions only when no other is up.",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/Backend"
+          }
+        },
+        "health": {
+          "description": "Backend health: passive ejection on ICMP \"port unreachable\", optional TCP probes.",
+          "$ref": "#/$defs/UdpHealth",
+          "default": {
+            "passive": {
+              "ejection": "30s",
+              "enabled": true,
+              "failures": 3,
+              "max_ejection_percent": 50,
+              "window": "30s"
+            },
+            "tcp_check": null,
+            "when_all_down": "fail_open"
+          }
+        },
+        "load_balancer": {
+          "description": "How a new session's backend is chosen.",
+          "$ref": "#/$defs/UdpLoadBalancer",
+          "default": {
+            "policy": "round_robin"
+          }
+        },
+        "requests": {
+          "description": "Detach a session from its client address after this many datagrams from the client\n(NGINX `proxy_requests`): the next datagram opens a new session, possibly to another\nbackend, while the detached one still relays its replies until `responses` or `idle`\nends it. `1` balances every datagram on its own.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "responses": {
+          "description": "End a session after this many datagrams from the backend (NGINX `proxy_responses`).\n`1` suits request-and-answer protocols such as DNS: the socket is released as soon as\nthe answer is relayed. Omitted, a session ends only when idle.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "timeouts": {
+          "description": "Session timeouts.",
+          "$ref": "#/$defs/UdpTimeouts",
+          "default": {
+            "idle": "1m"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "backends"
+      ]
+    },
+    "UdpSessions": {
+      "description": "Session caps of a `udp` listener. Both are on by default: a UDP source address can be\nforged, so without a cap anyone could make the listener open sockets until it runs out of\nfile descriptors (each session holds one socket and one task). Datagrams that would open\na session over a cap are dropped and counted in `rdock_udp_dropped_total`, never answered.",
+      "type": "object",
+      "properties": {
+        "max": {
+          "description": "Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluster at\n1,024 by default (`max_connections` circuit breaker, checked 2026-11-11 in\ndocs/research/v0.8-cache-extensibility.md §5.1); a listener here stands for a cluster\nand may serve several clients' DNS bursts, and 4,096 sockets stay far below the\ncontainer default of 1,048,576 open files. `unlimited` removes the cap.",
+          "$ref": "#/$defs/SessionLimit",
+          "default": 4096
+        },
+        "max_per_client": {
+          "description": "Sessions per client IP address (any source port). Default 64, so one source (or one\nforged address) can take at most 1/64 of the listener's default budget; a resolver\nthat forwards many parallel queries from one address may need more. `unlimited`\nremoves the cap.",
+          "$ref": "#/$defs/SessionLimit",
+          "default": 64
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpTcpCheck": {
+      "description": "TCP probes of the backends of a UDP service.",
+      "type": "object",
+      "properties": {
+        "healthy": {
+          "description": "Consecutive successes before a backend is healthy.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 2,
+          "minimum": 0
+        },
+        "interval": {
+          "description": "Time between probes.",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "port": {
+          "description": "TCP port to connect to; the backend's port when omitted.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "default": null,
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "timeout": {
+          "description": "Probe timeout.",
+          "$ref": "#/$defs/Duration",
+          "default": "2s"
+        },
+        "unhealthy": {
+          "description": "Consecutive failures before a backend is unhealthy.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 3,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "UdpTimeouts": {
+      "description": "Timeouts of a UDP service.",
+      "type": "object",
+      "properties": {
+        "idle": {
+          "description": "A session with no datagram in either direction for this long is closed and its socket\nreleased. Default 60 s, Envoy's `udp_proxy` default; Traefik uses 3 s and NGINX\n10 minutes (sources in docs/research/v0.8-cache-extensibility.md §5.1, checked\n2026-11-11).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "Unauthenticated": {
+      "description": "What `oidc` does with a request that has no valid session.",
+      "oneOf": [
+        {
+          "description": "Redirect page navigations to the login; `401` for everything else.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "Redirect every `GET` and `HEAD` to the login; `401` for other methods.",
+          "type": "string",
+          "const": "redirect"
+        },
+        {
+          "description": "Always `401`.",
+          "type": "string",
+          "const": "deny"
+        }
+      ]
+    },
+    "UnknownOperations": {
+      "description": "What `validate` does with requests outside the OpenAPI document.",
+      "oneOf": [
+        {
+          "description": "Answer `404` (no path template matches) or `405` (the path exists, the method not).",
+          "type": "string",
+          "const": "deny"
+        },
+        {
+          "description": "Let them through unchecked.",
+          "type": "string",
+          "const": "allow"
         }
       ]
     },
@@ -5456,6 +7796,125 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "ValidationMode": {
+      "description": "Whether `validate` refuses invalid requests.",
+      "oneOf": [
+        {
+          "description": "Refuse invalid requests.",
+          "type": "string",
+          "const": "enforce"
+        },
+        {
+          "description": "Log and count invalid requests, and let them through.",
+          "type": "string",
+          "const": "report"
+        }
+      ]
+    },
+    "VaultAuth": {
+      "description": "How rdock logs in to Vault.",
+      "oneOf": [
+        {
+          "description": "A token, as a `${file:…}` or `${env:…}` reference (read again on every request, so a\ntoken file rotated by an agent is picked up).",
+          "type": "object",
+          "properties": {
+            "token": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "token"
+          ]
+        },
+        {
+          "description": "Kubernetes service-account login (`POST /v1/auth/<mount>/login`); the token is renewed\nby logging in again before its lease runs out.",
+          "type": "object",
+          "properties": {
+            "kubernetes": {
+              "$ref": "#/$defs/KubernetesAuth"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "kubernetes"
+          ]
+        }
+      ]
+    },
+    "VaultSettings": {
+      "description": "A Vault or `OpenBao` server (`secrets.vault`).\n\nValues are read when a configuration is loaded and every `refresh`; a changed value reloads\nthe configuration. They stay in memory only: the configuration, its history, snapshots, the\nadmin API, logs and diagnostics keep the `${vault:…}` reference.",
+      "type": "object",
+      "properties": {
+        "address": {
+          "description": "The server, e.g. `https://vault.internal:8200`. `https://` only, or `http://` to a\nloopback address (a dev server or a local agent), unless `insecure_http` is set.",
+          "$ref": "#/$defs/HttpUrl"
+        },
+        "allow_private_targets": {
+          "description": "Allow a server on a private address (`10.0.0.0/8`, …). On by default: Vault usually\nruns inside the network.",
+          "type": "boolean",
+          "default": true
+        },
+        "auth": {
+          "description": "How rdock logs in.",
+          "$ref": "#/$defs/VaultAuth"
+        },
+        "ca_file": {
+          "description": "CA certificates (PEM) that sign the server's certificate, instead of the system's.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "insecure_http": {
+          "description": "Allow `http://` to a server that is not on a loopback address. **Unsafe**: the token\nand every secret cross the network unencrypted. Validation warns.",
+          "type": "boolean",
+          "default": false
+        },
+        "namespace": {
+          "description": "A Vault Enterprise or `OpenBao` namespace, sent as `X-Vault-Namespace`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "refresh": {
+          "description": "How often referenced values are read again.",
+          "$ref": "#/$defs/Duration",
+          "default": "5m"
+        },
+        "timeout": {
+          "description": "Time allowed for one request to the server.",
+          "$ref": "#/$defs/Duration",
+          "default": "5s"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "address",
+        "auth"
+      ]
+    },
+    "WasmCapability": {
+      "description": "A host interface a WASM plugin may be granted.",
+      "oneOf": [
+        {
+          "description": "`rdock:plugin/log`: write lines to rdock's log (32 per request, 1 KiB each).",
+          "type": "string",
+          "const": "log"
+        },
+        {
+          "description": "`rdock:plugin/clock`: read the wall clock.",
+          "type": "string",
+          "const": "clock"
+        },
+        {
+          "description": "`rdock:plugin/random`: read random bits from the operating system.",
+          "type": "string",
+          "const": "random"
+        }
+      ]
     },
     "Webhook": {
       "description": "An HTTPS endpoint that receives JSON events.",

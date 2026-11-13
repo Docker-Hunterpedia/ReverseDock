@@ -14,3 +14,5 @@ status, err := client.StatusWithResponse(ctx)
 ```
 
 Do not edit `client.gen.go`. After the API changes, run `just schema` and `just clients` from the repository root; CI fails when the generated file is out of date.
+
+The Terraform and OpenTofu provider in [`clients/terraform`](../terraform) imports this module (through a `replace` directive to this directory while both live in this repository).

@@ -57,7 +57,8 @@ fn every_supported_feature_has_a_test() -> &'static [&'static str] {
 #[test]
 fn the_claimed_features_are_exactly_the_tested_ones() {
     // Core features (tests in gateway_conformance.rs), `ListenerSet` (every upstream test
-    // gated on it, in gateway_listenerset.rs) and the Extended ones below.
+    // gated on it, in gateway_listenerset.rs), `UDPRoute` (every upstream test gated on it,
+    // in gateway_udp.rs) and the Extended ones below.
     let tested = [
         "GRPCRoute",
         "GRPCRouteNamedRouteRule",
@@ -84,6 +85,7 @@ fn the_claimed_features_are_exactly_the_tested_ones() {
         "ReferenceGrant",
         "TCPRoute",
         "TLSRoute",
+        "UDPRoute",
     ];
     assert_eq!(every_supported_feature_has_a_test(), tested);
 }

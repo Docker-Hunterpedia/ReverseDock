@@ -4,8 +4,9 @@
 //! one route and one service named after the container; `rdock.static.root` ends the route with
 //! a `static` middleware instead of the service. Full form:
 //! `rdock.routes.<name>.<field>`, `rdock.services.<name>.<field>`,
-//! `rdock.middlewares.<name>.<field>`, `rdock.tcp_routes.<name>.<field>` and
-//! `rdock.tcp_services.<name>.<field>`, where `<field>` is a dotted path of the YAML model.
+//! `rdock.middlewares.<name>.<field>`, `rdock.tcp_routes.<name>.<field>`,
+//! `rdock.tcp_services.<name>.<field>`, `rdock.udp_routes.<name>.<field>` and
+//! `rdock.udp_services.<name>.<field>`, where `<field>` is a dotted path of the YAML model.
 
 use serde_json::Value;
 
@@ -56,6 +57,8 @@ pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: 
         "middlewares" => middleware(draft, name, field, value),
         "tcp_routes" => tcp_route(draft, name, field, value),
         "tcp_services" => tcp_service(draft, name, field, value),
+        "udp_routes" => udp_route(draft, name, field, value),
+        "udp_services" => udp_service(draft, name, field, value),
         _ => Err("unknown label".to_owned()),
     };
     if let Err(message) = result {
@@ -123,6 +126,36 @@ fn tcp_service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Resul
         "proxy_protocol" => service.tree.set(field, Value::String(value.to_owned())),
         _ if field.starts_with("timeouts.") => service.tree.set(field, scalar(value)),
         _ => Err(format!("TCP services have no `{field}` setting")),
+    }
+}
+
+fn udp_route(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
+    let value = match field {
+        "match" | "service" => Value::String(value.to_owned()),
+        "middlewares" | "listeners" => list(value),
+        "priority" | "enabled" => scalar(value),
+        _ => return Err(format!("UDP routes have no `{field}` setting")),
+    };
+    draft
+        .udp_routes
+        .entry(name.to_owned())
+        .or_default()
+        .set(field, value)
+}
+
+fn udp_service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
+    let service = draft.udp_services.entry(name.to_owned()).or_default();
+    match field {
+        "port" => {
+            service.port = Some(port(value)?);
+            Ok(())
+        }
+        "load_balancer.policy" => service.tree.set(field, Value::String(value.to_owned())),
+        "responses" | "requests" => service.tree.set(field, scalar(value)),
+        _ if field.starts_with("timeouts.") || field.starts_with("health.") => {
+            service.tree.set(field, scalar(value))
+        }
+        _ => Err(format!("UDP services have no `{field}` setting")),
     }
 }
 

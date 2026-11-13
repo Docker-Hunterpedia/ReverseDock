@@ -46,6 +46,16 @@ export type Code = {
 };
 
 /**
+ * A consumer as the API defines it.
+ */
+export type ConsumerSpec = {
+    /**
+     * Groups, in order of precedence.
+     */
+    groups?: Array<string>;
+};
+
+/**
  * A new token: the value is shown only in this answer.
  */
 export type CreatedToken = TokenView & {
@@ -98,6 +108,24 @@ export type Listed = {
     user: string;
 };
 
+/**
+ * A key to mint.
+ */
+export type NewKey = {
+    /**
+     * When the key expires, RFC 3339.
+     */
+    expires?: string | null;
+    /**
+     * Days until the key expires (1–3650); never when neither this nor `expires` is set.
+     */
+    expires_in_days?: number | null;
+    /**
+     * What the key is for.
+     */
+    note?: string | null;
+};
+
 export type NewUser = {
     name: string;
     password: string;
@@ -121,6 +149,39 @@ export type Owned = {
 export type PasswordChange = {
     current: string;
     new: string;
+};
+
+/**
+ * What a purge removes; set exactly one field.
+ */
+export type PurgeRequest = {
+    /**
+     * Everything in the store.
+     */
+    all?: boolean | null;
+    /**
+     * Every object whose URL starts with this absolute URL.
+     */
+    prefix?: string | null;
+    /**
+     * Every object with this tag (from `Cache-Tag` or `Surrogate-Key`).
+     */
+    tag?: string | null;
+    /**
+     * Every variant of this absolute URL (`https://app.example.com/a?b=1`).
+     */
+    url?: string | null;
+};
+
+/**
+ * The result of a purge.
+ */
+export type Purged = {
+    /**
+     * Objects removed. Fills in progress that the purge covers are discarded too.
+     */
+    purged: number;
+    store: string;
 };
 
 export type Reauth = {
@@ -515,6 +576,42 @@ export type RdockAdminTokens = {
 };
 
 /**
+ * An agent's circuit breaker: after `failures` failed calls in a row, the most recent within
+ * `window` of the first, the agent is not called for `open_for`; `on_error` applies at once
+ * meanwhile. Then one call is tried: success closes the breaker, failure opens it again.
+ */
+export type RdockAgentBreaker = {
+    /**
+     * Failed calls in a row that open the breaker; `0` turns it off.
+     */
+    failures?: number;
+    /**
+     * How long the breaker stays open.
+     */
+    open_for?: RdockDuration;
+    /**
+     * The failures must fall within this time.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | number | RdockDuration | undefined;
+};
+
+/**
+ * What an agent failure does to the request.
+ */
+export type RdockAgentOnError = 'deny' | 'allow';
+
+/**
+ * What a body longer than `max_body` does.
+ */
+export type RdockAgentOversize = 'reject' | 'skip';
+
+/**
+ * How a request is described to an agent.
+ */
+export type RdockAgentProtocol = 'rdock' | 'forward' | 'ext_proc' | 'ext_authz' | 'spop';
+
+/**
  * One alert destination (ADR-0024). URLs, secrets and passwords are secrets: write them as
  * `${file:…}` or `${env:…}` references.
  */
@@ -670,6 +767,35 @@ export type RdockAlerts = {
 };
 
 /**
+ * What an authenticating middleware does with a request that carries no credential.
+ */
+export type RdockAnonymous = 'deny' | 'allow';
+
+/**
+ * One API key of a consumer: `rdk_<id>_<secret><checksum>` is the key, and only `id` and the
+ * SHA-256 of the secret are stored.
+ */
+export type RdockApiKeyEntry = {
+    /**
+     * When the key stops working: an RFC 3339 time, e.g. `2027-01-01T00:00:00Z`.
+     */
+    expires?: string | null;
+    /**
+     * SHA-256 of the key's secret (the 32 characters after the ID's `_`, without the
+     * 6-character checksum), as 64 lower-case hex digits. `rdock keys hash` prints it.
+     */
+    hash: string;
+    /**
+     * The key's public ID: the 12 characters after `rdk_`.
+     */
+    id: string;
+    /**
+     * What the key is for.
+     */
+    note?: string | null;
+};
+
+/**
  * Argon2id parameters. The default is the OWASP minimum, m=19456 KiB, t=2, p=1 (Password
  * Storage Cheat Sheet, checked 2026-10-31).
  */
@@ -687,6 +813,11 @@ export type RdockArgon2Cost = {
      */
     parallelism?: number;
 };
+
+/**
+ * One value or a list of values.
+ */
+export type RdockAudience = string | Array<string>;
 
 /**
  * Where audit records are forwarded.
@@ -707,6 +838,11 @@ export type RdockAuditForward = {
      */
     transport?: RdockSyslogTransport;
 };
+
+/**
+ * What to do with responses to requests that carry `Authorization`.
+ */
+export type RdockAuthorizationRule = 'refuse' | 'store';
 
 /**
  * Azure DNS (`type: azure_dns`). Exactly one of `client_secret`, `client_certificate` and
@@ -790,6 +926,17 @@ export type RdockBackend = {
 export type RdockBackendAddress = string;
 
 /**
+ * Body changes of `transform`.
+ */
+export type RdockBodyTransform = {
+    /**
+     * A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and
+     * `test` with JSON Pointers (RFC 6901), applied in order, all or nothing.
+     */
+    patch?: Array<RdockPatchOp>;
+};
+
+/**
  * Size in bytes, optionally with a unit (KB = 1000, KiB = 1024).
  */
 export type RdockByteSize = number | string;
@@ -798,6 +945,35 @@ export type RdockByteSize = number | string;
  * A certificate authority.
  */
 export type RdockCaRef = RdockKnownCa | RdockHttpUrl;
+
+/**
+ * A cache store: where cached responses live. Stores are created once per process; adding
+ * one applies on reload, changing or removing one takes effect after a restart.
+ */
+export type RdockCacheStore = {
+    /**
+     * Bytes kept, bodies and headers together.
+     */
+    max_size?: RdockByteSize;
+    type: 'memory';
+    [key: string]: unknown | RdockByteSize | 'memory' | undefined;
+} | {
+    /**
+     * Objects kept on disk (one file each).
+     */
+    max_objects?: number;
+    /**
+     * Bytes kept on disk (file sizes).
+     */
+    max_size?: RdockByteSize;
+    /**
+     * Directory of the store, absolute; `<data dir>/cache/<name>` when omitted. Created with
+     * mode 0700. Anyone who can write it can serve arbitrary content through the cache.
+     */
+    path?: string | null;
+    type: 'disk';
+    [key: string]: unknown | number | RdockByteSize | string | null | 'disk' | undefined;
+};
 
 /**
  * A certificate and private key provided as files. Changes to the files are picked up
@@ -889,10 +1065,23 @@ export type RdockConfig = {
      */
     admin?: RdockAdmin;
     /**
+     * HTTP cache stores, used by `cache` middlewares.
+     */
+    caches?: {
+        [key: string]: RdockCacheStore;
+    };
+    /**
      * Certificates you provide yourself.
      */
     certificates?: {
         [key: string]: RdockCertificate;
+    };
+    /**
+     * API clients and users that requests are attributed to, with their API keys (stored
+     * hashed). The `api` provider may add consumers and keys (`rdock consumers`).
+     */
+    consumers?: {
+        [key: string]: RdockConsumer;
     };
     /**
      * Defaults applied to routes that do not set a value.
@@ -930,6 +1119,10 @@ export type RdockConfig = {
         [key: string]: RdockRoute;
     };
     /**
+     * External secret stores that secret fields can reference (`${vault:…}`).
+     */
+    secrets?: RdockSecrets;
+    /**
      * Client IP trust and request limits.
      */
     security?: RdockSecurity;
@@ -952,24 +1145,70 @@ export type RdockConfig = {
         [key: string]: RdockTcpService;
     };
     /**
+     * UDP routes: which `udp` listener's datagrams go to which UDP service.
+     */
+    udp_routes?: {
+        [key: string]: RdockUdpRoute;
+    };
+    /**
+     * UDP backend pools.
+     */
+    udp_services?: {
+        [key: string]: RdockUdpService;
+    };
+    /**
      * Configuration format version. Only `1` exists; omit it to use the latest.
      */
     version?: number | null;
     [key: string]: unknown | string | null | RdockAcmeSetting | null | RdockAdmin | {
+        [key: string]: RdockCacheStore;
+    } | {
         [key: string]: RdockCertificate;
+    } | {
+        [key: string]: RdockConsumer;
     } | RdockDefaults | RdockLifecycle | {
         [key: string]: RdockListener;
     } | {
         [key: string]: RdockMiddleware;
     } | RdockObservability | RdockProviders | {
         [key: string]: RdockRoute;
-    } | RdockSecurity | {
+    } | RdockSecrets | RdockSecurity | {
         [key: string]: RdockService;
     } | {
         [key: string]: RdockTcpRoute;
     } | {
         [key: string]: RdockTcpService;
+    } | {
+        [key: string]: RdockUdpRoute;
+    } | {
+        [key: string]: RdockUdpService;
     } | number | null | undefined;
+};
+
+/**
+ * A consumer: an API client or user that requests are attributed to (`consumers.<name>`).
+ *
+ * An authenticating middleware (`api_key`, `oidc`, `cloudflare_access`, `jwt` with
+ * `consumer_claim`) sets the request's consumer;
+ * rate limits and quotas can count per consumer, and the access log, metrics, metering and the
+ * cache key see its name.
+ */
+export type RdockConsumer = {
+    /**
+     * Groups, in order of precedence: per-group limit overrides use the first listed group
+     * that has one, and `api_key.groups` admits a consumer in any of them. In the admin
+     * API's document, an entry without `groups` only adds keys to a consumer of the file.
+     */
+    groups?: Array<string>;
+    /**
+     * API keys, stored as their ID and the SHA-256 of their secret; never the key itself.
+     */
+    keys?: Array<RdockApiKeyEntry>;
+    /**
+     * A file of `id:sha256[:expires]` lines (blank lines and `#` comments ignored), read on
+     * every reload and watched like the configuration file.
+     */
+    keys_file?: string | null;
 };
 
 /**
@@ -982,6 +1221,11 @@ export type RdockDefaults = {
      */
     certificate?: string | null;
     /**
+     * How answers rdock produces itself (404 without a route, 401/403/429 from middlewares,
+     * 502/503/504) are rendered, for routes that do not set `errors`.
+     */
+    errors?: RdockErrorSettings;
+    /**
      * Listeners used by routes that do not name any.
      */
     listeners?: Array<string>;
@@ -993,7 +1237,7 @@ export type RdockDefaults = {
      * TLS for routes that do not set `tls`: `auto` (automatic certificates) or `off`.
      */
     tls?: RdockTlsMode;
-    [key: string]: unknown | string | null | Array<string> | boolean | RdockTlsMode | undefined;
+    [key: string]: unknown | string | null | RdockErrorSettings | Array<string> | boolean | RdockTlsMode | undefined;
 };
 
 /**
@@ -1122,6 +1366,11 @@ export type RdockDuration = string;
 export type RdockEndpoint = string;
 
 /**
+ * The format of rdock's own error answers.
+ */
+export type RdockErrorFormat = 'html' | 'problem' | 'auto';
+
+/**
  * A 5xx-share threshold.
  */
 export type RdockErrorRateRule = {
@@ -1137,6 +1386,22 @@ export type RdockErrorRateRule = {
      * Window (1m–15m).
      */
     window?: RdockDuration;
+};
+
+/**
+ * How rdock renders the answers it produces itself (F-GW-04, ADR-0030). Pages of an `errors`
+ * middleware and a `maintenance` file take precedence where they apply.
+ */
+export type RdockErrorSettings = {
+    /**
+     * `html`: an HTML page, or a small JSON object for clients that ask for JSON and not
+     * HTML (the behaviour before v0.8). `problem`: `application/problem+json` (RFC 9457) for
+     * every client that accepts JSON, which includes `**` and a missing `Accept`; HTML only
+     * for clients that ask for HTML and no JSON type (browsers). `auto`: problem details for
+     * clients that ask for JSON and not HTML, HTML otherwise.
+     */
+    format?: RdockErrorFormat;
+    [key: string]: unknown | RdockErrorFormat | undefined;
 };
 
 /**
@@ -1319,6 +1584,24 @@ export type RdockJwtAlgorithm = 'RS256' | 'RS384' | 'RS512' | 'PS256' | 'PS384' 
 export type RdockKnownCa = 'letsencrypt' | 'zerossl' | 'buypass' | 'google';
 
 /**
+ * Kubernetes login settings.
+ */
+export type RdockKubernetesAuth = {
+    /**
+     * Where the Kubernetes auth method is mounted.
+     */
+    mount?: string;
+    /**
+     * The Vault role to log in as.
+     */
+    role: string;
+    /**
+     * The service-account token, read at every login.
+     */
+    token_file?: string;
+};
+
+/**
  * Gateway API settings of the Kubernetes provider.
  */
 export type RdockKubernetesGateway = {
@@ -1495,6 +1778,11 @@ export type RdockLifecycle = {
 };
 
 /**
+ * Rate-limit response headers.
+ */
+export type RdockLimitHeaders = 'off' | 'draft';
+
+/**
  * Request size limits. Requests over a limit are answered with 431, 414 or 413.
  */
 export type RdockLimits = {
@@ -1555,6 +1843,11 @@ export type RdockListener = {
      */
     proxy_protocol?: RdockProxyProtocolIn | null;
     /**
+     * `udp` listeners: how many sessions (client address and port, each with its own
+     * upstream socket) may exist at once. Capped by default even when omitted.
+     */
+    sessions?: RdockUdpSessions | null;
+    /**
      * `tcp` listeners: answer a protocol's request to start TLS before reading the TLS
      * ClientHello. Off by default.
      */
@@ -1567,7 +1860,7 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
 };
 
 /**
@@ -1645,6 +1938,90 @@ export type RdockLogFormat = 'json' | 'text' | 'off';
  * How a route selects requests.
  */
 export type RdockMatchSpec = string | RdockStructuredMatch;
+
+/**
+ * Usage metering (`observability.metering`, F-GW-05): one event per request that has a
+ * consumer, sent in batches to a webhook (`CloudEvents` 1.0) and/or an OTLP logs endpoint.
+ *
+ * Events wait in a bounded in-memory queue; when it is full the newest are dropped and
+ * counted. Delivery is at least once (a retried batch carries the same event IDs). There is
+ * no disk spool: events still queued are lost on a crash. Per instance; not billing-grade.
+ */
+export type RdockMetering = {
+    /**
+     * Also meter requests without a consumer.
+     */
+    all_requests?: boolean;
+    /**
+     * Longest an event waits before its batch is sent.
+     */
+    flush_interval?: RdockDuration;
+    /**
+     * Events per request to a sink, at most.
+     */
+    max_batch?: number;
+    /**
+     * OTLP/HTTP logs (JSON encoding).
+     */
+    otlp?: RdockMeteringOtlp | null;
+    /**
+     * Events waiting per sink, at most; more are dropped and counted.
+     */
+    queue?: number;
+    /**
+     * `CloudEvents` over HTTP.
+     */
+    webhook?: RdockMeteringWebhook | null;
+};
+
+/**
+ * The OTLP logs sink.
+ */
+export type RdockMeteringOtlp = {
+    /**
+     * Allow a collector on a private, loopback or link-local address (the usual case).
+     */
+    allow_private_targets?: boolean;
+    /**
+     * The collector's base URL (`/v1/logs` is added) or the full logs URL.
+     */
+    endpoint: RdockHttpUrl;
+    /**
+     * A bearer token as a `${file:…}` or `${env:…}` reference.
+     */
+    token?: string | null;
+};
+
+/**
+ * The `CloudEvents` webhook sink.
+ */
+export type RdockMeteringWebhook = {
+    /**
+     * Allow a receiver on a private, loopback or link-local address.
+     */
+    allow_private_targets?: boolean;
+    /**
+     * A Standard Webhooks signing secret (`whsec_…`) as a `${file:…}` or `${env:…}`
+     * reference: requests carry `webhook-id`, `webhook-timestamp` and `webhook-signature`.
+     */
+    secret?: string | null;
+    /**
+     * The events' `source`; `rdock/<host name>` when unset.
+     */
+    source?: string | null;
+    /**
+     * A bearer token as a `${file:…}` or `${env:…}` reference.
+     */
+    token?: string | null;
+    /**
+     * The events' `type`.
+     */
+    type?: string;
+    /**
+     * Where batches are posted (`application/cloudevents-batch+json`).
+     */
+    url: RdockHttpUrl;
+};
 
 /**
  * Metrics settings.
@@ -1831,15 +2208,29 @@ export type RdockMiddleware = {
      */
     burst?: number | null;
     /**
+     * `draft` adds `RateLimit-Policy` and `RateLimit` to responses
+     * (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
+     */
+    headers?: RdockLimitHeaders;
+    /**
      * What to count by.
      */
     key?: RdockRateLimitKey;
+    /**
+     * Group → limit for consumers in that group, with `key: consumer`. The first of the
+     * consumer's groups (in its `groups` order) that has an override wins.
+     */
+    overrides?: {
+        [key: string]: RdockRateOverride;
+    };
     /**
      * Period of `average`.
      */
     period?: RdockDuration;
     type: 'rate_limit';
-    [key: string]: unknown | number | number | null | RdockRateLimitKey | RdockDuration | 'rate_limit' | undefined;
+    [key: string]: unknown | number | number | null | RdockLimitHeaders | RdockRateLimitKey | {
+        [key: string]: RdockRateOverride;
+    } | RdockDuration | 'rate_limit' | undefined;
 } | {
     /**
      * Requests in flight allowed per key.
@@ -1974,9 +2365,19 @@ export type RdockMiddleware = {
         [key: string]: string;
     };
     /**
+     * A claim that becomes the request's consumer (for `rate_limit` and `quota` with
+     * `key: consumer`, the cache key and the access log), e.g. `sub` or `email`.
+     */
+    consumer_claim?: string | null;
+    /**
      * Keep the token in the request to the backend.
      */
     forward_token?: boolean;
+    /**
+     * The claim listing the consumer's groups (a string or an array of strings), with
+     * `consumer_claim`.
+     */
+    groups_claim?: string | null;
     /**
      * Shared secret for HS256/HS384/HS512 tokens, as a `${file:…}` or `${env:…}` reference.
      */
@@ -1998,13 +2399,28 @@ export type RdockMiddleware = {
      */
     leeway?: RdockDuration;
     /**
+     * With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding
+     * its groups and sharing its quota, rate-limit and cache identity with its API keys
+     * (other names stay keyed on the issuer). Off by default: a token's consumer is a
+     * separate identity keyed on the token's issuer and the name. Turn it on only when the
+     * issuer controls the claim.
+     */
+    map_to_consumers?: boolean;
+    /**
      * Where the token is read from; `Authorization: Bearer` when empty.
      */
     token?: RdockTokenSource;
     type: 'jwt';
+    /**
+     * With `consumer_claim: email`: accept an `email` claim that comes without
+     * `email_verified`. Off: the address names the consumer only with `email_verified:
+     * true`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an
+     * issuer that lets users set an address they do not own.
+     */
+    unverified_emails?: boolean;
     [key: string]: unknown | Array<RdockJwtAlgorithm> | Array<string> | {
         [key: string]: string;
-    } | boolean | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
+    } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
 } | {
     /**
      * Names a certificate must have one of: its common name or a DNS, URI or email SAN.
@@ -2031,7 +2447,7 @@ export type RdockMiddleware = {
     cache_control?: RdockStaticCacheControl;
     /**
      * Redirect (`308`) a directory path without a trailing slash to the path with one when the
-     * directory has an index file.
+     * directory has an index file, or is listed.
      */
     directory_redirect?: boolean;
     /**
@@ -2052,7 +2468,10 @@ export type RdockMiddleware = {
      */
     index?: Array<string>;
     /**
-     * Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+     * List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that
+     * prefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request
+     * would be refused are not listed. At most 10,000 entries, sorted by name. A directory
+     * that exists is listed instead of getting the `fallback`.
      */
     listing?: boolean;
     /**
@@ -2092,6 +2511,640 @@ export type RdockMiddleware = {
     [key: string]: unknown | RdockStaticCacheControl | boolean | string | null | Array<string> | RdockHiddenFiles | Array<string> | number | Array<RdockCompressAlgorithm> | string | RdockSymlinkPolicy | 'static' | {
         [key: string]: string;
     } | undefined;
+} | {
+    /**
+     * Largest body held, at most 64MiB; a longer one is refused with `413`. The route's
+     * `max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.
+     */
+    max?: RdockByteSize;
+    /**
+     * Longest time from the first body byte to the last; a slower upload is refused with
+     * `408`. The service's `timeouts.read` also runs while the backend waits for the body.
+     */
+    timeout?: RdockDuration;
+    type: 'hold_body';
+    [key: string]: unknown | RdockByteSize | RdockDuration | 'hold_body' | undefined;
+} | {
+    /**
+     * Responses to requests that carry `Authorization` to the origin: `refuse` (default)
+     * stores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC
+     * 9111 §3.5); `store` stores them anyway. The risk of `store` is serving one
+     * credential's answer to another.
+     */
+    authorization?: RdockAuthorizationRule;
+    /**
+     * Refresh stale responses in the background (`stale-while-revalidate`). Not supported
+     * in this version: `stale-while-revalidate` is treated as plain staleness.
+     */
+    background_refresh?: boolean;
+    /**
+     * Requests that skip the cache entirely.
+     */
+    bypass?: {
+        /**
+         * Skip when the request has one of these cookies.
+         */
+        cookies?: Array<string>;
+        /**
+         * Skip when the request has one of these headers.
+         */
+        headers?: Array<string>;
+        [key: string]: unknown | Array<string> | Array<string> | undefined;
+    };
+    /**
+     * Add `Cache-Status` (RFC 9211) to responses.
+     */
+    cache_status?: boolean;
+    /**
+     * Lifetime by status (`"200": 5m`) for responses whose origin gives none (no
+     * `max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or
+     * `no-cache`. Empty by default: the risk is caching personalised pages the origin did
+     * not mark.
+     */
+    default_ttl?: {
+        [key: string]: RdockDuration;
+    };
+    /**
+     * Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at
+     * most a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.
+     */
+    heuristic_freshness?: boolean;
+    /**
+     * What, besides store, route, scheme, host, path and method, selects a stored response.
+     */
+    key?: {
+        /**
+         * Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,
+         * else the `jwt` issuer and subject, else the client certificate's subject.
+         */
+        consumer?: boolean;
+        /**
+         * Request headers whose values select a response (beyond the origin's `Vary`).
+         */
+        headers?: Array<string>;
+        /**
+         * How the query string enters the key.
+         */
+        query?: RdockQueryKey;
+        [key: string]: unknown | boolean | Array<string> | RdockQueryKey | undefined;
+    };
+    /**
+     * Request coalescing: one origin fetch per key at a time.
+     */
+    lock?: {
+        /**
+         * While one request fetches a key, others wait for its response instead of asking the
+         * origin too. Off, every miss goes to the origin.
+         */
+        enabled?: boolean;
+        /**
+         * Longest wait. After it the waiting request goes to the origin without storing, and
+         * a fetch running that long no longer holds others back.
+         */
+        timeout?: RdockDuration;
+        [key: string]: unknown | boolean | RdockDuration | undefined;
+    };
+    /**
+     * Largest response body stored; larger ones pass through uncached.
+     */
+    max_object_size?: RdockByteSize;
+    /**
+     * Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off
+     * by default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without
+     * it would fall back to the less specific `Cache-Control`.
+     */
+    remove_targeted?: boolean;
+    /**
+     * The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default,
+     * RFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches.
+     * `only-if-cached` is always honoured.
+     */
+    request_directives?: RdockRequestDirectives;
+    /**
+     * Responses that set a cookie: `refuse` (default) never stores them; `strip` stores
+     * them without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie.
+     */
+    set_cookie?: RdockSetCookie;
+    /**
+     * The route authenticates requests but its responses are the same for every user, so
+     * one stored copy may be served to all of them. Required (or `key.consumer`) when the
+     * route has an authenticating middleware; the risk is serving one user's page to
+     * another.
+     */
+    shared_across_users?: boolean;
+    /**
+     * Longest time a stale response is served when the origin fails, if the origin allowed
+     * it with `stale-if-error` (RFC 5861). `0s` turns it off.
+     */
+    stale_if_error?: RdockDuration;
+    /**
+     * Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300,
+     * 301, 308, 404, 410. 206 and 304 are never stored as such.
+     */
+    statuses?: Array<number> | null;
+    /**
+     * The store, a name under `caches`.
+     */
+    store: string;
+    /**
+     * Cache tags for purging groups of responses.
+     */
+    tags?: {
+        /**
+         * Response headers that carry tags (comma or space separated).
+         */
+        headers?: Array<string>;
+        /**
+         * Pass the tag headers on to clients; by default they are removed.
+         */
+        keep?: boolean;
+        [key: string]: unknown | Array<string> | boolean | undefined;
+    };
+    /**
+     * Targeted cache-control fields honoured, in order (RFC 9213): the first one with a
+     * valid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both
+     * directions (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600`
+     * stores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the
+     * origin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of
+     * your own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.
+     */
+    targeted?: Array<string>;
+    type: 'cache';
+    [key: string]: unknown | RdockAuthorizationRule | boolean | {
+        /**
+         * Skip when the request has one of these cookies.
+         */
+        cookies?: Array<string>;
+        /**
+         * Skip when the request has one of these headers.
+         */
+        headers?: Array<string>;
+        [key: string]: unknown | Array<string> | Array<string> | undefined;
+    } | {
+        [key: string]: RdockDuration;
+    } | {
+        /**
+         * Keep one copy per authenticated identity: the consumer, else the `basic_auth` user,
+         * else the `jwt` issuer and subject, else the client certificate's subject.
+         */
+        consumer?: boolean;
+        /**
+         * Request headers whose values select a response (beyond the origin's `Vary`).
+         */
+        headers?: Array<string>;
+        /**
+         * How the query string enters the key.
+         */
+        query?: RdockQueryKey;
+        [key: string]: unknown | boolean | Array<string> | RdockQueryKey | undefined;
+    } | {
+        /**
+         * While one request fetches a key, others wait for its response instead of asking the
+         * origin too. Off, every miss goes to the origin.
+         */
+        enabled?: boolean;
+        /**
+         * Longest wait. After it the waiting request goes to the origin without storing, and
+         * a fetch running that long no longer holds others back.
+         */
+        timeout?: RdockDuration;
+        [key: string]: unknown | boolean | RdockDuration | undefined;
+    } | RdockByteSize | RdockRequestDirectives | RdockSetCookie | RdockDuration | Array<number> | null | string | {
+        /**
+         * Response headers that carry tags (comma or space separated).
+         */
+        headers?: Array<string>;
+        /**
+         * Pass the tag headers on to clients; by default they are removed.
+         */
+        keep?: boolean;
+        [key: string]: unknown | Array<string> | boolean | undefined;
+    } | Array<string> | 'cache' | undefined;
+} | {
+    /**
+     * The plugin's own settings, checked by the plugin when the configuration is validated
+     * and loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay
+     * visible in the configuration API.
+     */
+    config?: {
+        [key: string]: unknown;
+    };
+    /**
+     * The name the plugin is registered under in this binary.
+     */
+    name: string;
+    type: 'plugin';
+    [key: string]: unknown | {
+        [key: string]: unknown;
+    } | string | 'plugin' | undefined;
+} | {
+    /**
+     * UNSAFE: run the module without a signature (the `sha256` pin still applies). A
+     * signature that is present must still verify. Logged as a warning at every load.
+     */
+    allow_unsigned?: boolean;
+    /**
+     * Host interfaces the plugin may import besides its `config`. A component that imports
+     * one not listed here, or anything else (WASI included), is refused when it is loaded.
+     */
+    capabilities?: Array<RdockWasmCapability>;
+    /**
+     * The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.
+     */
+    config?: {
+        [key: string]: unknown;
+    };
+    /**
+     * Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.
+     */
+    fuel?: number;
+    /**
+     * The largest linear memory the plugin may have.
+     */
+    memory?: RdockByteSize;
+    /**
+     * What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny`
+     * answers `500` (in the response phase, the response is replaced by a `500`), `allow`
+     * passes the request or response on unchanged. Both are counted and logged.
+     */
+    on_error?: RdockAgentOnError;
+    /**
+     * The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration
+     * is loaded; a reload reads it again.
+     */
+    path: string;
+    /**
+     * The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it
+     * fixes which file runs, so a changed file is refused until the pin is updated.
+     */
+    sha256: string;
+    /**
+     * The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>`
+     * writes).
+     */
+    signature?: string | null;
+    /**
+     * Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The
+     * call runs on a proxy worker thread, so keep it short.
+     */
+    timeout?: RdockDuration;
+    /**
+     * Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file
+     * (`RWQ…`).
+     */
+    trusted_keys?: Array<string>;
+    type: 'wasm';
+    [key: string]: unknown | boolean | Array<RdockWasmCapability> | {
+        [key: string]: unknown;
+    } | number | RdockByteSize | RdockAgentOnError | string | string | null | RdockDuration | Array<string> | 'wasm' | undefined;
+} | {
+    /**
+     * The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless
+     * the network between rdock and the agent is private.
+     */
+    address: RdockHttpUrl;
+    /**
+     * The circuit breaker that stops calling a failing agent for a while.
+     */
+    breaker?: RdockAgentBreaker;
+    /**
+     * Largest request body sent to the agent; `0` sends none. The body is held until the
+     * agent has answered, so none of the body reaches the backend before the verdict; the
+     * request head does: with a body, the backend connection is opened and the head sent
+     * before the body is read (Pingora 0.9.1), and a refusal closes that connection.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an
+     * open breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker
+     * is open), `allow` lets it through unchecked.
+     */
+    on_error?: RdockAgentOnError;
+    /**
+     * A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without
+     * the body (only when the length is declared; a chunked body that grows past
+     * `max_body` is refused with `413` either way).
+     */
+    on_oversize?: RdockAgentOversize;
+    /**
+     * How the request is described to the agent.
+     */
+    protocol?: RdockAgentProtocol;
+    /**
+     * Request headers sent to the agent besides the default set (`accept`,
+     * `accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,
+     * `referer`, `user-agent`); `["*"]` sends every header except hop-by-hop ones.
+     * `authorization`, `cookie` and `proxy-authorization` go only when listed here.
+     */
+    request_headers?: Array<string>;
+    /**
+     * Request headers the agent may set on the request that goes to the backend (allowed
+     * answers only). Copies sent by the client are removed first. Applied only when the
+     * verdict comes before the request head leaves, which is the case for requests without
+     * a body (or whose body is not sent to the agent).
+     */
+    response_headers?: Array<string>;
+    /**
+     * Time allowed for the agent's whole answer.
+     */
+    timeout?: RdockDuration;
+    /**
+     * TLS to an `https://` agent.
+     */
+    tls?: RdockUpstreamTls | null;
+    type: 'agent';
+    [key: string]: unknown | RdockHttpUrl | RdockAgentBreaker | RdockByteSize | RdockAgentOnError | RdockAgentOversize | RdockAgentProtocol | Array<string> | Array<string> | RdockDuration | RdockUpstreamTls | null | 'agent' | undefined;
+} | {
+    /**
+     * The Application Audience (AUD) tag of the Access application, or several. Required:
+     * without it a token of any application of the same team would pass.
+     */
+    audience: RdockAudience;
+    /**
+     * Where the keys are fetched from instead of the team's certs URL: for tests, or an
+     * egress proxy that mirrors it. `https://` (or a loopback address).
+     */
+    certs_url?: RdockHttpUrl | null;
+    /**
+     * Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email,
+     * common_name: X-Auth-Service-Token }`. Client-sent copies are removed first.
+     */
+    claims_to_headers?: {
+        [key: string]: string;
+    };
+    /**
+     * The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
+     */
+    team: string;
+    type: 'cloudflare_access';
+    [key: string]: unknown | RdockAudience | RdockHttpUrl | null | {
+        [key: string]: string;
+    } | string | 'cloudflare_access' | undefined;
+} | {
+    /**
+     * Requests without a key: `deny` answers `401`; `allow` lets them through without a
+     * consumer (an invalid key is still refused).
+     */
+    anonymous?: RdockAnonymous;
+    /**
+     * Keep the key in the request to the backend. Off by default: the backend gets the
+     * consumer in `X-Consumer-Name`, `X-Consumer-Groups` and `X-Credential-Id` instead.
+     */
+    forward_credential?: boolean;
+    /**
+     * Only consumers in one of these groups are let in; others get `403`. Any consumer when
+     * empty.
+     */
+    groups?: Array<string>;
+    /**
+     * Request headers the key is read from, in order; the first present wins. A key in
+     * `Authorization` must follow `Bearer `.
+     */
+    headers?: Array<string>;
+    /**
+     * A query parameter the key is also read from, after the headers. Off unless named: keys
+     * in URLs end up in other systems' logs.
+     */
+    query?: string | null;
+    /**
+     * The realm of the `WWW-Authenticate` challenge.
+     */
+    realm?: string | null;
+    type: 'api_key';
+} | {
+    /**
+     * How often counters are written to disk.
+     */
+    flush_interval?: RdockDuration;
+    /**
+     * `draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of
+     * `draft-ietf-httpapi-ratelimit-headers-11`. Off by default while the draft changes.
+     */
+    headers?: RdockLimitHeaders;
+    /**
+     * What to count by; only `consumer` (the default) is accepted. Requests without a
+     * consumer are counted per client IP.
+     */
+    key?: RdockRateLimitKey;
+    /**
+     * Requests allowed per window.
+     */
+    limit: number;
+    /**
+     * Group → limit, for consumers in that group (the first of the consumer's groups that has
+     * one wins).
+     */
+    overrides?: {
+        [key: string]: number;
+    };
+    type: 'quota';
+    /**
+     * The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
+     */
+    window: RdockQuotaWindow;
+} | {
+    /**
+     * With `openapi`: a prefix the document's paths are relative to (`/api` when the
+     * document's server URL is `https://example.com/api`). Requests outside it are unknown
+     * operations.
+     */
+    base_path?: string | null;
+    /**
+     * A schema for the JSON request body. A body with another content type is answered
+     * `415`, a body that is not JSON `400`, a body over `max_body` `413`.
+     */
+    body?: unknown;
+    /**
+     * With `body`: a request without a body is refused. Off by default, as OpenAPI's
+     * `requestBody.required`.
+     */
+    body_required?: boolean;
+    /**
+     * A schema for the object of request cookies. Converted like `query`.
+     */
+    cookies?: unknown;
+    /**
+     * Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12
+     * treats it as an annotation unless asked; rdock asks by default.
+     */
+    formats?: boolean;
+    /**
+     * A schema for the object of request headers, keyed by lower-case name. Converted like
+     * `query`.
+     */
+    headers?: unknown;
+    /**
+     * Largest body checked, at most 64MiB; the body is held until it is complete. The
+     * route's `max_body` applies when it is smaller.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * Most errors listed in an answer (1 to 100).
+     */
+    max_errors?: number;
+    /**
+     * `enforce` (the default) refuses invalid requests; `report` only logs and counts them,
+     * to try a schema on live traffic.
+     */
+    mode?: RdockValidationMode;
+    /**
+     * An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to
+     * its operations by method and path template; each operation's parameters and its
+     * `application/json` request body are checked.
+     */
+    openapi?: string | null;
+    /**
+     * Path parameters: a regular expression for the path with named groups, and a schema for
+     * the object of the groups' values.
+     */
+    path?: RdockPathParameters | null;
+    /**
+     * A schema for the object of query parameters (`{ name: value }`; a repeated name gives
+     * an array). Values are strings, converted to the `type` the schema declares for the
+     * property (`integer`, `number`, `boolean`, `array`).
+     */
+    query?: unknown;
+    type: 'validate';
+    /**
+     * With `openapi`: requests that match no operation of the document. `deny` (the
+     * default) answers `404` or `405`; `allow` lets them through unchecked.
+     */
+    unknown_operations?: RdockUnknownOperations;
+} | {
+    /**
+     * Largest body patched, request or response, at most 64MiB (default 1MiB). A larger
+     * request body is refused with `413`; a larger response body passes unchanged.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * A request patch that cannot be applied (a `test` operation fails, a location is
+     * missing): `reject` (the default) answers `422`; `pass` forwards the body unchanged.
+     * A response patch that fails always leaves the body unchanged (the status is sent).
+     */
+    on_error?: RdockOnPatchError;
+    /**
+     * A request body that is not JSON when `request.body.patch` is set: `pass` (the
+     * default) forwards it unchanged; `reject` answers `415` (wrong content type) or `400`
+     * (not valid JSON).
+     */
+    on_non_json?: RdockOnNonJson;
+    /**
+     * Changes to the request sent to the backend.
+     */
+    request?: RdockTransformSide;
+    /**
+     * Changes to the response sent to the client.
+     */
+    response?: RdockTransformSide;
+    type: 'transform';
+} | {
+    /**
+     * ID-token algorithms accepted: those the provider advertises in
+     * `id_token_signing_alg_values_supported` and that are listed here. HS256/384/512 use
+     * the client secret as key and are accepted only when listed explicitly.
+     */
+    algorithms?: Array<RdockJwtAlgorithm>;
+    /**
+     * Allow the provider's endpoints to resolve to private, loopback or link-local
+     * addresses (an in-cluster Keycloak or Dex). Off by default.
+     */
+    allow_private_targets?: boolean;
+    /**
+     * Who may log in. Everyone the provider authenticates when all lists are empty;
+     * otherwise a user matching any one entry.
+     */
+    allowed?: RdockOidcAllowed;
+    /**
+     * Request headers set from ID-token claims (`claim: header`). Client-sent copies are
+     * always removed first.
+     */
+    claims_to_headers?: {
+        [key: string]: string;
+    };
+    /**
+     * The client ID registered at the provider.
+     */
+    client_id: string;
+    /**
+     * The client secret, as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Without it
+     * rdock is a public client and relies on PKCE alone.
+     */
+    client_secret?: string | null;
+    /**
+     * The claim that becomes the request's consumer (rate limits, quotas, the cache key,
+     * the access log). `sub` is used when the token lacks it, and in place of `email` when
+     * the provider has not verified the address (`email_verified` is not `true`; see
+     * `allowed.unverified_emails`).
+     */
+    consumer_claim?: string;
+    /**
+     * Pass the access token to the backend in `X-Forwarded-Access-Token`. It is then kept
+     * in the session cookie, which grows.
+     */
+    forward_access_token?: boolean;
+    /**
+     * The claim that lists the user's groups (a string or an array of strings).
+     */
+    groups_claim?: string;
+    /**
+     * The provider's issuer URL; its configuration is read from
+     * `<issuer>/.well-known/openid-configuration`. `https://` (or a loopback address).
+     */
+    issuer: RdockHttpUrl;
+    /**
+     * Clock skew allowed for `exp`, `iat` and `nbf`.
+     */
+    leeway?: RdockDuration;
+    /**
+     * Path that ends the session (`GET`, `HEAD` or `POST`, from the site itself: a request
+     * another site triggers is refused with `403`); the provider's `end_session_endpoint` is
+     * called when it advertises one (RP-initiated logout).
+     */
+    logout_path?: string;
+    /**
+     * Treat a consumer name that `consumers` defines as that consumer: the session then
+     * gets its groups, and shares its quota, rate-limit and cache identity with its API keys
+     * (other names stay keyed on the issuer). Off by default: an OIDC user is a separate
+     * identity, keyed on the issuer and the name, so a user whose claim happens to equal a
+     * configured consumer's name gains nothing from it. Turn it on only when the provider controls the
+     * claim (it cannot be chosen by the user).
+     */
+    map_to_consumers?: boolean;
+    /**
+     * Where the browser lands after logging out (a path on the same host).
+     */
+    post_logout_path?: string;
+    /**
+     * Path of the callback the provider redirects back to. The route must match it.
+     */
+    redirect_path?: string;
+    /**
+     * The full redirect URI registered at the provider, when it cannot be built from the
+     * request (a route without a `Host` rule, a port the browser does not see). Its path
+     * replaces `redirect_path`.
+     */
+    redirect_url?: RdockHttpUrl | null;
+    /**
+     * Scopes requested; must include `openid`. Add `offline_access` where the provider needs
+     * it for refresh tokens.
+     */
+    scopes?: Array<string>;
+    /**
+     * The session cookie.
+     */
+    session: RdockOidcSession;
+    /**
+     * How the client authenticates at the token endpoint when it has a secret.
+     */
+    token_endpoint_auth?: RdockTokenEndpointAuth;
+    type: 'oidc';
+    /**
+     * Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD`
+     * asking for `text/html`) to the login and answers `401` to everything else, so API
+     * and XHR clients never get a redirect; `redirect` always redirects `GET` and `HEAD`;
+     * `deny` always answers `401`.
+     */
+    unauthenticated?: RdockUnauthenticated;
 };
 
 /**
@@ -2123,6 +3176,10 @@ export type RdockObservability = {
      */
     alerts?: RdockAlerts;
     /**
+     * Usage events per request with a consumer, for analytics and showback (F-GW-05).
+     */
+    metering?: RdockMetering | null;
+    /**
      * Metrics.
      */
     metrics?: RdockMetrics;
@@ -2130,8 +3187,99 @@ export type RdockObservability = {
      * Distributed tracing.
      */
     tracing?: RdockTracing | null;
-    [key: string]: unknown | RdockAccessLog | RdockAlerts | RdockMetrics | RdockTracing | null | undefined;
+    [key: string]: unknown | RdockAccessLog | RdockAlerts | RdockMetering | null | RdockMetrics | RdockTracing | null | undefined;
 };
+
+/**
+ * Who may log in.
+ */
+export type RdockOidcAllowed = {
+    /**
+     * E-mail domains (the part after `@` of the verified `email` claim).
+     */
+    domains?: Array<string>;
+    /**
+     * E-mail addresses (the verified `email` claim), compared without case.
+     */
+    emails?: Array<string>;
+    /**
+     * Groups from `groups_claim`.
+     */
+    groups?: Array<string>;
+    /**
+     * Also trust an `email` claim that comes without `email_verified` (some providers never
+     * send it): for `emails` and `domains`, and as the consumer name when `consumer_claim`
+     * is `email`. Unsafe with a provider that lets users set an address they do not own.
+     * Off: only `email_verified: true` counts; `email_verified: false` never does.
+     */
+    unverified_emails?: boolean;
+};
+
+/**
+ * The `SameSite` attribute of the session cookie.
+ */
+export type RdockOidcSameSite = 'lax' | 'strict' | 'none';
+
+/**
+ * The session cookie of `oidc`.
+ */
+export type RdockOidcSession = {
+    /**
+     * Explicit opt-in for `secure: false` (local development without TLS).
+     */
+    allow_insecure_cookies?: boolean;
+    /**
+     * Name of the cookie, without prefix. `__Host-` is prepended when `secure` is on and no
+     * `domain` is set, `__Secure-` when `secure` is on with a `domain`.
+     */
+    cookie_name?: string;
+    /**
+     * Share the cookie with subdomains of this domain. Host-only (and `__Host-`) when unset.
+     */
+    domain?: string | null;
+    /**
+     * The key that encrypts the cookie (at least 32 bytes), as a `${file:…}`, `${env:…}` or
+     * `${vault:…}` reference. Every replica needs the same key. Use `keys` to rotate.
+     */
+    key?: string | null;
+    /**
+     * A file holding the key (read on every reload), instead of `key`.
+     */
+    key_file?: string | null;
+    /**
+     * Keys for rotation: the first encrypts, all decrypt. References, as `key`.
+     */
+    keys?: Array<string>;
+    /**
+     * Use the refresh token, when the provider issues one, to renew the session before the
+     * tokens expire; a failed refresh means a new login.
+     */
+    refresh?: boolean;
+    /**
+     * The cookie's `SameSite` attribute.
+     */
+    same_site?: RdockOidcSameSite;
+    /**
+     * Send the cookie over HTTPS only. Turning it off is refused unless every route using
+     * the middleware is plain HTTP and `allow_insecure_cookies` is set.
+     */
+    secure?: boolean;
+    /**
+     * Longest session, from login. Without a refresh token the session also ends when the
+     * ID token expires.
+     */
+    ttl?: RdockDuration;
+};
+
+/**
+ * What `transform` does with a request body that is not JSON.
+ */
+export type RdockOnNonJson = 'pass' | 'reject';
+
+/**
+ * What `transform` does when a request patch cannot be applied.
+ */
+export type RdockOnPatchError = 'reject' | 'pass';
 
 /**
  * Ejection of backends that keep failing.
@@ -2159,6 +3307,82 @@ export type RdockPassiveHealth = {
      */
     window?: RdockDuration;
     [key: string]: unknown | RdockDuration | number | Array<number> | undefined;
+};
+
+/**
+ * One JSON Patch operation (RFC 6902 §4).
+ */
+export type RdockPatchOp = {
+    op: 'add';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+    /**
+     * The value to add.
+     */
+    value: unknown;
+} | {
+    op: 'remove';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+} | {
+    op: 'replace';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+    /**
+     * The new value.
+     */
+    value: unknown;
+} | {
+    /**
+     * Where the value is taken from.
+     */
+    from: string;
+    op: 'move';
+    /**
+     * Where it is put.
+     */
+    path: string;
+} | {
+    /**
+     * Where the value is copied from.
+     */
+    from: string;
+    op: 'copy';
+    /**
+     * Where the copy is put.
+     */
+    path: string;
+} | {
+    op: 'test';
+    /**
+     * A JSON Pointer (RFC 6901).
+     */
+    path: string;
+    /**
+     * The expected value.
+     */
+    value: unknown;
+};
+
+/**
+ * Path parameters of `validate`.
+ */
+export type RdockPathParameters = {
+    /**
+     * A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it
+     * does not match fails validation.
+     */
+    regex: string;
+    /**
+     * A schema for the object of the groups' values, converted like `query`.
+     */
+    schema: unknown;
 };
 
 /**
@@ -2208,7 +3432,40 @@ export type RdockProxyProtocolIn = {
  */
 export type RdockProxyProtocolVersion = 'v1' | 'v2';
 
+/**
+ * How the query string enters the key. Parameters left out of the key are also removed
+ * from the request sent to the origin.
+ */
+export type RdockQueryKey = 'as_sent' | 'sorted' | {
+    only: Array<string>;
+} | {
+    ignore: Array<string>;
+};
+
+/**
+ * A quota's calendar window, in UTC.
+ */
+export type RdockQuotaWindow = 'hour' | 'day' | 'month';
+
 export type RdockRateLimitKey = string;
+
+/**
+ * A limit for the consumers of one group.
+ */
+export type RdockRateOverride = {
+    /**
+     * Requests allowed per `period` on average.
+     */
+    average: number;
+    /**
+     * Largest burst; defaults to `average`.
+     */
+    burst?: number | null;
+    /**
+     * Period of `average`; defaults to the middleware's.
+     */
+    period?: RdockDuration | null;
+};
 
 /**
  * A path prefix replaced by another (`redirect.prefix`).
@@ -2230,6 +3487,11 @@ export type RdockRedirectPrefix = {
  * Redirect target schemes.
  */
 export type RdockRedirectScheme = 'http' | 'https';
+
+/**
+ * The client's request directives.
+ */
+export type RdockRequestDirectives = 'honour' | 'ignore';
 
 /**
  * A fixed answer of a service (`respond`): the status with ReverseDock's error page.
@@ -2318,6 +3580,10 @@ export type RdockRoute = {
      */
     enabled?: boolean;
     /**
+     * How rdock renders its own error answers on this route, instead of `defaults.errors`.
+     */
+    errors?: RdockErrorSettings | null;
+    /**
      * Listeners the route is attached to. Defaults to `defaults.listeners`.
      */
     listeners?: Array<string> | null;
@@ -2355,7 +3621,7 @@ export type RdockRoute = {
      * TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
      */
     tls?: RdockRouteTls | null;
-    [key: string]: unknown | boolean | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
+    [key: string]: unknown | boolean | RdockErrorSettings | null | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
 };
 
 /**
@@ -2451,6 +3717,17 @@ export type RdockSameSite = 'lax' | 'strict' | 'none';
 export type RdockScheme = 'http' | 'https' | 'h2c';
 
 /**
+ * External secret stores.
+ */
+export type RdockSecrets = {
+    /**
+     * A `HashiCorp` Vault or `OpenBao` server whose KV version 2 secrets secret fields may
+     * reference as `${vault:<mount>/<path>#<field>}`.
+     */
+    vault?: RdockVaultSettings | null;
+};
+
+/**
  * Client IP trust and request limits.
  */
 export type RdockSecurity = {
@@ -2532,6 +3809,16 @@ export type RdockService = {
     tls?: RdockUpstreamTls | null;
     [key: string]: unknown | Array<RdockBackend> | RdockHealth | null | RdockLoadBalancer | number | null | number | null | boolean | RdockRespond | null | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
 };
+
+/**
+ * A number of sessions (at least 1), or `unlimited`.
+ */
+export type RdockSessionLimit = number | 'unlimited';
+
+/**
+ * What to do with responses that set a cookie.
+ */
+export type RdockSetCookie = 'refuse' | 'strip';
 
 /**
  * How the SMTP connection is protected.
@@ -2846,6 +4133,11 @@ export type RdockTlsMode = 'auto' | 'off';
 export type RdockTlsPolicy = 'modern' | 'intermediate';
 
 /**
+ * Token endpoint client authentication (OpenID Connect Core §9).
+ */
+export type RdockTokenEndpointAuth = 'client_secret_basic' | 'client_secret_post';
+
+/**
  * Where a JWT is read from. The first one present wins: header, cookie, query parameter.
  */
 export type RdockTokenSource = {
@@ -2880,6 +4172,20 @@ export type RdockTracing = {
 };
 
 /**
+ * One direction of `transform`.
+ */
+export type RdockTransformSide = {
+    /**
+     * Body changes.
+     */
+    body?: RdockBodyTransform;
+    /**
+     * Header operations, applied in the order remove, set, add (as `headers` does).
+     */
+    headers?: RdockHeaderRules;
+};
+
+/**
  * `cloudflare` (edge ranges synced automatically) or an IP address/CIDR range.
  */
 export type RdockTrustedProxy = string;
@@ -2888,6 +4194,221 @@ export type RdockTrustedProxy = string;
  * TSIG algorithms (RFC 8945).
  */
 export type RdockTsigAlgorithm = 'hmac-sha256' | 'hmac-sha384' | 'hmac-sha512' | 'hmac-sha1' | 'hmac-md5';
+
+/**
+ * Health of the backends of a UDP service.
+ */
+export type RdockUdpHealth = {
+    /**
+     * Ejection after ICMP "port unreachable" answers (seen as refused sends or receives on a
+     * session's connected socket). On by default.
+     */
+    passive?: RdockUdpPassiveHealth;
+    /**
+     * Periodic TCP connection probes, for backends that also listen on TCP (a DNS server
+     * does on port 53). Off by default: a generic UDP probe cannot tell a healthy server
+     * from one that drops datagrams.
+     */
+    tcp_check?: RdockUdpTcpCheck | null;
+    /**
+     * What happens when no backend is healthy.
+     */
+    when_all_down?: RdockWhenAllDown;
+    [key: string]: unknown | RdockUdpPassiveHealth | RdockUdpTcpCheck | null | RdockWhenAllDown | undefined;
+};
+
+/**
+ * How a UDP session's backend is chosen.
+ */
+export type RdockUdpLbPolicy = 'round_robin' | 'random' | 'least_sessions' | 'ip_hash';
+
+/**
+ * Backend selection for new UDP sessions.
+ */
+export type RdockUdpLoadBalancer = {
+    /**
+     * Selection policy.
+     */
+    policy?: RdockUdpLbPolicy;
+    [key: string]: unknown | RdockUdpLbPolicy | undefined;
+};
+
+/**
+ * Passive health of a UDP service.
+ */
+export type RdockUdpPassiveHealth = {
+    /**
+     * How long an ejected backend gets no new sessions before one session tries it again;
+     * doubled for each ejection in a row, up to 5 minutes.
+     */
+    ejection?: RdockDuration;
+    /**
+     * Count refusals and eject backends. `false` only ends the affected session.
+     */
+    enabled?: boolean;
+    /**
+     * Refusals within `window` that eject a backend.
+     */
+    failures?: number;
+    /**
+     * Largest share of the pool ejected at once, in percent.
+     */
+    max_ejection_percent?: number;
+    /**
+     * Sliding window for counting refusals.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | RdockDuration | boolean | number | undefined;
+};
+
+/**
+ * A UDP route: the datagrams of its `udp` listeners go to its UDP service. The backend is
+ * chosen once per session (a client address and port) and kept for the session's life.
+ */
+export type RdockUdpRoute = {
+    /**
+     * Set to `false` to keep the route defined but inactive.
+     */
+    enabled?: boolean;
+    /**
+     * `udp` listeners the route is attached to (required).
+     */
+    listeners?: Array<string> | null;
+    /**
+     * Rule made of ``ClientIP(`…`)`` matchers only (with `&&`, `||`, `!`). Omitted, the route
+     * takes every datagram of its listeners; a listener has at most one such route.
+     */
+    match?: string | null;
+    /**
+     * Middlewares checked before a session is created: `ip_allow` and `ip_deny`. A datagram
+     * they refuse is dropped without an answer.
+     */
+    middlewares?: Array<string>;
+    /**
+     * Higher priorities are evaluated first. `0` uses the rule length.
+     */
+    priority?: number;
+    /**
+     * UDP service (a key of `udp_services`).
+     */
+    service: string;
+    [key: string]: unknown | boolean | Array<string> | null | string | null | Array<string> | number | string | undefined;
+};
+
+/**
+ * A UDP service: backends that receive the datagrams of UDP routes. Each session (one client
+ * address and port) gets its own connected socket to one backend, chosen when the session
+ * starts.
+ */
+export type RdockUdpService = {
+    /**
+     * Backend servers (`host:port`; Unix sockets are not supported). `weight` sets each
+     * one's share of new sessions; `backup` ones get sessions only when no other is up.
+     */
+    backends: Array<RdockBackend>;
+    /**
+     * Backend health: passive ejection on ICMP "port unreachable", optional TCP probes.
+     */
+    health?: RdockUdpHealth;
+    /**
+     * How a new session's backend is chosen.
+     */
+    load_balancer?: RdockUdpLoadBalancer;
+    /**
+     * Detach a session from its client address after this many datagrams from the client
+     * (NGINX `proxy_requests`): the next datagram opens a new session, possibly to another
+     * backend, while the detached one still relays its replies until `responses` or `idle`
+     * ends it. `1` balances every datagram on its own.
+     */
+    requests?: number | null;
+    /**
+     * End a session after this many datagrams from the backend (NGINX `proxy_responses`).
+     * `1` suits request-and-answer protocols such as DNS: the socket is released as soon as
+     * the answer is relayed. Omitted, a session ends only when idle.
+     */
+    responses?: number | null;
+    /**
+     * Session timeouts.
+     */
+    timeouts?: RdockUdpTimeouts;
+    [key: string]: unknown | Array<RdockBackend> | RdockUdpHealth | RdockUdpLoadBalancer | number | null | number | null | RdockUdpTimeouts | undefined;
+};
+
+/**
+ * Session caps of a `udp` listener. Both are on by default: a UDP source address can be
+ * forged, so without a cap anyone could make the listener open sockets until it runs out of
+ * file descriptors (each session holds one socket and one task). Datagrams that would open
+ * a session over a cap are dropped and counted in `rdock_udp_dropped_total`, never answered.
+ */
+export type RdockUdpSessions = {
+    /**
+     * Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluster at
+     * 1,024 by default (`max_connections` circuit breaker, checked 2026-11-11 in
+     * docs/research/v0.8-cache-extensibility.md §5.1); a listener here stands for a cluster
+     * and may serve several clients' DNS bursts, and 4,096 sockets stay far below the
+     * container default of 1,048,576 open files. `unlimited` removes the cap.
+     */
+    max?: RdockSessionLimit;
+    /**
+     * Sessions per client IP address (any source port). Default 64, so one source (or one
+     * forged address) can take at most 1/64 of the listener's default budget; a resolver
+     * that forwards many parallel queries from one address may need more. `unlimited`
+     * removes the cap.
+     */
+    max_per_client?: RdockSessionLimit;
+    [key: string]: unknown | RdockSessionLimit | undefined;
+};
+
+/**
+ * TCP probes of the backends of a UDP service.
+ */
+export type RdockUdpTcpCheck = {
+    /**
+     * Consecutive successes before a backend is healthy.
+     */
+    healthy?: number;
+    /**
+     * Time between probes.
+     */
+    interval?: RdockDuration;
+    /**
+     * TCP port to connect to; the backend's port when omitted.
+     */
+    port?: number | null;
+    /**
+     * Probe timeout.
+     */
+    timeout?: RdockDuration;
+    /**
+     * Consecutive failures before a backend is unhealthy.
+     */
+    unhealthy?: number;
+    [key: string]: unknown | number | RdockDuration | number | null | undefined;
+};
+
+/**
+ * Timeouts of a UDP service.
+ */
+export type RdockUdpTimeouts = {
+    /**
+     * A session with no datagram in either direction for this long is closed and its socket
+     * released. Default 60 s, Envoy's `udp_proxy` default; Traefik uses 3 s and NGINX
+     * 10 minutes (sources in docs/research/v0.8-cache-extensibility.md §5.1, checked
+     * 2026-11-11).
+     */
+    idle?: RdockDuration;
+    [key: string]: unknown | RdockDuration | undefined;
+};
+
+/**
+ * What `oidc` does with a request that has no valid session.
+ */
+export type RdockUnauthenticated = 'auto' | 'redirect' | 'deny';
+
+/**
+ * What `validate` does with requests outside the OpenAPI document.
+ */
+export type RdockUnknownOperations = 'deny' | 'allow';
 
 /**
  * TLS to backends.
@@ -2915,6 +4436,70 @@ export type RdockUpstreamTls = {
     verify?: boolean;
     [key: string]: unknown | string | null | string | null | string | null | string | null | boolean | undefined;
 };
+
+/**
+ * Whether `validate` refuses invalid requests.
+ */
+export type RdockValidationMode = 'enforce' | 'report';
+
+/**
+ * How rdock logs in to Vault.
+ */
+export type RdockVaultAuth = {
+    token: string;
+} | {
+    kubernetes: RdockKubernetesAuth;
+};
+
+/**
+ * A Vault or `OpenBao` server (`secrets.vault`).
+ *
+ * Values are read when a configuration is loaded and every `refresh`; a changed value reloads
+ * the configuration. They stay in memory only: the configuration, its history, snapshots, the
+ * admin API, logs and diagnostics keep the `${vault:…}` reference.
+ */
+export type RdockVaultSettings = {
+    /**
+     * The server, e.g. `https://vault.internal:8200`. `https://` only, or `http://` to a
+     * loopback address (a dev server or a local agent), unless `insecure_http` is set.
+     */
+    address: RdockHttpUrl;
+    /**
+     * Allow a server on a private address (`10.0.0.0/8`, …). On by default: Vault usually
+     * runs inside the network.
+     */
+    allow_private_targets?: boolean;
+    /**
+     * How rdock logs in.
+     */
+    auth: RdockVaultAuth;
+    /**
+     * CA certificates (PEM) that sign the server's certificate, instead of the system's.
+     */
+    ca_file?: string | null;
+    /**
+     * Allow `http://` to a server that is not on a loopback address. **Unsafe**: the token
+     * and every secret cross the network unencrypted. Validation warns.
+     */
+    insecure_http?: boolean;
+    /**
+     * A Vault Enterprise or `OpenBao` namespace, sent as `X-Vault-Namespace`.
+     */
+    namespace?: string | null;
+    /**
+     * How often referenced values are read again.
+     */
+    refresh?: RdockDuration;
+    /**
+     * Time allowed for one request to the server.
+     */
+    timeout?: RdockDuration;
+};
+
+/**
+ * A host interface a WASM plugin may be granted.
+ */
+export type RdockWasmCapability = 'log' | 'clock' | 'random';
 
 /**
  * An HTTPS endpoint that receives JSON events.
@@ -3628,6 +5213,91 @@ export type UndrainResponses = {
 
 export type UndrainResponse = UndrainResponses[keyof UndrainResponses];
 
+export type ListCachesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cache';
+};
+
+export type ListCachesErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListCachesError = ListCachesErrors[keyof ListCachesErrors];
+
+export type ListCachesResponses = {
+    /**
+     * `stores`: name, kind, objects, bytes, max_size, max_objects, hits, misses, stored, evictions, purged, dropped
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListCachesResponse = ListCachesResponses[keyof ListCachesResponses];
+
+export type PurgeCacheData = {
+    body: PurgeRequest;
+    path: {
+        /**
+         * Store name, under `caches`
+         */
+        store: string;
+    };
+    query?: never;
+    url: '/api/v1/cache/{store}/purge';
+};
+
+export type PurgeCacheErrors = {
+    /**
+     * Not exactly one selector, or not an absolute URL
+     */
+    400: ErrorBody;
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such store
+     */
+    404: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+    /**
+     * The store failed
+     */
+    500: ErrorBody;
+};
+
+export type PurgeCacheError = PurgeCacheErrors[keyof PurgeCacheErrors];
+
+export type PurgeCacheResponses = {
+    /**
+     * Purged
+     */
+    200: Purged;
+};
+
+export type PurgeCacheResponse = PurgeCacheResponses[keyof PurgeCacheResponses];
+
 export type CertificatesData = {
     body?: never;
     path?: never;
@@ -4167,6 +5837,313 @@ export type ValidateResponses = {
 
 export type ValidateResponse = ValidateResponses[keyof ValidateResponses];
 
+export type ListConsumersData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/consumers';
+};
+
+export type ListConsumersErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListConsumersError = ListConsumersErrors[keyof ListConsumersErrors];
+
+export type ListConsumersResponses = {
+    /**
+     * `consumers`: name, groups, keys (id, expires, note, owner, hash for operators), owner
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListConsumersResponse = ListConsumersResponses[keyof ListConsumersResponses];
+
+export type DeleteConsumerData = {
+    body?: never;
+    headers: {
+        /**
+         * The current `ETag`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}';
+};
+
+export type DeleteConsumerErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such API consumer
+     */
+    404: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type DeleteConsumerError = DeleteConsumerErrors[keyof DeleteConsumerErrors];
+
+export type DeleteConsumerResponses = {
+    /**
+     * Applied; the reload report
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type DeleteConsumerResponse = DeleteConsumerResponses[keyof DeleteConsumerResponses];
+
+export type GetConsumerData = {
+    body?: never;
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}';
+};
+
+export type GetConsumerErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such consumer
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type GetConsumerError = GetConsumerErrors[keyof GetConsumerErrors];
+
+export type GetConsumerResponses = {
+    /**
+     * The consumer
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type GetConsumerResponse = GetConsumerResponses[keyof GetConsumerResponses];
+
+export type PutConsumerData = {
+    body: ConsumerSpec;
+    headers: {
+        /**
+         * The `ETag` from `GET /api/v1/config/api` or `GET /api/v1/consumers`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}';
+};
+
+export type PutConsumerErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The consumer belongs to the configuration file
+     */
+    403: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * Rejected
+     */
+    422: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type PutConsumerError = PutConsumerErrors[keyof PutConsumerErrors];
+
+export type PutConsumerResponses = {
+    /**
+     * Applied; the reload report
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type PutConsumerResponse = PutConsumerResponses[keyof PutConsumerResponses];
+
+export type CreateConsumerKeyData = {
+    body: NewKey;
+    headers: {
+        /**
+         * The current `ETag`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}/keys';
+};
+
+export type CreateConsumerKeyErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such consumer
+     */
+    404: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * Rejected
+     */
+    422: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type CreateConsumerKeyError = CreateConsumerKeyErrors[keyof CreateConsumerKeyErrors];
+
+export type CreateConsumerKeyResponses = {
+    /**
+     * `key` (shown once), `id`, `expires`, `report`
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type CreateConsumerKeyResponse = CreateConsumerKeyResponses[keyof CreateConsumerKeyResponses];
+
+export type RevokeConsumerKeyData = {
+    body?: never;
+    headers: {
+        /**
+         * The current `ETag`
+         */
+        'If-Match': string;
+    };
+    path: {
+        /**
+         * Consumer name
+         */
+        name: string;
+        /**
+         * Key ID
+         */
+        id: string;
+    };
+    query?: never;
+    url: '/api/v1/consumers/{name}/keys/{id}';
+};
+
+export type RevokeConsumerKeyErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The key belongs to the configuration file
+     */
+    403: ErrorBody;
+    /**
+     * No such key
+     */
+    404: ErrorBody;
+    /**
+     * The API objects changed since they were read
+     */
+    412: ErrorBody;
+    /**
+     * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type RevokeConsumerKeyError = RevokeConsumerKeyErrors[keyof RevokeConsumerKeyErrors];
+
+export type RevokeConsumerKeyResponses = {
+    /**
+     * Applied; the reload report
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type RevokeConsumerKeyResponse = RevokeConsumerKeyResponses[keyof RevokeConsumerKeyResponses];
+
 export type EventsData = {
     body?: never;
     headers?: {
@@ -4412,6 +6389,126 @@ export type ProvidersResponses = {
 };
 
 export type ProvidersResponse = ProvidersResponses[keyof ProvidersResponses];
+
+export type ListQuotasData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/quota';
+};
+
+export type ListQuotasErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListQuotasError = ListQuotasErrors[keyof ListQuotasErrors];
+
+export type ListQuotasResponses = {
+    /**
+     * `quotas`: middleware, window, window_start, window_end, usage (key, used, limit)
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListQuotasResponse = ListQuotasResponses[keyof ListQuotasResponses];
+
+export type ResetQuotaData = {
+    body?: never;
+    path: {
+        /**
+         * Consumer name
+         */
+        consumer: string;
+    };
+    query?: {
+        /**
+         * Only this `quota` middleware's counters.
+         */
+        middleware?: string;
+    };
+    url: '/api/v1/quota/{consumer}';
+};
+
+export type ResetQuotaErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ResetQuotaError = ResetQuotaErrors[keyof ResetQuotaErrors];
+
+export type ResetQuotaResponses = {
+    /**
+     * `reset`: how many counters were removed
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ResetQuotaResponse = ResetQuotaResponses[keyof ResetQuotaResponses];
+
+export type GetQuotaData = {
+    body?: never;
+    path: {
+        /**
+         * Consumer name
+         */
+        consumer: string;
+    };
+    query?: never;
+    url: '/api/v1/quota/{consumer}';
+};
+
+export type GetQuotaErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type GetQuotaError = GetQuotaErrors[keyof GetQuotaErrors];
+
+export type GetQuotaResponses = {
+    /**
+     * `quotas` with this consumer's use only
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type GetQuotaResponse = GetQuotaResponses[keyof GetQuotaResponses];
 
 export type ExplainData = {
     body: {

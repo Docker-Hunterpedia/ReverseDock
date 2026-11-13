@@ -25,7 +25,7 @@ use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::ListenerResolver;
 use tokio::io::AsyncReadExt;
-use tokio::sync::watch;
+use tokio::sync::{oneshot, watch};
 use tokio::task::JoinSet;
 
 use crate::conn::ConnStream;
@@ -147,6 +147,49 @@ pub fn bind(address: &ListenAddress) -> io::Result<std::net::TcpListener> {
     Ok(listener)
 }
 
+/// Binds a UDP socket. `:port` binds all interfaces, IPv6 and IPv4 when available.
+pub fn bind_udp(address: &ListenAddress) -> io::Result<std::net::UdpSocket> {
+    let socket = match address.ip() {
+        Some(ip) => std::net::UdpSocket::bind(SocketAddr::new(ip, address.port()))?,
+        None => std::net::UdpSocket::bind(SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
+            address.port(),
+        ))
+        .or_else(|_| {
+            std::net::UdpSocket::bind(SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
+                address.port(),
+            ))
+        })?,
+    };
+    socket.set_nonblocking(true)?;
+    Ok(socket)
+}
+
+/// A bound socket, before its listener starts.
+#[derive(Debug)]
+pub enum Socket {
+    /// `http`, `https` and `tcp` listeners.
+    Tcp(tokio::net::TcpListener),
+    /// `udp` listeners.
+    Udp(tokio::net::UdpSocket),
+}
+
+impl Socket {
+    /// Binds `address` for a listener of `protocol`.
+    ///
+    /// # Errors
+    ///
+    /// The address cannot be bound.
+    pub fn bind(address: &ListenAddress, protocol: ListenerProtocol) -> io::Result<Self> {
+        Ok(if protocol == ListenerProtocol::Udp {
+            Self::Udp(tokio::net::UdpSocket::from_std(bind_udp(address)?)?)
+        } else {
+            Self::Tcp(tokio::net::TcpListener::from_std(bind(address)?)?)
+        })
+    }
+}
+
 /// The HTTP engine of one listener.
 pub fn http_engine(
     name: Arc<str>,
@@ -182,53 +225,156 @@ pub struct Settings {
     pub timeouts: ListenerTimeouts,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
-    /// `http`, `https` or `tcp`: what a new connection is served as.
+    /// `http`, `https`, `tcp` or `udp`: what a new connection (or datagram) is served as.
     pub protocol: ListenerProtocol,
     /// `tcp` listeners: the protocol whose request to start TLS is answered.
     pub starttls: Option<StartTls>,
+}
+
+/// How a listener is asked to stop.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Stop {
+    /// How long open connections (or UDP sessions) may still run.
+    pub drain: Duration,
+    /// Hand the socket back instead of closing it, because another listener takes the same
+    /// address over in this reload. A TCP listener's connections still drain; a UDP listener
+    /// ends its sessions at once, since their replies leave from that socket.
+    pub hand_off: bool,
+}
+
+impl Stop {
+    /// Stop with `drain` and close the socket.
+    #[must_use]
+    pub const fn drain(drain: Duration) -> Self {
+        Self {
+            drain,
+            hand_off: false,
+        }
+    }
 }
 
 /// A running listener.
 pub struct Running {
     /// Bind address.
     pub address: ListenAddress,
+    /// A UDP socket (a `udp` listener), not a TCP one.
+    pub udp: bool,
     /// Changeable settings.
     pub settings: Arc<ArcSwap<Settings>>,
-    stop: watch::Sender<Option<Duration>>,
+    stop: watch::Sender<Option<Stop>>,
+    /// Resolves once the listener's socket is closed (the sender is dropped) or handed back.
+    released: oneshot::Receiver<Socket>,
     task: tokio::task::JoinHandle<()>,
 }
 
 impl Running {
-    /// Starts accepting on `socket`.
+    /// Starts accepting on `socket` (or, for a UDP socket, receiving datagrams).
     pub fn start(
         name: Arc<str>,
         address: ListenAddress,
-        socket: tokio::net::TcpListener,
+        socket: Socket,
         settings: Settings,
         shared: Arc<Shared>,
     ) -> Self {
-        let engine = http_engine(name.clone(), shared.clone(), &settings.timeouts);
-        let settings = Arc::new(ArcSwap::from_pointee(settings));
         let (stop, stop_rx) = watch::channel(None);
-        let task = tokio::spawn(accept_loop(
-            name,
-            socket,
-            settings.clone(),
-            engine,
-            stop_rx,
-            shared,
-        ));
+        let (hand_back, released) = oneshot::channel();
+        let udp = matches!(socket, Socket::Udp(_));
+        let settings = Arc::new(ArcSwap::from_pointee(settings));
+        let task = match socket {
+            Socket::Tcp(socket) => {
+                let engine = http_engine(name.clone(), shared.clone(), &settings.load().timeouts);
+                tokio::spawn(accept_loop(
+                    name,
+                    socket,
+                    settings.clone(),
+                    engine,
+                    (stop_rx, hand_back),
+                    shared,
+                ))
+            }
+            Socket::Udp(socket) => {
+                tokio::spawn(crate::udp::serve(name, socket, stop_rx, hand_back, shared))
+            }
+        };
         Self {
             address,
+            udp,
             settings,
             stop,
+            released,
             task,
         }
     }
 
-    /// Stops accepting and waits up to `drain` for open connections to finish.
-    pub async fn stop(self, drain: Duration) {
-        let _ = self.stop.send(Some(drain));
+    /// Stops accepting (or opening UDP sessions); open connections (or sessions) may run for up
+    /// to `drain`. A TCP listener closes its socket at once; a UDP listener keeps it until its
+    /// sessions end, because their replies leave from it.
+    #[must_use]
+    pub fn stop(self, drain: Duration) -> Stopping {
+        let _ = self.stop.send(Some(Stop::drain(drain)));
+        Stopping {
+            address: self.address,
+            udp: self.udp,
+            stop: self.stop,
+            released: Some(self.released),
+            task: self.task,
+        }
+    }
+
+    /// Stops the listener and returns its socket, for another listener on the same address. A
+    /// TCP listener's connections drain for up to `drain`; a UDP listener's sessions end first.
+    /// `None` only if the socket could not be handed back (it is closed then).
+    pub async fn hand_off(self, drain: Duration) -> (Option<Socket>, Stopping) {
+        let _ = self.stop.send(Some(Stop {
+            drain,
+            hand_off: true,
+        }));
+        let socket = self.released.await.ok();
+        let stopping = Stopping {
+            address: self.address,
+            udp: self.udp,
+            stop: self.stop,
+            released: None,
+            task: self.task,
+        };
+        (socket, stopping)
+    }
+}
+
+/// A listener that was asked to stop and may still be draining.
+pub struct Stopping {
+    /// Bind address.
+    pub address: ListenAddress,
+    /// A UDP listener.
+    pub udp: bool,
+    stop: watch::Sender<Option<Stop>>,
+    released: Option<oneshot::Receiver<Socket>>,
+    task: tokio::task::JoinHandle<()>,
+}
+
+impl Stopping {
+    /// Waits until the listener's socket is closed.
+    pub async fn released(&mut self) {
+        if let Some(released) = self.released.take() {
+            // The socket is never handed back here: only `Running::hand_off` asks for that.
+            let _ = released.await;
+        }
+    }
+
+    /// Ends the drain now (open UDP sessions end) and waits until the socket is closed.
+    pub async fn end_now(&mut self) {
+        let _ = self.stop.send(Some(Stop::drain(Duration::ZERO)));
+        self.released().await;
+    }
+
+    /// Whether the listener's task has ended (drain over, socket closed).
+    #[must_use]
+    pub fn is_finished(&self) -> bool {
+        self.task.is_finished()
+    }
+
+    /// Waits until the drain is over.
+    pub async fn finished(self) {
         let _ = self.task.await;
     }
 }
@@ -238,19 +384,19 @@ async fn accept_loop(
     socket: tokio::net::TcpListener,
     settings: Arc<ArcSwap<Settings>>,
     engine: Arc<HttpProxy<RdockProxy>>,
-    mut stop: watch::Receiver<Option<Duration>>,
+    (mut stop, hand_back): (watch::Receiver<Option<Stop>>, oneshot::Sender<Socket>),
     shared: Arc<Shared>,
 ) {
     let metrics: &Metrics = &shared.metrics;
     let (closing, closing_rx) = watch::channel(false);
     let mut connections = JoinSet::new();
-    let drain = loop {
+    let request = loop {
         while connections.try_join_next().is_some() {}
         tokio::select! {
             changed = stop.changed() => {
                 let requested = *stop.borrow();
                 if changed.is_err() || requested.is_some() {
-                    break requested.unwrap_or_default();
+                    break requested.unwrap_or(Stop::drain(Duration::ZERO));
                 }
             }
             accepted = socket.accept() => match accepted {
@@ -275,7 +421,15 @@ async fn accept_loop(
             },
         }
     };
-    drop(socket);
+    // The accepting socket goes first, so its address is free (or taken over) while open
+    // connections drain; dropping `hand_back` tells the reload it is closed.
+    if request.hand_off {
+        let _ = hand_back.send(Socket::Tcp(socket));
+    } else {
+        drop(socket);
+        drop(hand_back);
+    }
+    let drain = request.drain;
     let _ = closing.send(true);
     engine.cleanup().await;
     let drained = tokio::time::timeout(drain, async {

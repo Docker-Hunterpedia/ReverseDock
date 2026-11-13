@@ -5,8 +5,8 @@ use std::fmt::Write as _;
 
 use rdock_config::merge::Fragment;
 use rdock_model::providers::DockerProvider;
-use rdock_model::route::{Route, TcpRoute};
-use rdock_model::service::{Service, TcpService};
+use rdock_model::route::{Route, TcpRoute, UdpRoute};
+use rdock_model::service::{Service, TcpService, UdpService};
 use rdock_model::{Config, Diagnostic};
 use rdock_provider_docker::labels::{Container, Health, translate};
 use serde_json::{Map, Value};
@@ -42,6 +42,7 @@ pub fn traefik(text: &str, expose_by_default: bool) -> Result<Migration, String>
         (Input::Compose, containers, BTreeMap::new(), notes)
     } else if document.get("http").is_some()
         || document.get("tcp").is_some()
+        || document.get("udp").is_some()
         || document.get("tls").is_some()
     {
         let (container, servers, notes) = dynamic(&document);
@@ -236,7 +237,8 @@ fn dynamic(document: &Value) -> (Container, BTreeMap<String, Vec<String>>, Vec<S
     }
     if document.get("udp").is_some() {
         notes.push(
-            "`udp`: UDP routing is not supported in this version (planned for v0.8)".to_owned(),
+            "`udp`: UDP routers of a dynamic configuration are not migrated; write `udp_routes` and `udp_services` in rdock.yaml (`traefik.udp.*` Compose labels are migrated)"
+                .to_owned(),
         );
     }
     if document.get("tls").is_some() {
@@ -326,6 +328,8 @@ fn check(fragment: &Fragment) -> Vec<String> {
         middlewares: fragment.middlewares.clone(),
         tcp_routes: fragment.tcp_routes.clone(),
         tcp_services: fragment.tcp_services.clone(),
+        udp_routes: fragment.udp_routes.clone(),
+        udp_services: fragment.udp_services.clone(),
         ..Config::default()
     };
     config
@@ -343,7 +347,9 @@ fn render(fragment: &Fragment, notes: &[String]) -> Result<String, String> {
     let mut document = Map::new();
     let tcp_route_base = baseline::<TcpRoute>(&serde_json::json!({ "match": "", "service": "" }));
     let tcp_service_base = baseline::<TcpService>(&serde_json::json!({ "backends": [] }));
-    let sections: [(&str, Value, Option<&Value>); 5] = [
+    let udp_route_base = baseline::<UdpRoute>(&serde_json::json!({ "service": "" }));
+    let udp_service_base = baseline::<UdpService>(&serde_json::json!({ "backends": [] }));
+    let sections: [(&str, Value, Option<&Value>); 7] = [
         ("routes", to_value(&fragment.routes)?, route_base.as_ref()),
         (
             "services",
@@ -360,6 +366,16 @@ fn render(fragment: &Fragment, notes: &[String]) -> Result<String, String> {
             "tcp_services",
             to_value(&fragment.tcp_services)?,
             tcp_service_base.as_ref(),
+        ),
+        (
+            "udp_routes",
+            to_value(&fragment.udp_routes)?,
+            udp_route_base.as_ref(),
+        ),
+        (
+            "udp_services",
+            to_value(&fragment.udp_services)?,
+            udp_service_base.as_ref(),
         ),
     ];
     for (key, mut objects, base) in sections {

@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use rdock_balancer::{BackendState, Balancer, Pool, StickyKeys};
-use rdock_middleware::Middleware;
+use rdock_middleware::Chain;
 use rdock_model::config::{
     ListenerProtocol, ListenerTimeouts, ProxyProtocolIn, StartTls, TlsPolicy,
 };
@@ -45,8 +45,14 @@ pub struct Runtime {
     pub cert_expiry: Vec<(String, i64)>,
     /// Every service, for health checks.
     pub services: BTreeMap<String, Arc<ServiceRuntime>>,
+    /// The backend pools of UDP services, by service name, for their TCP health checks.
+    pub udp_pools: BTreeMap<String, Arc<ServiceRuntime>>,
     /// OpenTelemetry tracer, when `observability.tracing` is set.
     pub tracer: Option<Arc<rdock_observability::Tracer>>,
+    /// How rdock's own error answers are rendered outside routes (`defaults.errors.format`).
+    pub errors: rdock_model::config::ErrorFormat,
+    /// Usage metering (`observability.metering`), when configured.
+    pub metering: Option<Arc<rdock_observability::metering::Meter>>,
 }
 
 impl Runtime {
@@ -69,7 +75,10 @@ impl Runtime {
             local_cert_names: Vec::new(),
             cert_expiry: Vec::new(),
             services: BTreeMap::new(),
+            udp_pools: BTreeMap::new(),
             tracer: None,
+            errors: rdock_model::config::ErrorFormat::Html,
+            metering: None,
         }
     }
 }
@@ -81,7 +90,7 @@ pub struct ListenerRuntime {
     pub name: Arc<str>,
     /// Bind address.
     pub address: ListenAddress,
-    /// `http`, `https` or `tcp`.
+    /// `http`, `https`, `tcp` or `udp`.
     pub protocol: ListenerProtocol,
     /// `tcp` listeners: the protocol whose request to start TLS is answered.
     pub starttls: Option<StartTls>,
@@ -96,6 +105,10 @@ pub struct ListenerRuntime {
     /// TCP routes in evaluation order. A connection keeps these, not the whole runtime, for
     /// as long as it is relayed.
     pub tcp_routes: Arc<[Arc<crate::tcp::TcpRouteRuntime>]>,
+    /// UDP routes in evaluation order (`udp` listeners).
+    pub udp_routes: Arc<[Arc<crate::udp::UdpRouteRuntime>]>,
+    /// Session caps (`udp` listeners).
+    pub udp_sessions: rdock_model::config::UdpSessions,
     /// Path answered `200 OK` before routing, for load-balancer monitors.
     pub ping: Option<String>,
     /// Plain-HTTP listeners: redirect these hosts to HTTPS when no route of the listener
@@ -134,8 +147,8 @@ pub struct RouteRuntime {
     pub expr: String,
     /// Target service; none when the last middleware answers every request.
     pub service: Option<Arc<ServiceRuntime>>,
-    /// Middlewares, in order.
-    pub middlewares: Arc<[Arc<dyn Middleware>]>,
+    /// Middlewares, in order, with the phases they use (computed once, here).
+    pub middlewares: Chain,
     /// Per-route timeout overrides.
     pub timeouts: RouteTimeouts,
     /// Copies of requests sent to another service.
@@ -146,6 +159,10 @@ pub struct RouteRuntime {
     pub grpc_web: bool,
     /// Request body limit of this route, overriding `security.limits.max_body_bytes`.
     pub max_body: Option<rdock_model::values::ByteSize>,
+    /// The route's cache policy, when its chain has a `cache` middleware (F-WEB-03).
+    pub cache: Option<Arc<rdock_cache::RoutePolicy>>,
+    /// How rdock's own error answers are rendered on this route (F-GW-04).
+    pub errors: rdock_model::config::ErrorFormat,
 }
 
 /// Request mirroring of a route.

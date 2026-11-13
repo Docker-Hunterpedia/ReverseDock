@@ -2,7 +2,7 @@
 title: middlewares
 description: "Reusable request and response policies."
 sidebar:
-  order: 7
+  order: 9
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -310,11 +310,44 @@ Requests allowed per `period` on average.
 
 Largest burst; defaults to `average`.
 
+### `middlewares.<name>.headers`
+
+**Type:** `off` · `draft` · **Default:** `off`
+
+`draft` adds `RateLimit-Policy` and `RateLimit` to responses (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
+
+- `off`: None (`Retry-After` is always sent with `429`).
+- `draft`: `RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.
+
 ### `middlewares.<name>.key`
 
 **Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `client_ip`
 
 What to count by.
+
+### `middlewares.<name>.overrides`
+
+**Type:** map of names to object
+
+Group → limit for consumers in that group, with `key: consumer`. The first of the consumer's groups (in its `groups` order) that has an override wins.
+
+#### `middlewares.<name>.overrides.<name>.average`
+
+**Type:** `integer` · **Required**
+
+Requests allowed per `period` on average.
+
+#### `middlewares.<name>.overrides.<name>.burst`
+
+**Type:** `integer`
+
+Largest burst; defaults to `average`.
+
+#### `middlewares.<name>.overrides.<name>.period`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+Period of `average`; defaults to the middleware's.
 
 ### `middlewares.<name>.period`
 
@@ -518,11 +551,23 @@ Accepted `aud` values (one must match); `[any]` accepts every audience.
 
 Request headers set from claims (`claim: header`). Client-sent copies are removed first.
 
+### `middlewares.<name>.consumer_claim`
+
+**Type:** `string`
+
+A claim that becomes the request's consumer (for `rate_limit` and `quota` with `key: consumer`, the cache key and the access log), e.g. `sub` or `email`.
+
 ### `middlewares.<name>.forward_token`
 
 **Type:** `boolean` · **Default:** `true`
 
 Keep the token in the request to the backend.
+
+### `middlewares.<name>.groups_claim`
+
+**Type:** `string`
+
+The claim listing the consumer's groups (a string or an array of strings), with `consumer_claim`.
 
 ### `middlewares.<name>.hmac_secret`
 
@@ -554,6 +599,12 @@ URL of a JSON Web Key Set, fetched in the background and cached for 10 minutes.
 
 Clock skew allowed for `exp` and `nbf`.
 
+### `middlewares.<name>.map_to_consumers`
+
+**Type:** `boolean` · **Default:** `false`
+
+With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding its groups and sharing its quota, rate-limit and cache identity with its API keys (other names stay keyed on the issuer). Off by default: a token's consumer is a separate identity keyed on the token's issuer and the name. Turn it on only when the issuer controls the claim.
+
 ### `middlewares.<name>.token`
 
 **Type:** object · **Default:** `{"cookie":null,"header":null,"query":null}`
@@ -577,6 +628,12 @@ A header; `Authorization` values must start with `Bearer `.
 **Type:** `string`
 
 A query parameter (tokens in URLs end up in logs; prefer a header).
+
+### `middlewares.<name>.unverified_emails`
+
+**Type:** `boolean` · **Default:** `false`
+
+With `consumer_claim: email`: accept an `email` claim that comes without `email_verified`. Off: the address names the consumer only with `email_verified: true`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an issuer that lets users set an address they do not own.
 
 ## `type: client_cert`
 
@@ -628,7 +685,7 @@ Value for files no prefix matches. `no-cache` makes clients revalidate with the 
 
 **Type:** `boolean` · **Default:** `true`
 
-Redirect (`308`) a directory path without a trailing slash to the path with one when the directory has an index file.
+Redirect (`308`) a directory path without a trailing slash to the path with one when the directory has an index file, or is listed.
 
 ### `middlewares.<name>.fallback`
 
@@ -661,11 +718,7 @@ File names tried, in order, for a request that names a directory.
 
 **Type:** `boolean` · **Default:** `false`
 
-Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
-
-:::note[Planned for v0.8]
-Directory listing (F-WEB-02): accepted by `rdock validate` with a warning, refused by `rdock run` until v0.8.
-:::
+List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that prefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request would be refused are not listed. At most 10,000 entries, sorted by name. A directory that exists is listed instead of getting the `fallback`.
 
 ### `middlewares.<name>.max_ranges`
 
@@ -712,3 +765,991 @@ Which symbolic links are followed.
 **Type:** map of names to `string`
 
 File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.
+
+## `type: hold_body`
+
+Hold the request body until it is complete (up to `max`) before any of it reaches the backend. The backend connection and the request head are already sent, so this does not shield backend workers from slow uploads; it refuses oversize bodies with `413` and lets body middlewares see the whole body.
+
+### `middlewares.<name>.max`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `1MiB`
+
+Largest body held, at most 64MiB; a longer one is refused with `413`. The route's `max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.
+
+### `middlewares.<name>.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
+
+Longest time from the first body byte to the last; a slower upload is refused with `408`. The service's `timeouts.read` also runs while the backend waits for the body.
+
+## `type: cache`
+
+Cache responses in a store named under `caches` (RFC 9111). Only what the origin's headers allow is stored; see `docs/guides/caching`.
+
+### `middlewares.<name>.authorization`
+
+**Type:** `refuse` · `store` · **Default:** `refuse`
+
+Responses to requests that carry `Authorization` to the origin: `refuse` (default) stores them only when they are marked `public`, `s-maxage` or `must-revalidate` (RFC 9111 §3.5); `store` stores them anyway. The risk of `store` is serving one credential's answer to another.
+
+- `refuse`: Store only `public`, `s-maxage` or `must-revalidate` responses (RFC 9111 §3.5).
+- `store`: Store them like other responses.
+
+### `middlewares.<name>.background_refresh`
+
+**Type:** `boolean` · **Default:** `false`
+
+Refresh stale responses in the background (`stale-while-revalidate`). Not supported in this version: `stale-while-revalidate` is treated as plain staleness.
+
+:::note[Planned for a later version]
+Background refresh of stale cached responses (stale-while-revalidate): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `middlewares.<name>.bypass`
+
+**Type:** object · **Default:** `{"cookies":[],"headers":[]}`
+
+Requests that skip the cache entirely.
+
+#### `middlewares.<name>.bypass.cookies`
+
+**Type:** list of `string`
+
+Skip when the request has one of these cookies.
+
+#### `middlewares.<name>.bypass.headers`
+
+**Type:** list of `string`
+
+Skip when the request has one of these headers.
+
+### `middlewares.<name>.cache_status`
+
+**Type:** `boolean` · **Default:** `true`
+
+Add `Cache-Status` (RFC 9211) to responses.
+
+### `middlewares.<name>.default_ttl`
+
+**Type:** map of names to [`Duration`](/docs/reference/configuration/#duration)
+
+Lifetime by status (`"200": 5m`) for responses whose origin gives none (no `max-age`, `s-maxage` or `Expires`). Never applies over `no-store`, `private` or `no-cache`. Empty by default: the risk is caching personalised pages the origin did not mark.
+
+### `middlewares.<name>.heuristic_freshness`
+
+**Type:** `boolean` · **Default:** `false`
+
+Give responses with `Last-Modified` and no explicit lifetime 10 % of their age, at most a day (RFC 9111 §4.2.2). Off by default: the origin did not ask for caching.
+
+### `middlewares.<name>.key`
+
+**Type:** object · **Default:** `{"consumer":false,"headers":[],"query":"as_sent"}`
+
+What, besides store, route, scheme, host, path and method, selects a stored response.
+
+#### `middlewares.<name>.key.consumer`
+
+**Type:** `boolean` · **Default:** `false`
+
+Keep one copy per authenticated identity: the consumer, else the `basic_auth` user, else the `jwt` issuer and subject, else the client certificate's subject.
+
+#### `middlewares.<name>.key.headers`
+
+**Type:** list of `string`
+
+Request headers whose values select a response (beyond the origin's `Vary`).
+
+#### `middlewares.<name>.key.query`
+
+**Type:** `as_sent` · `sorted` · **Default:** `as_sent`
+
+How the query string enters the key.
+
+- `as_sent`: The query exactly as forwarded.
+- `sorted`: Parameters sorted by name.
+
+#### `type: undefined`
+
+The query exactly as forwarded.
+
+#### `type: undefined`
+
+Parameters sorted by name.
+
+#### `type: undefined`
+
+Only these parameters (`name` or `prefix*`).
+
+#### `middlewares.<name>.key.query.only`
+
+**Type:** list of `string` · **Required**
+
+#### `type: undefined`
+
+All but these parameters (`name` or `prefix*`).
+
+#### `middlewares.<name>.key.query.ignore`
+
+**Type:** list of `string` · **Required**
+
+### `middlewares.<name>.lock`
+
+**Type:** object · **Default:** `{"enabled":true,"timeout":"5s"}`
+
+Request coalescing: one origin fetch per key at a time.
+
+#### `middlewares.<name>.lock.enabled`
+
+**Type:** `boolean` · **Default:** `true`
+
+While one request fetches a key, others wait for its response instead of asking the origin too. Off, every miss goes to the origin.
+
+#### `middlewares.<name>.lock.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+Longest wait. After it the waiting request goes to the origin without storing, and a fetch running that long no longer holds others back.
+
+### `middlewares.<name>.max_object_size`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64MiB`
+
+Largest response body stored; larger ones pass through uncached.
+
+### `middlewares.<name>.remove_targeted`
+
+**Type:** `boolean` · **Default:** `false`
+
+Remove the targeted fields from responses to clients (RFC 9213 §2.2 allows it). Off by default: a CDN in front of this proxy needs `CDN-Cache-Control` too, and without it would fall back to the less specific `Cache-Control`.
+
+### `middlewares.<name>.request_directives`
+
+**Type:** `honour` · `ignore` · **Default:** `honour`
+
+The client's `no-cache`, `max-age`, `min-fresh` and `max-stale`: `honour` (default, RFC 9111 §5.2.1) or `ignore`, so clients cannot force origin fetches. `only-if-cached` is always honoured.
+
+- `honour`: Apply them (RFC 9111 §5.2.1).
+- `ignore`: Ignore them, except `only-if-cached`.
+
+### `middlewares.<name>.set_cookie`
+
+**Type:** `refuse` · `strip` · **Default:** `refuse`
+
+Responses that set a cookie: `refuse` (default) never stores them; `strip` stores them without `Set-Cookie`. The risk of `strip` is a page that depends on the cookie.
+
+- `refuse`: Never store them.
+- `strip`: Store them without `Set-Cookie`.
+
+### `middlewares.<name>.shared_across_users`
+
+**Type:** `boolean` · **Default:** `false`
+
+The route authenticates requests but its responses are the same for every user, so one stored copy may be served to all of them. Required (or `key.consumer`) when the route has an authenticating middleware; the risk is serving one user's page to another.
+
+### `middlewares.<name>.stale_if_error`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1d`
+
+Longest time a stale response is served when the origin fails, if the origin allowed it with `stale-if-error` (RFC 5861). `0s` turns it off.
+
+### `middlewares.<name>.statuses`
+
+**Type:** list of `integer`
+
+Statuses that may be stored, each only with a lifetime; default 200, 203, 204, 300, 301, 308, 404, 410. 206 and 304 are never stored as such.
+
+### `middlewares.<name>.store`
+
+**Type:** `string` · **Required**
+
+The store, a name under `caches`.
+
+### `middlewares.<name>.tags`
+
+**Type:** object · **Default:** `{"headers":["cache-tag","surrogate-key"],"keep":false}`
+
+Cache tags for purging groups of responses.
+
+#### `middlewares.<name>.tags.headers`
+
+**Type:** list of `string` · **Default:** `["cache-tag","surrogate-key"]`
+
+Response headers that carry tags (comma or space separated).
+
+#### `middlewares.<name>.tags.keep`
+
+**Type:** `boolean` · **Default:** `false`
+
+Pass the tag headers on to clients; by default they are removed.
+
+### `middlewares.<name>.targeted`
+
+**Type:** list of `string` · **Default:** `["CDN-Cache-Control"]`
+
+Targeted cache-control fields honoured, in order (RFC 9213): the first one with a valid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both directions (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600` stores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the origin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of your own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.
+
+## `type: plugin`
+
+A native plugin compiled into this binary and registered under `name` (ADR-0030). The stock `rdock` binary registers none; see `docs/guides/plugins`.
+
+### `middlewares.<name>.config`
+
+**Type:** `object`
+
+The plugin's own settings, checked by the plugin when the configuration is validated and loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay visible in the configuration API.
+
+### `middlewares.<name>.name`
+
+**Type:** `string` · **Required**
+
+The name the plugin is registered under in this binary.
+
+## `type: wasm`
+
+A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with minisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
+
+### `middlewares.<name>.allow_unsigned`
+
+**Type:** `boolean` · **Default:** `false`
+
+UNSAFE: run the module without a signature (the `sha256` pin still applies). A signature that is present must still verify. Logged as a warning at every load.
+
+### `middlewares.<name>.capabilities`
+
+**Type:** list of `log` · `clock` · `random`
+
+Host interfaces the plugin may import besides its `config`. A component that imports one not listed here, or anything else (WASI included), is refused when it is loaded.
+
+### `middlewares.<name>.config`
+
+**Type:** `object`
+
+The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.
+
+### `middlewares.<name>.fuel`
+
+**Type:** `integer` · **Default:** `10000000`
+
+Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.
+
+### `middlewares.<name>.memory`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `16MiB`
+
+The largest linear memory the plugin may have.
+
+### `middlewares.<name>.on_error`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny` answers `500` (in the response phase, the response is replaced by a `500`), `allow` passes the request or response on unchanged. Both are counted and logged.
+
+- `deny`: Refuse the request (fail closed).
+- `allow`: Let the request through unchecked (fail open); counted and logged.
+
+### `middlewares.<name>.path`
+
+**Type:** `string` · **Required**
+
+The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration is loaded; a reload reads it again.
+
+### `middlewares.<name>.sha256`
+
+**Type:** `string` · **Required**
+
+The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it fixes which file runs, so a changed file is refused until the pin is updated.
+
+### `middlewares.<name>.signature`
+
+**Type:** `string`
+
+The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>` writes).
+
+### `middlewares.<name>.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `50ms`
+
+Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The call runs on a proxy worker thread, so keep it short.
+
+### `middlewares.<name>.trusted_keys`
+
+**Type:** list of `string`
+
+Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file (`RWQ…`).
+
+## `type: agent`
+
+Ask an out-of-process agent (a WAF, a policy service) whether to allow a request, with its body up to `max_body` (ADR-0030). Fails closed by default.
+
+### `middlewares.<name>.address`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless the network between rdock and the agent is private.
+
+### `middlewares.<name>.breaker`
+
+**Type:** object · **Default:** `{"failures":5,"open_for":"30s","window":"10s"}`
+
+The circuit breaker that stops calling a failing agent for a while.
+
+#### `middlewares.<name>.breaker.failures`
+
+**Type:** `integer` · **Default:** `5`
+
+Failed calls in a row that open the breaker; `0` turns it off.
+
+#### `middlewares.<name>.breaker.open_for`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
+
+How long the breaker stays open.
+
+#### `middlewares.<name>.breaker.window`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
+
+The failures must fall within this time.
+
+### `middlewares.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64KiB`
+
+Largest request body sent to the agent; `0` sends none. The body is held until the agent has answered, so none of the body reaches the backend before the verdict; the request head does: with a body, the backend connection is opened and the head sent before the body is read (Pingora 0.9.1), and a refusal closes that connection.
+
+### `middlewares.<name>.on_error`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an open breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker is open), `allow` lets it through unchecked.
+
+- `deny`: Refuse the request (fail closed).
+- `allow`: Let the request through unchecked (fail open); counted and logged.
+
+### `middlewares.<name>.on_oversize`
+
+**Type:** `reject` · `skip` · **Default:** `reject`
+
+A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without the body (only when the length is declared; a chunked body that grows past `max_body` is refused with `413` either way).
+
+- `reject`: Refuse the request with `413`.
+- `skip`: Ask the agent without the body.
+
+### `middlewares.<name>.protocol`
+
+**Type:** `rdock` · `forward` · `ext_proc` · `ext_authz` · `spop` · **Default:** `rdock`
+
+How the request is described to the agent.
+
+- `rdock`: POST a JSON document describing the request; the agent answers a JSON verdict (`schema/agent.v1.json`).
+- `forward`: Replay the request to the agent (same method, path, query, allowed headers and body); a 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image understands.
+- `ext_proc`: Envoy's gRPC external processing (planned for a later version).
+- `ext_authz`: Envoy's gRPC external authorization (planned for a later version).
+- `spop`: HAProxy's stream processing offload protocol (planned for a later version).
+
+:::note[Planned for a later version]
+Agents over Envoy's gRPC external processing (protocol: ext_proc): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `middlewares.<name>.request_headers`
+
+**Type:** list of `string`
+
+Request headers sent to the agent besides the default set (`accept`, `accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`, `referer`, `user-agent`); `["*"]` sends every header except hop-by-hop ones. `authorization`, `cookie` and `proxy-authorization` go only when listed here.
+
+### `middlewares.<name>.response_headers`
+
+**Type:** list of `string`
+
+Request headers the agent may set on the request that goes to the backend (allowed answers only). Copies sent by the client are removed first. Applied only when the verdict comes before the request head leaves, which is the case for requests without a body (or whose body is not sent to the agent).
+
+### `middlewares.<name>.timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1s`
+
+Time allowed for the agent's whole answer.
+
+### `middlewares.<name>.tls`
+
+**Type:** object
+
+TLS to an `https://` agent.
+
+#### `middlewares.<name>.tls.ca_file`
+
+**Type:** `string`
+
+CA bundle used instead of the system roots.
+
+#### `middlewares.<name>.tls.cert_file`
+
+**Type:** `string`
+
+Client certificate for upstream mTLS.
+
+#### `middlewares.<name>.tls.key_file`
+
+**Type:** `string`
+
+Client key for upstream mTLS.
+
+#### `middlewares.<name>.tls.server_name`
+
+**Type:** `string`
+
+SNI and verification name, when it differs from the backend host.
+
+#### `middlewares.<name>.tls.verify`
+
+**Type:** `boolean` · **Default:** `true`
+
+Verify the backend certificate and host name.
+
+## `type: cloudflare_access`
+
+Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset over `jwt` with the team's keys, issuer and RS256, the token from the `Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.
+
+### `middlewares.<name>.audience`
+
+**Type:** [`Audience`](/docs/reference/configuration/#audience) · **Required**
+
+The Application Audience (AUD) tag of the Access application, or several. Required: without it a token of any application of the same team would pass.
+
+### `middlewares.<name>.certs_url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl)
+
+Where the keys are fetched from instead of the team's certs URL: for tests, or an egress proxy that mirrors it. `https://` (or a loopback address).
+
+### `middlewares.<name>.claims_to_headers`
+
+**Type:** map of names to `string`
+
+Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email, common_name: X-Auth-Service-Token }`. Client-sent copies are removed first.
+
+### `middlewares.<name>.team`
+
+**Type:** `string` · **Required**
+
+The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
+
+## `type: api_key`
+
+Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or `X-API-Key`; sets the request's consumer (F-GW-01).
+
+### `middlewares.<name>.anonymous`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+Requests without a key: `deny` answers `401`; `allow` lets them through without a consumer (an invalid key is still refused).
+
+- `deny`: Answer `401`.
+- `allow`: Continue without a consumer.
+
+### `middlewares.<name>.forward_credential`
+
+**Type:** `boolean` · **Default:** `false`
+
+Keep the key in the request to the backend. Off by default: the backend gets the consumer in `X-Consumer-Name`, `X-Consumer-Groups` and `X-Credential-Id` instead.
+
+### `middlewares.<name>.groups`
+
+**Type:** list of `string`
+
+Only consumers in one of these groups are let in; others get `403`. Any consumer when empty.
+
+### `middlewares.<name>.headers`
+
+**Type:** list of `string` · **Default:** `["Authorization","X-API-Key"]`
+
+Request headers the key is read from, in order; the first present wins. A key in `Authorization` must follow `Bearer `.
+
+### `middlewares.<name>.query`
+
+**Type:** `string`
+
+A query parameter the key is also read from, after the headers. Off unless named: keys in URLs end up in other systems' logs.
+
+### `middlewares.<name>.realm`
+
+**Type:** `string`
+
+The realm of the `WWW-Authenticate` challenge.
+
+## `type: quota`
+
+Requests per consumer per calendar window (hour, day, month), persisted across restarts; `429` when used up (F-GW-02).
+
+### `middlewares.<name>.flush_interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10s`
+
+How often counters are written to disk.
+
+### `middlewares.<name>.headers`
+
+**Type:** `off` · `draft` · **Default:** `off`
+
+`draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of `draft-ietf-httpapi-ratelimit-headers-11`. Off by default while the draft changes.
+
+- `off`: None (`Retry-After` is always sent with `429`).
+- `draft`: `RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.
+
+### `middlewares.<name>.key`
+
+**Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `consumer`
+
+What to count by; only `consumer` (the default) is accepted. Requests without a consumer are counted per client IP.
+
+### `middlewares.<name>.limit`
+
+**Type:** `integer` · **Required**
+
+Requests allowed per window.
+
+### `middlewares.<name>.overrides`
+
+**Type:** map of names to `integer`
+
+Group → limit, for consumers in that group (the first of the consumer's groups that has one wins).
+
+### `middlewares.<name>.window`
+
+**Type:** `hour` · `day` · `month` · **Required**
+
+The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
+
+- `hour`: From the start of each hour.
+- `day`: From 00:00 UTC.
+- `month`: From 00:00 UTC on the 1st.
+
+## `type: validate`
+
+Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an OpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).
+
+### `middlewares.<name>.base_path`
+
+**Type:** `string`
+
+With `openapi`: a prefix the document's paths are relative to (`/api` when the document's server URL is `https://example.com/api`). Requests outside it are unknown operations.
+
+### `middlewares.<name>.body`
+
+**Type:** `any`
+
+A schema for the JSON request body. A body with another content type is answered `415`, a body that is not JSON `400`, a body over `max_body` `413`.
+
+### `middlewares.<name>.body_required`
+
+**Type:** `boolean` · **Default:** `false`
+
+With `body`: a request without a body is refused. Off by default, as OpenAPI's `requestBody.required`.
+
+### `middlewares.<name>.cookies`
+
+**Type:** `any`
+
+A schema for the object of request cookies. Converted like `query`.
+
+### `middlewares.<name>.formats`
+
+**Type:** `boolean` · **Default:** `true`
+
+Check `format` (`date-time`, `email`, `uuid`, …) as an assertion. JSON Schema 2020-12 treats it as an annotation unless asked; rdock asks by default.
+
+### `middlewares.<name>.headers`
+
+**Type:** `any`
+
+A schema for the object of request headers, keyed by lower-case name. Converted like `query`.
+
+### `middlewares.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `1MiB`
+
+Largest body checked, at most 64MiB; the body is held until it is complete. The route's `max_body` applies when it is smaller.
+
+### `middlewares.<name>.max_errors`
+
+**Type:** `integer` · **Default:** `5`
+
+Most errors listed in an answer (1 to 100).
+
+### `middlewares.<name>.mode`
+
+**Type:** `enforce` · `report` · **Default:** `enforce`
+
+`enforce` (the default) refuses invalid requests; `report` only logs and counts them, to try a schema on live traffic.
+
+- `enforce`: Refuse invalid requests.
+- `report`: Log and count invalid requests, and let them through.
+
+### `middlewares.<name>.openapi`
+
+**Type:** `string`
+
+An OpenAPI 3.1 document (JSON or YAML), read on every reload. Requests are matched to its operations by method and path template; each operation's parameters and its `application/json` request body are checked.
+
+### `middlewares.<name>.path`
+
+**Type:** object
+
+Path parameters: a regular expression for the path with named groups, and a schema for the object of the groups' values.
+
+#### `middlewares.<name>.path.regex`
+
+**Type:** `string` · **Required**
+
+A regular expression for the whole path, with named groups (`(?<id>[^/]+)`). A path it does not match fails validation.
+
+#### `middlewares.<name>.path.schema`
+
+**Type:** `any` · **Required**
+
+A schema for the object of the groups' values, converted like `query`.
+
+### `middlewares.<name>.query`
+
+**Type:** `any`
+
+A schema for the object of query parameters (`{ name: value }`; a repeated name gives an array). Values are strings, converted to the `type` the schema declares for the property (`integer`, `number`, `boolean`, `array`).
+
+### `middlewares.<name>.unknown_operations`
+
+**Type:** `deny` · `allow` · **Default:** `deny`
+
+With `openapi`: requests that match no operation of the document. `deny` (the default) answers `404` or `405`; `allow` lets them through unchecked.
+
+- `deny`: Answer `404` (no path template matches) or `405` (the path exists, the method not).
+- `allow`: Let them through unchecked.
+
+## `type: transform`
+
+Change request and response headers, and JSON bodies with JSON Patch (RFC 6902) (F-GW-04).
+
+### `middlewares.<name>.max_body`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `1MiB`
+
+Largest body patched, request or response, at most 64MiB (default 1MiB). A larger request body is refused with `413`; a larger response body passes unchanged.
+
+### `middlewares.<name>.on_error`
+
+**Type:** `reject` · `pass` · **Default:** `reject`
+
+A request patch that cannot be applied (a `test` operation fails, a location is missing): `reject` (the default) answers `422`; `pass` forwards the body unchanged. A response patch that fails always leaves the body unchanged (the status is sent).
+
+- `reject`: Answer `422` (problem type `patch-failed`).
+- `pass`: Forward the body unchanged.
+
+### `middlewares.<name>.on_non_json`
+
+**Type:** `pass` · `reject` · **Default:** `pass`
+
+A request body that is not JSON when `request.body.patch` is set: `pass` (the default) forwards it unchanged; `reject` answers `415` (wrong content type) or `400` (not valid JSON).
+
+- `pass`: Forward it unchanged.
+- `reject`: Answer `415` or `400`.
+
+### `middlewares.<name>.request`
+
+**Type:** object · **Default:** `{"body":{"patch":[]},"headers":{"add":{},"remove":[],"set":{}}}`
+
+Changes to the request sent to the backend.
+
+#### `middlewares.<name>.request.body`
+
+**Type:** object · **Default:** `{"patch":[]}`
+
+Body changes.
+
+#### `middlewares.<name>.request.body.patch`
+
+**Type:** list of object, selected by `type`
+
+A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and `test` with JSON Pointers (RFC 6901), applied in order, all or nothing.
+
+#### `middlewares.<name>.request.headers`
+
+**Type:** object · **Default:** `{"add":{},"remove":[],"set":{}}`
+
+Header operations, applied in the order remove, set, add (as `headers` does).
+
+#### `middlewares.<name>.request.headers.add`
+
+**Type:** map of names to `string`
+
+Append header values.
+
+#### `middlewares.<name>.request.headers.remove`
+
+**Type:** list of `string`
+
+Remove headers.
+
+#### `middlewares.<name>.request.headers.set`
+
+**Type:** map of names to `string`
+
+Replace headers.
+
+### `middlewares.<name>.response`
+
+**Type:** object · **Default:** `{"body":{"patch":[]},"headers":{"add":{},"remove":[],"set":{}}}`
+
+Changes to the response sent to the client.
+
+#### `middlewares.<name>.response.body`
+
+**Type:** object · **Default:** `{"patch":[]}`
+
+Body changes.
+
+#### `middlewares.<name>.response.body.patch`
+
+**Type:** list of object, selected by `type`
+
+A JSON Patch (RFC 6902): operations `add`, `remove`, `replace`, `move`, `copy` and `test` with JSON Pointers (RFC 6901), applied in order, all or nothing.
+
+#### `middlewares.<name>.response.headers`
+
+**Type:** object · **Default:** `{"add":{},"remove":[],"set":{}}`
+
+Header operations, applied in the order remove, set, add (as `headers` does).
+
+#### `middlewares.<name>.response.headers.add`
+
+**Type:** map of names to `string`
+
+Append header values.
+
+#### `middlewares.<name>.response.headers.remove`
+
+**Type:** list of `string`
+
+Remove headers.
+
+#### `middlewares.<name>.response.headers.set`
+
+**Type:** map of names to `string`
+
+Replace headers.
+
+## `type: oidc`
+
+OpenID Connect login for browsers: authorization code flow with PKCE, a stateless encrypted session cookie, claims to headers and to the consumer (F-GW-01).
+
+### `middlewares.<name>.algorithms`
+
+**Type:** list of `RS256` · `RS384` · `RS512` · `PS256` · `PS384` · `PS512` · `ES256` · `ES384` · `EdDSA` · `HS256` · `HS384` · `HS512` · **Default:** `["RS256","RS384","RS512","PS256","PS384","PS512","ES256","ES384","EdDSA"]`
+
+ID-token algorithms accepted: those the provider advertises in `id_token_signing_alg_values_supported` and that are listed here. HS256/384/512 use the client secret as key and are accepted only when listed explicitly.
+
+### `middlewares.<name>.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow the provider's endpoints to resolve to private, loopback or link-local addresses (an in-cluster Keycloak or Dex). Off by default.
+
+### `middlewares.<name>.allowed`
+
+**Type:** object · **Default:** `{"domains":[],"emails":[],"groups":[],"unverified_emails":false}`
+
+Who may log in. Everyone the provider authenticates when all lists are empty; otherwise a user matching any one entry.
+
+#### `middlewares.<name>.allowed.domains`
+
+**Type:** list of `string`
+
+E-mail domains (the part after `@` of the verified `email` claim).
+
+#### `middlewares.<name>.allowed.emails`
+
+**Type:** list of `string`
+
+E-mail addresses (the verified `email` claim), compared without case.
+
+#### `middlewares.<name>.allowed.groups`
+
+**Type:** list of `string`
+
+Groups from `groups_claim`.
+
+#### `middlewares.<name>.allowed.unverified_emails`
+
+**Type:** `boolean` · **Default:** `false`
+
+Also trust an `email` claim that comes without `email_verified` (some providers never send it): for `emails` and `domains`, and as the consumer name when `consumer_claim` is `email`. Unsafe with a provider that lets users set an address they do not own. Off: only `email_verified: true` counts; `email_verified: false` never does.
+
+### `middlewares.<name>.claims_to_headers`
+
+**Type:** map of names to `string`
+
+Request headers set from ID-token claims (`claim: header`). Client-sent copies are always removed first.
+
+### `middlewares.<name>.client_id`
+
+**Type:** `string` · **Required**
+
+The client ID registered at the provider.
+
+### `middlewares.<name>.client_secret`
+
+**Type:** `string`
+
+The client secret, as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Without it rdock is a public client and relies on PKCE alone.
+
+### `middlewares.<name>.consumer_claim`
+
+**Type:** `string` · **Default:** `email`
+
+The claim that becomes the request's consumer (rate limits, quotas, the cache key, the access log). `sub` is used when the token lacks it, and in place of `email` when the provider has not verified the address (`email_verified` is not `true`; see `allowed.unverified_emails`).
+
+### `middlewares.<name>.forward_access_token`
+
+**Type:** `boolean` · **Default:** `false`
+
+Pass the access token to the backend in `X-Forwarded-Access-Token`. It is then kept in the session cookie, which grows.
+
+### `middlewares.<name>.groups_claim`
+
+**Type:** `string` · **Default:** `groups`
+
+The claim that lists the user's groups (a string or an array of strings).
+
+### `middlewares.<name>.issuer`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+The provider's issuer URL; its configuration is read from `<issuer>/.well-known/openid-configuration`. `https://` (or a loopback address).
+
+### `middlewares.<name>.leeway`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
+
+Clock skew allowed for `exp`, `iat` and `nbf`.
+
+### `middlewares.<name>.logout_path`
+
+**Type:** `string` · **Default:** `/_rdock/oidc/logout`
+
+Path that ends the session (`GET`, `HEAD` or `POST`, from the site itself: a request another site triggers is refused with `403`); the provider's `end_session_endpoint` is called when it advertises one (RP-initiated logout).
+
+### `middlewares.<name>.map_to_consumers`
+
+**Type:** `boolean` · **Default:** `false`
+
+Treat a consumer name that `consumers` defines as that consumer: the session then gets its groups, and shares its quota, rate-limit and cache identity with its API keys (other names stay keyed on the issuer). Off by default: an OIDC user is a separate identity, keyed on the issuer and the name, so a user whose claim happens to equal a configured consumer's name gains nothing from it. Turn it on only when the provider controls the claim (it cannot be chosen by the user).
+
+### `middlewares.<name>.post_logout_path`
+
+**Type:** `string` · **Default:** `/`
+
+Where the browser lands after logging out (a path on the same host).
+
+### `middlewares.<name>.redirect_path`
+
+**Type:** `string` · **Default:** `/_rdock/oidc/callback`
+
+Path of the callback the provider redirects back to. The route must match it.
+
+### `middlewares.<name>.redirect_url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl)
+
+The full redirect URI registered at the provider, when it cannot be built from the request (a route without a `Host` rule, a port the browser does not see). Its path replaces `redirect_path`.
+
+### `middlewares.<name>.scopes`
+
+**Type:** list of `string` · **Default:** `["openid","email","profile"]`
+
+Scopes requested; must include `openid`. Add `offline_access` where the provider needs it for refresh tokens.
+
+### `middlewares.<name>.session`
+
+**Type:** object · **Required**
+
+The session cookie.
+
+#### `middlewares.<name>.session.allow_insecure_cookies`
+
+**Type:** `boolean` · **Default:** `false`
+
+Explicit opt-in for `secure: false` (local development without TLS).
+
+#### `middlewares.<name>.session.cookie_name`
+
+**Type:** `string` · **Default:** `rdock_oidc`
+
+Name of the cookie, without prefix. `__Host-` is prepended when `secure` is on and no `domain` is set, `__Secure-` when `secure` is on with a `domain`.
+
+#### `middlewares.<name>.session.domain`
+
+**Type:** `string`
+
+Share the cookie with subdomains of this domain. Host-only (and `__Host-`) when unset.
+
+#### `middlewares.<name>.session.key`
+
+**Type:** `string`
+
+The key that encrypts the cookie (at least 32 bytes), as a `${file:…}`, `${env:…}` or `${vault:…}` reference. Every replica needs the same key. Use `keys` to rotate.
+
+#### `middlewares.<name>.session.key_file`
+
+**Type:** `string`
+
+A file holding the key (read on every reload), instead of `key`.
+
+#### `middlewares.<name>.session.keys`
+
+**Type:** list of `string`
+
+Keys for rotation: the first encrypts, all decrypt. References, as `key`.
+
+#### `middlewares.<name>.session.refresh`
+
+**Type:** `boolean` · **Default:** `true`
+
+Use the refresh token, when the provider issues one, to renew the session before the tokens expire; a failed refresh means a new login.
+
+#### `middlewares.<name>.session.same_site`
+
+**Type:** `lax` · `strict` · `none` · **Default:** `lax`
+
+The cookie's `SameSite` attribute.
+
+- `lax`: Sent on same-site requests and top-level navigations from other sites.
+- `strict`: Sent only on same-site requests. Refused: the browser would not send it on the redirect back from the provider, and the login would loop.
+- `none`: Sent on every request (needs `secure`).
+
+#### `middlewares.<name>.session.secure`
+
+**Type:** `boolean` · **Default:** `true`
+
+Send the cookie over HTTPS only. Turning it off is refused unless every route using the middleware is plain HTTP and `allow_insecure_cookies` is set.
+
+#### `middlewares.<name>.session.ttl`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `8h`
+
+Longest session, from login. Without a refresh token the session also ends when the ID token expires.
+
+### `middlewares.<name>.token_endpoint_auth`
+
+**Type:** `client_secret_basic` · `client_secret_post` · **Default:** `client_secret_basic`
+
+How the client authenticates at the token endpoint when it has a secret.
+
+- `client_secret_basic`: HTTP Basic with the client ID and secret.
+- `client_secret_post`: The client ID and secret in the form body.
+
+### `middlewares.<name>.unauthenticated`
+
+**Type:** `auto` · `redirect` · `deny` · **Default:** `auto`
+
+Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD` asking for `text/html`) to the login and answers `401` to everything else, so API and XHR clients never get a redirect; `redirect` always redirects `GET` and `HEAD`; `deny` always answers `401`.
+
+- `auto`: Redirect page navigations to the login; `401` for everything else.
+- `redirect`: Redirect every `GET` and `HEAD` to the login; `401` for other methods.
+- `deny`: Always `401`.

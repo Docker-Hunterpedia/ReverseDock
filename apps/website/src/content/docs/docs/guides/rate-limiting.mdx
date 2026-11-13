@@ -37,6 +37,7 @@ bursts of up to 50.
 | `header:<Name>` | Value of a request header, for example `header:X-Api-Key`. Requests without the header share one bucket. |
 | `cookie:<name>` <Status since="v0.4" /> | Value of a cookie, for example `cookie:session`. Requests without it share one bucket. |
 | `claim:<name>` <Status since="v0.4" /> | A claim of the token verified by an earlier [`jwt`](/docs/guides/jwt/) middleware, for example `claim:sub`. |
+| `consumer` <Status planned="v0.8" /> | The [consumer](/docs/guides/api-keys/) an earlier `api_key` or `cloudflare_access` middleware set. Requests without one (`anonymous: allow`) are counted per client IP. |
 
 If ReverseDock runs behind a load balancer or CDN that is not listed in
 `security.trusted_proxies`, every request seems to come from that proxy and all clients share
@@ -95,6 +96,23 @@ middlewares:
 Clients without the header share one bucket and can block each other. To keep them out of
 the route, require the header in the rule, for example
 ``Host(`api.example.com`) && HeaderRegexp(`X-Api-Key`, `.`)``.
+
+## Per consumer, with group overrides
+
+<Status planned="v0.8" /> With `key: consumer`, `overrides` gives the consumers of a group another
+limit; the first of the consumer's groups that has one wins. `headers: draft` adds the IETF
+draft's `RateLimit-Policy` and `RateLimit` headers. See
+[Quotas and per-consumer limits](/docs/guides/quotas/), which also covers calendar quotas.
+
+```yaml title="rdock.yaml (excerpt)"
+middlewares:
+  per-consumer:
+    type: rate_limit
+    key: consumer
+    average: 10
+    overrides:
+      gold: { average: 100, burst: 200 }
+```
 
 ## What to know
 

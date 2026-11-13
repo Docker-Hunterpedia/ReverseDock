@@ -58,6 +58,19 @@ msrv:
     rustup toolchain install {{msrv}} --profile minimal
     cargo +{{msrv}} check --workspace --all-targets --locked
 
+# WASM plugins (experimental, cargo feature `wasm`, ADR-0030): clippy with the feature, the
+# example guest, the WASM tests, and the MSRV check with the feature. Not part of `ci`.
+wasm:
+    rustup target add wasm32-wasip2
+    cargo clippy --workspace --all-targets --locked --features rdock/wasm,rdock-wasm/testing -- -D warnings
+    cd examples/plugins/wasm-header && cargo fmt --check && cargo clippy --locked --release --target wasm32-wasip2 -- -D warnings
+    cargo test --locked -p rdock-wasm --features wasm,testing
+    cargo test --locked -p rdock-middleware --features wasm wasm::
+    cargo test --locked -p rdock-proxy --features wasm --lib gate::
+    cargo test --locked -p rdock --features wasm --test e2e_wasm --test cli
+    rustup toolchain install {{msrv}} --profile minimal
+    cargo +{{msrv}} check -p rdock -p rdock-wasm --all-targets --locked --features rdock/wasm,rdock-wasm/testing
+
 # Validate configuration files, e.g. `just validate examples/config/rdock.full.yaml`
 validate +files:
     cargo run --quiet --locked -p rdock -- validate {{files}}

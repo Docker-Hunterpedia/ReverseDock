@@ -1,0 +1,70 @@
+# GoReleaser configuration for the Terraform and OpenTofu registries, kept here until the
+# provider moves to its own repository (the registries need a public repository named
+# terraform-provider-reversedock whose root is this directory). It follows
+# https://developer.hashicorp.com/terraform/registry/providers/publishing (checked 2026-11-11):
+# zip archives named terraform-provider-{NAME}_{VERSION}_{OS}_{ARCH}.zip, a SHA256SUMS file
+# with a detached binary GPG signature, and terraform-registry-manifest.json released as
+# terraform-provider-{NAME}_{VERSION}_manifest.json. Tags are vX.Y.Z.
+#
+#   export GPG_FINGERPRINT=<fingerprint of the signing key>   # a maintainer's key; never committed
+#   goreleaser release --clean
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - env:
+      - CGO_ENABLED=0
+    mod_timestamp: "{{ .CommitTimestamp }}"
+    flags:
+      - -trimpath
+    ldflags:
+      - "-s -w -X main.version={{ .Version }}"
+    goos:
+      - freebsd
+      - windows
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - "386"
+      - arm
+      - arm64
+    ignore:
+      - goos: darwin
+        goarch: "386"
+      - goos: windows
+        goarch: arm
+    binary: "{{ .ProjectName }}_v{{ .Version }}"
+
+archives:
+  - formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+
+checksum:
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
+  name_template: "{{ .ProjectName }}_{{ .Version }}_SHA256SUMS"
+  algorithm: sha256
+
+signs:
+  - artifacts: checksum
+    args:
+      - "--batch"
+      - "--local-user"
+      - "{{ .Env.GPG_FINGERPRINT }}"
+      - "--output"
+      - "${signature}"
+      - "--detach-sign"
+      - "${artifact}"
+
+release:
+  extra_files:
+    - glob: terraform-registry-manifest.json
+      name_template: "{{ .ProjectName }}_{{ .Version }}_manifest.json"
+
+changelog:
+  disable: true

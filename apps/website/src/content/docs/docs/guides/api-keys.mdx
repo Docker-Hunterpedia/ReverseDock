@@ -1,0 +1,164 @@
+---
+title: API keys and consumers
+description: Authenticate API clients with rdk_ keys stored only as hashes, attribute requests to consumers with groups, and mint, expire and revoke keys from the file, a keys file or the admin API.
+sidebar:
+  order: 26
+---
+
+import Status from '../../../../components/Status.astro';
+
+A **consumer** <Status planned="v0.8" /> is a client of your API: a partner, an app, a team, or a
+user who logged in. The `api_key` middleware checks the key a request carries, and the request
+then belongs to that consumer (an [OIDC login](/docs/guides/oidc-login/), a
+[JWT claim](/docs/guides/jwt/#consumers-from-tokens) or Cloudflare Access set it the same way,
+as identities of their own, keyed on the issuer, unless `map_to_consumers: true` maps them to
+the consumers defined here): [rate limits and quotas](/docs/guides/quotas/) can count per consumer, the access log
+and [usage metering](/docs/guides/usage-metering/) name it, and the backend learns who called.
+
+## The key format
+
+A key looks like `rdk_f3Kq9ZpL2mXa_Vq2bX7rT0pLm9sN4kZc8wY1eH6jU3aFd1x8QzB`:
+
+| Part | Length | What it is |
+|---|---|---|
+| `rdk_` | 4 | Prefix, so a secret scanner can find leaked keys. |
+| ID | 12 | Public: shown in lists, logs and metering events, used to revoke. |
+| `_` | 1 | Separator (not a Base62 character, so double-click still selects the whole key). |
+| Secret | 32 | 190 bits of randomness. |
+| Checksum | 6 | CRC32 of everything before it: a typo is refused without a lookup. |
+
+All parts use the Base62 alphabet (`0-9A-Za-z`). The design follows GitHub's token format
+(prefix, high entropy, CRC32 checksum; [GitHub blog, 2021-04-05](https://github.blog/engineering/platform-security/behind-githubs-new-authentication-token-formats/)).
+
+**Only the ID and the SHA-256 of the secret are stored**, never the key. A key with 190 bits of
+entropy needs no slow password hash: NIST SP 800-63B-4 §3.1.2.2 asks for an approved hash for
+such look-up secrets and a password hash only below 112 bits
+([NIST, checked 2026-11-11](https://pages.nist.gov/800-63-4/sp800-63b.html)). Checking a key
+costs a hash-map lookup and one SHA-256, compared in constant time.
+
+## Consumers in the configuration file
+
+Create a key and its hash with `rdock keys generate` (offline), give the key to its owner and
+keep only `id` and `hash`:
+
+```sh
+$ rdock keys generate
+key: rdk_f3Kq9ZpL2mXa_Vq2bX7rT0pLm9sN4kZc8wY1eH6jU3aFd1x8QzB
+id: f3Kq9ZpL2mXa
+hash: 990d89c9bc536e6b9eb4aadd1ce4e5f890417af575b3551d412f6579a1dbb186
+```
+
+`rdock keys hash` prints the same `id` and `hash` for a key read from standard input.
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+consumers:
+  acme:
+    groups: [gold]
+    keys:
+      - id: f3Kq9ZpL2mXa
+        hash: 990d89c9bc536e6b9eb4aadd1ce4e5f890417af575b3551d412f6579a1dbb186
+        expires: "2027-06-30T00:00:00Z"
+        note: production integration
+
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+    middlewares: [keys]
+
+middlewares:
+  keys:
+    type: api_key
+
+services:
+  api:
+    backends: [{ address: "api:8080" }]
+```
+
+A **keys file** suits generated lists: one `id:hash[:expires]` per line, blank lines and `#`
+comments allowed. It is read on every reload and watched like the configuration file, so
+removing a line revokes that key on the next reload.
+
+```yaml title="rdock.yaml (excerpt)"
+consumers:
+  partner:
+    keys_file: /etc/rdock/partner.keys
+```
+
+```text title="/etc/rdock/partner.keys"
+# id:sha256(secret)[:expires]
+f3Kq9ZpL2mXa:990d89c9bc536e6b9eb4aadd1ce4e5f890417af575b3551d412f6579a1dbb186:2027-06-30T00:00:00Z
+```
+
+`rdock validate` refuses a hash that is not 64 lower-case hex digits, an ID that is not 12
+characters, an `expires` that is not an RFC 3339 time, the same ID twice, and anything that
+looks like a key itself (without printing it).
+
+## Minting and revoking through the admin API
+
+Keys can also be issued while ReverseDock runs. They are kept in the `api` provider's document,
+so each change is validated, applied like a reload, recorded in the configuration history and
+audited. The clear-text key is in the answer to its creation **and nowhere else**.
+
+```sh
+rdock consumers set mobile --group free          # a consumer kept by the API
+rdock keys create mobile --days 90 --note "iOS app"
+rdock consumers list                             # IDs, owners, expiry; never keys
+rdock keys revoke mobile f3Kq9ZpL2mXa
+```
+
+The same as HTTP (send `If-Match` with the `ETag` of `GET /api/v1/consumers`):
+
+| Endpoint | Role | What it does |
+|---|---|---|
+| `GET /api/v1/consumers`, `GET /api/v1/consumers/{name}` | viewer | List consumers and keys; key hashes for operators only. |
+| `PUT /api/v1/consumers/{name}` | operator | Create or change an API consumer's `groups`. |
+| `DELETE /api/v1/consumers/{name}` | operator | Remove an API consumer and its API keys. |
+| `POST /api/v1/consumers/{name}/keys` | operator | Mint a key (`expires_in_days` or `expires`, `note`); answers `201` with `key` once. |
+| `DELETE /api/v1/consumers/{name}/keys/{id}` | operator | Revoke a key the API minted. |
+
+A consumer of the configuration file can get keys from the API too; its groups and file keys
+are changed in the file, and its groups come from the file only, never from the API. Remove the
+consumer from the file and the keys the API minted for it stop working with that reload (a
+warning names the consumer); define it again to bring them back, or revoke them. A revoked key stops working with the configuration that applies the
+revocation: no restart, and on this instance within the request that changes it.
+
+## Where a key may be sent
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `headers` | `[Authorization, X-API-Key]` | Headers tried in order; the first present wins. In `Authorization` the key follows `Bearer `; other schemes there (Basic) are ignored. |
+| `query` | none | A query parameter, only when named. Keys in URLs end up in browser histories and other systems' logs; `rdock validate` warns. |
+| `forward_credential` | `false` | Keep the key in the request to the backend. When `false`, every configured header that holds a key and the query parameter (its name compared after percent-decoding, so `%61pi_key` is `api_key`) are removed, not only the one the key was read from. |
+| `anonymous` | `deny` | `allow` lets requests without a key through without a consumer. An invalid key is refused either way. |
+| `groups` | any | Admit only consumers in one of these groups; others get `403`. |
+| `realm` | `api` | The realm of the `WWW-Authenticate` challenge. |
+
+Keys are never read from cookies. A key sent twice (two headers of the same name, or two query
+values) is refused with `400`, and so is a second, different key in another configured location
+(a key in `Authorization` and another in `X-API-Key`), so the backend cannot read a copy that
+was not checked. The same key in several locations is accepted.
+
+## What the backend and the logs see
+
+The backend gets `X-Consumer-Name`, `X-Consumer-Groups` (comma-separated) and
+`X-Credential-Id` (the key ID); copies a client sends are removed first. The access log has
+`consumer` and `key_id`; [`rdock_consumer_requests_total`](/docs/reference/metrics/#rdock_consumer_requests_total)
+counts requests per consumer. A missing or invalid key gets `401` with
+`WWW-Authenticate: Bearer realm="api"` (`error="invalid_token"` for an invalid one), rendered
+as [problem details](/docs/guides/error-pages-and-maintenance/#problem-details-for-apis) where
+the route asks for them.
+
+Routes that also cache must keep consumers apart: add `key.consumer: true` to the
+[`cache`](/docs/guides/caching/) middleware, or `shared_across_users: true` when every consumer
+gets the same answers.
+
+## Related
+
+- [Rate limits and quotas per consumer](/docs/guides/quotas/)
+- [Usage metering](/docs/guides/usage-metering/)
+- [Cloudflare Access](/docs/guides/cloudflare/#cloudflare-access), which also sets the consumer
+- [OIDC login](/docs/guides/oidc-login/) and [JWT](/docs/guides/jwt/#consumers-from-tokens) (`consumer_claim`), which set it from the user's identity

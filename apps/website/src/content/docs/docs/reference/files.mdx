@@ -107,6 +107,14 @@ written when the applied document differs from the previous one. Each file is na
 | `summary` | What changed compared with the previous configuration. |
 | `source` | The configuration document as written. |
 
+### `quota/` <Status planned="v0.8" />
+
+The counters of [`quota`](/docs/guides/quotas/) middlewares, written every few seconds and read again at start, so a restart loses at most the last few seconds. See [Quotas](/docs/guides/quotas/).
+
+### `spool/` <Status planned="v0.8" />
+
+Unlinked temporary files that [`hold_body`](/docs/guides/timeouts-and-limits/) uses for request bodies over 64 KiB; the directory is emptied at start. A disk [cache store](/docs/guides/caching/) lives at the `path` you give it, not here.
+
 ### Secrets on disk
 
 `lkg.json` and the history store the document **as written**, with `${env:…}` and `${file:…}`

@@ -56,6 +56,32 @@ impl Validator<'_> {
                 "files and directories starting with `.` (such as `.env` and `.git/`) are served",
             );
         }
+        if config.listing {
+            self.check_static_listing(path, config);
+        }
+    }
+
+    /// A listing tells the world what is there, so it must not be on together with the options
+    /// that serve what is meant to stay private (ADR-0030).
+    fn check_static_listing(&mut self, path: &str, config: &StaticConfig) {
+        if config.hidden == HiddenFiles::Allow {
+            self.push(
+                Diagnostic::warning(
+                    format!("{path}.listing"),
+                    "with `hidden: allow`, directory listings show files and directories starting with `.` (such as `.env` and `.git/`)",
+                )
+                .with_hint("keep `hidden: refuse` (the default) on a directory that is listed"),
+            );
+        }
+        if config.symlinks == SymlinkPolicy::All {
+            self.push(
+                Diagnostic::warning(
+                    format!("{path}.listing"),
+                    "with `symlinks: all`, directory listings show links that lead out of `root`, and their targets' sizes and dates",
+                )
+                .with_hint("`none` (the default) or `within_root` lists only what stays inside the directory"),
+            );
+        }
     }
 
     fn check_static_index(&mut self, path: &str, index: &[String]) {

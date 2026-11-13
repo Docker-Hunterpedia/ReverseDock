@@ -443,6 +443,10 @@ async fn explain_shows_why_routes_match_and_backends_are_excluded() {
     );
     assert_eq!(answer["outcome"]["route"], "api");
     assert_eq!(answer["outcome"]["middlewares"], serde_json::json!(["tag"]));
+    assert_eq!(
+        answer["outcome"]["phases"],
+        serde_json::json!([{ "middleware": "tag", "phases": ["request", "response"] }])
+    );
     let excluded = answer["outcome"]["backends"]
         .as_array()
         .unwrap()
@@ -464,7 +468,93 @@ async fn explain_shows_why_routes_match_and_backends_are_excluded() {
     let text = String::from_utf8_lossy(&output.stdout);
     assert!(output.status.success(), "{text}");
     assert!(
-        text.contains("route api → service app") && text.contains("excluded: drained"),
+        text.contains("route api → service app")
+            && text.contains("excluded: drained")
+            && text.contains(&format!("  {:<24} request, response", "tag")),
         "{text}"
     );
+}
+
+/// The per-object endpoints read the API document, change one object and write it back, so the
+/// document must round-trip: it once carried empty sections the writer refused (`tcp_routes`).
+#[tokio::test]
+async fn objects_are_created_replaced_and_deleted_one_at_a_time() {
+    let backend = Backend::start("object-backend").await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\n"
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    // Writes are limited per second; a refused one is sent again.
+    let send = |method: &str, path: &str, body: &str| {
+        loop {
+            let (_, head, _) = rdock
+                .admin_send("GET", "/api/v1/config/api", &[], "")
+                .unwrap();
+            let tag = etag(&head);
+            let headers = [
+                ("Content-Type", "application/json"),
+                ("If-Match", tag.as_str()),
+            ];
+            let (status, _, answer) = rdock.admin_send(method, path, &headers, body).unwrap();
+            if status != 429 {
+                return (status, answer);
+            }
+            std::thread::sleep(std::time::Duration::from_millis(300));
+        }
+    };
+
+    let (_, _, body) = rdock
+        .admin_send("GET", "/api/v1/config/api", &[], "")
+        .unwrap();
+    let document: serde_json::Value = serde_json::from_str(&body).unwrap();
+    let mut sections: Vec<&str> = document
+        .as_object()
+        .unwrap()
+        .keys()
+        .map(String::as_str)
+        .collect();
+    sections.sort_unstable();
+    assert_eq!(sections, ["middlewares", "routes", "services"], "{body}");
+
+    let service = serde_json::json!({ "backends": [{ "address": backend.addr.to_string() }] });
+    let (status, answer) = send("PUT", "/api/v1/services/app", &service.to_string());
+    assert_eq!(status, 200, "{answer}\n{}", rdock.log());
+    let route = serde_json::json!({ "match": "Host(`object.test`)", "service": "app" });
+    let (status, answer) = send("PUT", "/api/v1/routes/app", &route.to_string());
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(
+        client::http1(proxy, get("object.test", "/")).await.status,
+        200
+    );
+
+    let headers =
+        serde_json::json!({ "type": "headers", "response": { "set": { "X-Object": "1" } } });
+    let (status, answer) = send("PUT", "/api/v1/middlewares/mark", &headers.to_string());
+    assert_eq!(status, 200, "{answer}");
+    let route = serde_json::json!({ "match": "Host(`object.test`)", "service": "app", "middlewares": ["mark"] });
+    let (status, answer) = send("PUT", "/api/v1/routes/app", &route.to_string());
+    assert_eq!(status, 200, "{answer}");
+    let reply = client::http1(proxy, get("object.test", "/")).await;
+    assert_eq!(reply.header("x-object"), Some("1"));
+
+    // A service a route still names cannot go; nothing changes.
+    let (status, answer) = send("DELETE", "/api/v1/services/app", "");
+    assert_eq!(status, 422, "{answer}");
+    assert_eq!(
+        client::http1(proxy, get("object.test", "/")).await.status,
+        200
+    );
+
+    let (status, answer) = send("DELETE", "/api/v1/routes/app", "");
+    assert_eq!(status, 200, "{answer}");
+    assert_eq!(
+        client::http1(proxy, get("object.test", "/")).await.status,
+        404
+    );
+    let (status, answer) = send("DELETE", "/api/v1/services/app", "");
+    assert_eq!(status, 200, "{answer}");
+    let (status, _) = send("DELETE", "/api/v1/services/app", "");
+    assert_eq!(status, 404);
 }

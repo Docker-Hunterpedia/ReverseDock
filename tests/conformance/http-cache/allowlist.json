@@ -1,0 +1,7 @@
+{
+  "description": "Required tests of http-tests/cache-tests that may fail at rdock's safe defaults, each with the reason. summarize.mjs fails the job when a required test fails that is not listed here, and when a listed test passes (the entry is stale and must be removed). Reviewed 2026-11-12 against suite revision 7e2c53785f41eedc57aa73c8cc19a6729eef39ed. See README.md.",
+  "tests": {
+    "other-date-update": "Known defect, tracked in docs/07-roadmap.md (v0.8 cache): Pingora 0.9.1 replaces the Date header of every response it writes to a client (pingora-core 0.9.1, protocols/http/v1/server.rs write_response_header and v2/server.rs, with no public setting to turn it off), so a stored response is served with the current time instead of the origin's Date (RFC 9110 §6.6.1, RFC 9111 §4). Needs an upstream Pingora change.",
+    "other-date-update-expires": "Known defect, tracked in docs/07-roadmap.md (v0.8 cache): the same Pingora 0.9.1 Date rewrite as other-date-update, with Expires present."
+  }
+}

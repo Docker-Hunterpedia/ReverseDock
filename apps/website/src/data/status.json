@@ -1,16 +1,37 @@
 [
   {
-    "path": "listeners.<name>.protocol",
-    "planned": "v0.8",
-    "what": "UDP listeners (`udp`)",
+    "path": "listeners.<name>.proxy_protocol",
+    "planned": "a later version",
+    "what": "PROXY protocol on UDP listeners",
     "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\n  dns: { address: \":53\", protocol: udp }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  app: { match: \"PathPrefix(`/`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+    "fixture": "listeners:\n  dns: { address: \":53\", protocol: udp, proxy_protocol: { trusted: [10.0.0.0/8] } }\nudp_routes:\n  dns: { listeners: [dns], service: dns }\nudp_services:\n  dns:\n    backends: [{ address: \"127.0.0.1:5353\" }]\n"
   },
   {
-    "path": "middlewares.<name>.listing",
-    "planned": "v0.8",
-    "what": "Directory listing (F-WEB-02)",
+    "path": "middlewares.<name>.background_refresh",
+    "planned": "a later version",
+    "what": "Background refresh of stale cached responses (stale-while-revalidate)",
     "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\ndefaults:\n  listeners: [web]\n  tls: off\nroutes:\n  site: { match: \"PathPrefix(`/`)\", middlewares: [site] }\nmiddlewares:\n  site: { type: static, root: /srv/www/example, listing: true }\n"
+    "fixture": "caches:\n  mem: { type: memory }\nmiddlewares:\n  cache: { type: cache, store: mem, background_refresh: true }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [cache] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.protocol",
+    "planned": "a later version",
+    "what": "Agents over Envoy's gRPC external processing (protocol: ext_proc)",
+    "value": true,
+    "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: ext_proc }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.protocol",
+    "planned": "a later version",
+    "what": "Agents over Envoy's gRPC external authorization (protocol: ext_authz)",
+    "value": true,
+    "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: ext_authz }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "middlewares.<name>.protocol",
+    "planned": "a later version",
+    "what": "Agents over HAProxy's SPOP (protocol: spop)",
+    "value": true,
+    "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: spop }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   }
 ]

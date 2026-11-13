@@ -5,7 +5,7 @@
 //! firing alert once and again at most every `min_interval`, sends `resolved` when it ends, and
 //! delivers from a bounded queue with jittered retries. Never on the request path.
 
-mod deliver;
+pub(crate) mod deliver;
 
 use std::collections::HashMap;
 use std::sync::Arc;

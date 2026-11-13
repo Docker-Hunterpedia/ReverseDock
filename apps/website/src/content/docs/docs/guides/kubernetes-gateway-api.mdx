@@ -1,6 +1,6 @@
 ---
 title: Kubernetes Gateway API
-description: Serve Gateway, HTTPRoute, GRPCRoute, TLSRoute and TCPRoute objects with ReverseDock, with HTTPS from Secrets or cert-manager, cross-namespace references, the supported feature list, and how to read status when something is not programmed.
+description: Serve Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute and UDPRoute objects with ReverseDock, with HTTPS from Secrets or cert-manager, cross-namespace references, the supported feature list, and how to read status when something is not programmed.
 sidebar:
   order: 4
 ---
@@ -26,7 +26,7 @@ It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The contro
 | ReferenceGrant | Yes, for every reference across namespaces. |
 | BackendTLSPolicy | Applied to HTTPRoute and GRPCRoute backends, but not claimed as a supported feature. |
 | ListenerSet | Yes, when the parent Gateway allows it ([below](#listenersets)). |
-| UDPRoute | **Not supported.** UDP waits for v0.8. |
+| UDPRoute | Yes, on `UDP` listeners <Status planned="v0.8" />. |
 
 ## How the pieces map
 
@@ -34,14 +34,14 @@ It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The contro
 |---|---|
 | **GatewayClass** `controllerName: reversedock.dev/gateway-controller` | Says this ReverseDock serves the class. Its status gets `Accepted`, `SupportedVersion` (the installed CRD bundle against 1.7) and `supportedFeatures`. |
 | **Gateway** | One internal listener per (Gateway, port) in every ReverseDock pod, and **one Service per Gateway**. The Gateway's `status.addresses` is that Service's address. |
-| **HTTPRoute, GRPCRoute, TLSRoute, TCPRoute** | ReverseDock routes, services and middlewares on those listeners, named with `@kubernetes`. They appear read-only in `rdock status` and the dashboard. |
+| **HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute** | ReverseDock routes, services and middlewares on those listeners, named with `@kubernetes`. They appear read-only in `rdock status` and the dashboard. |
 | **ListenerSet** | More listeners for a Gateway that allows them: they join the Gateway's internal listeners and its Service ([below](#listenersets)). |
 | **Service + EndpointSlices** | The backend pool of a `backendRef`: ReverseDock sends to pod addresses, not to the Service's cluster IP, and balances, drains and health-checks them itself. |
 | **Secret** (`kubernetes.io/tls`) | The certificate of an HTTPS listener. |
 
 ### The Service made for each Gateway
 
-For every accepted Gateway the controller creates a Service in ReverseDock's own namespace, named `<gateway namespace>-<gateway name>-<hash>` (the hash of the exact namespace and name keeps two Gateways from ever sharing a Service; the readable part is shortened to fit 63 characters) and labelled `gateway.networking.k8s.io/gateway-name` and `reversedock.dev/gateway-namespace`; the annotations `reversedock.dev/gateway-namespace` and `reversedock.dev/gateway-name` hold the exact Gateway. It selects the ReverseDock pods. Each listener port of the Gateway becomes a Service `port`, with a `targetPort` taken from `providers.kubernetes.gateway.port_range` (default `20000-29999`): all the pods open exactly those internal ports. The Service's ports are the record of the allocation, so the replicas always agree. Labels and annotations in the Gateway's `spec.infrastructure` are copied onto the Service, which is how you ask a cloud for an internal load balancer.
+For every accepted Gateway the controller creates a Service in ReverseDock's own namespace, named `<gateway namespace>-<gateway name>-<hash>` (the hash of the exact namespace and name keeps two Gateways from ever sharing a Service; the readable part is shortened to fit 63 characters) and labelled `gateway.networking.k8s.io/gateway-name` and `reversedock.dev/gateway-namespace`; the annotations `reversedock.dev/gateway-namespace` and `reversedock.dev/gateway-name` hold the exact Gateway. It selects the ReverseDock pods. Each listener port of the Gateway becomes a Service `port`, with a `targetPort` taken from `providers.kubernetes.gateway.port_range` (default `20000-29999`): all the pods open exactly those internal ports. Ports are kept apart by protocol: a Gateway with `TCP` and `UDP` listeners on port 53 gets a Service with two ports, `tcp-53` (`protocol: TCP`) and `udp-53` (`protocol: UDP`), each with its own internal port. A load balancer must support Services with mixed protocols for that (stable since Kubernetes 1.26; the cloud provider decides which protocols its load balancers carry). Port names are `tcp-<port>` and `udp-<port>`; Services created by v0.7 keep their `port-<port>` names, so upgrading does not rewrite them. The Service's ports are the record of the allocation, so the replicas always agree. Labels and annotations in the Gateway's `spec.infrastructure` are copied onto the Service, which is how you ask a cloud for an internal load balancer.
 
 The Service's type is `providers.kubernetes.gateway.service_type`: `load_balancer` (default), `cluster_ip` or `node_port`. The Gateway's address is the load balancer's IP and host name, or the Service's cluster IP for the other two types (with `node_port`, the address is still the cluster IP; reach the node port through a node's address). Services of Gateways that no longer exist are deleted. Each Gateway therefore has its own address, and two Gateways can both listen on port 80.
 
@@ -127,7 +127,7 @@ spec:
 
 Without it the listener reports `ResolvedRefs=False` with the reason `RefNotPermitted`. Grants are read on every translation: deleting one withdraws the access at once.
 
-## gRPC, TLS passthrough and TCP
+## gRPC, TLS passthrough, TCP and UDP
 
 **GRPCRoute** attaches to `HTTP` and `HTTPS` listeners like an HTTPRoute. A match on `service` and `method` becomes the path `/service/method`, a match on `service` alone becomes everything under `/service/`, and a regular expression matches the whole path. GRPCRoute backends speak HTTP/2 without TLS (h2c) by default. [`grpcroute.yaml`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/examples/kubernetes/grpcroute.yaml) attaches to the `https` listener of the example Gateway.
 
@@ -167,6 +167,41 @@ spec:
 ```
 
 The model has no weighted split for TCP, so the backends of a rule are pooled: each endpoint gets its reference's weight divided by the number of endpoints of that Service, so each Service receives about its share whatever its size. A reference that cannot be resolved contributes nothing, and a route with no usable endpoint accepts no connection. See [TCP routes](/docs/guides/tcp-routes/) for what the proxy does with them.
+
+**UDPRoute** <Status planned="v0.8" /> relays the datagrams of a `UDP` listener to its backends: each client address gets a session on one backend, as described in [UDP routes](/docs/guides/udp-routes/) (sessions end after 60 s without traffic, and every listener caps its sessions). A `UDP` listener may share its port number with a `TCP`, `HTTP`, `HTTPS` or `TLS` listener, because it is another transport; two `UDP` listeners on one port conflict. When several UDPRoutes attach to one listener, all are accepted and counted, and the oldest receives the datagrams. Weights pool the endpoints as for TCPRoute. For UDP there is nothing to refuse with, so a route with no usable endpoint drops its datagrams, and an invalid reference's share is left out of the pool instead of dropping that share of the datagrams as the specification asks (no conformance test checks this).
+
+```yaml title="udproute.yaml"
+apiVersion: gateway.networking.k8s.io/v1
+kind: Gateway
+metadata:
+  name: dns
+  namespace: default
+spec:
+  gatewayClassName: reversedock
+  listeners:
+    - name: dns-udp
+      protocol: UDP
+      port: 53
+    - name: dns-tcp
+      protocol: TCP
+      port: 53
+---
+apiVersion: gateway.networking.k8s.io/v1
+kind: UDPRoute
+metadata:
+  name: dns
+  namespace: default
+spec:
+  parentRefs:
+    - name: dns
+      sectionName: dns-udp
+  rules:
+    - backendRefs:
+        - name: coredns
+          port: 53
+```
+
+A `backendRef` port that the Service has for both protocols (TCP and UDP 53) resolves to the UDP entry for a UDPRoute and the TCP entry for a TCPRoute.
 
 ## ListenerSets
 
@@ -278,7 +313,7 @@ kubectl get gatewayclass reversedock -o jsonpath='{.status.supportedFeatures[*].
 
 | Group | Claimed |
 |---|---|
-| Core | `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`, `TCPRoute`, `ReferenceGrant` |
+| Core | `Gateway`, `HTTPRoute`, `GRPCRoute`, `TLSRoute`, `TCPRoute`, `UDPRoute`, `ReferenceGrant` |
 | Gateway | `GatewayPort8080`, `ListenerSet` |
 | HTTP matching | `HTTPRouteMethodMatching`, `HTTPRouteQueryParamMatching`, `HTTPRouteParentRefPort`, `HTTPRouteNamedRouteRule` |
 | HTTP filters | `HTTPRouteResponseHeaderModification`, `HTTPRouteHostRewrite`, `HTTPRoutePathRewrite`, `HTTPRoutePathRedirect`, `HTTPRoutePortRedirect`, `HTTPRouteSchemeRedirect`, `HTTPRoute303RedirectStatusCode`, `HTTPRoute307RedirectStatusCode`, `HTTPRoute308RedirectStatusCode`, `HTTPRouteRequestMirror` |
@@ -300,7 +335,6 @@ What is not supported, and what happens to it:
 | Client certificate validation on a Gateway | Not claimed. |
 | `HTTPRouteDestinationPortMatching`, `HTTPRouteBackendURLRewrite`, `GRPCRouteRequestHeaderModifier` | Not claimed. |
 | `TLSRouteModeTerminate`, `TLSRouteModeMixed` | A `TLS` listener with `mode: Terminate` is `Accepted=False` (`UnsupportedValue`). Not claimed. |
-| `UDPRoute`, `UDP` listeners | The listener is `Accepted=False` (`UnsupportedProtocol`); a UDPRoute is not accepted. UDP is planned for v0.8. |
 | `BackendTLSPolicy` as a feature | Applied (above) but not claimed. |
 | Listener `tls.options` | Ignored with a diagnostic. |
 | Older API versions (`v1beta1`, `v1alpha2`) | Not read; only `v1` objects are. |
@@ -318,7 +352,7 @@ kubectl get gatewayclass reversedock -o yaml
 | Condition | On | Meaning |
 |---|---|---|
 | `Accepted` | GatewayClass, Gateway, ListenerSet, listener, route parent | The object is valid and ReverseDock will use it. `False` has a reason such as `UnsupportedProtocol`, `NotAllowedByListeners`, `NoMatchingParent`. |
-| `Programmed` | Gateway, ListenerSet, listener | The Service has an address and maps the port, and the listener is open. `Pending` waits for the Service; `AddressNotAssigned` waits for the load balancer; `Invalid` has a message. |
+| `Programmed` | Gateway, ListenerSet, listener | The Service has an address and maps the port, and the listener is open. `Pending` waits for the Service, or for the internal port to be free on this replica (a removed listener may hold it for a moment; it is retried); `AddressNotAssigned` waits for the load balancer; `Invalid` has a message. |
 | `ResolvedRefs` | listener, route parent | Every reference resolves: certificates, route kinds, Services, grants. The reason names the first failure (`InvalidCertificateRef`, `RefNotPermitted`, `BackendNotFound`, `InvalidKind`). |
 | `Conflicted` | listener | Two listeners of a port disagree (`ProtocolConflict`, `HostnameConflict`). Between a Gateway's own listeners both are refused and neither wins; a ListenerSet's listener is refused and the one that takes precedence keeps working. |
 | `SupportedVersion` | GatewayClass | `False` means the CRD bundle is not 1.7; the class stays accepted. |
@@ -356,11 +390,12 @@ If ReverseDock gets a burst of changes, translations are coalesced: at most one 
 ## Limits
 
 - One Gateway port is one listener in every pod. The port range bounds how many (10,000 by default).
+- An internal port a deleted Gateway released is not given to another Gateway for 30 seconds (unless the range has no other). `Programmed` reflects the leader's own data plane; another replica that cannot bind a port yet retries it without saying so in the status.
 - Listeners are in-process sockets in shared pods. A Gateway's address is a Service address, not a pod: a host-port DaemonSet exposes the file-configured Ingress listeners only, not Gateway listeners.
 - `providers.kubernetes.namespaces` (chart `watchNamespaces`) limits which namespaces are watched.
-- No request timeout, retry policy or UDP yet ([above](#what-is-supported)).
+- No request timeout or retry policy yet ([above](#what-is-supported)).
 - The data plane never waits for the Kubernetes API at request time; the last snapshot serves while the API is away.
-- Proven in CI (2026-11-11, commit `19e88cc`): the upstream conformance suite on kind, and the Helm install on k3s with the example Gateway. Not exercised in a cluster job: Ingress, cert-manager, RKE2 and the namespaced mode. No conformance report has been submitted upstream, and nothing is released.
+- Proven in CI: the upstream conformance suite on kind (2026-11-11, commit `19e88cc`, for `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`; `GATEWAY-UDP` on 2026-11-12, commit `43d81de`, core 21 and extended 7 passed, which also shows the load balancer forwards the Service's UDP ports), and the Helm install on k3s with the example Gateway. Not exercised in a cluster job: Ingress, cert-manager, RKE2 and the namespaced mode. No conformance report has been submitted upstream, and nothing is released.
 
 ## Related
 

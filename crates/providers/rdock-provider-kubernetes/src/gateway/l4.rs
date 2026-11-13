@@ -8,20 +8,26 @@
 //!   longer names shorter ones, then older routes ([`super::priority`]).
 //! - **TCPRoute** attaches to `TCP` listeners and becomes ``HostSNI(`*`)`` on the port's
 //!   `tcp` listener; when several attach to one listener, the oldest wins.
-//! - **UDPRoute** has no listener to attach to (UDP listeners are not supported until
-//!   v0.8): its parentRefs to our Gateways are `Accepted=False/NotAllowedByListeners` (or
-//!   `NoMatchingParent`).
+//! - **UDPRoute** attaches to `UDP` listeners and becomes a UDP route without `match` on the
+//!   port's `udp` listener. A listener has at most one such route, so when several attach to
+//!   one listener only the oldest is emitted (all are `Accepted=True` and counted in
+//!   `attachedRoutes`, as `UDPRouteMultipleRoutesAttachment` expects).
 //!
-//! The backends of every rule are pooled into one TCP service (the model has no weighted TCP
-//! split): each endpoint of a `backendRef` gets that reference's weight multiplied by 1000
+//! The backends of every rule are pooled into one TCP (or UDP) service (the model has no
+//! weighted L4 split): each endpoint of a `backendRef` gets that reference's weight multiplied by 1000
 //! and divided by the reference's number of endpoints, so each Service receives about its
 //! weighted share whatever its size. A backend reference that cannot be resolved makes
 //! `ResolvedRefs=False` and contributes nothing; a route with no usable endpoint at all gets
-//! no TCP route, so its connections are refused, as the conformance tests expect.
+//! no TCP route, so its connections are refused, as the conformance tests expect. For UDP
+//! there is nothing to refuse with: a route without a usable endpoint gets no UDP route, so
+//! its datagrams are dropped, and an unresolved reference's share is dropped from the pool
+//! instead of becoming a share of dropped datagrams (`udproute_types.go` asks for the latter;
+//! no conformance test checks it, and a backend that drops on purpose would have to be an
+//! address that sends traffic nowhere, which no address guarantees).
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
-use rdock_model::route::{TcpRoute, TcpRouteTls};
+use rdock_model::route::{TcpRoute, TcpRouteTls, UdpRoute};
 use rdock_model::service::Backend;
 use rdock_rules::{Expr, Matcher};
 
@@ -69,8 +75,20 @@ pub fn translate(cx: &mut Context<'_>, ranks: &BTreeMap<(RouteKind, ObjectKey), 
             },
         );
     }
-    for (key, route) in &inventory.udp_routes {
-        translate_route(
+    // Oldest first: the first UDP route emitted on an internal listener claims it.
+    let mut udp: Vec<(usize, &ObjectKey)> = inventory
+        .udp_routes
+        .keys()
+        .map(|key| {
+            let rank = ranks.get(&(RouteKind::Udp, key.clone())).copied();
+            (rank.unwrap_or(usize::MAX), key)
+        })
+        .collect();
+    udp.sort();
+    let mut claimed = BTreeSet::new();
+    for (rank, key) in udp {
+        let route = &inventory.udp_routes[key];
+        translate_route_claiming(
             cx,
             &L4Spec {
                 kind: RouteKind::Udp,
@@ -79,8 +97,9 @@ pub fn translate(cx: &mut Context<'_>, ranks: &BTreeMap<(RouteKind, ObjectKey), 
                 parent_refs: &route.spec.parent_refs,
                 hostnames: &[],
                 rules: &route.spec.rules,
-                rank: usize::MAX,
+                rank,
             },
+            &mut claimed,
         );
     }
 }
@@ -96,6 +115,16 @@ struct L4Spec<'a> {
 }
 
 fn translate_route(cx: &mut Context<'_>, spec: &L4Spec<'_>) {
+    translate_route_claiming(cx, spec, &mut BTreeSet::new());
+}
+
+/// Translates one route; a UDP route is emitted only on internal listeners not in `claimed`,
+/// which it then claims.
+fn translate_route_claiming(
+    cx: &mut Context<'_>,
+    spec: &L4Spec<'_>,
+    claimed: &mut BTreeSet<String>,
+) {
     let (namespace, name) = (&spec.key.0, &spec.key.1);
     let id = object_id(spec.kind.as_str(), namespace, name);
     let mut unresolved: Vec<Failure> = Vec::new();
@@ -177,10 +206,30 @@ fn translate_route(cx: &mut Context<'_>, spec: &L4Spec<'_>) {
         cx.warn(
             &id,
             "",
-            "no backend has a usable endpoint; connections are refused",
+            if spec.kind == RouteKind::Udp {
+                "no backend has a usable endpoint; datagrams are dropped"
+            } else {
+                "no backend has a usable endpoint; connections are refused"
+            },
         );
         return;
     }
+    if spec.kind == RouteKind::Udp {
+        emit_udp(cx, spec, &id, targets.into_keys().collect(), pool, claimed);
+    } else {
+        emit_tcp(cx, spec, &id, targets, pool);
+    }
+}
+
+/// The TCP service of a TLS or TCP route and its TCP routes.
+fn emit_tcp(
+    cx: &mut Context<'_>,
+    spec: &L4Spec<'_>,
+    id: &str,
+    targets: BTreeMap<String, (bool, Intersection)>,
+    pool: Vec<Backend>,
+) {
+    let (namespace, name) = (&spec.key.0, &spec.key.1);
     let service_name = super::names::object_name(
         "tcp",
         &[namespace, name],
@@ -191,7 +240,62 @@ fn translate_route(cx: &mut Context<'_>, spec: &L4Spec<'_>) {
         .tcp_services
         .insert(service_name.clone(), backends::tcp_service(pool));
     for (internal, (https, hosts)) in targets {
-        emit(cx, spec, &id, &internal, https, &hosts, &service_name);
+        emit(cx, spec, id, &internal, https, &hosts, &service_name);
+    }
+}
+
+/// The UDP service of a route and a UDP route on each internal listener no older route has
+/// claimed.
+fn emit_udp(
+    cx: &mut Context<'_>,
+    spec: &L4Spec<'_>,
+    id: &str,
+    internals: Vec<String>,
+    pool: Vec<Backend>,
+    claimed: &mut BTreeSet<String>,
+) {
+    let (namespace, name) = (&spec.key.0, &spec.key.1);
+    let mut service_name = None;
+    for internal in internals {
+        if !claimed.insert(internal.clone()) {
+            cx.warn(
+                id,
+                "",
+                "an older UDPRoute is attached to the same listener and receives its datagrams",
+            );
+            continue;
+        }
+        let service = service_name
+            .get_or_insert_with(|| {
+                super::names::object_name(
+                    "udp",
+                    &[namespace, name],
+                    &format!("udpsvc/{namespace}/{name}"),
+                )
+            })
+            .clone();
+        let route_name = super::names::object_name(
+            "udp",
+            &[namespace, name],
+            &format!("l4/udp/{namespace}/{name}/{internal}"),
+        );
+        cx.out.fragment.udp_routes.insert(
+            route_name,
+            UdpRoute {
+                matcher: None,
+                listeners: Some(vec![internal]),
+                priority: 0,
+                service,
+                middlewares: Vec::new(),
+                enabled: true,
+            },
+        );
+    }
+    if let Some(service) = service_name {
+        cx.out
+            .fragment
+            .udp_services
+            .insert(service, backends::udp_service(pool));
     }
 }
 
@@ -336,12 +440,13 @@ fn backend(
             format!("backendRef to Service `{}` has no port", r.name),
         ));
     };
-    let resolved = backends::resolve(
+    let resolved = backends::resolve_protocol(
         cx.inventory,
         namespace,
         &r.name,
         Some(PortRef::Number(port)),
         cx.settings.provider.gateway.allow_external_name,
+        if kind == RouteKind::Udp { "UDP" } else { "TCP" },
     )
     .map_err(|e| match e {
         BackendError::ExternalNameNotAllowed { .. } => (reasons::INVALID_KIND, e.to_string()),

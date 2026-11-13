@@ -29,8 +29,9 @@ use super::{Alert, State};
 const TIMEOUT: Duration = Duration::from_secs(5);
 const ATTEMPTS: u32 = 3;
 
-/// Whether an address is one a public alert service never has.
-fn private(ip: IpAddr) -> bool {
+/// Whether an address is one a public service never has: private, loopback, link-local,
+/// unspecified, broadcast, shared (100.64.0.0/10) or unique-local.
+pub fn private(ip: IpAddr) -> bool {
     match ip {
         IpAddr::V4(v4) => {
             v4.is_private()
@@ -54,7 +55,7 @@ fn private(ip: IpAddr) -> bool {
 
 /// Whether `url` names its host by a private IP address. The connector skips the resolver
 /// for IP literals, so `Guarded` never sees them and they are checked here instead.
-fn private_literal(url: &str) -> bool {
+pub(crate) fn private_literal(url: &str) -> bool {
     url.parse::<http::Uri>()
         .ok()
         .and_then(|uri| {
@@ -67,8 +68,8 @@ fn private_literal(url: &str) -> bool {
 
 /// Resolves names and drops private addresses unless allowed.
 #[derive(Clone)]
-struct Guarded {
-    allow_private: bool,
+pub(crate) struct Guarded {
+    pub(crate) allow_private: bool,
 }
 
 impl tower_service::Service<Name> for Guarded {
@@ -105,7 +106,7 @@ type Http = Client<HttpsConnector<HttpConnector<Guarded>>, Full<Bytes>>;
 
 /// HTTP clients for public and for private targets.
 #[derive(Clone)]
-pub(super) struct Clients {
+pub(crate) struct Clients {
     public: Http,
     private: Http,
 }
@@ -124,11 +125,53 @@ fn client(allow_private: bool) -> Result<Http, String> {
 }
 
 impl Clients {
-    pub(super) fn new() -> Result<Self, String> {
+    pub(crate) fn new() -> Result<Self, String> {
         Ok(Self {
             public: client(false)?,
             private: client(true)?,
         })
+    }
+
+    /// POSTs `body` and returns the answer's status, or why there is none. Private targets
+    /// are refused unless `allow_private`; redirects are not followed.
+    pub(crate) async fn post_raw(
+        &self,
+        allow_private: bool,
+        url: &str,
+        headers: &[(&'static str, String)],
+        body: Bytes,
+        timeout: Duration,
+    ) -> Result<http::StatusCode, String> {
+        if !allow_private && private_literal(url) {
+            return Err(
+                "the URL names a private address; set allow_private_targets: true".to_owned(),
+            );
+        }
+        let mut request = Request::post(url).header(
+            header::USER_AGENT,
+            concat!("rdock/", env!("CARGO_PKG_VERSION")),
+        );
+        for (name, value) in headers {
+            request = request.header(*name, value);
+        }
+        let request = request.body(Full::new(body)).map_err(|e| e.to_string())?;
+        let client = if allow_private {
+            &self.private
+        } else {
+            &self.public
+        };
+        let response = tokio::time::timeout(timeout, client.request(request))
+            .await
+            .map_err(|_| format!("no answer within {} s", timeout.as_secs()))?
+            .map_err(|e| {
+                format!(
+                    "{e}: {}",
+                    std::error::Error::source(&e)
+                        .map(ToString::to_string)
+                        .unwrap_or_default()
+                )
+            })?;
+        Ok(response.status())
     }
 }
 
@@ -173,7 +216,7 @@ pub(super) fn wants(channel: &AlertChannel, rule: AlertRule) -> bool {
     rules.is_empty() || rules.contains(&rule)
 }
 
-fn secret(value: &str) -> Result<String, String> {
+pub(crate) fn secret(value: &str) -> Result<String, String> {
     rdock_config::interpolate::expand(value, &rdock_config::System)
         .map(|v| v.trim().to_owned())
         .map_err(|e| e.to_string())
@@ -206,7 +249,7 @@ pub(super) fn webhook_body(alert: &Alert) -> Value {
 
 /// `webhook-signature` of Standard Webhooks: `v1,` and the base64 HMAC-SHA256 of
 /// `id.timestamp.body` with the decoded `whsec_` secret.
-pub(super) fn sign(secret: &str, id: &str, timestamp: u64, body: &str) -> Result<String, String> {
+pub(crate) fn sign(secret: &str, id: &str, timestamp: u64, body: &str) -> Result<String, String> {
     let key = STANDARD
         .decode(secret.strip_prefix("whsec_").unwrap_or(secret))
         .map_err(|_| "the webhook secret is not whsec_ followed by base64".to_owned())?;

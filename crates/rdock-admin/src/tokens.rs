@@ -12,18 +12,20 @@ use std::sync::{Mutex, PoisonError};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use ipnet::IpNet;
-use ring::digest::{SHA256, digest};
-use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use subtle::ConstantTimeEq;
 
 use crate::caller::Access;
 
-const PREFIX: &str = "rdk_pat_";
-const BASE62: &[u8; 62] = b"0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
-const ID_LEN: usize = 10;
-const SECRET_LEN: usize = 32;
-const CHECK_LEN: usize = 6;
+/// The format code lives in `rdock-credentials`, which the data plane may use too (ADR-0030).
+const FORMAT: rdock_credentials::Format = rdock_credentials::ADMIN_TOKEN;
+#[cfg(test)]
+const PREFIX: &str = FORMAT.prefix;
+#[cfg(test)]
+const ID_LEN: usize = FORMAT.id_len;
+#[cfg(test)]
+const SECRET_LEN: usize = FORMAT.secret_len;
+#[cfg(test)]
+const CHECK_LEN: usize = rdock_credentials::CHECK_LEN;
 /// How often a token's last use is written to disk at most.
 const PERSIST_USE_EVERY: Duration = Duration::from_secs(60);
 
@@ -33,50 +35,13 @@ fn now() -> u64 {
         .map_or(0, |d| d.as_secs())
 }
 
-/// Uniform Base62 characters by rejection sampling, so no character is more likely.
-fn random_base62(len: usize) -> Option<String> {
-    let rng = SystemRandom::new();
-    let mut out = String::with_capacity(len);
-    let mut buffer = [0u8; 64];
-    while out.len() < len {
-        rng.fill(&mut buffer).ok()?;
-        for &byte in &buffer {
-            if byte < 248 && out.len() < len {
-                out.push(char::from(BASE62[usize::from(byte % 62)]));
-            }
-        }
-    }
-    Some(out)
-}
-
-fn checksum(body: &str) -> String {
-    let mut value = u64::from(crc32fast::hash(body.as_bytes()));
-    let mut out = [b'0'; CHECK_LEN];
-    for slot in out.iter_mut().rev() {
-        *slot = BASE62[usize::try_from(value % 62).unwrap_or(0)];
-        value /= 62;
-    }
-    String::from_utf8_lossy(&out).into_owned()
-}
-
 /// The ID and secret of a well-formed token with a correct checksum.
 fn parse(token: &str) -> Option<(&str, &str)> {
-    let rest = token.strip_prefix(PREFIX)?;
-    let (id, tail) = rest.split_once('_')?;
-    if id.len() != ID_LEN || tail.len() != SECRET_LEN + CHECK_LEN || !tail.is_ascii() {
-        return None;
-    }
-    let (secret, check) = tail.split_at(SECRET_LEN);
-    let base62 = |s: &str| s.bytes().all(|b| b.is_ascii_alphanumeric());
-    if !base62(id) || !base62(secret) {
-        return None;
-    }
-    let body = &token[..token.len() - CHECK_LEN];
-    (checksum(body) == check).then_some((id, secret))
+    FORMAT.parse(token)
 }
 
 fn hash(secret: &str) -> String {
-    crate::hex(digest(&SHA256, secret.as_bytes()).as_ref())
+    rdock_credentials::hash_secret(secret)
 }
 
 /// One token as stored.
@@ -178,21 +143,19 @@ impl Tokens {
 
     /// Creates a token and returns its full value (shown once) with the stored record.
     pub fn create(&self, new: NewToken) -> io::Result<(String, Token)> {
-        let random = || random_base62(ID_LEN + SECRET_LEN);
-        let chars = random().ok_or_else(|| io::Error::other("the random generator failed"))?;
-        let (id, secret) = chars.split_at(ID_LEN);
-        let body = format!("{PREFIX}{id}_{secret}");
-        let value = format!("{body}{}", checksum(&body));
+        let made = FORMAT
+            .generate()
+            .ok_or_else(|| io::Error::other("the random generator failed"))?;
         let created_at = now();
         let token = Token {
-            id: id.to_owned(),
+            id: made.id.clone(),
             name: new.name,
             role: new.role,
             created_by: new.created_by,
             created_at,
             expires_at: new.lifetime.map(|l| created_at + l.as_secs()),
             allowed_from: new.allowed_from,
-            secret_sha256: hash(secret),
+            secret_sha256: made.secret_sha256,
             last_used_at: None,
             last_used_from: None,
         };
@@ -202,7 +165,7 @@ impl Tokens {
             inner.list.pop();
             return Err(err);
         }
-        Ok((value, token))
+        Ok((made.value.into_inner(), token))
     }
 
     /// The token record for a presented value, if it is valid, unexpired and allowed from
@@ -214,11 +177,7 @@ impl Tokens {
         let mut inner = self.lock();
         let index = inner.list.iter().position(|t| t.id == id)?;
         let token = &mut inner.list[index];
-        let matches = bool::from(
-            presented_hash
-                .as_bytes()
-                .ct_eq(token.secret_sha256.as_bytes()),
-        );
+        let matches = rdock_credentials::hashes_match(&presented_hash, &token.secret_sha256);
         let fresh = token.expires_at.is_none_or(|at| now() < at);
         let allowed = token.allowed_from.is_empty()
             || client.is_some_and(|ip| token.allowed_from.iter().any(|net| net.contains(&ip)));

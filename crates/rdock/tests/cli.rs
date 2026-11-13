@@ -161,3 +161,65 @@ fn hash_prints_a_verifiable_argon2id_entry() {
         .unwrap();
     assert_eq!(empty.status.code(), Some(2));
 }
+
+#[test]
+fn the_stock_binary_registers_no_plugins_and_says_so() {
+    let dir = std::env::temp_dir().join(format!("rdock-cli-plugins-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("plugins.yaml");
+    std::fs::write(
+        &file,
+        "middlewares:\n  geo: { type: plugin, name: geo_block, config: { deny: [XX] } }\n  waf: { type: agent, address: \"http://waf.internal:8080\", protocol: spop }\n",
+    )
+    .unwrap();
+    let output = rdock(&["validate", file.to_str().unwrap()]);
+    assert_eq!(output.status.code(), Some(1));
+    let text = stdout(&output);
+    assert!(
+        text.contains("error: middlewares.geo.name: no plugin `geo_block`: this build of rdock registers no plugins\n    plugins are compiled into a custom binary"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "warning: middlewares.waf.address: plain `http://` to a host that is not loopback"
+        ),
+        "{text}"
+    );
+    assert!(
+        text.contains("warning: middlewares.waf.protocol: agents over HAProxy's SPOP (`spop`): not supported in this version (planned for a later version)"),
+        "{text}"
+    );
+    std::fs::write(&file, "middlewares:\n  bad: { type: plugin, name: Geo }\n").unwrap();
+    let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
+    assert!(
+        text.contains("error: middlewares.bad.name: `Geo` is not a plugin name"),
+        "{text}"
+    );
+    let version = rdock(&["version", "--json"]);
+    let info: serde_json::Value = serde_json::from_slice(&version.stdout).unwrap();
+    assert_eq!(info["plugins"], serde_json::json!([]));
+    assert_eq!(info["plugin_api"], "0.1.0");
+    let wasm_abi = if cfg!(feature = "wasm") {
+        serde_json::json!("0.1.0")
+    } else {
+        serde_json::Value::Null
+    };
+    assert_eq!(info["wasm_abi"], wasm_abi);
+}
+
+#[cfg(not(feature = "wasm"))]
+#[test]
+fn wasm_plugins_need_a_build_with_the_feature() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("rdock.yaml");
+    std::fs::write(
+        &file,
+        "middlewares:\n  w: { type: wasm, path: /plugins/p.wasm, sha256: \"0000000000000000000000000000000000000000000000000000000000000000\", trusted_keys: [\"RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\"] }\n",
+    )
+    .unwrap();
+    let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
+    assert!(
+        text.contains("warning: middlewares.w: WASM plugins (`type: wasm`): this build does not include WASM plugins; build with --features wasm"),
+        "{text}"
+    );
+}

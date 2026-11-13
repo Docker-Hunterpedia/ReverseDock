@@ -37,6 +37,13 @@ const SECRETS: &[&[&str]] = &[
     &["services", "*", "sticky", "cookie", "secret"],
     &["middlewares", "*", "hmac_secret"],
     &["services", "*", "sticky", "cookie", "previous_secrets", "*"],
+    &["observability", "metering", "webhook", "secret"],
+    &["observability", "metering", "webhook", "token"],
+    &["observability", "metering", "otlp", "token"],
+    &["secrets", "vault", "auth", "token"],
+    &["middlewares", "*", "client_secret"],
+    &["middlewares", "*", "session", "key"],
+    &["middlewares", "*", "session", "keys", "*"],
 ];
 
 /// Locations taken literally.

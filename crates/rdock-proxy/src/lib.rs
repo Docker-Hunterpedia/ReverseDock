@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 mod alerting;
+mod cache;
 pub mod compile;
 mod conn;
 mod dns;
@@ -17,6 +18,7 @@ pub mod runtime;
 mod server;
 pub mod tcp;
 mod trace;
+pub mod udp;
 pub mod upstream;
 
 pub use compile::{CompileEnv, Compiled, compile};

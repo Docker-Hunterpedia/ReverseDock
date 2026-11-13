@@ -19,11 +19,14 @@ use rdock_model::middleware::{CompressAlgorithm, StaticConfig};
 use ring::rand::{SecureRandom, SystemRandom};
 
 use super::body::{FileBody, Segment};
+use super::listing::{self, Listing};
 use super::root::Found;
 use crate::{Body, BuildError, Reply};
 
 const OCTET_STREAM: &str = "application/octet-stream";
 const NOSNIFF: HeaderName = HeaderName::from_static("x-content-type-options");
+const CONTENT_SECURITY_POLICY: HeaderName = HeaderName::from_static("content-security-policy");
+const REFERRER_POLICY: HeaderName = HeaderName::from_static("referrer-policy");
 
 /// Media types that differ from `mime_guess`: RFC 9239 makes `text/javascript` the only
 /// JavaScript type, also for modules.
@@ -322,6 +325,33 @@ impl Answers {
                 self.entity(200, &rep, vec![whole])
             }
         }
+    }
+
+    /// The answer for a directory listing: always `200`, whatever the conditional and range
+    /// headers say. A listing has no validator, because nothing cheap and correct can make one
+    /// (the directory's modification time does not change when a file inside it does, and a
+    /// hash of the page would cost the whole read anyway), so there is nothing a precondition
+    /// could be compared with; and ranges of a generated page are of no use.
+    pub(crate) fn listing(&self, req: &RequestHeader, found: &Listing) -> Reply {
+        let rendered = listing::negotiate(req);
+        let Some(rendered) = found.render(rendered) else {
+            return Reply::status(500);
+        };
+        let mut reply = Reply::status(200)
+            .header(
+                CONTENT_TYPE,
+                HeaderValue::from_static(rendered.content_type),
+            )
+            .header(VARY, HeaderValue::from_static("Accept"))
+            .header(CACHE_CONTROL, self.cache_control(&found.url_path()).clone())
+            .header(
+                CONTENT_SECURITY_POLICY,
+                HeaderValue::from_static(listing::CONTENT_SECURITY_POLICY),
+            )
+            .header(REFERRER_POLICY, HeaderValue::from_static("no-referrer"))
+            .header(NOSNIFF, HeaderValue::from_static("nosniff"));
+        reply.body = Some(Body::Bytes(rendered.body));
+        reply
     }
 
     fn vary(&self, reply: Reply) -> Reply {

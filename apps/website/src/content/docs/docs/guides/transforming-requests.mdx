@@ -1,0 +1,105 @@
+---
+title: Transforming requests and responses
+description: Change request and response headers and patch JSON bodies with JSON Patch (RFC 6902) on the way to the backend and back, with size caps and explicit failure rules.
+sidebar:
+  order: 30
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `transform` middleware <Status planned="v0.8" /> changes what passes through a route: headers
+in both directions, and JSON bodies with [JSON Patch](https://www.rfc-editor.org/rfc/rfc6902)
+(RFC 6902). There is no template language and no query engine: a patch is a fixed list of
+operations, checked when the configuration is loaded.
+
+## A patch on each side
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+routes:
+  legacy:
+    match: "Host(`api.example.com`) && PathPrefix(`/v1`)"
+    service: api
+    middlewares: [v1-compat]
+
+middlewares:
+  v1-compat:
+    type: transform
+    request:
+      headers:
+        set: { X-Api-Version: "2" }
+        remove: [X-Debug]
+      body:
+        patch:
+          - { op: test, path: /version, value: 1 }
+          - { op: replace, path: /version, value: 2 }
+          - { op: move, from: /customer_id, path: /customer/id }
+          - { op: remove, path: /debug }
+    response:
+      headers:
+        remove: [Server]
+      body:
+        patch:
+          - { op: remove, path: /internal }
+          - { op: copy, from: /id, path: /legacy_id }
+
+services:
+  api:
+    backends: [{ address: "10.0.0.5:8080" }]
+```
+
+The operations are RFC 6902's: `add`, `remove`, `replace`, `move`, `copy` and `test`, with
+`path` and `from` as [JSON Pointers](https://www.rfc-editor.org/rfc/rfc6901) (RFC 6901: `/a/0/b`,
+`~1` for `/` and `~0` for `~` in a name, `-` for the end of an array). They run in order and
+**all or nothing**: when one fails, none applies. `rdock validate` refuses a malformed pointer
+and a `move` into its own child. Header rules work as in the [`headers`](/docs/guides/security-headers/)
+middleware: `remove`, then `set`, then `add`.
+
+## Request bodies
+
+A request body is patched when its `Content-Type` is JSON (`application/json` or a `+json` type).
+It is held until complete (up to `max_body`, default `1MiB`, at most `64MiB`; larger is `413`),
+patched, and sent to the backend instead of the client's. The request head has left before the
+body is known, so the client's `Content-Length` is dropped and the new body is sent chunked
+(HTTP/1.1) or framed by the stream (HTTP/2).
+
+| Case | Default | Other choice |
+|---|---|---|
+| A patch that cannot apply: a `test` fails, a location is missing, the patched document would be larger than `max_body` (each `copy` can double it) | `on_error: reject`: `422` [`patch-failed`](/docs/reference/problems/#patch-failed), naming the operation | `on_error: pass`: forward the body unchanged |
+| A body that is not JSON (other `Content-Type`, or not valid JSON) | `on_non_json: pass`: forward it unchanged | `on_non_json: reject`: `415` (content type) or `400` (not JSON) |
+
+## Response bodies
+
+Pingora's response body phase is synchronous, so a response body is patched by collecting its
+chunks and sending the patched document at the end. Only responses where this is safe are
+patched:
+
+- status 2xx with a body, other than `204`, `205` and `206` (ranges of a body cannot be patched);
+- a JSON `Content-Type`;
+- not compressed by the backend (`Content-Encoding` absent or `identity`; the
+  [`compress`](/docs/guides/compression/) middleware compresses after the patch);
+- a `Content-Length` of at most `max_body`, or, without a length, a body that ends before it grows
+  past `max_body`.
+
+A patched response loses `Content-Length`, `ETag`, `Accept-Ranges` and digest headers, which
+describe the backend's bytes. Everything else passes unchanged and is counted in
+[`rdock_transform_skipped_total`](/docs/reference/metrics/#rdock_transform_skipped_total) with the
+reason: `status`, `not_json`, `encoded`, `too_large` (a body without a length that outgrew the cap
+is sent as it came), `invalid_json` or `patch_failed`. A response patch that fails always leaves
+the body as it was; the status has been sent by then.
+
+## With the cache
+
+The [cache](/docs/guides/caching/) is not a step of the middleware list: it stores what the
+backend sent, before any middleware's response hook runs, and a cached answer passes through the
+route's middlewares again. So **wherever `transform` stands in the list, the cache never holds a
+patched body**, every hit is patched again, and a request body patch never changes the cache key
+(requests with a body are not cached).
+
+## Related
+
+- [Request validation](/docs/guides/request-validation/)
+- [Security headers](/docs/guides/security-headers/)
+- [Redirects and rewrites](/docs/guides/redirects-and-rewrites/)

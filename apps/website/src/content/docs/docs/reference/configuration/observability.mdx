@@ -2,7 +2,7 @@
 title: observability
 description: "Logs, metrics and traces."
 sidebar:
-  order: 8
+  order: 10
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -296,6 +296,102 @@ Bearer token sent in `Authorization`. Write it as a `${file:…}` or `${env:…}
 **Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
 
 `https://` URL (`http://` only for loopback addresses).
+
+## `observability.metering`
+
+**Type:** object
+
+Usage events per request with a consumer, for analytics and showback (F-GW-05).
+
+### `observability.metering.all_requests`
+
+**Type:** `boolean` · **Default:** `false`
+
+Also meter requests without a consumer.
+
+### `observability.metering.flush_interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+Longest an event waits before its batch is sent.
+
+### `observability.metering.max_batch`
+
+**Type:** `integer` · **Default:** `500`
+
+Events per request to a sink, at most.
+
+### `observability.metering.otlp`
+
+**Type:** object
+
+OTLP/HTTP logs (JSON encoding).
+
+#### `observability.metering.otlp.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `true`
+
+Allow a collector on a private, loopback or link-local address (the usual case).
+
+#### `observability.metering.otlp.endpoint`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+The collector's base URL (`/v1/logs` is added) or the full logs URL.
+
+#### `observability.metering.otlp.token`
+
+**Type:** `string`
+
+A bearer token as a `${file:…}` or `${env:…}` reference.
+
+### `observability.metering.queue`
+
+**Type:** `integer` · **Default:** `10000`
+
+Events waiting per sink, at most; more are dropped and counted.
+
+### `observability.metering.webhook`
+
+**Type:** object
+
+`CloudEvents` over HTTP.
+
+#### `observability.metering.webhook.allow_private_targets`
+
+**Type:** `boolean` · **Default:** `false`
+
+Allow a receiver on a private, loopback or link-local address.
+
+#### `observability.metering.webhook.secret`
+
+**Type:** `string`
+
+A Standard Webhooks signing secret (`whsec_…`) as a `${file:…}` or `${env:…}` reference: requests carry `webhook-id`, `webhook-timestamp` and `webhook-signature`.
+
+#### `observability.metering.webhook.source`
+
+**Type:** `string`
+
+The events' `source`; `rdock/<host name>` when unset.
+
+#### `observability.metering.webhook.token`
+
+**Type:** `string`
+
+A bearer token as a `${file:…}` or `${env:…}` reference.
+
+#### `observability.metering.webhook.type`
+
+**Type:** `string` · **Default:** `dev.reversedock.request.v1`
+
+The events' `type`.
+
+#### `observability.metering.webhook.url`
+
+**Type:** [`HttpUrl`](/docs/reference/configuration/#httpurl) · **Required**
+
+Where batches are posted (`application/cloudevents-batch+json`).
 
 ## `observability.metrics`
 

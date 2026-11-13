@@ -56,9 +56,218 @@ pub enum Middleware {
     /// Serve files from a directory on ReverseDock's own file system. It answers the request,
     /// so a route that ends with it needs no service (unless `pass_through` is on).
     Static(StaticConfig),
+    /// Hold the request body until it is complete (up to `max`) before any of it reaches the
+    /// backend. The backend connection and the request head are already sent, so this does
+    /// not shield backend workers from slow uploads; it refuses oversize bodies with `413`
+    /// and lets body middlewares see the whole body.
+    HoldBody(HoldBodyConfig),
+    /// Cache responses in a store named under `caches` (RFC 9111). Only what the origin's
+    /// headers allow is stored; see `docs/guides/caching`.
+    Cache(crate::cache::CacheConfig),
+    /// A native plugin compiled into this binary and registered under `name` (ADR-0030). The
+    /// stock `rdock` binary registers none; see `docs/guides/plugins`.
+    Plugin(PluginConfig),
+    /// A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world
+    /// `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with
+    /// minisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
+    Wasm(WasmConfig),
+    /// Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,
+    /// with its body up to `max_body` (ADR-0030). Fails closed by default.
+    Agent(AgentConfig),
+    /// Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset
+    /// over `jwt` with the team's keys, issuer and RS256, the token from the
+    /// `Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.
+    CloudflareAccess(CloudflareAccessConfig),
+    /// Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or
+    /// `X-API-Key`; sets the request's consumer (F-GW-01).
+    ApiKey(crate::gateway::ApiKeyConfig),
+    /// Requests per consumer per calendar window (hour, day, month), persisted across
+    /// restarts; `429` when used up (F-GW-02).
+    Quota(crate::gateway::QuotaConfig),
+    /// Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an
+    /// OpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).
+    Validate(crate::validation::ValidateConfig),
+    /// Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)
+    /// (F-GW-04).
+    Transform(crate::transform::TransformConfig),
+    /// OpenID Connect login for browsers: authorization code flow with PKCE, a stateless
+    /// encrypted session cookie, claims to headers and to the consumer (F-GW-01).
+    Oidc(Box<crate::oidc::OidcConfig>),
+}
+
+/// Cloudflare Access application tokens (`type: cloudflare_access`, W-CF-06, ADR-0030).
+///
+/// The keys come from `https://<team>.cloudflareaccess.com/cdn-cgi/access/certs` (refreshed
+/// every 10 minutes and at once on an unknown key ID, well inside the 7 days a rotated key
+/// stays valid), the issuer must be `https://<team>.cloudflareaccess.com`, the algorithm RS256.
+/// The request's consumer becomes the user's `email`, or for a service token (empty `sub`) its
+/// `common_name` in the group `service-token`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct CloudflareAccessConfig {
+    /// The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
+    pub team: String,
+    /// The Application Audience (AUD) tag of the Access application, or several. Required:
+    /// without it a token of any application of the same team would pass.
+    pub audience: Audience,
+    /// Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email,
+    /// common_name: X-Auth-Service-Token }`. Client-sent copies are removed first.
+    #[serde(default)]
+    pub claims_to_headers: BTreeMap<String, String>,
+    /// Where the keys are fetched from instead of the team's certs URL: for tests, or an
+    /// egress proxy that mirrors it. `https://` (or a loopback address).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub certs_url: Option<HttpUrl>,
+}
+
+impl CloudflareAccessConfig {
+    /// The team name: `team` without the `.cloudflareaccess.com` suffix, lower-cased.
+    #[must_use]
+    pub fn team_name(&self) -> String {
+        let team = self.team.trim().to_ascii_lowercase();
+        team.strip_suffix(".cloudflareaccess.com")
+            .map_or_else(|| team.clone(), str::to_owned)
+    }
+
+    /// Whether `team` is a valid team name or team domain.
+    #[must_use]
+    pub fn team_is_valid(&self) -> bool {
+        let name = self.team_name();
+        !name.is_empty()
+            && name.len() <= 63
+            && !name.starts_with('-')
+            && !name.ends_with('-')
+            && name
+                .bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
+    }
+
+    /// The issuer of the team's tokens, `https://<team>.cloudflareaccess.com`.
+    #[must_use]
+    pub fn issuer(&self) -> String {
+        format!("https://{}.cloudflareaccess.com", self.team_name())
+    }
+
+    /// The URL of the team's signing keys.
+    #[must_use]
+    pub fn certs(&self) -> String {
+        self.certs_url.as_ref().map_or_else(
+            || format!("{}/cdn-cgi/access/certs", self.issuer()),
+            |url| url.as_url().to_string(),
+        )
+    }
+
+    /// The `jwt` settings this preset stands for.
+    #[must_use]
+    pub fn to_jwt(&self) -> Option<JwtConfig> {
+        let jwks_url = self.certs().parse().ok()?;
+        Some(JwtConfig {
+            jwks_url: Some(jwks_url),
+            jwks_file: None,
+            hmac_secret: None,
+            issuer: self.issuer(),
+            audiences: self.audience.list().to_vec(),
+            algorithms: vec![JwtAlgorithm::Rs256],
+            leeway: sixty_seconds(),
+            token: TokenSource {
+                header: Some("Cf-Access-Jwt-Assertion".to_owned()),
+                cookie: Some("CF_Authorization".to_owned()),
+                query: None,
+            },
+            claims_to_headers: self.claims_to_headers.clone(),
+            forward_token: true,
+            consumer_claim: None,
+            groups_claim: None,
+            map_to_consumers: false,
+            unverified_emails: false,
+        })
+    }
+}
+
+/// One value or a list of values.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(untagged)]
+pub enum Audience {
+    /// One value.
+    One(String),
+    /// Several values.
+    Many(Vec<String>),
+}
+
+impl Audience {
+    /// The values.
+    #[must_use]
+    pub fn list(&self) -> &[String] {
+        match self {
+            Self::One(one) => std::slice::from_ref(one),
+            Self::Many(many) => many,
+        }
+    }
+}
+
+/// How an authenticating middleware identifies who it let in, for the cache rule
+/// (ADR-0030): a route that authenticates and caches must share responses explicitly or key
+/// them on this identity.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Identity {
+    /// The `basic_auth` user name.
+    User,
+    /// The `jwt` issuer and subject (`iss`, `sub`).
+    TokenSubject,
+    /// The verified client certificate's subject.
+    Certificate,
+    /// The consumer the middleware attributes the request to (`api_key`,
+    /// `cloudflare_access`, `oidc`, `jwt` with `consumer_claim`).
+    Consumer,
+    /// Decided by an external service; rdock knows only the headers it copies back.
+    External {
+        /// Headers the middleware copies from the service's answer.
+        headers: Vec<String>,
+    },
+}
+
+impl Identity {
+    /// Whether `key.consumer` can tell users apart for this middleware.
+    #[must_use]
+    pub fn keyable(&self) -> bool {
+        !matches!(self, Self::External { .. })
+    }
+
+    /// What `key.consumer` keys on, for diagnostics.
+    #[must_use]
+    pub fn describe(&self) -> &'static str {
+        match self {
+            Self::User => "the user name",
+            Self::TokenSubject => "the token's issuer and subject",
+            Self::Certificate => "the certificate's subject",
+            Self::Consumer => "the consumer name",
+            Self::External { .. } => "nothing: rdock does not learn who the service let in",
+        }
+    }
 }
 
 impl Middleware {
+    /// The identity this middleware establishes, when it authenticates requests. New
+    /// authenticating middlewares add themselves here and the cache rule follows.
+    #[must_use]
+    pub fn authenticates(&self) -> Option<Identity> {
+        match self {
+            Self::BasicAuth(_) => Some(Identity::User),
+            Self::Jwt(j) if j.consumer_claim.is_some() => Some(Identity::Consumer),
+            Self::Jwt(_) => Some(Identity::TokenSubject),
+            Self::ClientCert(_) => Some(Identity::Certificate),
+            Self::CloudflareAccess(_) | Self::ApiKey(_) | Self::Oidc(_) => Some(Identity::Consumer),
+            Self::ForwardAuth(f) => Some(Identity::External {
+                headers: f.copy_headers.clone(),
+            }),
+            // An agent that sets identity headers decides who is let in, as `forward_auth` does.
+            Self::Agent(a) if !a.response_headers.is_empty() => Some(Identity::External {
+                headers: a.response_headers.clone(),
+            }),
+            _ => None,
+        }
+    }
+
     /// Whether this middleware answers every request itself, so a route whose chain ends with
     /// it needs no service: `static` without `pass_through`, and `maintenance` that is enabled
     /// for everyone.
@@ -104,6 +313,27 @@ pub struct JwtConfig {
     /// Keep the token in the request to the backend.
     #[serde(default = "crate::defaults::yes")]
     pub forward_token: bool,
+    /// A claim that becomes the request's consumer (for `rate_limit` and `quota` with
+    /// `key: consumer`, the cache key and the access log), e.g. `sub` or `email`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub consumer_claim: Option<String>,
+    /// The claim listing the consumer's groups (a string or an array of strings), with
+    /// `consumer_claim`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub groups_claim: Option<String>,
+    /// With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding
+    /// its groups and sharing its quota, rate-limit and cache identity with its API keys
+    /// (other names stay keyed on the issuer). Off by default: a token's consumer is a
+    /// separate identity keyed on the token's issuer and the name. Turn it on only when the
+    /// issuer controls the claim.
+    #[serde(default)]
+    pub map_to_consumers: bool,
+    /// With `consumer_claim: email`: accept an `email` claim that comes without
+    /// `email_verified`. Off: the address names the consumer only with `email_verified:
+    /// true`, otherwise `sub` does (`email_verified: false` never counts). Unsafe with an
+    /// issuer that lets users set an address they do not own.
+    #[serde(default)]
+    pub unverified_emails: bool,
 }
 
 fn default_jwt_algorithms() -> Vec<JwtAlgorithm> {
@@ -235,6 +465,33 @@ pub enum ClientCertForward {
     Traefik,
     /// Envoy's `X-Forwarded-Client-Cert`.
     Xfcc,
+}
+
+/// Holding the request body (`hold_body`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[schemars(inline)]
+pub struct HoldBodyConfig {
+    /// Largest body held, at most 64MiB; a longer one is refused with `413`. The route's
+    /// `max_body` (or `security.limits.max_body_bytes`) applies when it is smaller.
+    pub max: ByteSize,
+    /// Longest time from the first body byte to the last; a slower upload is refused with
+    /// `408`. The service's `timeouts.read` also runs while the backend waits for the body.
+    pub timeout: Duration,
+}
+
+impl HoldBodyConfig {
+    /// Largest `max` accepted: a held body is in memory in full when it is released.
+    pub const MAX: ByteSize = ByteSize::mib(64);
+}
+
+impl Default for HoldBodyConfig {
+    fn default() -> Self {
+        Self {
+            max: ByteSize::mib(1),
+            timeout: Duration::from_secs(30),
+        }
+    }
 }
 
 /// gRPC-Web translation has no settings.
@@ -397,6 +654,262 @@ pub struct BasicAuthConfig {
     pub remove_header: bool,
 }
 
+/// A native plugin (`type: plugin`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct PluginConfig {
+    /// The name the plugin is registered under in this binary.
+    pub name: String,
+    /// The plugin's own settings, checked by the plugin when the configuration is validated
+    /// and loaded. Values are interpolated like any other (`${env:…}`, `${file:…}`) and stay
+    /// visible in the configuration API.
+    #[serde(default)]
+    pub config: serde_json::Map<String, serde_json::Value>,
+}
+
+/// A sandboxed WebAssembly plugin (`type: wasm`, F-EXT-03, ADR-0030). EXPERIMENTAL: the
+/// host ABI is `0.x` and may change in any release.
+///
+/// The file is checked before it is compiled: its SHA-256 must equal `sha256`, and its
+/// minisign signature (`signature`, by default `<path>.minisig`) must be made by one of
+/// `trusted_keys`. Each request runs in a fresh instance with `fuel`, `timeout` and `memory`
+/// as limits and no access to files, the network, environment variables or clocks beyond
+/// the granted `capabilities`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct WasmConfig {
+    /// The component file (`.wasm`; `.wat` text is accepted too). Read when the configuration
+    /// is loaded; a reload reads it again.
+    pub path: PathBuf,
+    /// The file's SHA-256 digest, 64 hex digits (`sha256sum plugin.wasm`). Required: it
+    /// fixes which file runs, so a changed file is refused until the pin is updated.
+    pub sha256: String,
+    /// The minisign signature file; default `<path>.minisig` (what `minisign -S -m <path>`
+    /// writes).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub signature: Option<PathBuf>,
+    /// Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file
+    /// (`RWQ…`).
+    #[serde(default)]
+    pub trusted_keys: Vec<String>,
+    /// UNSAFE: run the module without a signature (the `sha256` pin still applies). A
+    /// signature that is present must still verify. Logged as a warning at every load.
+    #[serde(default)]
+    pub allow_unsigned: bool,
+    /// Fuel per call, about one unit per WebAssembly instruction; a call that runs out fails.
+    #[serde(default = "WasmConfig::default_fuel")]
+    pub fuel: u64,
+    /// Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). The
+    /// call runs on a proxy worker thread, so keep it short.
+    #[serde(default = "WasmConfig::default_timeout")]
+    pub timeout: Duration,
+    /// The largest linear memory the plugin may have.
+    #[serde(default = "WasmConfig::default_memory")]
+    pub memory: ByteSize,
+    /// Host interfaces the plugin may import besides its `config`. A component that imports
+    /// one not listed here, or anything else (WASI included), is refused when it is loaded.
+    #[serde(default)]
+    pub capabilities: Vec<WasmCapability>,
+    /// What a failed call (fuel, timeout, memory, trap, an invalid result) does: `deny`
+    /// answers `500` (in the response phase, the response is replaced by a `500`), `allow`
+    /// passes the request or response on unchanged. Both are counted and logged.
+    #[serde(default)]
+    pub on_error: AgentOnError,
+    /// The plugin's own settings, given to it as JSON text through `rdock:plugin/config`.
+    #[serde(default)]
+    pub config: serde_json::Map<String, serde_json::Value>,
+}
+
+impl WasmConfig {
+    /// The largest `memory`.
+    pub const MAX_MEMORY: ByteSize = ByteSize::mib(1024);
+    /// The longest `timeout`.
+    pub const MAX_TIMEOUT: Duration = Duration::from_secs(10);
+
+    const fn default_fuel() -> u64 {
+        10_000_000
+    }
+
+    const fn default_timeout() -> Duration {
+        Duration::from_millis(50)
+    }
+
+    const fn default_memory() -> ByteSize {
+        ByteSize::mib(16)
+    }
+}
+
+/// A host interface a WASM plugin may be granted.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum WasmCapability {
+    /// `rdock:plugin/log`: write lines to rdock's log (32 per request, 1 KiB each).
+    Log,
+    /// `rdock:plugin/clock`: read the wall clock.
+    Clock,
+    /// `rdock:plugin/random`: read random bits from the operating system.
+    Random,
+}
+
+/// An out-of-process agent (`type: agent`).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+pub struct AgentConfig {
+    /// The agent's URL (`http://` or `https://`). Use `https://` or a loopback address unless
+    /// the network between rdock and the agent is private.
+    pub address: HttpUrl,
+    /// How the request is described to the agent.
+    #[serde(default)]
+    pub protocol: AgentProtocol,
+    /// Time allowed for the agent's whole answer.
+    #[serde(default = "one_second")]
+    pub timeout: Duration,
+    /// What happens when the agent cannot answer (unreachable, timeout, an invalid answer, an
+    /// open breaker): `deny` refuses the request (502, 504 on timeout, 503 while the breaker
+    /// is open), `allow` lets it through unchecked.
+    #[serde(default)]
+    pub on_error: AgentOnError,
+    /// Largest request body sent to the agent; `0` sends none. The body is held until the
+    /// agent has answered, so none of the body reaches the backend before the verdict; the
+    /// request head does: with a body, the backend connection is opened and the head sent
+    /// before the body is read (Pingora 0.9.1), and a refusal closes that connection.
+    #[serde(default = "sixty_four_kib")]
+    pub max_body: ByteSize,
+    /// A body longer than `max_body`: `reject` answers `413`, `skip` asks the agent without
+    /// the body (only when the length is declared; a chunked body that grows past
+    /// `max_body` is refused with `413` either way).
+    #[serde(default)]
+    pub on_oversize: AgentOversize,
+    /// Request headers sent to the agent besides the default set (`accept`,
+    /// `accept-encoding`, `accept-language`, `cache-control`, `content-type`, `origin`,
+    /// `referer`, `user-agent`); `["*"]` sends every header except hop-by-hop ones.
+    /// `authorization`, `cookie` and `proxy-authorization` go only when listed here.
+    #[serde(default)]
+    pub request_headers: Vec<String>,
+    /// Request headers the agent may set on the request that goes to the backend (allowed
+    /// answers only). Copies sent by the client are removed first. Applied only when the
+    /// verdict comes before the request head leaves, which is the case for requests without
+    /// a body (or whose body is not sent to the agent).
+    #[serde(default)]
+    pub response_headers: Vec<String>,
+    /// The circuit breaker that stops calling a failing agent for a while.
+    #[serde(default)]
+    pub breaker: AgentBreaker,
+    /// TLS to an `https://` agent.
+    #[serde(default)]
+    pub tls: Option<crate::service::UpstreamTls>,
+}
+
+impl AgentConfig {
+    /// Request headers an agent may never set: framing, routing and forwarding facts belong
+    /// to the proxy (and every `x-forwarded-*` header).
+    pub const PROTECTED_HEADERS: [&'static str; 13] = [
+        "host",
+        "content-length",
+        "transfer-encoding",
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "te",
+        "trailer",
+        "upgrade",
+        "expect",
+        "x-request-id",
+        "forwarded",
+        "x-real-ip",
+    ];
+
+    /// Whether an agent may not set the request header `lower` (a lower-case name).
+    #[must_use]
+    pub fn is_protected_header(lower: &str) -> bool {
+        Self::PROTECTED_HEADERS.contains(&lower) || lower.starts_with("x-forwarded-")
+    }
+}
+
+const fn sixty_four_kib() -> ByteSize {
+    ByteSize::kib(64)
+}
+
+/// How a request is described to an agent.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentProtocol {
+    /// POST a JSON document describing the request; the agent answers a JSON verdict
+    /// (`schema/agent.v1.json`).
+    #[default]
+    Rdock,
+    /// Replay the request to the agent (same method, path, query, allowed headers and body);
+    /// a 2xx allows, any other answer is sent to the client. What a WAF reverse-proxy image
+    /// understands.
+    Forward,
+    /// Envoy's gRPC external processing (planned for a later version).
+    ExtProc,
+    /// Envoy's gRPC external authorization (planned for a later version).
+    ExtAuthz,
+    /// HAProxy's stream processing offload protocol (planned for a later version).
+    Spop,
+}
+
+impl AgentProtocol {
+    /// The name used in configuration.
+    #[must_use]
+    pub fn name(self) -> &'static str {
+        match self {
+            Self::Rdock => "rdock",
+            Self::Forward => "forward",
+            Self::ExtProc => "ext_proc",
+            Self::ExtAuthz => "ext_authz",
+            Self::Spop => "spop",
+        }
+    }
+}
+
+/// What an agent failure does to the request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOnError {
+    /// Refuse the request (fail closed).
+    #[default]
+    Deny,
+    /// Let the request through unchecked (fail open); counted and logged.
+    Allow,
+}
+
+/// What a body longer than `max_body` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOversize {
+    /// Refuse the request with `413`.
+    #[default]
+    Reject,
+    /// Ask the agent without the body.
+    Skip,
+}
+
+/// An agent's circuit breaker: after `failures` failed calls in a row, the most recent within
+/// `window` of the first, the agent is not called for `open_for`; `on_error` applies at once
+/// meanwhile. Then one call is tried: success closes the breaker, failure opens it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct AgentBreaker {
+    /// Failed calls in a row that open the breaker; `0` turns it off.
+    pub failures: u32,
+    /// The failures must fall within this time.
+    pub window: Duration,
+    /// How long the breaker stays open.
+    pub open_for: Duration,
+}
+
+impl Default for AgentBreaker {
+    fn default() -> Self {
+        Self {
+            failures: 5,
+            window: Duration::from_secs(10),
+            open_for: Duration::from_secs(30),
+        }
+    }
+}
+
 /// Forward authentication.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -445,6 +958,14 @@ pub struct RateLimitConfig {
     /// Period of `average`.
     #[serde(default = "one_second")]
     pub period: Duration,
+    /// Group → limit for consumers in that group, with `key: consumer`. The first of the
+    /// consumer's groups (in its `groups` order) that has an override wins.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub overrides: BTreeMap<String, crate::gateway::RateOverride>,
+    /// `draft` adds `RateLimit-Policy` and `RateLimit` to responses
+    /// (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
+    #[serde(default)]
+    pub headers: crate::gateway::LimitHeaders,
 }
 
 const fn one_second() -> Duration {
@@ -629,11 +1150,14 @@ pub struct StaticConfig {
     /// Files and directories whose name starts with `.` (`.env`, `.git/`).
     #[serde(default)]
     pub hidden: HiddenFiles,
-    /// Directory listings. Only `false` in this version (F-WEB-02 is planned for v0.8).
+    /// List a directory that has no `index` file (F-WEB-02): HTML, or JSON for clients that
+    /// prefer it in `Accept`. Off by default. Follows `hidden` and `symlinks`: names a request
+    /// would be refused are not listed. At most 10,000 entries, sorted by name. A directory
+    /// that exists is listed instead of getting the `fallback`.
     #[serde(default)]
     pub listing: bool,
     /// Redirect (`308`) a directory path without a trailing slash to the path with one when the
-    /// directory has an index file.
+    /// directory has an index file, or is listed.
     #[serde(default = "crate::defaults::yes")]
     pub directory_redirect: bool,
     /// Most byte ranges answered in one request, from 1 to 16. A request for more gets the

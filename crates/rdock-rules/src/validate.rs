@@ -15,6 +15,8 @@ pub enum Context {
     Http,
     /// A TCP route.
     Tcp,
+    /// A UDP route: a datagram shows only its source, so `ClientIP` is the only matcher.
+    Udp,
 }
 
 /// A problem with one matcher of a parsed rule.
@@ -55,6 +57,12 @@ fn check(matcher: &Matcher, context: Context) -> Result<(), String> {
         Context::Tcp if !matcher.is_tcp() => {
             return Err(format!(
                 "`{}` is an HTTP matcher; TCP routes accept HostSNI, HostSNIRegexp, ClientIP and ALPN",
+                matcher.name()
+            ));
+        }
+        Context::Udp if !matches!(matcher, Matcher::ClientIp(_)) => {
+            return Err(format!(
+                "`{}` cannot match a datagram; UDP routes accept ClientIP only",
                 matcher.name()
             ));
         }
@@ -199,7 +207,7 @@ fn check_alpn(protocol: &str) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
-    use super::Context::{Http, Tcp};
+    use super::Context::{Http, Tcp, Udp};
     use crate::parse;
 
     fn messages(rule: &str, context: super::Context) -> Vec<String> {
@@ -237,6 +245,17 @@ mod tests {
             messages("ClientIP(`10.0.0.0/8`)", Tcp),
             Vec::<String>::new()
         );
+    }
+
+    #[test]
+    fn udp_rules_accept_client_ip_only() {
+        assert_eq!(
+            messages("ClientIP(`10.0.0.0/8`) && !ClientIP(`10.1.0.0/16`)", Udp),
+            Vec::<String>::new()
+        );
+        assert!(messages("HostSNI(`*`)", Udp)[0].contains("ClientIP only"));
+        assert!(messages("Host(`a.com`)", Udp)[0].contains("ClientIP only"));
+        assert!(messages("ClientIP(`10.0.0.0/33`)", Udp)[0].contains("CIDR"));
     }
 
     #[test]

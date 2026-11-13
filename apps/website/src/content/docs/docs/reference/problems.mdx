@@ -1,0 +1,188 @@
+---
+title: Problem types
+description: The RFC 9457 problem types of the errors ReverseDock produces itself, with their status, title and when each is sent.
+sidebar:
+  order: 8
+---
+
+import Status from '../../../../components/Status.astro';
+
+When a route (or `defaults`) sets `errors.format: problem` or `auto`
+<Status planned="v0.8" />, the errors ReverseDock produces itself are
+`application/problem+json` documents ([RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)). Each
+`type` below is a stable URI: this page and the type's anchor, for example
+`https://reversedock.oday-bakkour.com/docs/reference/problems/#quota-exceeded`. Match on `type`
+(or `status`), not on `title` or `detail`, which are for people.
+
+```json
+{
+  "type": "https://reversedock.oday-bakkour.com/docs/reference/problems/#quota-exceeded",
+  "title": "Quota exceeded",
+  "status": 429,
+  "detail": "The request quota for the current window is used up. It renews at the time given in `Retry-After`.",
+  "instance": "urn:uuid:019a7c1e-2f4b-7c3d-9e8f-0a1b2c3d4e5f",
+  "request_id": "019a7c1e-2f4b-7c3d-9e8f-0a1b2c3d4e5f",
+  "retry_after": 3600
+}
+```
+
+| Member | Meaning |
+|---|---|
+| `type`, `title`, `status`, `detail` | As in RFC 9457. `detail` is generic: it never names a backend, an address, a file or a credential. |
+| `instance` | `urn:uuid:` and the request ID, when the ID is a UUID (ReverseDock makes UUIDv7s; an ID a trusted proxy sent is not one). |
+| `request_id` | The request ID, also in `X-Request-ID` and the access log. |
+| `retry_after` | Seconds, when the answer has `Retry-After`. |
+| `errors` | `validation-failed` and `patch-failed` only: what failed, as a list. Never holds a value from the request. |
+
+Answers carry `Content-Language: en` and `Cache-Control: no-store`. A status without a type of
+its own below is sent as `type: about:blank` with the reason phrase as `title`.
+
+### `bad-request`
+
+**400 — Bad request.** The request is malformed or repeats a credential.
+
+Sent by: A credential sent twice (two `X-API-Key` headers, two tokens), an HTTP/1.1 request without `Host`.
+
+### `validation-failed`
+
+**400 — Request validation failed.** The request does not match the schema of this route. `errors` lists where.
+
+Sent by: [`validate`](/docs/guides/request-validation/) <Status planned="v0.8" />. `errors` holds at most `max_errors` entries (default 5) `{ "pointer": "/query/limit", "message": "must be at most 100" }`: `pointer` is a JSON Pointer into an object with the members `path`, `query`, `headers`, `cookies` and `body`; `message` names the failing rule and the schema's own limits, never the value sent. `errors_truncated: true` says more errors were found. A body that is not JSON is reported as `{ "pointer": "/body", "message": "is not valid JSON" }`. The pre-v0.8 JSON object (`errors.format: html` with a client that asks for JSON) carries `errors` too.
+
+```json
+{
+  "type": "https://reversedock.oday-bakkour.com/docs/reference/problems/#validation-failed",
+  "title": "Request validation failed",
+  "status": 400,
+  "detail": "The request does not match the schema of this route. `errors` lists where.",
+  "request_id": "019a7c1e-2f4b-7c3d-9e8f-0a1b2c3d4e5f",
+  "errors": [
+    { "pointer": "/query/limit", "message": "must be at most 100" },
+    { "pointer": "/body", "message": "`name` is required" }
+  ]
+}
+```
+
+### `unauthenticated`
+
+**401 — Authentication required.** The request carries no valid credential for this route.
+
+Sent by: `api_key`, `jwt`, `cloudflare_access`, `basic_auth` (the answer keeps its `WWW-Authenticate` challenge), `oidc` for requests without a session that are not page navigations.
+
+### `login-failed`
+
+**401 — Login failed.** The login could not be completed. Open the page again to start a new login.
+
+Sent by: `oidc` at its callback: the provider refused the login (its `error` code is logged, its `error_description` is never shown), the login took longer than 10 minutes or its state cookie is missing or does not match, the token request failed, or the ID token failed a check.
+
+### `forbidden`
+
+**403 — Forbidden.** The request is not allowed on this route.
+
+Sent by: `ip_allow`/`ip_deny`, `client_cert`, a consumer outside `api_key.groups`, an `oidc` user outside `allowed`.
+
+### `not-found`
+
+**404 — Not found.** Nothing is served at this address.
+
+Sent by: No route matches the request; `static` finds no file.
+
+### `method-not-allowed`
+
+**405 — Method not allowed.** This method is not allowed at this address.
+
+Sent by: `static` asked for a method other than GET or HEAD.
+
+### `request-timeout`
+
+**408 — Request timeout.** The request body did not arrive in time.
+
+Sent by: A held body (`hold_body`, agents) that arrives too slowly.
+
+### `payload-too-large`
+
+**413 — Request body too large.** The request body is larger than this route accepts.
+
+Sent by: `max_body` or `security.limits.max_body_bytes`, a held body over its limit (`hold_body`, `agent`, `validate`, `transform`).
+
+### `uri-too-long`
+
+**414 — Request target too long.** The request target is longer than allowed.
+
+Sent by: `security.limits.max_uri_bytes`.
+
+### `unsupported-media-type`
+
+**415 — Unsupported media type.** The request body's content type is not accepted here.
+
+Sent by: [`validate`](/docs/guides/request-validation/) when the route checks the body and its `Content-Type` is not JSON (or not a type the OpenAPI operation lists); [`transform`](/docs/guides/transforming-requests/) with `on_non_json: reject` <Status planned="v0.8" />.
+
+### `expectation-failed`
+
+**417 — Expectation failed.** Only `Expect: 100-continue` is supported.
+
+Sent by: Any other `Expect` value.
+
+### `patch-failed`
+
+**422 — Request transformation failed.** The request body cannot be transformed for this route: it lacks a value the route expects.
+
+Sent by: [`transform`](/docs/guides/transforming-requests/) <Status planned="v0.8" /> when its request patch cannot be applied (a `test` operation fails, a location is missing) and `on_error` is `reject` (the default). `errors` holds one entry `{ "operation": 0, "op": "test", "message": "the value is not the expected one" }`, naming the operation of the configured patch, never the body's content.
+
+### `rate-limited`
+
+**429 — Rate limit exceeded.** Too many requests. Wait for the time given in `Retry-After` before retrying.
+
+Sent by: `rate_limit`, `in_flight`. Has `retry_after`.
+
+### `quota-exceeded`
+
+**429 — Quota exceeded.** The request quota for the current window is used up. It renews at the time given in `Retry-After`.
+
+Sent by: `quota`. Has `retry_after`: the seconds until the window ends.
+
+### `headers-too-large`
+
+**431 — Request headers too large.** The request headers are larger or more than allowed.
+
+Sent by: `security.limits.max_header_bytes`, `max_headers`.
+
+### `internal-error`
+
+**500 — Internal error.** The proxy could not complete the request.
+
+Sent by: A native plugin that panicked, a spool file that could not be written.
+
+### `bad-gateway`
+
+**502 — Bad gateway.** The upstream service could not be reached or answered badly.
+
+Sent by: Backend connection refused or reset, an agent or `forward_auth` service that failed.
+
+### `service-unavailable`
+
+**503 — Service unavailable.** The service cannot take the request now.
+
+Sent by: No healthy backend, an agent's open breaker. Has `retry_after` (5 s).
+
+### `maintenance`
+
+**503 — Down for maintenance.** The service is down for maintenance.
+
+Sent by: `maintenance` without a `file` (with one, the file is sent). Has `retry_after` when `retry_after` is set.
+
+### `identity-provider-unavailable`
+
+**503 — Identity provider unavailable.** The identity provider cannot be reached, so a new login cannot start. Try again later.
+
+Sent by: `oidc` when a login should start (or finish) and the provider's configuration and keys cannot be read; existing sessions keep working. Has `Retry-After: 30`.
+
+### `gateway-timeout`
+
+**504 — Gateway timeout.** The upstream service did not answer in time.
+
+Sent by: Backend read timeout, an agent's timeout, the cache lock wait.
+
+## Related
+
+- [Error pages and maintenance](/docs/guides/error-pages-and-maintenance/#problem-details-for-apis)

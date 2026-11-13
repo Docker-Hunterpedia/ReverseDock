@@ -153,6 +153,24 @@ pub fn resolve(
     port: Option<PortRef<'_>>,
     allow_external_name: bool,
 ) -> Result<ServiceBackends, BackendError> {
+    resolve_protocol(inventory, namespace, name, port, allow_external_name, "TCP")
+}
+
+/// [`resolve`] for a transport: a port number that a Service has twice (`TCP` and `UDP` 53)
+/// resolves to the entry of `protocol` (`TCP` or `UDP`); one it has once resolves to that
+/// entry, whatever its protocol.
+///
+/// # Errors
+///
+/// As [`resolve`].
+pub fn resolve_protocol(
+    inventory: &Inventory,
+    namespace: &str,
+    name: &str,
+    port: Option<PortRef<'_>>,
+    allow_external_name: bool,
+    protocol: &str,
+) -> Result<ServiceBackends, BackendError> {
     let key = (namespace.to_owned(), name.to_owned());
     let Some(service) = inventory.services.get(&key) else {
         return Err(BackendError::ServiceNotFound {
@@ -160,7 +178,7 @@ pub fn resolve(
             name: name.to_owned(),
         });
     };
-    let service_port = find_port(service, namespace, name, port)?;
+    let service_port = find_port(service, namespace, name, port, protocol)?;
     let external = service.spec.as_ref().and_then(|spec| {
         (spec.type_.as_deref() == Some("ExternalName"))
             .then(|| spec.external_name.clone().unwrap_or_default())
@@ -201,6 +219,7 @@ fn find_port(
     namespace: &str,
     name: &str,
     port: Option<PortRef<'_>>,
+    protocol: &str,
 ) -> Result<ServicePort, BackendError> {
     let ports = service
         .spec
@@ -208,7 +227,12 @@ fn find_port(
         .and_then(|spec| spec.ports.as_deref())
         .unwrap_or_default();
     let found = match port {
-        Some(PortRef::Number(number)) => ports.iter().find(|p| p.port == i32::from(number)),
+        Some(PortRef::Number(number)) => {
+            let numbered = || ports.iter().filter(|p| p.port == i32::from(number));
+            numbered()
+                .find(|p| p.protocol.as_deref().unwrap_or("TCP") == protocol)
+                .or_else(|| numbered().next())
+        }
         Some(PortRef::Name(port_name)) => {
             ports.iter().find(|p| p.name.as_deref() == Some(port_name))
         }
@@ -392,6 +416,19 @@ pub fn split(targets: Vec<(String, u32)>) -> Service {
             .map(|(service, weight)| SplitTarget { service, weight })
             .collect(),
         ..base()
+    }
+}
+
+/// A UDP service over `backends` (at least one), every setting at its default.
+#[must_use]
+pub fn udp_service(backends: Vec<Backend>) -> rdock_model::service::UdpService {
+    rdock_model::service::UdpService {
+        backends,
+        load_balancer: rdock_model::service::UdpLoadBalancer::default(),
+        timeouts: rdock_model::service::UdpTimeouts::default(),
+        responses: None,
+        requests: None,
+        health: rdock_model::service::UdpHealth::default(),
     }
 }
 

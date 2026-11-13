@@ -1,0 +1,103 @@
+{
+  "$id": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/agent.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "ReverseDock agent protocol, version 1 (protocol: rdock)",
+  "description": "What an `agent` middleware with `protocol: rdock` POSTs to the agent (`request`, with `Content-Type: application/json`) and what the agent answers (`verdict`, status 200, `Content-Type: application/json`). Any other status, or a body that does not match `verdict`, is a failure and follows `on_error`. Unknown fields are ignored in both directions, so later versions can add fields. ADR-0030.",
+  "$defs": {
+    "header_values": {
+      "description": "One value, or several values of the same header.",
+      "oneOf": [
+        { "type": "string" },
+        { "type": "array", "items": { "type": "string" } }
+      ]
+    },
+    "request": {
+      "description": "The document rdock sends.",
+      "type": "object",
+      "required": ["version", "request", "client", "route", "request_id", "body", "body_skipped"],
+      "properties": {
+        "version": { "const": 1 },
+        "request": {
+          "type": "object",
+          "required": ["method", "path", "query", "http_version", "host", "scheme", "headers"],
+          "properties": {
+            "method": { "type": "string", "examples": ["POST"] },
+            "path": { "type": "string", "description": "As the client sent it (after earlier middlewares), percent-encoded.", "examples": ["/login"] },
+            "query": { "type": ["string", "null"], "description": "Without `?`; null when absent.", "examples": ["next=%2F"] },
+            "http_version": { "enum": ["HTTP/0.9", "HTTP/1.0", "HTTP/1.1", "HTTP/2", "HTTP/3"] },
+            "host": { "type": "string", "description": "`Host` or `:authority`, port included." },
+            "scheme": { "enum": ["http", "https"], "description": "Whether the client connection uses TLS." },
+            "headers": {
+              "description": "The allowed request headers (the default set plus `request_headers`) as [name, value] pairs in order; names are lower-case.",
+              "type": "array",
+              "items": {
+                "type": "array",
+                "prefixItems": [{ "type": "string" }, { "type": "string" }],
+                "minItems": 2,
+                "maxItems": 2
+              }
+            }
+          }
+        },
+        "client": {
+          "type": "object",
+          "required": ["ip", "tls"],
+          "properties": {
+            "ip": { "type": "string", "description": "The client address rdock resolved (after trusted proxies)." },
+            "tls": { "type": "boolean" }
+          }
+        },
+        "route": { "type": "string" },
+        "request_id": { "type": "string", "description": "Also sent as `X-Request-ID`, and to the backend." },
+        "body": {
+          "description": "The request body (at most `max_body` bytes), or null when the request has none or it is not sent.",
+          "oneOf": [
+            { "type": "null" },
+            {
+              "type": "object",
+              "required": ["length", "base64"],
+              "properties": {
+                "length": { "type": "integer", "minimum": 0 },
+                "base64": { "type": "string", "contentEncoding": "base64" }
+              }
+            }
+          ]
+        },
+        "body_skipped": {
+          "type": "boolean",
+          "description": "True when the body was longer than `max_body` and `on_oversize: skip` sent the request without it."
+        }
+      }
+    },
+    "verdict": {
+      "description": "The agent's answer.",
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": { "enum": ["allow", "deny"] },
+        "status": {
+          "type": "integer",
+          "minimum": 200,
+          "maximum": 599,
+          "default": 403,
+          "description": "deny: the status sent to the client."
+        },
+        "headers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/header_values" },
+          "description": "deny: headers of the answer to the client (framing headers are dropped)."
+        },
+        "body": {
+          "type": "string",
+          "description": "deny: the body of the answer; rdock's standard page for the status when absent."
+        },
+        "set_request_headers": {
+          "type": "object",
+          "additionalProperties": { "$ref": "#/$defs/header_values" },
+          "description": "allow: headers to set on the request that goes to the backend. Only names in the middleware's `response_headers` are applied, and only for requests decided before their head left (requests without a body); others are ignored and counted in `rdock_agent_ignored_headers_total`."
+        }
+      }
+    }
+  },
+  "oneOf": [{ "$ref": "#/$defs/request" }, { "$ref": "#/$defs/verdict" }]
+}

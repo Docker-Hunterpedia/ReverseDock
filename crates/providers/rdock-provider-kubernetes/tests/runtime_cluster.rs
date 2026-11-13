@@ -248,6 +248,7 @@ async fn per_gateway_services_follow_the_desired_set() {
         })
     };
     let service = |gateway: &str, ports: Vec<u16>| DesiredService {
+        udp_ports: Vec::new(),
         namespace: ns.clone(),
         name: gateway_service_name("apps", gateway),
         gateway: ("apps".to_owned(), gateway.to_owned()),
@@ -365,6 +366,327 @@ async fn per_gateway_services_follow_the_desired_set() {
     )
     .await;
     assert!(services.get_opt(&api_name).await.unwrap().is_some());
+    running.stop().await;
+}
+
+// (2c) TCP and UDP on one port (the DNS case): one mixed-protocol Service with two entries,
+// each on its own internal port, read back by protocol. A Service written by the previous
+// version (ports named `port-<n>`) is not rewritten.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_gateway_with_tcp_and_udp_on_one_port_gets_both_service_ports() {
+    let Some((kubeconfig, client)) = cluster("mixed_protocols").await else {
+        return;
+    };
+    let ns = namespace(&client, "mixed").await;
+    let data = tempfile::tempdir().unwrap();
+    let seen: Seen = Arc::default();
+    let desired: Arc<Mutex<Vec<DesiredService>>> = Arc::default();
+    let translate = {
+        let (seen, desired) = (seen.clone(), desired.clone());
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            *seen.lock().unwrap() = Some(inventory.clone());
+            Translation {
+                services: desired.lock().unwrap().clone(),
+                ..Translation::default()
+            }
+        })
+    };
+    let services: Api<Service> = Api::namespaced(client.clone(), &ns);
+    // What v0.7 applied for Gateway apps/old: TCP 80 named `port-80`.
+    let old_name = gateway_service_name("apps", "old");
+    let old = DesiredService {
+        namespace: ns.clone(),
+        name: old_name.clone(),
+        gateway: ("apps".to_owned(), "old".to_owned()),
+        ports: vec![80],
+        ..DesiredService::default()
+    };
+    let mut provider = provider(&kubeconfig, &ns);
+    provider.leader_election.enabled = true;
+    let settings = Settings {
+        provider: provider.clone(),
+        controller_namespace: ns.clone(),
+        data_dir: data.path().to_owned(),
+    };
+    let legacy_ports = BTreeMap::from([(
+        rdock_provider_kubernetes::runtime::services::PortKey::tcp(80),
+        20000,
+    )]);
+    let legacy_names = legacy_ports
+        .keys()
+        .map(|k| (*k, "port-80".to_owned()))
+        .collect();
+    let manifest = rdock_provider_kubernetes::runtime::services::manifest(
+        &old,
+        &legacy_ports,
+        &legacy_names,
+        &settings,
+    );
+    services
+        .patch(
+            &old_name,
+            &PatchParams::apply(rdock_provider_kubernetes::runtime::services::FIELD_MANAGER)
+                .force(),
+            &Patch::Apply(&manifest),
+        )
+        .await
+        .unwrap();
+    let old_rv = services.get(&old_name).await.unwrap().resource_version();
+
+    let (leader_tx, mut leader_rx) = watch::channel(false);
+    let options = Options {
+        translate,
+        lease: LeaseTimings {
+            lease_duration: Duration::from_secs(2),
+            renew_deadline: Duration::from_millis(1500),
+            retry_period: Duration::from_millis(300),
+        },
+        leadership: Some(leader_tx),
+        ..Options::default()
+    };
+    // Desired from the start: the first pass after taking the lead must not see the old
+    // Service as stale and delete it.
+    *desired.lock().unwrap() = vec![old.clone()];
+    let running = start(provider, context(&ns, data.path()), options);
+    tokio::time::timeout(Duration::from_secs(10), leader_rx.wait_for(|l| *l))
+        .await
+        .expect("the only replica leads")
+        .unwrap();
+    let dns_name = gateway_service_name("apps", "dns");
+    *desired.lock().unwrap() = vec![
+        old,
+        DesiredService {
+            namespace: ns.clone(),
+            name: dns_name.clone(),
+            gateway: ("apps".to_owned(), "dns".to_owned()),
+            ports: vec![53],
+            udp_ports: vec![53],
+            ..DesiredService::default()
+        },
+    ];
+    poke(&client, &ns).await;
+    eventually("Service for apps/dns", Duration::from_secs(10), || async {
+        services.get_opt(&dns_name).await.unwrap().is_some()
+    })
+    .await;
+    let dns = services.get(&dns_name).await.unwrap();
+    let ports: Vec<(String, String, i32, String)> = dns
+        .spec
+        .as_ref()
+        .unwrap()
+        .ports
+        .as_ref()
+        .unwrap()
+        .iter()
+        .map(|p| {
+            (
+                p.name.clone().unwrap_or_default(),
+                p.protocol.clone().unwrap_or_default(),
+                p.port,
+                format!("{:?}", p.target_port.as_ref().unwrap()),
+            )
+        })
+        .collect::<BTreeSet<_>>()
+        .into_iter()
+        .collect();
+    assert_eq!(
+        ports,
+        [
+            (
+                "tcp-53".to_owned(),
+                "TCP".to_owned(),
+                53,
+                "Int(20001)".to_owned()
+            ),
+            (
+                "udp-53".to_owned(),
+                "UDP".to_owned(),
+                53,
+                "Int(20002)".to_owned()
+            ),
+        ]
+    );
+    eventually(
+        "the Service in the inventory by protocol",
+        Duration::from_secs(10),
+        || async {
+            seen.lock().unwrap().as_ref().is_some_and(|i| {
+                i.gateway_services
+                    .get(&("apps".to_owned(), "dns".to_owned()))
+                    .is_some_and(|g| {
+                        g.ports == BTreeMap::from([(53, 20001)])
+                            && g.udp_ports == BTreeMap::from([(53, 20002)])
+                    })
+            })
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_secs(1)).await;
+    assert_eq!(
+        services.get(&old_name).await.unwrap().resource_version(),
+        old_rv,
+        "the previous version's Service was rewritten"
+    );
+    running.stop().await;
+}
+
+// (2d) A UDP Gateway is deleted and another created right after: the new Service does not get
+// the internal port the old one just released, which the replicas may still hold for the
+// removed listener while its sessions drain.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_released_internal_port_is_not_handed_out_again_at_once() {
+    let Some((kubeconfig, client)) = cluster("quarantine").await else {
+        return;
+    };
+    let ns = namespace(&client, "quar").await;
+    let data = tempfile::tempdir().unwrap();
+    let seen: Seen = Arc::default();
+    let desired: Arc<Mutex<Vec<DesiredService>>> = Arc::default();
+    let translate = {
+        let (seen, desired) = (seen.clone(), desired.clone());
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            *seen.lock().unwrap() = Some(inventory.clone());
+            Translation {
+                services: desired.lock().unwrap().clone(),
+                ..Translation::default()
+            }
+        })
+    };
+    let service = |gateway: &str| DesiredService {
+        namespace: ns.clone(),
+        name: gateway_service_name("apps", gateway),
+        gateway: ("apps".to_owned(), gateway.to_owned()),
+        udp_ports: vec![53],
+        ..DesiredService::default()
+    };
+    let running = start(
+        provider(&kubeconfig, &ns),
+        context(&ns, data.path()),
+        Options {
+            translate,
+            ..Options::default()
+        },
+    );
+    let services: Api<Service> = Api::namespaced(client.clone(), &ns);
+    let udp_target = |s: &Service| -> Vec<String> {
+        s.spec
+            .as_ref()
+            .unwrap()
+            .ports
+            .as_ref()
+            .unwrap()
+            .iter()
+            .map(|p| format!("{:?}", p.target_port.as_ref().unwrap()))
+            .collect()
+    };
+    let first = gateway_service_name("apps", "first");
+    let second = gateway_service_name("apps", "second");
+    *desired.lock().unwrap() = vec![service("first")];
+    poke(&client, &ns).await;
+    eventually("the first Service", Duration::from_secs(10), || async {
+        services.get_opt(&first).await.unwrap().is_some()
+    })
+    .await;
+    assert_eq!(
+        udp_target(&services.get(&first).await.unwrap()),
+        ["Int(20000)"]
+    );
+    eventually(
+        "the first Service in the inventory",
+        Duration::from_secs(10),
+        || async {
+            seen.lock().unwrap().as_ref().is_some_and(|i| {
+                i.gateway_services
+                    .contains_key(&("apps".to_owned(), "first".to_owned()))
+            })
+        },
+    )
+    .await;
+    tokio::time::sleep(Duration::from_millis(500)).await;
+
+    // Deleted; once its Service is gone, a new UDP Gateway arrives.
+    desired.lock().unwrap().clear();
+    poke(&client, &ns).await;
+    eventually(
+        "the first Service deleted",
+        Duration::from_secs(10),
+        || async { services.get_opt(&first).await.unwrap().is_none() },
+    )
+    .await;
+    *desired.lock().unwrap() = vec![service("second")];
+    poke(&client, &ns).await;
+    eventually("the second Service", Duration::from_secs(10), || async {
+        services.get_opt(&second).await.unwrap().is_some()
+    })
+    .await;
+    assert_eq!(
+        udp_target(&services.get(&second).await.unwrap()),
+        ["Int(20001)"],
+        "the port released moments ago is in quarantine"
+    );
+    running.stop().await;
+}
+
+// (2e) The data plane's left-out internal listeners reach the translation: a change translates
+// again, with the names in the inventory.
+#[tokio::test(flavor = "multi_thread")]
+async fn left_out_internal_listeners_reach_the_translation() {
+    let Some((kubeconfig, client)) = cluster("unbound").await else {
+        return;
+    };
+    let ns = namespace(&client, "unb").await;
+    let data = tempfile::tempdir().unwrap();
+    let seen: Seen = Arc::default();
+    let translate = {
+        let seen = seen.clone();
+        Arc::new(move |inventory: &Inventory, _: &Settings| {
+            *seen.lock().unwrap() = Some(inventory.clone());
+            Translation::default()
+        })
+    };
+    let (unbound_tx, unbound_rx) = watch::channel(BTreeSet::new());
+    let running = start(
+        provider(&kubeconfig, &ns),
+        context(&ns, data.path()),
+        Options {
+            translate,
+            unbound: Some(unbound_rx),
+            ..Options::default()
+        },
+    );
+    eventually("a first translation", Duration::from_secs(20), || async {
+        seen.lock().unwrap().is_some()
+    })
+    .await;
+    assert!(
+        seen.lock()
+            .unwrap()
+            .as_ref()
+            .unwrap()
+            .unbound_listeners
+            .is_empty()
+    );
+    let names = BTreeSet::from(["gwu-apps-dns-53-0123456789".to_owned()]);
+    unbound_tx.send_replace(names.clone());
+    eventually(
+        "the names in the inventory",
+        Duration::from_secs(5),
+        || async {
+            seen.lock()
+                .unwrap()
+                .as_ref()
+                .is_some_and(|i| i.unbound_listeners == names)
+        },
+    )
+    .await;
+    unbound_tx.send_replace(BTreeSet::new());
+    eventually("an empty set again", Duration::from_secs(5), || async {
+        seen.lock()
+            .unwrap()
+            .as_ref()
+            .is_some_and(|i| i.unbound_listeners.is_empty())
+    })
+    .await;
     running.stop().await;
 }
 

@@ -15,6 +15,9 @@ on:
       - "crates/rdock-rules/**"
       - "crates/rdock-config/**"
       - "crates/rdock-proxy/**"
+      - "crates/rdock-cache/**"
+      - "crates/rdock-model/src/json_patch.rs"
+      - "crates/rdock-model/src/json_patch/**"
       - "tests/fuzz/**"
       - ".github/workflows/fuzz.yml"
 
@@ -32,7 +35,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        target: [h1_framing, rules_parser, config_loader, jwt_verify, proxy_header, clienthello]
+        target: [h1_framing, rules_parser, config_loader, jwt_verify, proxy_header, clienthello, disk_cache_header, json_patch, oidc_cookie]
     env:
       SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'pull_request' && '120') || '600' }}
     steps:

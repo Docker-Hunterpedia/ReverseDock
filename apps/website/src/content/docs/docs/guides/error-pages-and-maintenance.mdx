@@ -34,6 +34,60 @@ These responses carry `Cache-Control: no-store` and an `X-Request-ID` header wit
 A 503 that ReverseDock sends because a service has no available backend also has
 `Retry-After: 5`.
 
+## Problem details for APIs
+
+<Status planned="v0.8" /> API clients often send `Accept: */*` or no `Accept` at all, and get the
+HTML page. `errors.format` makes every error ReverseDock produces itself an
+`application/problem+json` document ([RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)):
+404 without a route, 401/403/429 from middlewares, 408, 413, 414, 431, 502, 503 and 504 from the
+proxy, agent and plugin failures, and the cache's 504.
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure: { address: ":443", tls: {} }
+
+defaults:
+  errors: { format: problem }
+
+routes:
+  api:
+    match: "Host(`api.example.com`)"
+    service: api
+  site:
+    match: "Host(`www.example.com`)"
+    service: site
+    errors: { format: html }
+
+services:
+  api:
+    backends: [{ address: "api:8080" }]
+  site:
+    backends: [{ address: "site:8080" }]
+```
+
+| `format` | What clients get |
+|---|---|
+| `html` (default) | The HTML page, or the small JSON object above for clients that ask for `application/json` and not `text/html`: exactly the behaviour before v0.8. |
+| `problem` | Problem details for every client that accepts JSON, which includes `*/*` and a missing `Accept`; the HTML page only for clients that ask for `text/html` and no JSON type (browsers). |
+| `auto` | Problem details for clients that ask for a JSON type and not `text/html`; the HTML page otherwise. |
+
+A route's `errors` replaces `defaults.errors`; answers before a route is chosen (no route, a
+request target that is too long) use `defaults.errors`.
+
+```sh
+$ curl -s https://api.example.com/missing
+{"detail":"Nothing is served at this address.","instance":"urn:uuid:019a…","request_id":"019a…","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+```
+
+Each `type` is listed in the [problem types reference](/docs/reference/problems/). The answers
+keep their headers (`WWW-Authenticate`, `Retry-After`, which `retry_after` repeats), carry
+`Content-Language: en` and `Cache-Control: no-store`, and never name a backend address. Errors a
+**backend** sends are passed through unchanged.
+
+**What takes precedence**, in this order: a body a middleware sends itself (a `maintenance`
+`file`, an agent's or `forward_auth` service's answer); then an `errors` middleware page for the
+status; then this format. `basic_auth`'s plain `401 Unauthorized` text is used only with `html`.
+
 ## Your own error pages
 
 The `errors` middleware replaces the body of responses whose status is in `status`. The

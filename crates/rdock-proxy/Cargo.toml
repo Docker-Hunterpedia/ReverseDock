@@ -26,11 +26,13 @@ ipnet.workspace = true
 pingora.workspace = true
 proxy-header.workspace = true
 rdock-balancer.workspace = true
+rdock-cache.workspace = true
 rdock-config.workspace = true
 rdock-limits.workspace = true
 rdock-middleware.workspace = true
 rdock-model.workspace = true
 rdock-observability.workspace = true
+rdock-plugin-api.workspace = true
 rdock-rules.workspace = true
 rdock-tls.workspace = true
 regex.workspace = true
@@ -45,7 +47,13 @@ url.workspace = true
 uuid.workspace = true
 x509-parser.workspace = true
 
+[features]
+# Sandboxed WASM plugins on wasmtime (experimental, ADR-0030).
+wasm = ["rdock-middleware/wasm"]
+
 [dev-dependencies]
+http-body-util.workspace = true
+jsonschema.workspace = true
 rdock-testkit.workspace = true
 tempfile.workspace = true
 

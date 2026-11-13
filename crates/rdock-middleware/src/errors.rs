@@ -164,7 +164,13 @@ mod tests {
     fn replaces_bodies_in_range_and_keeps_the_status() {
         let (client, pages) = env_with_pages();
         let lookup = move |_: &str| Some(pages.clone());
+        let plugins = rdock_plugin_api::Registry::new();
         let env = BuildEnv {
+            plugins: &plugins,
+            metrics: None,
+            consumers: Arc::default(),
+            quotas: None,
+            route_hosts: Arc::default(),
             service: &lookup,
             client,
         };
@@ -200,7 +206,13 @@ mod tests {
         let file = dir.path().join("404.html");
         std::fs::write(&file, "<p>not here</p>").unwrap();
         let lookup = |_: &str| None;
+        let plugins = rdock_plugin_api::Registry::new();
         let env = BuildEnv {
+            plugins: &plugins,
+            metrics: None,
+            consumers: Arc::default(),
+            quotas: None,
+            route_hosts: Arc::default(),
             service: &lookup,
             client: Arc::new(HttpClient::default()),
         };

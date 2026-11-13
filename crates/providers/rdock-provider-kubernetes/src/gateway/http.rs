@@ -247,9 +247,15 @@ pub struct MatchOut {
 /// What a filter does, before the listener port is known.
 #[derive(Debug, Clone)]
 enum FilterPlan {
-    Middleware(Middleware),
+    Middleware(Box<Middleware>),
     /// A redirect; the port defaults to the listener's.
     Redirect(RedirectConfig),
+}
+
+impl FilterPlan {
+    fn middleware(middleware: Middleware) -> Self {
+        Self::Middleware(Box::new(middleware))
+    }
 }
 
 /// A valid rule, ready to emit.
@@ -1153,7 +1159,7 @@ fn plan_rewrite(
     if let Some(host) = &f.hostname {
         let mut request = HeaderRules::default();
         request.set.insert("Host".to_owned(), host.clone());
-        out.push(FilterPlan::Middleware(Middleware::Headers(HeadersConfig {
+        out.push(FilterPlan::middleware(Middleware::Headers(HeadersConfig {
             request,
             ..HeadersConfig::default()
         })));
@@ -1161,7 +1167,7 @@ fn plan_rewrite(
     if let Some(m) = &f.path {
         match m.kind.as_str() {
             path_modifier::REPLACE_FULL_PATH => {
-                out.push(FilterPlan::Middleware(Middleware::ReplacePath(
+                out.push(FilterPlan::middleware(Middleware::ReplacePath(
                     ReplacePathConfig {
                         path: m
                             .replace_full_path
@@ -1173,7 +1179,7 @@ fn plan_rewrite(
             path_modifier::REPLACE_PREFIX_MATCH => {
                 let from = single_prefix(matches)?;
                 let to = m.replace_prefix_match.clone().unwrap_or_default();
-                out.push(FilterPlan::Middleware(Middleware::Rewrite(prefix_rewrite(
+                out.push(FilterPlan::middleware(Middleware::Rewrite(prefix_rewrite(
                     &from, &to,
                 ))));
             }
@@ -1198,7 +1204,7 @@ fn plan_filter(filter: &HTTPRouteFilter, matches: &[HTTPRouteMatch]) -> Result<P
                 .request_header_modifier
                 .as_ref()
                 .ok_or_else(|| missing(&filter.kind))?;
-            out.push(FilterPlan::Middleware(Middleware::Headers(HeadersConfig {
+            out.push(FilterPlan::middleware(Middleware::Headers(HeadersConfig {
                 request: header_rules(f).map_err(unsupported)?,
                 ..HeadersConfig::default()
             })));
@@ -1208,7 +1214,7 @@ fn plan_filter(filter: &HTTPRouteFilter, matches: &[HTTPRouteMatch]) -> Result<P
                 .response_header_modifier
                 .as_ref()
                 .ok_or_else(|| missing(&filter.kind))?;
-            out.push(FilterPlan::Middleware(Middleware::Headers(HeadersConfig {
+            out.push(FilterPlan::middleware(Middleware::Headers(HeadersConfig {
                 response: header_rules(f).map_err(unsupported)?,
                 ..HeadersConfig::default()
             })));
@@ -1270,7 +1276,7 @@ fn emit_middlewares(
         .enumerate()
         .map(|(i, filter)| {
             let middleware = match filter {
-                FilterPlan::Middleware(m) => m.clone(),
+                FilterPlan::Middleware(m) => (**m).clone(),
                 FilterPlan::Redirect(r) => {
                     let mut r = r.clone();
                     if r.scheme.is_none() && r.port.is_none() {
@@ -1385,6 +1391,7 @@ fn emit(
                         timeouts: plan.timeouts,
                         mirror: plan.mirror.clone(),
                         max_body: None,
+                        errors: None,
                         enabled: true,
                     },
                 );

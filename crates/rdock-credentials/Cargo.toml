@@ -1,0 +1,19 @@
+[package]
+name = "rdock-credentials"
+description = "Credential formats shared by ReverseDock's admin API and data plane: API tokens and API keys"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+homepage.workspace = true
+publish.workspace = true
+
+[dependencies]
+crc32fast.workspace = true
+ring.workspace = true
+subtle.workspace = true
+
+[lints]
+workspace = true

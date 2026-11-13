@@ -10,6 +10,9 @@ Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard ch
 > | `GATEWAY-GRPC` | success, 17 passed | success, 7 passed |
 > | `GATEWAY-TLS` | success, 21 passed | success, 8 passed |
 > | `GATEWAY-TCP` | success, 20 passed | success, 7 passed |
+> | `GATEWAY-UDP` | success, 21 passed | success, 7 passed |
+>
+> `GATEWAY-UDP` (core features only: `Gateway`, `ReferenceGrant`, `UDPRoute`) joined `options.yaml` with UDP routes (v0.8, [ADR-0030](../../../docs/decisions/0030-v0-8-cache-extensibility-gateway.md)); its nine tests are transcribed against the translator in `crates/providers/rdock-provider-kubernetes/tests/gateway_udp.rs` and pass there, and the profile passed in the same job on kind on 2026-11-12, on commit `43d81de` (the `GATEWAY-UDP` row above; the other four rows are from the 2026-11-11 run), which also proves that cloud-provider-kind forwards the per-Gateway Service's UDP ports. All five profiles of `options.yaml` pass.
 >
 > "Extended success" means every test for the extended features this implementation claims ([`features.rs`](../../../crates/providers/rdock-provider-kubernetes/src/features.rs)) passed; it does not mean every extended feature of the Gateway API is supported. The same core results were obtained on two earlier commits the same day, before ListenerSet support was added. The job now fails the workflow (no `--allow-partial`); adding it to the repository ruleset's required checks is a maintainer action. No report has been submitted to the upstream Gateway API repository, because reports require a released version (see "Reports"), and the software is not released.
 
@@ -19,7 +22,7 @@ Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard ch
 |---|---|
 | `conformance_test.go` | `TestConformance`: calls the upstream `conformance.RunConformance`. Build tag `conformance`, so `go vet ./...` and `go test ./...` elsewhere never compile it. |
 | `options_test.go` | `TestOptionsFile`: loads `options.yaml` strictly (a misspelled key fails in seconds instead of being ignored by the upstream loader). Needs no cluster. |
-| `options.yaml` | Gateway class `reversedock`, the four profiles, the implementation block, `skipTests`. Keys are the json tags of `suite.ConfigurableOptions`. |
+| `options.yaml` | Gateway class `reversedock`, the five profiles, the implementation block, `skipTests`. Keys are the json tags of `suite.ConfigurableOptions`. |
 | `kind.yaml` | kind v0.33.0 cluster: Kubernetes v1.37.0 (tag and digest from kind's own defaults), one control plane and one worker. |
 | `run.sh` | Cluster, CRDs, image, cloud-provider-kind, `helm install --wait`, the suite, `check-report.py`; diagnostics on failure. Idempotent. |
 | `install-tools.sh` | Pinned, SHA-256-verified kind, kubectl, helm (4 and 3), kubeconform and cloud-provider-kind for Linux x86-64. CI uses it. |

@@ -1,9 +1,9 @@
 import { json } from "@codemirror/lang-json";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { jsonSchema } from "@valtown/codemirror-json-schema";
+import { Compartment } from "@codemirror/state";
 import { EditorView, basicSetup } from "codemirror";
 import { useEffect, useMemo, useRef, useState } from "react";
-import fullSchema from "../../../../schema/rdock.v1.json";
 import { useReauth } from "../components/Reauth";
 import { TD, TH, Table } from "../components/Table";
 import { useToast } from "../components/Toast";
@@ -12,18 +12,24 @@ import { type Diagnostic, type Session, api, apiWithTag, describe, diagnostics }
 
 type JSONSchema7 = NonNullable<Parameters<typeof jsonSchema>[0]>;
 
-/** What the API provider accepts: routes, services and middlewares of rdock.yaml. */
-const apiSchema = {
-  $schema: "http://json-schema.org/draft-07/schema#",
-  type: "object",
-  additionalProperties: false,
-  properties: {
-    routes: fullSchema.properties.routes,
-    services: fullSchema.properties.services,
-    middlewares: fullSchema.properties.middlewares,
-  },
-  $defs: (fullSchema as { $defs?: object }).$defs,
-} as unknown as JSONSchema7;
+/**
+ * What the API provider accepts: routes, services and middlewares of rdock.yaml. The schema is
+ * its own chunk, loaded when an editor opens, so this page stays inside the bundle budget.
+ */
+const apiSchema = async () => {
+  const { default: fullSchema } = await import("../../../../schema/rdock.v1.json");
+  return {
+    $schema: "http://json-schema.org/draft-07/schema#",
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      routes: fullSchema.properties.routes,
+      services: fullSchema.properties.services,
+      middlewares: fullSchema.properties.middlewares,
+    },
+    $defs: (fullSchema as { $defs?: object }).$defs,
+  } as unknown as JSONSchema7;
+};
 
 interface Checked {
   valid: boolean;
@@ -50,14 +56,15 @@ function Editor({ value, onChange, readOnly }: { value: string; onChange?: (v: s
     // In a shadow root CodeMirror adds its styles as constructed stylesheets instead of a <style>
     // element, so the Content Security Policy can refuse inline style elements (ASVS 3.4.3).
     const root = box.current.shadowRoot ?? box.current.attachShadow({ mode: "open" });
-    view.current = new EditorView({
+    const schema = new Compartment();
+    const editor = new EditorView({
       parent: root,
       root,
       doc: value,
       extensions: [
         basicSetup,
         json(),
-        readOnly ? [] : jsonSchema(apiSchema),
+        schema.of([]),
         EditorView.editable.of(!readOnly),
         EditorView.contentAttributes.of({ "aria-label": readOnly ? "Configuration, read only" : "Configuration editor" }),
         EditorView.updateListener.of((u) => u.docChanged && change.current?.(u.state.doc.toString())),
@@ -70,7 +77,19 @@ function Editor({ value, onChange, readOnly }: { value: string; onChange?: (v: s
         }),
       ],
     });
-    return () => view.current?.destroy();
+    view.current = editor;
+    let open = true;
+    if (!readOnly) {
+      // Without the schema the editor still edits; only completion, hover and lint are missing.
+      apiSchema().then(
+        (loaded) => open && editor.dispatch({ effects: schema.reconfigure(jsonSchema(loaded)) }),
+        () => undefined,
+      );
+    }
+    return () => {
+      open = false;
+      editor.destroy();
+    };
     // The document is set once; later outside changes go through the effect below.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [readOnly]);

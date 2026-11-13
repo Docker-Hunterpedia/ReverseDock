@@ -12,8 +12,8 @@ use std::net::IpAddr;
 use rdock_config::merge::Fragment;
 use rdock_model::middleware::Middleware;
 use rdock_model::providers::DockerProvider;
-use rdock_model::route::{Route, TcpRoute};
-use rdock_model::service::{Service, TcpService};
+use rdock_model::route::{Route, TcpRoute, UdpRoute};
+use rdock_model::service::{Service, TcpService, UdpService};
 use rdock_model::{Diagnostic, path_key};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
@@ -21,6 +21,7 @@ use serde_json::Value;
 mod native;
 mod traefik;
 mod traefik_tcp;
+mod traefik_udp;
 pub(crate) mod tree;
 
 use tree::{Tree, decode};
@@ -294,6 +295,8 @@ pub(crate) struct Draft {
     pub(crate) retries: BTreeMap<String, traefik::Retry>,
     pub(crate) tcp_routes: BTreeMap<String, Tree>,
     pub(crate) tcp_services: BTreeMap<String, ServiceDraft>,
+    pub(crate) udp_routes: BTreeMap<String, Tree>,
+    pub(crate) udp_services: BTreeMap<String, ServiceDraft>,
 }
 
 /// A service as labels describe it.
@@ -456,6 +459,7 @@ impl<'a> Scope<'a> {
             }
         }
         self.build_tcp(&mut draft, pools, fragment);
+        self.build_udp(&mut draft, pools, fragment);
         // Objects whose every label was rejected are already explained by those warnings.
         draft.middlewares.retain(|_, tree| !tree.is_empty());
         for (name, tree) in std::mem::take(&mut draft.routes) {
@@ -507,6 +511,47 @@ impl<'a> Scope<'a> {
             match decode::<TcpRoute>(tree.into_value()) {
                 Ok(route) => pools.add_tcp_route(self, name, route, fragment),
                 Err(err) => self.warn_object("TCP route", &name, &err),
+            }
+        }
+    }
+
+    /// UDP routes and services: like TCP ones, a UDP route must name its listeners.
+    fn build_udp(&mut self, draft: &mut Draft, pools: &mut Pools, fragment: &mut Fragment) {
+        draft.udp_routes.retain(|_, tree| !tree.is_empty());
+        let unattached: Vec<String> = draft
+            .udp_routes
+            .iter()
+            .filter(|(_, tree)| !tree.has("listeners"))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in unattached {
+            draft.udp_routes.remove(&name);
+            let message = format!("UDP route `{name}` names no listener; the route is ignored");
+            let hint = "set `traefik.udp.routers.<name>.entrypoints` or `rdock.udp_routes.<name>.listeners`";
+            self.warn_container(message, Some(hint.to_owned()));
+        }
+        self.link_services(
+            &mut draft.udp_routes,
+            &mut draft.udp_services,
+            &BTreeMap::new(),
+        );
+        for (name, service) in std::mem::take(&mut draft.udp_services) {
+            // Docker reports exposed UDP ports apart from TCP ones, and a TCP port is no
+            // guess for a UDP service: the port is always named.
+            if service.port.is_none() && service.address.is_none() {
+                let message = format!("UDP service `{name}` names no port; the service is ignored");
+                let hint = "set `rdock.udp_services.<name>.port` or `traefik.udp.services.<name>.loadbalancer.server.port`";
+                self.warn_container(message, Some(hint.to_owned()));
+                continue;
+            }
+            if let Some((service, backend)) = self.service::<UdpService>(&name, service) {
+                pools.add_udp(self, name, service, backend);
+            }
+        }
+        for (name, tree) in std::mem::take(&mut draft.udp_routes) {
+            match decode::<UdpRoute>(tree.into_value()) {
+                Ok(route) => pools.add_udp_route(self, name, route, fragment),
+                Err(err) => self.warn_object("UDP route", &name, &err),
             }
         }
     }
@@ -809,6 +854,12 @@ impl Pooled for TcpService {
     }
 }
 
+impl Pooled for UdpService {
+    fn backends_mut(&mut self) -> &mut Vec<rdock_model::service::Backend> {
+        &mut self.backends
+    }
+}
+
 /// Services by name, each with the backends of every container that declares it.
 type PoolMap<T> = BTreeMap<String, (T, Vec<Backend>)>;
 
@@ -817,6 +868,7 @@ type PoolMap<T> = BTreeMap<String, (T, Vec<Backend>)>;
 struct Pools {
     services: PoolMap<Service>,
     tcp_services: PoolMap<TcpService>,
+    udp_services: PoolMap<UdpService>,
     /// (kind, name) of objects declared differently by two containers.
     conflicts: BTreeSet<(&'static str, String)>,
 }
@@ -851,6 +903,36 @@ impl Pools {
             service,
             backend,
         );
+    }
+
+    fn add_udp(
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: String,
+        service: UdpService,
+        backend: Backend,
+    ) {
+        let (services, conflicts) = (&mut self.udp_services, &mut self.conflicts);
+        pool(
+            services,
+            conflicts,
+            "UDP service",
+            scope,
+            name,
+            service,
+            backend,
+        );
+    }
+
+    fn add_udp_route(
+        &mut self,
+        scope: &mut Scope<'_>,
+        name: String,
+        route: UdpRoute,
+        fragment: &mut Fragment,
+    ) {
+        let routes = &mut fragment.udp_routes;
+        insert(routes, &mut self.conflicts, "UDP route", scope, name, route);
     }
 
     fn add_route(
@@ -899,6 +981,7 @@ impl Pools {
             match *kind {
                 "route" => drop(out.fragment.routes.remove(name)),
                 "TCP route" => drop(out.fragment.tcp_routes.remove(name)),
+                "UDP route" => drop(out.fragment.udp_routes.remove(name)),
                 "middleware" => drop(out.fragment.middlewares.remove(name)),
                 _ => {}
             }
@@ -908,6 +991,12 @@ impl Pools {
         out.fragment.tcp_services = fill(
             self.tcp_services,
             "TCP service",
+            conflicts,
+            &mut out.diagnostics,
+        );
+        out.fragment.udp_services = fill(
+            self.udp_services,
+            "UDP service",
             conflicts,
             &mut out.diagnostics,
         );
@@ -981,10 +1070,10 @@ fn fill<T: Pooled>(
         let healthy: Vec<&Backend> = backends.iter().filter(|b| b.healthy).collect();
         let serving: Vec<&Backend> = if healthy.is_empty() {
             let containers: Vec<&str> = backends.iter().map(|b| b.container.as_str()).collect();
-            let section = if kind == "service" {
-                "services"
-            } else {
-                "tcp_services"
+            let section = match kind {
+                "service" => "services",
+                "UDP service" => "udp_services",
+                _ => "tcp_services",
             };
             diagnostics.push(Diagnostic::warning(
                 path_key(section, &name),

@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 ipnet.workspace = true
+rdock-credentials.workspace = true
 rdock-rules.workspace = true
 regex.workspace = true
 schemars.workspace = true

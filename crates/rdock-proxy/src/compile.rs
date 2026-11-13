@@ -52,6 +52,14 @@ pub struct CompileEnv<'a> {
     pub sticky_key: &'a [u8],
     /// Live traffic rings by route and service, shared across generations (ADR-0024).
     pub live: &'a rdock_observability::live::Live,
+    /// The process's cache stores; `None` where no store may be opened (tests, tools).
+    pub caches: Option<&'a rdock_cache::Registry>,
+    /// The native plugins compiled into this binary (`type: plugin`, ADR-0030).
+    pub plugins: &'a rdock_plugin_api::Registry,
+    /// Where plugins and agents count; `None` when validating.
+    pub metrics: Option<&'a rdock_observability::Metrics>,
+    /// Quota counters that outlive a configuration; `None` when validating.
+    pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
 }
 
 /// The result of compilation.
@@ -73,6 +81,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let services = compile_services(config, env, &mut out);
     let tracer = tracer(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
+    let caches = resolve_caches(config, env, &mut out);
     let mut auto_tls = AutoTls {
         certs: &index,
         acme: config.effective_acme().is_some(),
@@ -87,11 +96,17 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &mut auto_tls,
         &listener_certificates,
         &env.live.routes,
+        &Caches {
+            stores: &caches,
+            required: env.mode == Mode::Run && env.caches.is_some(),
+        },
         &mut out,
     );
     crate::tcp::compile_tcp(config, env, &mut listeners, &mut auto_tls, &mut out);
+    let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, &mut out);
     let cert_requests = auto_tls.requests.into_iter().collect();
     let local_cert_names = auto_tls.local.into_iter().collect();
+    let metering = start_metering(config, env, &mut out);
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {
         generation: env.generation,
         listeners,
@@ -110,11 +125,33 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
             .iter()
             .map(|(name, s)| (name.clone(), s.clone()))
             .collect(),
+        udp_pools,
         tracer,
+        errors: config.defaults.errors.format,
+        metering,
     });
     Compiled {
         runtime,
         diagnostics: out,
+    }
+}
+
+/// The metering sinks of `observability.metering`, started when the configuration is applied
+/// (never when it is only validated).
+fn start_metering(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Option<Arc<rdock_observability::metering::Meter>> {
+    let settings = config.observability.metering.as_ref()?;
+    let metrics = env.metrics.filter(|_| env.mode == Mode::Run)?;
+    tokio::runtime::Handle::try_current().ok()?;
+    match rdock_observability::metering::Meter::start(settings, metrics.clone()) {
+        Ok(meter) => Some(Arc::new(meter)),
+        Err(message) => {
+            out.push(Diagnostic::error("observability.metering", message));
+            None
+        }
     }
 }
 
@@ -339,11 +376,11 @@ fn compile_service(
     let backends = compile_backends(&service.backends, env.dns);
     let tls = service.tls.as_ref();
     let ca = match tls.and_then(|t| t.ca_file.as_deref()) {
-        Some(file) => Some(load_ca(file)?),
+        Some(file) => Some(rdock_middleware::client::load_ca(file)?),
         None => None,
     };
     let client_cert = match tls.and_then(|t| t.cert_file.as_deref().zip(t.key_file.as_deref())) {
-        Some((cert, key)) => Some(load_client_cert(cert, key)?),
+        Some((cert, key)) => Some(rdock_middleware::client::load_client_cert(cert, key)?),
         None => None,
     };
     let verify = tls.is_none_or(|t| t.verify);
@@ -547,68 +584,6 @@ fn compile_sticky(sticky: &Sticky, default_key: &[u8]) -> Result<StickyRuntime, 
     })
 }
 
-/// Reads the client certificate chain and key that a service presents to its backends. They
-/// are checked here because Pingora asserts a non-empty chain and unwraps the key conversion.
-fn load_client_cert(
-    cert_file: &std::path::Path,
-    key_file: &std::path::Path,
-) -> Result<Arc<pingora::utils::tls::CertKey>, String> {
-    use rustls_pki_types::pem::PemObject;
-    use rustls_pki_types::{CertificateDer, PrivateKeyDer};
-    use x509_parser::prelude::FromDer;
-
-    let chain = CertificateDer::pem_file_iter(cert_file)
-        .and_then(Iterator::collect::<Result<Vec<_>, _>>)
-        .map_err(|e| format!("cannot read `{}`: {e}", cert_file.display()))?;
-    if chain.is_empty() {
-        return Err(format!("`{}` holds no certificate", cert_file.display()));
-    }
-    for der in &chain {
-        x509_parser::certificate::X509Certificate::from_der(der.as_ref())
-            .map_err(|e| format!("invalid certificate in `{}`: {e}", cert_file.display()))?;
-    }
-    let key = PrivateKeyDer::from_pem_file(key_file)
-        .map_err(|e| format!("cannot read the key `{}`: {e}", key_file.display()))?;
-    rustls::crypto::ring::sign::any_supported_type(&key)
-        .map_err(|e| format!("unusable key `{}`: {e}", key_file.display()))?;
-    let key = key.secret_der().to_vec();
-    if PrivateKeyDer::try_from(key.clone()).is_err() {
-        return Err(format!(
-            "unsupported key format in `{}`",
-            key_file.display()
-        ));
-    }
-    Ok(Arc::new(pingora::utils::tls::CertKey::new(
-        chain.into_iter().map(|c| c.to_vec()).collect(),
-        key,
-    )))
-}
-
-/// Reads a PEM bundle of CA certificates for backend verification.
-fn load_ca(file: &std::path::Path) -> Result<Arc<[pingora::utils::tls::WrappedX509]>, String> {
-    use rustls_pki_types::CertificateDer;
-    use rustls_pki_types::pem::PemObject;
-    use x509_parser::prelude::FromDer;
-
-    let bytes =
-        std::fs::read(file).map_err(|e| format!("cannot read `{}`: {e}", file.display()))?;
-    let mut certs = Vec::new();
-    for der in CertificateDer::pem_slice_iter(&bytes) {
-        let der = der.map_err(|e| format!("invalid PEM in `{}`: {e}", file.display()))?;
-        // Pingora's parser panics on invalid DER, so check it first.
-        x509_parser::certificate::X509Certificate::from_der(der.as_ref())
-            .map_err(|e| format!("invalid certificate in `{}`: {e}", file.display()))?;
-        certs.push(pingora::utils::tls::WrappedX509::new(
-            der.as_ref().to_vec(),
-            pingora::utils::tls::parse_x509,
-        ));
-    }
-    if certs.is_empty() {
-        return Err(format!("`{}` contains no certificate", file.display()));
-    }
-    Ok(certs.into())
-}
-
 fn build_middlewares(
     config: &Config,
     services: &HashMap<String, Arc<ServiceRuntime>>,
@@ -623,9 +598,23 @@ fn build_middlewares(
             client: client.clone(),
         }))
     };
+    let consumers = match rdock_middleware::ConsumerIndex::build(&config.consumers) {
+        Ok(index) => Arc::new(index),
+        Err(issues) => {
+            for issue in issues {
+                out.push(Diagnostic::error(issue.path, issue.message));
+            }
+            Arc::default()
+        }
+    };
     let build_env = BuildEnv {
         service: &lookup,
         client: env.client.clone(),
+        plugins: env.plugins,
+        metrics: env.metrics,
+        consumers,
+        quotas: env.quotas,
+        route_hosts: Arc::new(route_hosts(config)),
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
@@ -637,6 +626,21 @@ fn build_middlewares(
             Ok(m) => {
                 built.insert(name.clone(), m);
             }
+            Err(rdock_middleware::BuildError::Issues(issues)) => {
+                let base = path_key("middlewares", name);
+                for issue in issues {
+                    let path = match issue.path.as_str() {
+                        "" => base.clone(),
+                        p if p.starts_with('[') => format!("{base}{p}"),
+                        p => format!("{base}.{p}"),
+                    };
+                    let mut diagnostic = Diagnostic::error(path, issue.message);
+                    if let Some(hint) = issue.hint {
+                        diagnostic = diagnostic.with_hint(hint);
+                    }
+                    out.push(diagnostic);
+                }
+            }
             Err(e) => out.push(Diagnostic::error(
                 path_key("middlewares", name),
                 e.to_string(),
@@ -644,6 +648,27 @@ fn build_middlewares(
         }
     }
     built
+}
+
+/// The `Host` names of the routes that use each middleware (`oidc` builds its redirect URI
+/// only from these).
+fn route_hosts(config: &Config) -> HashMap<String, Vec<String>> {
+    let mut out: HashMap<String, Vec<String>> = HashMap::new();
+    for route in config.routes.values() {
+        let Some((expr, _)) = route_expr(route) else {
+            continue;
+        };
+        let hosts = expr.positive_hosts();
+        for reference in &route.middlewares {
+            let entry = out.entry(key(reference).to_owned()).or_default();
+            for host in &hosts {
+                if *host != "*" && !entry.iter().any(|h| h == host) {
+                    entry.push((*host).to_owned());
+                }
+            }
+        }
+    }
+    out
 }
 
 /// A `static` middleware from Docker or Swarm labels may serve only a directory inside that
@@ -728,6 +753,40 @@ fn wants_auto_tls(config: &Config, route: &Route) -> bool {
     }
 }
 
+/// The stores a configuration's routes may cache in.
+struct Caches<'a> {
+    stores: &'a HashMap<String, &'static rdock_cache::Store>,
+    /// A route naming a store that is not open is an error (a real start); otherwise
+    /// (validation, tools) the route compiles without its cache.
+    required: bool,
+}
+
+/// Opens or reuses the stores under `caches`. Validation never opens one; a changed or
+/// removed definition is a warning, because the running store stays until a restart.
+fn resolve_caches(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> HashMap<String, &'static rdock_cache::Store> {
+    let Some(registry) = env.caches.filter(|_| env.mode == Mode::Run) else {
+        return HashMap::new();
+    };
+    let resolved = registry.resolve(&config.caches);
+    for finding in &resolved.findings {
+        let path = path_key("caches", finding.store());
+        out.push(if finding.is_error() {
+            Diagnostic::error(path, finding.message())
+        } else {
+            Diagnostic::warning(path, finding.message())
+        });
+    }
+    resolved.stores
+}
+
+#[allow(
+    clippy::too_many_arguments,
+    reason = "the compiled parts of one configuration, each used by the routes"
+)]
 fn compile_listeners(
     config: &Config,
     services: &HashMap<String, Arc<ServiceRuntime>>,
@@ -735,12 +794,12 @@ fn compile_listeners(
     auto_tls: &mut AutoTls<'_>,
     scoped: &HashMap<String, Arc<CertIndex>>,
     rings: &rdock_observability::live::Rings,
+    caches: &Caches<'_>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
     let effective = config.effective_listeners();
     let mut listeners: BTreeMap<String, ListenerRuntime> = effective
         .iter()
-        .filter(|(_, l)| l.effective_protocol() != ListenerProtocol::Udp)
         .filter_map(|(name, l)| match new_listener(name, l) {
             Ok(listener) => Some((name.clone(), listener)),
             Err(message) => {
@@ -763,6 +822,8 @@ fn compile_listeners(
             middlewares,
             configs: &config.middlewares,
             live: rings.ring(name),
+            caches,
+            errors: config.defaults.errors.format,
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
@@ -835,6 +896,8 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         ping: listener.ping.clone(),
         routes: Vec::new(),
         tcp_routes: Arc::new([]),
+        udp_routes: Arc::new([]),
+        udp_sessions: listener.sessions.unwrap_or_default(),
         https_redirect: None,
     })
 }
@@ -867,6 +930,45 @@ struct RouteContext<'a> {
     /// The middlewares' configurations, by the same keys.
     configs: &'a std::collections::BTreeMap<String, rdock_model::middleware::Middleware>,
     live: Arc<rdock_observability::live::Ring>,
+    caches: &'a Caches<'a>,
+    /// `defaults.errors.format`.
+    errors: rdock_model::config::ErrorFormat,
+}
+
+/// The route's cache policy from its `cache` middleware, if it has one.
+fn route_cache(
+    path: &str,
+    route: &Route,
+    context: &RouteContext<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Result<Option<Arc<rdock_cache::RoutePolicy>>, ()> {
+    let config = route
+        .middlewares
+        .iter()
+        .find_map(|r| match context.configs.get(key(r)) {
+            Some(rdock_model::middleware::Middleware::Cache(c)) => Some(c),
+            _ => None,
+        });
+    let Some(config) = config else {
+        return Ok(None);
+    };
+    let Some(store) = context.caches.stores.get(&config.store) else {
+        if context.caches.required {
+            out.push(Diagnostic::error(
+                format!("{path}.middlewares"),
+                format!("cache store `{}` is not available", config.store),
+            ));
+            return Err(());
+        }
+        return Ok(None);
+    };
+    match rdock_cache::RoutePolicy::compile(config, store) {
+        Ok(policy) => Ok(Some(Arc::new(policy))),
+        Err(message) => {
+            out.push(Diagnostic::error(format!("{path}.middlewares"), message));
+            Err(())
+        }
+    }
 }
 
 fn compile_route(
@@ -904,7 +1006,7 @@ fn compile_route(
             out.push(unavailable("middleware", reference));
             return None;
         };
-        chain.push(m.clone());
+        chain.push((Arc::<str>::from(reference.as_str()), m.clone()));
     }
     // Validation checks this too, except for another provider's last middleware.
     let terminal = route
@@ -938,6 +1040,8 @@ fn compile_route(
         }
         None => None,
     };
+    let cache = route_cache(&path, route, context, out).ok()?;
+    let chain = rdock_middleware::Chain::new(chain);
     Some(Arc::new(RouteRuntime {
         name: Arc::from(name),
         priority,
@@ -945,11 +1049,13 @@ fn compile_route(
         service,
         expr: expr.to_string(),
         max_body: route.max_body,
-        grpc_web: chain.iter().any(|m| m.translates_grpc_web()),
-        middlewares: chain.into(),
+        grpc_web: chain.translates_grpc_web(),
+        middlewares: chain,
         timeouts: route.timeouts,
         mirror,
         live: context.live.clone(),
+        cache,
+        errors: route.errors.map_or(context.errors, |e| e.format),
     }))
 }
 

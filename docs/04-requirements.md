@@ -109,7 +109,7 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [x] M-TM-02 Concurrency limits with queue and queue deadline
 - [x] M-TM-03 Load shedding / overload protection (CPU, inflight, memory watermarks)
 - [x] M-TM-04 Bandwidth limits per route/client
-- [ ] M-TM-05 Buffering controls (request/response, upload streaming)
+- [ ] M-TM-05 Buffering controls (request/response, upload streaming). *Open (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)):* the `hold_body` middleware holds a request body until it is complete (memory up to 64 KiB, then a spool file; `413`/`408` on a limit) but is not full pre-buffering: the request head and backend connection exist while the body is held, so slow uploads still occupy a backend worker, and the head reaches the backend before an agent or `validate` verdict on the body (Pingora 0.9.1 limitation; it needs an upstream early-body hook). The box stays unticked.
 - [x] M-TM-06 Compression: gzip, brotli, zstd (negotiated, min size, content types)
 - [x] M-TM-07 Per-route timeouts and body limits override
 
@@ -130,7 +130,7 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [x] M-L4-01 TCP proxy listeners with `HostSNI` routing (SNI passthrough, no termination)
 - [x] M-L4-02 TLS termination for TCP routes (databases, MQTT, SMTP-with-TLS)
 - [x] M-L4-03 PROXY protocol v1/v2 inbound (trusted sources only) and outbound
-- [ ] M-L4-04 UDP relay with session idle timeouts (P2)
+- [ ] M-L4-04 UDP relay with session idle timeouts (P2). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `udp` listeners, `udp_routes`, `udp_services`, per-client sessions with idle timeouts, `responses`/`requests`, session caps on by default, passive and TCP health; the box is ticked by the release PR.
 - [x] M-L4-05 TCP health checks shared with HTTP checker framework
 
 ### M-SWM · Docker Swarm
@@ -191,30 +191,30 @@ Tracked as W-SWM-01…03 below.
 - [ ] F-UI-07 Multi-instance view (P3, with control plane)
 
 ### F-EXT · Extensibility (P2–P3)
-- [ ] F-EXT-01 Middleware pipeline with phases (`request`, `upstream_request`, `response`, `response_body`, `log`) and explicit ordering
-- [ ] F-EXT-02 Native Rust plugin trait (compile-time) with stability policy from v1.0
-- [ ] F-EXT-03 WASM plugins (component model, sandbox, fuel, capability allow-list) — experimental
-- [ ] F-EXT-04 Out-of-process "agents" over gRPC/HTTP for heavy engines (WAF, custom auth), with timeouts and fail policy
-- [ ] F-EXT-05 Plugin SDK, examples, signature verification for distributed plugins
+- [ ] F-EXT-01 Middleware pipeline with phases (`request`, `upstream_request`, `response`, `response_body`, `log`) and explicit ordering. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the phases `request`, `upstream_request`, `request_body`, `response`, `response_body` and `log` with list order in and reverse order out; the box is ticked by the release PR.
+- [ ] F-EXT-02 Native Rust plugin trait (compile-time) with stability policy from v1.0. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `rdock-plugin-api` (own `0.x` line, so the stability policy starts at 1.0), `type: plugin` with panic isolation and `rdock::run(registry)`; the box is ticked by the release PR.
+- [ ] F-EXT-03 WASM plugins (component model, sandbox, fuel, capability allow-list) — experimental. *Open:* implemented in the development tree behind the cargo feature `wasm` (off by default, not in the stock binary or images): `type: wasm` runs a component for the WIT world `rdock:plugin/filter@0.1.0` (request and response heads, no bodies) on wasmtime 36 LTS, a fresh instance per request, fuel, epoch deadline and memory limits, no WASI, capabilities `log`, `clock`, `random` granted per middleware, fail closed with `on_error`; tested (limits, traps, imports, a `no_std` Rust example guest, the real binary with a reload) in the non-required `wasm` CI job only; the ABI is `0.x`; the box waits for the release PR ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md))
+- [ ] F-EXT-04 Out-of-process "agents" over gRPC/HTTP for heavy engines (WAF, custom auth), with timeouts and fail policy. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `type: agent` over HTTP (`rdock` JSON and `forward` protocols; timeouts, fail closed by default, circuit breaker) and the CRS WAF example (`examples/waf`, `waf-example` CI job). *Open:* gRPC agents (`ext_proc`, `ext_authz`) and SPOP, refused as planned; the request head reaches the backend before a body verdict (Pingora 0.9.1 limitation).
+- [ ] F-EXT-05 Plugin SDK, examples, signature verification for distributed plugins. *Open:* the SDK half (`rdock-plugin-api`, `testing`, two native examples, a template) and the signature half (WASM modules: a mandatory `sha256` pin and a minisign Ed25519 signature by a pinned key, checked before compilation; `allow_unsigned: true` is the warned exception) are implemented in the development tree; signatures apply to WASM modules only, which need the experimental `wasm` feature; the box waits for the release PR
 
 ### F-GW · API gateway features (P2)
-- [ ] F-GW-01 API-key validation (hashed keys, external store) and OIDC login/policies (plain JWT validation is M-SEC-01)
-- [ ] F-GW-02 Per-consumer rate limits and quotas
-- [ ] F-GW-03 Request validation against OpenAPI/JSON Schema
-- [ ] F-GW-04 Consistent JSON error envelope; request/response transformation
-- [ ] F-GW-05 Usage metering events export (OTLP/webhook) — no billing in core
+- [ ] F-GW-01 API-key validation (hashed keys, external store) and OIDC login/policies (plain JWT validation is M-SEC-01). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the API-key half: `consumers`, `api_key` with `rdk_` keys stored as ID and SHA-256 (inline, keys file, admin API); OIDC login: `oidc` (authorization code with PKCE, stateless encrypted session cookie, refresh, RP-initiated logout, claims to headers and to the consumer; tested against a fake provider and Dex in CI), and `jwt.consumer_claim`. The external store (RFC 7662) and server-side sessions, early session revocation, OIDC back-channel logout and a dashboard UI for consumers, keys and quotas are open.
+- [ ] F-GW-02 Per-consumer rate limits and quotas. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `rate_limit.key: consumer` with group overrides, the `quota` middleware with persisted per-instance counters; the box is ticked by the release PR.
+- [ ] F-GW-03 Request validation against OpenAPI/JSON Schema. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `type: validate` with inline JSON Schema 2020-12 or an OpenAPI 3.1 document; non-default OpenAPI parameter styles are refused as planned.
+- [ ] F-GW-04 Consistent JSON error envelope; request/response transformation. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* the envelope half (`errors.format`, RFC 9457 problem details) and the transformation half (`type: transform`: header rules and JSON Patch on request bodies and, up to a cap, JSON response bodies).
+- [ ] F-GW-05 Usage metering events export (OTLP/webhook) — no billing in core. *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `observability.metering` (CloudEvents webhook, OTLP logs, bounded queue, at least once); the box is ticked by the release PR.
 
 ### F-WEB · Web server and legacy compatibility
 - [x] F-WEB-01 Static files: MIME, ranges, conditional requests, cache headers, SPA fallback, precompressed assets (P1)
-- [ ] F-WEB-02 Directory listing (off by default, hardened path resolution) (P3)
-- [ ] F-WEB-03 HTTP cache: memory + disk, RFC 9111, `Vary`, SWR/SIE, purge API (URL/tag), coalescing (P2)
+- [ ] F-WEB-02 Directory listing (off by default, hardened path resolution) (P3). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `static.listing: true` (off by default; escaped names, restrictive CSP, existing `hidden`/`symlinks` policy, at most 10,000 entries); the box is ticked by the release PR.
+- [ ] F-WEB-03 HTTP cache: memory + disk, RFC 9111, `Vary`, SWR/SIE, purge API (URL/tag), coalescing (P2). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `rdock-cache` with memory and disk stores, RFC 9111 storability, freshness, revalidation, `Vary`, `stale-if-error`, coalescing, invalidation, tags and the admin purge API (one instance); the stampede test passes; the RFC 9111 suite `http-tests/cache-tests` (commit `7e2c537`, Node.js 24, job `http-cache`, not a required check) passed its gate on commit `c292639` with 205 tests passing and 2 required failures allow-listed in `tests/conformance/http-cache/allowlist.json` (`other-date-update`, `other-date-update-expires`: Pingora 0.9.1 rewrites `Date`, an upstream change is needed). *Open:* background refresh for `stale-while-revalidate` (served as plain staleness; refused as planned). The box is ticked by the release PR.
 - [ ] F-WEB-04 FastCGI (PHP) gateway (P3, optional crate)
 - [ ] F-WEB-05 Explicit forward-proxy/CONNECT mode, isolated config, off by default (P3)
 - [ ] F-WEB-06 Mail proxy — out of scope for core (separate project if ever)
 
 ### F-MGMT · Management and automation
 - [x] F-MGMT-01 CLI/API parity; OpenAPI published; typed clients generated (TS, Go)
-- [ ] F-MGMT-02 Terraform/OpenTofu provider (P2)
+- [ ] F-MGMT-02 Terraform/OpenTofu provider (P2). *Open (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)):* the provider source (`reversedock_route`, `reversedock_service`, `reversedock_middleware`, data sources, import) is in `clients/terraform` and tested in the `terraform-provider` CI job; publishing needs a separate public repository `terraform-provider-reversedock` and a signing key (maintainer actions), so the box stays unticked.
 - [ ] F-MGMT-03 Migration assistants: `rdock migrate traefik` (labels + dynamic YAML, P0), `rdock migrate nginx` (directive subset, P3)
 - [ ] F-MGMT-04 Webhooks for config/cert/health events
 - [ ] F-MGMT-05 Docs site with interactive config playground (schema-driven)
@@ -237,7 +237,7 @@ Tracked as W-SWM-01…03 below.
 - [ ] W-CF-04 Origin CA certificates and Full (strict) guidance
 - [x] W-CF-08 Authenticated Origin Pulls: client-certificate verification against Cloudflare's origin-pull CA (needs M-TLS-01)
 - [ ] W-CF-05 Cloudflare Tunnel: documented deployment with `cloudflared` sidecar, no inbound ports
-- [ ] W-CF-06 Cloudflare Access JWT validation middleware (P2)
+- [ ] W-CF-06 Cloudflare Access JWT validation middleware (P2). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* `type: cloudflare_access`, a preset over `jwt`; the box is ticked by the release PR.
 - [x] W-CF-07 Compatible with Cloudflare Load Balancer origin pools (health endpoints, PROXY-less)
 
 ### W-DKR · Docker and Compose (P0, highest priority)
@@ -256,7 +256,7 @@ Tracked as W-SWM-01…03 below.
 - [x] W-SWM-03 Swarm secrets/configs; multi-node replicated proxies (global mode)
 
 ### W-K8S · Kubernetes (P2)
-- [ ] W-K8S-01 Gateway API controller targeting the latest Standard channel (v1.7.0, released 2026-10-29; every kind below is `v1` in Standard): GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet; upstream conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` in CI. *Open:* GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute (passthrough), TCPRoute, ReferenceGrant and ListenerSet are implemented; UDPRoute is not (UDP waits for M-L4-04, v0.8); the upstream Gateway API v1.7.0 conformance suite passes in CI on kind for `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP` (all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`, [run](https://github.com/Docker-Hunterpedia/ReverseDock/actions/runs/43046671411)); the box stays open until UDPRoute exists and the release PR ticks it, and no report has been submitted upstream ([ADR-0029](decisions/0029-kubernetes-gateway-api.md), [roadmap](07-roadmap.md))
+- [ ] W-K8S-01 Gateway API controller targeting the latest Standard channel (v1.7.0, released 2026-10-29; every kind below is `v1` in Standard): GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet; upstream conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` in CI. *Open:* GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute (passthrough), TCPRoute, ReferenceGrant and ListenerSet are implemented; UDPRoute is implemented with UDP routes (v0.8, ADR-0030), its nine upstream tests transcribed and passing against the translator, and `GATEWAY-UDP` added to the conformance job, where it passes on kind (2026-11-12, commit `43d81de`: core 21 passed, extended 7 passed); the upstream Gateway API v1.7.0 conformance suite passes in CI on kind for `GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP` (all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`, [run](https://github.com/Docker-Hunterpedia/ReverseDock/actions/runs/43046671411)); all five profiles now pass; the box stays open until the release PR ticks it, and no report has been submitted upstream ([ADR-0029](decisions/0029-kubernetes-gateway-api.md), [roadmap](07-roadmap.md))
 - [ ] W-K8S-02 Ingress controller (networking.k8s.io/v1) for migration. *Open:* implemented and tested on fixtures; no cluster job exercises Ingress (the `helm-k3s` job, which passed on 2026-11-11, uses a Gateway and an HTTPRoute only)
 - [ ] W-K8S-03 EndpointSlice watches, Secrets for TLS, cert-manager compatibility. *Open:* implemented and tested on fixtures and against a bare API server; cert-manager compatibility is not exercised in a cluster job (the k3s job uses a self-made TLS Secret, not cert-manager)
 - [ ] W-K8S-04 Leader election, RBAC, namespace scoping, readiness probes. *Open:* implemented and tested without a cluster; the chart's RBAC and readiness probes ran on kind and k3s in CI on 2026-11-11 (the controller wrote status through the conformance suite, and `helm install --wait` and `helm upgrade --wait` returned); leader election is not checked by any job; the namespaced mode (`watchNamespaces`) is not exercised in a cluster job; the box waits for the release PR
@@ -282,5 +282,5 @@ Tracked as W-SWM-01…03 below.
 
 ### W-OBS · Monitoring, config and secrets
 - [ ] W-OBS-01 Prometheus, Grafana, OTLP (Tempo/Jaeger), Loki/OpenSearch via stdout or OTLP, syslog (P0–P1)
-- [ ] W-OBS-02 Secrets: env, files, Docker/Swarm/K8s secrets (P0); Vault/External Secrets (P2)
+- [ ] W-OBS-02 Secrets: env, files, Docker/Swarm/K8s secrets (P0); Vault/External Secrets (P2). *Implemented (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)), not released:* External Secrets Operator, the CSI driver and Vault Agent documented as file and Secret producers; `${vault:…}` for KV v2 with token and Kubernetes login, tested against OpenBao.
 - [x] W-OBS-03 GitOps: file provider + `rdock validate` in CI (P0); Terraform (P2)

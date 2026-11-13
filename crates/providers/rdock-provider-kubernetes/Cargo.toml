@@ -36,6 +36,7 @@ rcgen.workspace = true
 rdock-balancer.workspace = true
 rdock-middleware.workspace = true
 rdock-observability.workspace = true
+rdock-plugin-api.workspace = true
 rdock-proxy.workspace = true
 rdock-testkit.workspace = true
 rdock-tls.workspace = true

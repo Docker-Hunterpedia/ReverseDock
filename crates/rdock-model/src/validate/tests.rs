@@ -1110,6 +1110,54 @@ fn static_settings_are_checked() {
 }
 
 #[test]
+fn directory_listing_with_risky_options_warns() {
+    assert_eq!(
+        warnings(site(json!({ "listing": true }))),
+        Vec::new(),
+        "safe defaults list without a warning"
+    );
+    assert_eq!(
+        warnings(site(json!({ "listing": true, "symlinks": "within_root" }))),
+        Vec::new()
+    );
+    // The options alone are warned about elsewhere; the listing adds its own warning.
+    let found = warnings(site(json!({ "listing": true, "hidden": "allow" })));
+    assert!(
+        has(&found, "middlewares.files.listing", "starting with `.`"),
+        "{found:?}"
+    );
+    let found = warnings(site(json!({ "listing": true, "symlinks": "all" })));
+    assert!(
+        has(&found, "middlewares.files.listing", "lead out of `root`"),
+        "{found:?}"
+    );
+    let found = warnings(site(json!({
+        "listing": true, "hidden": "allow", "symlinks": "all"
+    })));
+    assert_eq!(
+        found
+            .iter()
+            .filter(|(p, _)| p == "middlewares.files.listing")
+            .count(),
+        2,
+        "{found:?}"
+    );
+    assert!(
+        errors(site(
+            json!({ "listing": true, "hidden": "allow", "symlinks": "all" })
+        ))
+        .is_empty(),
+        "warnings, not errors"
+    );
+    assert!(
+        !warnings(site(json!({ "hidden": "allow" })))
+            .iter()
+            .any(|(p, _)| p.ends_with(".listing")),
+        "no listing, no listing warning"
+    );
+}
+
+#[test]
 fn risky_static_options_are_warnings() {
     let found = warnings(site(json!({
         "symlinks": "all",
@@ -1407,4 +1455,607 @@ fn listener_certificates_must_exist() {
         "listeners.b.tls.certificates[0]",
         "certificate `two` does not exist"
     ));
+}
+
+#[test]
+fn hold_body_needs_a_bounded_positive_size_and_timeout() {
+    let hold = |settings: Value| {
+        let mut m = json!({ "type": "hold_body" });
+        merge(&mut m, settings);
+        errors(with(app(), json!({ "middlewares": { "hold": m } })))
+    };
+    assert_eq!(hold(json!({})), [], "defaults: 1MiB within 30s");
+    assert_eq!(hold(json!({ "max": "64MiB", "timeout": "2m" })), []);
+    assert!(has(
+        &hold(json!({ "max": 0 })),
+        "middlewares.hold.max",
+        "greater than zero"
+    ));
+    assert!(has(
+        &hold(json!({ "max": "65MiB" })),
+        "middlewares.hold.max",
+        "at most 64MiB"
+    ));
+    assert!(has(
+        &hold(json!({ "timeout": "0s" })),
+        "middlewares.hold.timeout",
+        "greater than zero"
+    ));
+}
+
+// -- HTTP cache (F-WEB-03) --------------------------------------------------------------------
+
+#[allow(
+    clippy::needless_pass_by_value,
+    reason = "built inline by every caller"
+)]
+fn cached(middlewares: Value, chain: Value) -> Value {
+    with(
+        app(),
+        json!({
+            "caches": { "mem": { "type": "memory" } },
+            "middlewares": middlewares,
+            "routes": { "app": { "middlewares": chain } }
+        }),
+    )
+}
+
+#[test]
+fn cache_targeted_fields_are_header_names_other_than_cache_control() {
+    let found = errors(cached(
+        json!({ "c": { "type": "cache", "store": "mem", "targeted": ["Cache-Control", "bad name", "CDN-Cache-Control", "cdn-cache-control"] } }),
+        json!(["c"]),
+    ));
+    assert!(
+        has(&found, "middlewares.c.targeted[0]", "not a targeted field"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.targeted[1]",
+            "not a valid header name"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.targeted[3]", "listed twice"),
+        "{found:?}"
+    );
+    let ok = cached(
+        json!({ "c": { "type": "cache", "store": "mem", "targeted": [] } }),
+        json!(["c"]),
+    );
+    assert_eq!(errors(ok), Vec::<(String, String)>::new());
+}
+
+#[test]
+fn cache_middlewares_need_a_defined_store_and_sane_settings() {
+    let found = errors(cached(
+        json!({ "c": { "type": "cache", "store": "nope", "statuses": [206, 200, 99], "default_ttl": { "404": "1m", "x": "1m" }, "lock": { "timeout": "0s" }, "key": { "headers": ["bad header"], "query": { "only": [] } } } }),
+        json!(["c"]),
+    ));
+    assert!(
+        has(
+            &found,
+            "middlewares.c.store",
+            "cache store `nope` does not exist"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.statuses[0]", "never stored as such"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.statuses[2]",
+            "not a final status code"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.default_ttl.404",
+            "not one the route stores"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.default_ttl.x", "not a status code"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.lock.timeout", "above zero"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.c.key.headers[0]",
+            "not a valid header name"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.c.key.query", "at least one parameter"),
+        "{found:?}"
+    );
+    let ok = cached(
+        json!({ "c": { "type": "cache", "store": "mem" } }),
+        json!(["c"]),
+    );
+    assert_eq!(errors(ok), Vec::new());
+}
+
+#[test]
+fn disk_stores_need_absolute_separate_directories() {
+    let found = errors(with(
+        app(),
+        json!({ "caches": {
+            "a": { "type": "disk", "path": "relative/dir" },
+            "b": { "type": "disk", "path": "/var/cache/rdock" },
+            "c": { "type": "disk", "path": "/var/cache/rdock/inner" },
+            "d": { "type": "disk", "path": "/" },
+            "e": { "type": "disk", "path": "/var/../etc", "max_objects": 0 },
+            "f": { "type": "memory", "max_size": 0 }
+        } }),
+    ));
+    assert!(has(&found, "caches.a.path", "absolute path"), "{found:?}");
+    assert!(
+        has(&found, "caches.c.path", "overlaps store `b`"),
+        "{found:?}"
+    );
+    assert!(has(&found, "caches.d.path", "root directory"), "{found:?}");
+    assert!(has(&found, "caches.e.path", "`..`"), "{found:?}");
+    assert!(
+        has(&found, "caches.e.max_objects", "greater than zero"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "caches.f.max_size", "greater than zero"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn an_authenticated_route_caches_only_with_an_explicit_statement() {
+    const MESSAGE: &str = "`c` caches the responses of a route that authenticates with `auth`: one user's response could be served to another";
+    let auth = json!({ "type": "basic_auth", "users": ["alice:$2y$05$abcdefghijklmnopqrstuuJ8iS0V0zP5Y9n7wS8pB5yFq6YxwH8ZC"] });
+    let cache = |extra: Value| {
+        let mut c = json!({ "type": "cache", "store": "mem" });
+        merge(&mut c, extra);
+        c
+    };
+    // Position does not matter: the cache is looked up after every request phase.
+    for chain in [json!(["auth", "c"]), json!(["c", "auth"])] {
+        let found = errors(cached(
+            json!({ "auth": auth.clone(), "c": cache(json!({})) }),
+            chain.clone(),
+        ));
+        let index = usize::from(chain[0] != "c");
+        assert!(
+            has(&found, &format!("routes.app.middlewares[{index}]"), MESSAGE),
+            "{found:?}"
+        );
+    }
+    let diagnostics = validate(cached(
+        json!({ "auth": auth.clone(), "c": cache(json!({})) }),
+        json!(["auth", "c"]),
+    ));
+    let hint = diagnostics
+        .iter()
+        .find(|d| d.message == MESSAGE)
+        .and_then(|d| d.hint.clone())
+        .unwrap();
+    assert!(
+        hint.contains("`shared_across_users: true`") && hint.contains("keyed on the user name"),
+        "{hint}"
+    );
+    for extra in [
+        json!({ "shared_across_users": true }),
+        json!({ "key": { "consumer": true } }),
+    ] {
+        let found = errors(cached(
+            json!({ "auth": auth.clone(), "c": cache(extra.clone()) }),
+            json!(["auth", "c"]),
+        ));
+        assert_eq!(found, Vec::new(), "{extra}");
+    }
+    // forward_auth: rdock does not learn the identity; only a header it copies can key it.
+    let fa = json!({ "type": "forward_auth", "address": "http://auth:9091/verify", "copy_headers": ["X-User"] });
+    let found = errors(cached(
+        json!({ "auth": fa.clone(), "c": cache(json!({ "key": { "consumer": true } })) }),
+        json!(["auth", "c"]),
+    ));
+    assert!(
+        has(&found, "routes.app.middlewares[1]", MESSAGE),
+        "{found:?}"
+    );
+    let found = errors(cached(
+        json!({ "auth": fa, "c": cache(json!({ "key": { "headers": ["x-user"] } })) }),
+        json!(["auth", "c"]),
+    ));
+    assert_eq!(found, Vec::new());
+    // jwt and client_cert authenticate too.
+    let jwt = json!({ "type": "jwt", "jwks_url": "https://idp.example.com/jwks", "issuer": "https://idp.example.com", "audiences": ["app"] });
+    let found = errors(cached(
+        json!({ "auth": jwt, "c": cache(json!({})) }),
+        json!(["auth", "c"]),
+    ));
+    assert!(
+        has(&found, "routes.app.middlewares[1]", MESSAGE),
+        "{found:?}"
+    );
+    // A second cache middleware is refused.
+    let found = errors(cached(
+        json!({ "c": cache(json!({})), "c2": cache(json!({})) }),
+        json!(["c", "c2"]),
+    ));
+    assert!(
+        has(
+            &found,
+            "routes.app.middlewares[1]",
+            "second `cache` middleware"
+        ),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn a_fully_mirrored_cached_route_is_warned_about() {
+    let mut config = cached(
+        json!({ "c": { "type": "cache", "store": "mem" } }),
+        json!(["c"]),
+    );
+    merge(
+        &mut config,
+        json!({ "routes": { "app": { "mirror": { "service": "copy", "percent": 100 } } }, "services": { "copy": { "backends": [{ "address": "copy:1" }] } } }),
+    );
+    let found = warnings(config);
+    assert!(
+        has(&found, "routes.app.mirror.percent", "never used"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn agents_and_plugins_are_checked() {
+    let config = json!({ "middlewares": {
+        "waf": {
+            "type": "agent", "address": "https://waf.example.com",
+            "max_body": "65MiB", "timeout": "0s",
+            "request_headers": ["*", "bad name"],
+            "response_headers": ["X-User", "Host", "X-Forwarded-For", "Content-Length"],
+            "breaker": { "failures": 3, "window": "0s" },
+            "tls": { "verify": false }
+        },
+        "plain": { "type": "agent", "address": "http://policy.internal:9000", "tls": {} },
+        "local": { "type": "agent", "address": "http://127.0.0.1:9000", "max_body": 0, "response_headers": ["X-User"] },
+        "plug": { "type": "plugin", "name": "Not Valid" },
+        "ok": { "type": "plugin", "name": "header_rewrite", "config": { "anything": [1, 2] } }
+    }});
+    let errors = errors(config.clone());
+    assert!(
+        has(&errors, "middlewares.waf.max_body", "at most 64MiB"),
+        "{errors:?}"
+    );
+    assert!(has(&errors, "middlewares.waf.timeout", ""), "{errors:?}");
+    assert!(has(
+        &errors,
+        "middlewares.waf.request_headers[1]",
+        "not a valid header name"
+    ));
+    assert!(
+        !errors
+            .iter()
+            .any(|(p, _)| p == "middlewares.waf.request_headers[0]"),
+        "`*` is allowed"
+    );
+    assert!(has(
+        &errors,
+        "middlewares.waf.response_headers[1]",
+        "managed by rdock"
+    ));
+    assert!(has(
+        &errors,
+        "middlewares.waf.response_headers[2]",
+        "managed by rdock"
+    ));
+    assert!(has(
+        &errors,
+        "middlewares.waf.response_headers[3]",
+        "managed by rdock"
+    ));
+    assert!(
+        !errors
+            .iter()
+            .any(|(p, _)| p == "middlewares.waf.response_headers[0]")
+    );
+    assert!(
+        has(&errors, "middlewares.waf.breaker.window", ""),
+        "{errors:?}"
+    );
+    assert!(has(
+        &errors,
+        "middlewares.plug.name",
+        "is not a plugin name"
+    ));
+    assert!(
+        !errors.iter().any(|(p, _)| p.starts_with("middlewares.ok")),
+        "config is free-form"
+    );
+    let warnings = warnings(config);
+    assert!(has(&warnings, "middlewares.waf.tls.verify", "not verified"));
+    assert!(has(
+        &warnings,
+        "middlewares.waf.response_headers",
+        "only to requests without a body"
+    ));
+    assert!(has(
+        &warnings,
+        "middlewares.plain.address",
+        "plain `http://`"
+    ));
+    assert!(has(
+        &warnings,
+        "middlewares.plain.tls",
+        "only to an `https://` address"
+    ));
+    assert!(
+        !warnings
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.local")),
+        "{warnings:?}"
+    );
+}
+
+#[test]
+fn validate_middlewares_are_checked() {
+    let check = |mw: Value| errors(with(app(), json!({ "middlewares": { "v": mw } })));
+    let found = check(json!({ "type": "validate" }));
+    assert!(
+        has(&found, "middlewares.v", "nothing to check"),
+        "{found:?}"
+    );
+    let found = check(json!({ "type": "validate", "openapi": "/api.yaml", "body": {} }));
+    assert!(
+        has(&found, "middlewares.v", "cannot be combined"),
+        "{found:?}"
+    );
+    let found = check(json!({
+        "type": "validate",
+        "body": { "properties": { "a": { "$ref": "https://example.com/a.json" } } }
+    }));
+    assert!(
+        has(
+            &found,
+            "middlewares.v.body.properties.a.$ref",
+            "outside the schema"
+        ),
+        "{found:?}"
+    );
+    let found = check(json!({ "type": "validate", "query": "string" }));
+    assert!(
+        has(&found, "middlewares.v.query", "object or a boolean"),
+        "{found:?}"
+    );
+    let found =
+        check(json!({ "type": "validate", "body": {}, "max_body": "65MiB", "max_errors": 0 }));
+    assert!(
+        has(&found, "middlewares.v.max_body", "at most"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.v.max_errors", "use 1 to 100"),
+        "{found:?}"
+    );
+    assert_eq!(
+        check(json!({ "type": "validate", "body": { "$ref": "#/$defs/a", "$defs": { "a": {} } } })),
+        Vec::<(String, String)>::new()
+    );
+}
+
+#[test]
+fn transform_middlewares_are_checked() {
+    let check = |mw: Value| errors(with(app(), json!({ "middlewares": { "t": mw } })));
+    let found = check(json!({
+        "type": "transform",
+        "request": { "body": { "patch": [{ "op": "add", "path": "nope", "value": 1 }] } },
+        "response": { "body": { "patch": [{ "op": "move", "from": "/a", "path": "/a/b" }] } }
+    }));
+    assert!(
+        has(
+            &found,
+            "middlewares.t.request.body.patch[0]",
+            "must be empty or start with `/`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares.t.response.body.patch[0]",
+            "moved into itself"
+        ),
+        "{found:?}"
+    );
+    let found = warnings(with(
+        app(),
+        json!({ "middlewares": { "t": { "type": "transform" } } }),
+    ));
+    assert!(
+        has(&found, "middlewares.t", "nothing to change"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn vault_settings_are_checked() {
+    let check = |vault: Value| errors(with(app(), json!({ "secrets": { "vault": vault } })));
+    let found = check(
+        json!({ "address": "http://vault.internal:8200", "auth": { "token": "${file:/t}" } }),
+    );
+    assert!(
+        has(&found, "secrets.vault.address", "`https://`"),
+        "{found:?}"
+    );
+    assert_eq!(
+        check(json!({ "address": "http://127.0.0.1:8200", "auth": { "token": "${file:/t}" } })),
+        Vec::<(String, String)>::new()
+    );
+    let insecure = json!({ "address": "http://vault.internal:8200", "insecure_http": true, "auth": { "token": "${file:/t}" } });
+    assert_eq!(check(insecure.clone()), Vec::<(String, String)>::new());
+    let found = warnings(with(app(), json!({ "secrets": { "vault": insecure } })));
+    assert!(
+        has(&found, "secrets.vault.insecure_http", "unencrypted"),
+        "{found:?}"
+    );
+    let found = check(
+        json!({ "address": "https://vault.internal:8200/v1", "auth": { "token": "s.literal" } }),
+    );
+    assert!(has(&found, "secrets.vault.address", "root"), "{found:?}");
+    assert!(
+        has(
+            &found,
+            "secrets.vault.auth.token",
+            "written in the configuration"
+        ),
+        "{found:?}"
+    );
+    let found = check(json!({
+        "address": "https://vault.internal:8200",
+        "auth": { "kubernetes": { "role": "", "token_file": "relative" } },
+        "refresh": "500ms"
+    }));
+    assert!(
+        has(&found, "secrets.vault.auth.kubernetes.role", "empty"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "secrets.vault.auth.kubernetes.token_file",
+            "absolute"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "secrets.vault.refresh", "at least 1s"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "secrets.vault.timeout", "shorter than `refresh`"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn wasm_plugins_are_checked() {
+    let pin = "a".repeat(64);
+    let config = json!({ "middlewares": {
+        "bad": {
+            "type": "wasm", "path": "", "sha256": "abc",
+            "fuel": 0, "timeout": "11s", "memory": "1KiB",
+            "capabilities": ["log", "log"]
+        },
+        "unsigned": { "type": "wasm", "path": "/p.wasm", "sha256": pin, "allow_unsigned": true },
+        "ok": {
+            "type": "wasm", "path": "/p.wasm", "sha256": pin,
+            "trusted_keys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3"],
+            "capabilities": ["clock", "random"], "on_error": "allow", "config": { "x": 1 }
+        }
+    }});
+    let errors = errors(config.clone());
+    for (path, fragment) in [
+        ("middlewares.bad.path", "required"),
+        ("middlewares.bad.sha256", "64 hex digits"),
+        ("middlewares.bad.trusted_keys", "signed by a trusted key"),
+        ("middlewares.bad.fuel", ""),
+        ("middlewares.bad.timeout", "at most 10s"),
+        ("middlewares.bad.memory", "between 64KiB"),
+    ] {
+        assert!(has(&errors, path, fragment), "{path}: {errors:?}");
+    }
+    assert!(
+        !errors
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.ok") || p.starts_with("middlewares.unsigned")),
+        "{errors:?}"
+    );
+    let warnings = warnings(config);
+    assert!(has(
+        &warnings,
+        "middlewares.unsigned.allow_unsigned",
+        "unsigned"
+    ));
+    assert!(has(
+        &warnings,
+        "middlewares.bad.capabilities[1]",
+        "listed twice"
+    ));
+}
+
+/// M1 of the v0.8 review: a provider object cannot make rdock read a file, a variable or a
+/// Vault secret through a secret field; the API may name files and variables (documented for
+/// the configuration API), not Vault; the file may name anything.
+#[test]
+fn provider_objects_hold_no_references_in_secret_fields() {
+    let jwt = |secret: &str| {
+        json!({ "type": "jwt", "issuer": "any", "audiences": ["any"], "algorithms": ["HS256"],
+            "hmac_secret": secret })
+    };
+    let config: Config = serde_json::from_value(json!({
+        "middlewares": {
+            "a@docker": jwt("${file:/etc/shadow}"),
+            "b@kubernetes": jwt("${env:HOME}"),
+            "c@api": jwt("${vault:kv/prod#db}"),
+            "d@api": jwt("${file:/run/secrets/jwt}"),
+            "e": jwt("${vault:kv/prod#db}"),
+            "f@docker": jwt("a-literal-secret-of-at-least-32-bytes!!"),
+        },
+        "services": {
+            "s@swarm": { "backends": [{ "address": "10.0.0.1:80" }],
+                "sticky": { "cookie": { "name": "s", "secret": "${file:/etc/shadow}" } } }
+        }
+    }))
+    .unwrap();
+    let found: Vec<(String, String)> = config
+        .validate_merged()
+        .into_iter()
+        .filter(Diagnostic::is_error)
+        .map(|d| (d.path, d.message))
+        .collect();
+    let refused = |path: &str| has(&found, path, "reference") || has(&found, path, "read only");
+    assert!(
+        refused("middlewares[\"a@docker\"].hmac_secret"),
+        "{found:?}"
+    );
+    assert!(
+        refused("middlewares[\"b@kubernetes\"].hmac_secret"),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            "middlewares[\"c@api\"].hmac_secret",
+            "read only for the configuration file"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        refused("services[\"s@swarm\"].sticky.cookie.secret"),
+        "{found:?}"
+    );
+    for allowed in ["d@api", "e", "f@docker"] {
+        assert!(
+            !found
+                .iter()
+                .any(|(p, _)| p.contains(&format!("{allowed}\"]"))
+                    || p == &format!("middlewares.{allowed}.hmac_secret")),
+            "{allowed}: {found:?}"
+        );
+    }
 }

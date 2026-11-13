@@ -157,6 +157,48 @@ middlewares:
     );
 }
 
+#[test]
+fn provider_udp_routes_are_qualified_and_left_out_when_invalid() {
+    let file = FILE.replace(
+        "  web: { address: \":8080\" }\n",
+        "  web: { address: \":8080\" }\n  dns: { address: \":5353\", protocol: udp }\n",
+    );
+    let snapshot = docker(
+        "
+udp_routes:
+  dns: { listeners: [dns], service: dns, middlewares: [allow] }
+  second: { listeners: [dns], service: dns }
+  broken: { match: \"Host(`x.example.com`)\", listeners: [dns], service: dns }
+udp_services:
+  dns: { backends: [{ address: \"10.0.0.53:53\" }] }
+middlewares:
+  allow: { type: ip_allow, cidrs: [10.0.0.0/8] }
+",
+    );
+    let merged = assemble(&base(&file), &[&snapshot], &BTreeSet::new());
+    assert_eq!(merged.errors, Vec::new());
+    let route = &merged.config.udp_routes["dns@docker"];
+    assert_eq!(route.service, "dns@docker");
+    assert_eq!(route.middlewares, ["allow@docker"]);
+    assert!(merged.config.udp_services.contains_key("dns@docker"));
+    // A second route without `match` on the listener, and an HTTP rule, are left out.
+    for name in ["broken@docker", "second@docker"] {
+        assert!(!merged.config.udp_routes.contains_key(name), "{name}");
+        assert!(
+            merged
+                .skipped
+                .iter()
+                .any(|d| d.path == format!("udp_routes[\"{name}\"]")),
+            "{:?}",
+            merged.skipped
+        );
+    }
+    assert_eq!(
+        owner("udp_services[\"dns@docker\"].backends"),
+        Some((Section::UdpServices, "dns@docker".to_owned()))
+    );
+}
+
 fn kubernetes(yaml: &str) -> Snapshot {
     let fragment: Fragment = serde_saphyr::from_str(yaml).unwrap();
     Snapshot {
@@ -328,4 +370,65 @@ fn owners_of_listeners_and_certificates() {
         owner("certificates[\"c@kubernetes\"].cert_file"),
         Some((Section::Certificates, "c@kubernetes".to_owned()))
     );
+}
+
+fn api(json: serde_json::Value) -> Snapshot {
+    Snapshot {
+        provider: CONSUMER_PROVIDER.to_owned(),
+        fragment: serde_json::from_value(json).unwrap(),
+        diagnostics: Vec::new(),
+        revision: None,
+    }
+}
+
+const KEY: &str = "{ \"id\": \"abcdefghijkl\", \"hash\": \"0000000000000000000000000000000000000000000000000000000000000000\" }";
+
+/// L2 of the v0.8 review: keys the API minted for a consumer of the file stop working when the
+/// file no longer defines it; an API-owned consumer (with `groups`, even empty) stays.
+#[test]
+fn api_keys_of_a_consumer_the_file_dropped_are_left_out() {
+    let key: serde_json::Value = serde_json::from_str(KEY).unwrap();
+    let snapshot = api(serde_json::json!({
+        "consumers": {
+            "partner": { "keys": [key.clone()] },
+            "mobile": { "groups": [], "keys": [{ "id": "mnopqrstuvwx", "hash": key["hash"] }] },
+        }
+    }));
+    let with = format!("{FILE}consumers:\n  partner: {{ groups: [gold] }}\n");
+    let merged = assemble(&base(&with), &[&snapshot], &BTreeSet::new());
+    assert!(merged.errors.is_empty(), "{:?}", merged.errors);
+    assert_eq!(merged.config.consumers["partner"].keys.len(), 1);
+    assert!(merged.config.consumers.contains_key("mobile"));
+
+    let merged = assemble(&base(FILE), &[&snapshot], &BTreeSet::new());
+    assert!(
+        !merged.config.consumers.contains_key("partner"),
+        "{:?}",
+        merged.config.consumers
+    );
+    assert!(merged.config.consumers.contains_key("mobile"));
+    assert!(
+        merged
+            .skipped
+            .iter()
+            .any(|d| d.path == "consumers.partner" && d.message.contains("no longer defines")),
+        "{:?}",
+        merged.skipped
+    );
+}
+
+/// L3 of the v0.8 review: a consumer of the file has the file's groups only, even when its
+/// list there is empty and the API entry has some.
+#[test]
+fn api_groups_never_reach_a_consumer_of_the_file() {
+    let key: serde_json::Value = serde_json::from_str(KEY).unwrap();
+    let snapshot = api(serde_json::json!({
+        "consumers": { "partner": { "groups": ["admin"], "keys": [key] } }
+    }));
+    let with = format!("{FILE}consumers:\n  partner: {{}}\n");
+    let merged = assemble(&base(&with), &[&snapshot], &BTreeSet::new());
+    assert!(merged.errors.is_empty(), "{:?}", merged.errors);
+    let partner = &merged.config.consumers["partner"];
+    assert!(partner.groups().is_empty(), "{:?}", partner.groups());
+    assert_eq!(partner.keys.len(), 1, "the API's keys are still added");
 }

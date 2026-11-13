@@ -16,15 +16,18 @@ cargo-fuzz = true
 bytes = "1.12.1"
 httparse = "1.10.1"
 libfuzzer-sys = "0.4.13"
-pingora-core = { version = "0.9.0", default-features = false }
-pingora-http = "0.9.0"
+pingora-core = { version = "0.9.1", default-features = false }
+pingora-http = "0.9.1"
 # The PROXY protocol parser rdock-proxy uses on network bytes (pinned like the main workspace).
 proxy-header = { version = "=0.1.3", default-features = false }
+rdock-cache = { path = "../../crates/rdock-cache" }
 rdock-config = { path = "../../crates/rdock-config" }
 rdock-middleware = { path = "../../crates/rdock-middleware" }
+rdock-model = { path = "../../crates/rdock-model" }
 rdock-rules = { path = "../../crates/rdock-rules" }
 rdock-tls = { path = "../../crates/rdock-tls" }
-tokio = { version = ">=1.53.3, <1.54", features = ["io-util", "rt", "time"] }
+serde_json = "1.0.154"
+tokio = { version = "1.54.1", features = ["io-util", "rt", "time"] }
 
 [[bin]]
 name = "h1_framing"
@@ -64,6 +67,27 @@ bench = false
 [[bin]]
 name = "clienthello"
 path = "fuzz_targets/clienthello.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "disk_cache_header"
+path = "fuzz_targets/disk_cache_header.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "json_patch"
+path = "fuzz_targets/json_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "oidc_cookie"
+path = "fuzz_targets/oidc_cookie.rs"
 test = false
 doc = false
 bench = false

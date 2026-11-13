@@ -5,8 +5,8 @@
 //! algorithm only, `none` does not exist, `iss` and `aud` are checked unless the configuration
 //! says `any`, `exp` is required, and `jku`/`x5u` headers are never followed.
 
-mod keys;
-mod token;
+pub(crate) mod keys;
+pub(crate) mod token;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError, Weak};
@@ -21,7 +21,7 @@ use serde_json::Value;
 use tokio::sync::Notify;
 
 use crate::client::HttpClient;
-use crate::{BuildError, Context, Flow, Middleware, Reply};
+use crate::{BuildError, ConsumerIndex, Context, Flow, Middleware, Reply};
 use keys::Key;
 use token::{Invalid, Rules};
 
@@ -38,6 +38,7 @@ const MAX_JWKS: usize = 1024 * 1024;
 
 /// The `jwt` middleware.
 #[derive(Debug)]
+#[allow(clippy::struct_excessive_bools)] // independent settings of the configuration
 pub(crate) struct Jwt {
     name: String,
     issuer: Option<String>,
@@ -48,7 +49,22 @@ pub(crate) struct Jwt {
     forward_token: bool,
     local: Vec<Key>,
     remote: Option<Arc<Remote>>,
+    /// `cloudflare_access`: the consumer is the token's `email`, or a service token's
+    /// `common_name`.
+    access: bool,
+    /// The claim that names the consumer, and the one that lists its groups.
+    consumer_claim: Option<String>,
+    groups_claim: Option<String>,
+    /// `map_to_consumers`: the claim names a consumer of `consumers`.
+    map_to_consumers: bool,
+    /// `unverified_emails`: an `email` without `email_verified` names the consumer.
+    unverified_emails: bool,
+    /// The configuration's consumers, for `map_to_consumers`.
+    consumers: Arc<ConsumerIndex>,
 }
+
+/// The group a Cloudflare Access service token's consumer is in.
+pub(crate) const SERVICE_TOKEN_GROUP: &str = "service-token";
 
 /// Keys fetched from `jwks_url`.
 #[derive(Debug)]
@@ -70,6 +86,7 @@ impl Jwt {
         name: &str,
         config: &JwtConfig,
         client: Arc<HttpClient>,
+        consumers: Arc<ConsumerIndex>,
     ) -> Result<Self, BuildError> {
         let invalid =
             |message: String| BuildError::Invalid(format!("middleware `{name}`: {message}"));
@@ -137,7 +154,69 @@ impl Jwt {
             forward_token: config.forward_token,
             local,
             remote,
+            access: false,
+            consumer_claim: config.consumer_claim.clone(),
+            groups_claim: config.groups_claim.clone(),
+            map_to_consumers: config.map_to_consumers,
+            unverified_emails: config.unverified_emails,
+            consumers,
         })
+    }
+
+    /// The `cloudflare_access` preset (W-CF-06): `jwt` with the team's certs URL, issuer,
+    /// RS256 and the Access header, then cookie, and the consumer set from the identity.
+    pub(crate) fn cloudflare_access(
+        name: &str,
+        config: &rdock_model::middleware::CloudflareAccessConfig,
+        client: Arc<HttpClient>,
+        consumers: Arc<ConsumerIndex>,
+    ) -> Result<Self, BuildError> {
+        if !config.team_is_valid() {
+            return Err(BuildError::Invalid(format!(
+                "middleware `{name}`: `{}` is not a Cloudflare Zero Trust team name",
+                config.team
+            )));
+        }
+        let jwt = config.to_jwt().ok_or_else(|| {
+            BuildError::Invalid(format!("middleware `{name}`: the certs URL is invalid"))
+        })?;
+        let mut this = Self::new(name, &jwt, client, consumers)?;
+        this.access = true;
+        Ok(this)
+    }
+
+    /// The issuer that namespaces the token's consumer: the configured one, or the token's
+    /// `iss` with `issuer: any`, or the middleware's name when the token has none.
+    fn token_issuer(&self, claims: &serde_json::Map<String, Value>) -> Arc<str> {
+        match (
+            self.issuer.as_deref(),
+            claims.get("iss").and_then(Value::as_str),
+        ) {
+            (Some(issuer), _) | (None, Some(issuer)) => Arc::from(issuer),
+            (None, None) => Arc::from(format!("jwt:{}", self.name)),
+        }
+    }
+
+    /// With `map_to_consumers` and a consumer of `consumers` with the same name, adds its
+    /// groups and shares its identity; otherwise keys the consumer on the token's issuer, so
+    /// it never shares a configured consumer's identity (H1 of the v0.8 review).
+    fn place(&self, consumer: &mut crate::Consumer, claims: &serde_json::Map<String, Value>) {
+        let defined = self
+            .map_to_consumers
+            .then(|| self.consumers.consumer(&consumer.name))
+            .flatten();
+        let Some(defined) = defined else {
+            consumer.issuer = Some(self.token_issuer(claims));
+            return;
+        };
+        consumer.issuer = None;
+        let mut groups: Vec<Arc<str>> = consumer.groups.to_vec();
+        for group in defined.groups.iter() {
+            if !groups.contains(group) {
+                groups.push(group.clone());
+            }
+        }
+        consumer.groups = Arc::from(groups);
     }
 
     /// The token and, for header tokens, the header it came from.
@@ -318,8 +397,87 @@ fn unauthorized(error: Option<&str>) -> Flow {
     Flow::Reply(reply)
 }
 
+/// The consumer of a Cloudflare Access token: a user's `email`, or for a service token (whose
+/// `sub` is empty) its `common_name`, the Client ID, in the group [`SERVICE_TOKEN_GROUP`].
+/// Both are keyed on the team's `issuer`, service tokens on `<issuer> service-token`, so a
+/// service token never shares the identity of a user or of a consumer of `consumers`.
+fn access_consumer(
+    claims: &serde_json::Map<String, Value>,
+    issuer: &str,
+) -> Option<crate::Consumer> {
+    let text = |name: &str| {
+        claims
+            .get(name)
+            .and_then(Value::as_str)
+            .filter(|v| !v.trim().is_empty())
+    };
+    if text("sub").is_none()
+        && let Some(common_name) = text("common_name")
+    {
+        return Some(crate::Consumer {
+            name: Arc::from(common_name),
+            groups: Arc::from([Arc::from(SERVICE_TOKEN_GROUP)]),
+            issuer: Some(Arc::from(format!("{issuer} {SERVICE_TOKEN_GROUP}"))),
+        });
+    }
+    // Cloudflare Access verifies the address before it issues a user token.
+    text("email").map(|email| crate::Consumer {
+        issuer: Some(Arc::from(issuer)),
+        ..crate::Consumer::named(email)
+    })
+}
+
+/// The consumer named by `claim` (a non-empty string, or a number), with the groups listed in
+/// `groups` (a string or an array of strings). With `claim` `email`, the address counts only
+/// with `email_verified: true` (or without `email_verified` when `unverified_emails`), and
+/// `sub` names the consumer otherwise. The consumer is not yet placed (`issuer` is `None`).
+fn claim_consumer(
+    claims: &serde_json::Map<String, Value>,
+    claim: &str,
+    groups: Option<&str>,
+    unverified_emails: bool,
+) -> Option<crate::Consumer> {
+    let verified = email_verified(claims);
+    let claim =
+        if claim == "email" && verified != Some(true) && !(unverified_emails && verified.is_none())
+        {
+            "sub"
+        } else {
+            claim
+        };
+    let name = match claims.get(claim)? {
+        Value::String(s) if !s.trim().is_empty() => s.clone(),
+        Value::Number(n) => n.to_string(),
+        _ => return None,
+    };
+    let groups: Vec<Arc<str>> = match groups.and_then(|g| claims.get(g)) {
+        Some(Value::String(s)) => vec![Arc::from(s.as_str())],
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter_map(Value::as_str)
+            .map(Arc::from)
+            .collect(),
+        _ => Vec::new(),
+    };
+    Some(crate::Consumer {
+        name: Arc::from(name.as_str()),
+        groups: Arc::from(groups),
+        issuer: None,
+    })
+}
+
+/// The `email_verified` claim: `true`/`false` (also as strings), `None` when absent or of
+/// another type.
+pub(crate) fn email_verified(claims: &serde_json::Map<String, Value>) -> Option<bool> {
+    claims.get("email_verified").and_then(|v| match v {
+        Value::Bool(b) => Some(*b),
+        Value::String(s) => Some(s == "true"),
+        _ => None,
+    })
+}
+
 /// A claim as header text: strings as they are, other values as JSON, arrays joined by `,`.
-fn claim_text(value: &Value) -> String {
+pub(crate) fn claim_text(value: &Value) -> String {
     match value {
         Value::String(s) => s.clone(),
         Value::Array(items) => items.iter().map(claim_text).collect::<Vec<_>>().join(","),
@@ -379,7 +537,28 @@ impl Middleware for Jwt {
         {
             req.remove_header(&header);
         }
-        if cx.user.is_none() {
+        if self.access {
+            let issuer = self.token_issuer(&claims);
+            let Some(consumer) = access_consumer(&claims, &issuer) else {
+                tracing::debug!(middleware = %self.name, "Access token without email or common_name");
+                return unauthorized(Some("invalid_token"));
+            };
+            cx.user = Some(consumer.name.to_string());
+            cx.consumer = Some(consumer);
+        } else if let Some(claim) = &self.consumer_claim {
+            let Some(mut consumer) = claim_consumer(
+                &claims,
+                claim,
+                self.groups_claim.as_deref(),
+                self.unverified_emails,
+            ) else {
+                tracing::debug!(middleware = %self.name, claim = %claim, "JWT without the consumer claim");
+                return unauthorized(Some("invalid_token"));
+            };
+            self.place(&mut consumer, &claims);
+            cx.user = Some(consumer.name.to_string());
+            cx.consumer = Some(consumer);
+        } else if cx.user.is_none() {
             cx.user = claims.get("sub").and_then(Value::as_str).map(str::to_owned);
         }
         cx.claims = Some(Arc::new(claims));

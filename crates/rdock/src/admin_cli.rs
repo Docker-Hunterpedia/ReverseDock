@@ -1,5 +1,6 @@
 //! CLI parity with the admin API (ADR-0024, F-MGMT-01): configuration history, diff and
-//! rollback, users, tokens, the audit log and backend drain, all through the admin socket
+//! rollback, users, tokens, the audit log, backend drain and cache purges, all through the
+//! admin socket
 //! (or the listener with `RDOCK_ADMIN_TOKEN`).
 
 use std::io::Read;
@@ -120,6 +121,92 @@ pub(crate) struct TokenId {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum ConsumersCommand {
+    /// List consumers with their groups and keys (IDs, expiry, notes).
+    List(CtlArgs),
+    /// Create or change a consumer kept by the admin API.
+    Set(ConsumerSet),
+    /// Remove a consumer kept by the admin API, with the keys minted for it.
+    Delete(ConsumerName),
+    /// Show this instance's quota counters, of one consumer or all.
+    Quota(ConsumerQuota),
+    /// Forget a consumer's quota counters on this instance.
+    ResetQuota(ConsumerQuotaReset),
+}
+
+#[derive(Args)]
+pub(crate) struct ConsumerSet {
+    name: String,
+    /// A group; repeat for more, in order of precedence.
+    #[arg(long = "group")]
+    groups: Vec<String>,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Args)]
+pub(crate) struct ConsumerName {
+    name: String,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Args)]
+pub(crate) struct ConsumerQuota {
+    /// Only this consumer's counts.
+    name: Option<String>,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Args)]
+pub(crate) struct ConsumerQuotaReset {
+    name: String,
+    /// Only in this `quota` middleware.
+    #[arg(long)]
+    middleware: Option<String>,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Subcommand)]
+pub(crate) enum KeysCommand {
+    /// Mint an API key for a consumer and print it once.
+    Create(KeyCreate),
+    /// Revoke a key the admin API minted.
+    Revoke(KeyRevoke),
+    /// Print the `id` and `hash` of a key read from standard input, for `consumers.<name>.keys`
+    /// or a keys file (`id:hash`). Works offline; the key is not stored.
+    Hash,
+    /// Generate a key offline and print it with its `id` and `hash`, for configurations kept
+    /// in files.
+    Generate,
+}
+
+#[derive(Args)]
+pub(crate) struct KeyCreate {
+    /// The consumer.
+    consumer: String,
+    /// Days until it expires (1–3650); never when omitted.
+    #[arg(long)]
+    days: Option<u32>,
+    /// What the key is for.
+    #[arg(long)]
+    note: Option<String>,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Args)]
+pub(crate) struct KeyRevoke {
+    consumer: String,
+    /// The key's ID (the 12 characters after `rdk_`).
+    id: String,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Subcommand)]
 pub(crate) enum BackendsCommand {
     /// List every service's backends and their state.
     List(CtlArgs),
@@ -127,6 +214,35 @@ pub(crate) enum BackendsCommand {
     Drain(BackendRef),
     /// Put a drained backend back in rotation.
     Undrain(BackendRef),
+}
+
+#[derive(Subcommand)]
+pub(crate) enum CacheCommand {
+    /// List the cache stores with their objects, bytes and counters.
+    List(CtlArgs),
+    /// Remove objects from a store of this instance: by URL, URL prefix, tag, or all.
+    Purge(CachePurgeArgs),
+}
+
+#[derive(Args)]
+#[command(group(clap::ArgGroup::new("selector").required(true).args(["url", "prefix", "tag", "all"])))]
+pub(crate) struct CachePurgeArgs {
+    /// The store, as named under `caches`.
+    store: String,
+    /// Every variant of this absolute URL.
+    #[arg(long)]
+    url: Option<String>,
+    /// Every object whose URL starts with this absolute URL.
+    #[arg(long)]
+    prefix: Option<String>,
+    /// Every object with this tag.
+    #[arg(long)]
+    tag: Option<String>,
+    /// Everything in the store.
+    #[arg(long)]
+    all: bool,
+    #[command(flatten)]
+    ctl: CtlArgs,
 }
 
 #[derive(Args)]
@@ -392,6 +508,186 @@ pub(crate) fn tokens(command: &TokensCommand) -> anyhow::Result<ExitCode> {
     }
 }
 
+/// The current version of the API objects, for `If-Match`.
+fn api_etag(ctl: &CtlArgs) -> anyhow::Result<String> {
+    let answer = expect(call(ctl, &Call::new("GET", "/api/v1/config/api"))?, &[200])?;
+    answer
+        .header("etag")
+        .map(str::to_owned)
+        .context("the admin API sent no ETag")
+}
+
+/// Sends a conditional write; retries once on `412` (another write came first).
+fn conditional(
+    ctl: &CtlArgs,
+    method: &str,
+    path: &str,
+    body: Option<&Value>,
+    ok: &[u16],
+) -> anyhow::Result<Answer> {
+    for attempt in 0..2 {
+        let mut request = Call::new(method, path);
+        if let Some(body) = body {
+            request = request.json(body);
+        }
+        request.headers.push(("If-Match", api_etag(ctl)?));
+        let answer = call(ctl, &request)?;
+        if answer.status == 412 && attempt == 0 {
+            continue;
+        }
+        return expect(answer, ok);
+    }
+    bail!("the configuration kept changing; try again")
+}
+
+pub(crate) fn consumers(command: &ConsumersCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        ConsumersCommand::List(ctl) => {
+            let answer = expect(call(ctl, &Call::new("GET", "/api/v1/consumers"))?, &[200])?;
+            let list = answer.json()["consumers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            let mut out = Vec::new();
+            for c in &list {
+                let groups: Vec<String> = c["groups"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(text)
+                    .collect();
+                out.push(format!(
+                    "{}  ({})  groups: {}",
+                    text(&c["name"]),
+                    text(&c["owner"]),
+                    groups.join(", ")
+                ));
+                for k in c["keys"].as_array().into_iter().flatten() {
+                    out.push(format!(
+                        "  {}  {:<4} expires {}  {}",
+                        text(&k["id"]),
+                        text(&k["owner"]),
+                        k["expires"].as_str().unwrap_or("never"),
+                        k["note"].as_str().unwrap_or_default()
+                    ));
+                }
+            }
+            lines(out)
+        }
+        ConsumersCommand::Set(args) => {
+            let path = format!("/api/v1/consumers/{}", segment(&args.name));
+            conditional(
+                &args.ctl,
+                "PUT",
+                &path,
+                Some(&json!({ "groups": args.groups })),
+                &[200],
+            )?;
+            lines([format!("consumer {} saved", args.name)])
+        }
+        ConsumersCommand::Delete(args) => {
+            let path = format!("/api/v1/consumers/{}", segment(&args.name));
+            conditional(&args.ctl, "DELETE", &path, None, &[200])?;
+            lines([format!("consumer {} removed", args.name)])
+        }
+        ConsumersCommand::Quota(args) => {
+            let path = match &args.name {
+                Some(name) => format!("/api/v1/quota/{}", segment(name)),
+                None => "/api/v1/quota".to_owned(),
+            };
+            let answer = expect(call(&args.ctl, &Call::new("GET", &path))?, &[200])?;
+            let mut out = Vec::new();
+            for q in answer.json()["quotas"].as_array().into_iter().flatten() {
+                out.push(format!(
+                    "{} (per {})",
+                    text(&q["middleware"]),
+                    text(&q["window"])
+                ));
+                for u in q["usage"].as_array().into_iter().flatten() {
+                    out.push(format!(
+                        "  {:<32} {} / {}",
+                        text(&u["key"]),
+                        text(&u["used"]),
+                        text(&u["limit"])
+                    ));
+                }
+            }
+            lines(out)
+        }
+        ConsumersCommand::ResetQuota(args) => {
+            let mut path = format!("/api/v1/quota/{}", segment(&args.name));
+            if let Some(m) = &args.middleware {
+                path.push_str("?middleware=");
+                path.push_str(&segment(m));
+            }
+            let answer = expect(call(&args.ctl, &Call::new("DELETE", &path))?, &[200])?;
+            lines([format!(
+                "reset {} counter(s)",
+                text(&answer.json()["reset"])
+            )])
+        }
+    }
+}
+
+pub(crate) fn keys(command: &KeysCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        KeysCommand::Create(args) => {
+            let mut body = json!({});
+            if let Some(days) = args.days {
+                body["expires_in_days"] = json!(days);
+            }
+            if let Some(note) = &args.note {
+                body["note"] = json!(note);
+            }
+            let path = format!("/api/v1/consumers/{}/keys", segment(&args.consumer));
+            let answer = conditional(&args.ctl, "POST", &path, Some(&body), &[201])?;
+            let minted = answer.json();
+            lines([
+                text(&minted["key"]),
+                format!(
+                    "ID {}. Store the key now: it is shown only once.",
+                    text(&minted["id"])
+                ),
+            ])
+        }
+        KeysCommand::Revoke(args) => {
+            let path = format!(
+                "/api/v1/consumers/{}/keys/{}",
+                segment(&args.consumer),
+                segment(&args.id)
+            );
+            conditional(&args.ctl, "DELETE", &path, None, &[200])?;
+            lines([format!("revoked {}", args.id)])
+        }
+        KeysCommand::Hash => {
+            let mut input = String::new();
+            std::io::stdin().read_to_string(&mut input)?;
+            let Some((id, secret)) = rdock_credentials::API_KEY.parse(input.trim()) else {
+                bail!("this is not an rdock API key (rdk_…), or it has a typo");
+            };
+            lines([
+                format!("id: {id}"),
+                format!("hash: {}", rdock_credentials::hash_secret(secret)),
+                format!(
+                    "keys file line: {id}:{}",
+                    rdock_credentials::hash_secret(secret)
+                ),
+            ])
+        }
+        KeysCommand::Generate => {
+            let made = rdock_credentials::API_KEY
+                .generate()
+                .context("the random generator failed")?;
+            lines([
+                format!("key: {}", made.value.expose()),
+                format!("id: {}", made.id),
+                format!("hash: {}", made.secret_sha256),
+                "Give the key to its owner now; store only the id and hash.".to_owned(),
+            ])
+        }
+    }
+}
+
 pub(crate) fn backends(command: &BackendsCommand) -> anyhow::Result<ExitCode> {
     let (ctl, path, target, drained) = match command {
         BackendsCommand::List(ctl) => {
@@ -433,6 +729,53 @@ pub(crate) fn backends(command: &BackendsCommand) -> anyhow::Result<ExitCode> {
         target.service,
         target.backend
     )])
+}
+
+pub(crate) fn cache(command: &CacheCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        CacheCommand::List(ctl) => {
+            let answer = expect(call(ctl, &Call::new("GET", "/api/v1/cache"))?, &[200])?;
+            let stores = answer.json()["stores"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            lines(stores.iter().map(|s| {
+                format!(
+                    "{:<16} {:<6} {} objects  {} bytes of {}  hits {}  misses {}  evictions {}  purged {}",
+                    text(&s["name"]),
+                    text(&s["kind"]),
+                    s["objects"],
+                    s["bytes"],
+                    s["max_size"],
+                    s["hits"],
+                    s["misses"],
+                    s["evictions"],
+                    s["purged"],
+                )
+            }))
+        }
+        CacheCommand::Purge(args) => {
+            let body = if args.all {
+                json!({ "all": true })
+            } else if let Some(url) = &args.url {
+                json!({ "url": url })
+            } else if let Some(prefix) = &args.prefix {
+                json!({ "prefix": prefix })
+            } else {
+                json!({ "tag": args.tag })
+            };
+            let path = format!("/api/v1/cache/{}/purge", segment(&args.store));
+            let answer = expect(
+                call(&args.ctl, &Call::new("POST", &path).json(&body))?,
+                &[200],
+            )?;
+            lines([format!(
+                "purged {} objects from {}",
+                answer.json()["purged"],
+                args.store
+            )])
+        }
+    }
 }
 
 pub(crate) fn audit_list(args: &AuditList) -> anyhow::Result<ExitCode> {
@@ -519,6 +862,23 @@ pub(crate) fn routes(command: &RoutesCommand) -> anyhow::Result<ExitCode> {
                 .collect();
             if !middlewares.is_empty() {
                 out.push(format!("middlewares: {}", middlewares.join(" → ")));
+            }
+            for m in outcome["phases"].as_array().into_iter().flatten() {
+                let phases: Vec<String> = m["phases"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .map(text)
+                    .collect();
+                let hold = match m["hold_body"]["max"].as_u64() {
+                    Some(max) => format!(" (holds the body up to {max} bytes)"),
+                    None => String::new(),
+                };
+                out.push(format!(
+                    "  {:<24} {}{hold}",
+                    text(&m["middleware"]),
+                    phases.join(", ")
+                ));
             }
             for b in outcome["backends"].as_array().into_iter().flatten() {
                 let state = if b["considered"] == true {

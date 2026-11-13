@@ -3,7 +3,7 @@
 //!
 //! This is the single list. A feature is added here only together with a test that proves
 //! it (a translator test on fixtures in `tests/gateway_conformance.rs`,
-//! `tests/gateway_extended.rs` or `tests/gateway_listenerset.rs` that transcribes the upstream conformance test and, once CI
+//! `tests/gateway_extended.rs`, `tests/gateway_listenerset.rs` or `tests/gateway_udp.rs` that transcribes the upstream conformance test and, once CI
 //! runs it, the upstream conformance test itself). With no feature flags, the conformance
 //! suite runs exactly these features, so a feature listed without working support fails the
 //! suite, and one missing from the list is skipped.
@@ -19,7 +19,10 @@
 //! identical matches to combine), `GatewayHTTPListenerIsolation`,
 //! `GatewayRouteHostnameIntersectionPrecedence`, `GatewayStaticAddresses`,
 //! `GatewayAddressEmpty`, `GatewayInfrastructure`, client certificate validation,
-//! `TLSRouteModeTerminate`, `TLSRouteModeMixed`, `BackendTLSPolicy`, `UDPRoute`.
+//! `TLSRouteModeTerminate`, `TLSRouteModeMixed`, `BackendTLSPolicy`.
+//!
+//! `UDPRoute` is claimed with every upstream test gated on it transcribed in
+//! `tests/gateway_udp.rs` (v0.8, ADR-0030).
 
 /// Supported feature names (e.g. `Gateway`, `HTTPRoute`, `HTTPRouteQueryParamMatching`),
 /// sorted.
@@ -49,6 +52,7 @@ pub const SUPPORTED: &[&str] = &[
     "ReferenceGrant",
     "TCPRoute",
     "TLSRoute",
+    "UDPRoute",
 ];
 
 #[cfg(test)]

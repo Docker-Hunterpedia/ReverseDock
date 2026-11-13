@@ -17,6 +17,7 @@ use crate::{Body, BuildError, Context, Flow, Middleware, Reply};
 
 mod answer;
 mod body;
+mod listing;
 mod path;
 mod root;
 
@@ -55,6 +56,8 @@ impl Static {
                 directories: Directories {
                     index: config.index.clone(),
                     redirect: config.directory_redirect,
+                    listing: config.listing,
+                    hidden: config.hidden,
                 },
             }),
             precompressed: config.precompressed.clone(),
@@ -136,6 +139,7 @@ impl Middleware for Static {
         };
         match self.resolve(lookup).await {
             Some(Resolution::File(found)) => Flow::Reply(self.answers.reply(req, *found)),
+            Some(Resolution::Listing(found)) => Flow::Reply(self.answers.listing(req, &found)),
             Some(Resolution::AddSlash) => Flow::Reply(add_slash(req)),
             Some(Resolution::Missing) => self.refuse(Reply::status(404)),
             None => Flow::Reply(Reply::status(500)),
@@ -228,5 +232,215 @@ mod tests {
             serde_json::json!({ "directory_redirect": false }),
         );
         assert_eq!(status(&run(&mw, "GET", "/dir")), Some(200));
+    }
+
+    fn listing_site() -> tempfile::TempDir {
+        let site = site();
+        let r = site.path();
+        std::fs::create_dir_all(r.join("pub/sub")).unwrap();
+        std::fs::write(r.join("pub/a.txt"), "aaaa").unwrap();
+        std::fs::write(r.join("pub/.secret"), "s").unwrap();
+        site
+    }
+
+    fn reply_of(flow: Flow) -> Reply {
+        match flow {
+            Flow::Reply(reply) => reply,
+            Flow::Next => panic!("not answered"),
+        }
+    }
+
+    fn get_with(
+        mw: &Static,
+        method: &str,
+        target: &str,
+        headers: &[(&'static str, &str)],
+    ) -> Reply {
+        let mut req = request(method, target, headers);
+        reply_of(block_on(mw.request(&mut req, &mut cx())))
+    }
+
+    fn json(reply: &Reply) -> serde_json::Value {
+        serde_json::from_slice(crate::test_support::reply_bytes(reply).unwrap()).unwrap()
+    }
+
+    #[test]
+    fn listing_is_off_by_default() {
+        let site = listing_site();
+        let off = mw(site.path(), serde_json::json!({}));
+        assert_eq!(status(&run(&off, "GET", "/pub/")), Some(404));
+        assert_eq!(
+            status(&run(&off, "GET", "/pub")),
+            Some(404),
+            "no redirect either"
+        );
+        let pass = mw(site.path(), serde_json::json!({ "pass_through": true }));
+        assert_eq!(run(&pass, "GET", "/pub/"), Flow::Next);
+        assert_eq!(run(&pass, "GET", "/pub"), Flow::Next);
+    }
+
+    #[test]
+    fn a_listing_is_html_by_default_and_json_when_preferred() {
+        let site = listing_site();
+        let mw = mw(site.path(), serde_json::json!({ "listing": true }));
+        let html = get_with(&mw, "GET", "/pub/", &[]);
+        assert_eq!(html.status, 200);
+        assert_eq!(
+            reply_header(&html, "content-type"),
+            Some("text/html; charset=utf-8")
+        );
+        assert_eq!(reply_header(&html, "vary"), Some("Accept"));
+        assert_eq!(reply_header(&html, "cache-control"), Some("no-cache"));
+        assert_eq!(
+            reply_header(&html, "x-content-type-options"),
+            Some("nosniff")
+        );
+        assert_eq!(reply_header(&html, "referrer-policy"), Some("no-referrer"));
+        let csp = reply_header(&html, "content-security-policy").unwrap();
+        assert!(csp.starts_with("default-src 'none'"), "{csp}");
+        assert!(!csp.contains("unsafe-inline"), "{csp}");
+        assert_eq!(reply_header(&html, "etag"), None, "no validator");
+        assert_eq!(reply_header(&html, "last-modified"), None);
+        let page =
+            String::from_utf8(crate::test_support::reply_bytes(&html).unwrap().to_vec()).unwrap();
+        assert!(page.contains("href=\"./a.txt\""), "{page}");
+        assert!(page.contains("href=\"./sub/\""), "{page}");
+        assert!(!page.contains(".secret"), "{page}");
+        let json_reply = get_with(&mw, "GET", "/pub/", &[("accept", "application/json")]);
+        assert_eq!(
+            reply_header(&json_reply, "content-type"),
+            Some("application/json")
+        );
+        assert_eq!(reply_header(&json_reply, "vary"), Some("Accept"));
+        let body = json(&json_reply);
+        assert_eq!(body["path"], "/pub/");
+        assert_eq!(body["truncated"], false);
+        assert_eq!(body["entries"][0]["name"], "a.txt");
+        assert_eq!(body["entries"][0]["type"], "file");
+        assert_eq!(body["entries"][0]["size"], 4);
+        assert_eq!(body["entries"][1]["name"], "sub");
+        assert_eq!(body["entries"][1]["type"], "dir");
+        assert_eq!(body["entries"].as_array().unwrap().len(), 2);
+        let browser = get_with(&mw, "GET", "/pub/", &[("accept", "text/html,*/*;q=0.8")]);
+        assert_eq!(
+            reply_header(&browser, "content-type"),
+            Some("text/html; charset=utf-8")
+        );
+    }
+
+    #[test]
+    fn head_conditionals_and_ranges_on_a_listing() {
+        let site = listing_site();
+        let mw = mw(site.path(), serde_json::json!({ "listing": true }));
+        let get = get_with(&mw, "GET", "/pub/", &[]);
+        let head = get_with(&mw, "HEAD", "/pub/", &[]);
+        assert_eq!(head, get, "HEAD has GET's status, headers and length");
+        for headers in [
+            [("if-none-match", "*")],
+            [("if-modified-since", "Sun, 06 Nov 2094 08:49:37 GMT")],
+            [("range", "bytes=0-3")],
+            [("if-match", "\"x\"")],
+        ] {
+            let reply = get_with(&mw, "GET", "/pub/", &headers);
+            assert_eq!(
+                (reply.status, reply_header(&reply, "content-range")),
+                (200, None),
+                "{headers:?}"
+            );
+            assert_eq!(reply, get, "{headers:?}");
+        }
+        assert_eq!(get_with(&mw, "POST", "/pub/", &[]).status, 405);
+    }
+
+    #[test]
+    fn listing_redirect_fallback_and_cache_control() {
+        let site = listing_site();
+        let spa = mw(
+            site.path(),
+            serde_json::json!({
+                "listing": true,
+                "fallback": "/index.html",
+                "cache_control": { "default": "no-cache", "/pub/": "public, max-age=60" },
+            }),
+        );
+        let redirect = get_with(&spa, "GET", "/pub?x=1", &[]);
+        assert_eq!(redirect.status, 308);
+        assert_eq!(reply_header(&redirect, "location"), Some("/pub/?x=1"));
+        let listed = get_with(&spa, "GET", "/pub/", &[]);
+        assert_eq!(listed.status, 200);
+        assert_eq!(
+            reply_header(&listed, "content-type"),
+            Some("text/html; charset=utf-8")
+        );
+        assert_eq!(
+            reply_header(&listed, "cache-control"),
+            Some("public, max-age=60")
+        );
+        let nested = get_with(&spa, "GET", "/pub/sub/", &[]);
+        assert_eq!(
+            reply_header(&nested, "cache-control"),
+            Some("public, max-age=60")
+        );
+        let root_listing = get_with(&spa, "GET", "/", &[]);
+        assert_eq!(
+            reply_header(&root_listing, "content-type"),
+            Some("text/html; charset=utf-8"),
+            "the root has an index, so this is the file"
+        );
+        assert_eq!(crate::test_support::reply_bytes(&root_listing), None);
+        // A path that does not exist still gets the fallback file, a directory that does not.
+        let missing = get_with(&spa, "GET", "/nope/deeper", &[]);
+        assert_eq!(missing.status, 200);
+        assert!(
+            missing.body.as_ref().and_then(Body::as_bytes).is_none(),
+            "the fallback file"
+        );
+        assert_eq!(reply_header(&missing, "vary"), Some("Accept-Encoding"));
+        // Hidden names and traversal never list.
+        for target in [
+            "/.git/",
+            "/pub/.secret",
+            "/pub/../",
+            "/%2e%2e/",
+            "/pub/%2e%2e/",
+            "/pub/..%2f",
+        ] {
+            assert_ne!(
+                reply_header(&get_with(&spa, "GET", target, &[]), "vary"),
+                Some("Accept"),
+                "{target}"
+            );
+        }
+        let strict = mw(site.path(), serde_json::json!({ "listing": true }));
+        for target in [
+            "/.git/",
+            "/pub/../",
+            "/%2e%2e/",
+            "/pub/%2e%2e/",
+            "/pub/..%2f",
+            "/pub/%5c",
+        ] {
+            assert_eq!(
+                get_with(&strict, "GET", target, &[]).status,
+                404,
+                "{target}"
+            );
+        }
+    }
+
+    #[test]
+    fn no_redirect_lists_with_links_that_name_the_directory() {
+        let site = listing_site();
+        let mw = mw(
+            site.path(),
+            serde_json::json!({ "listing": true, "directory_redirect": false }),
+        );
+        let reply = get_with(&mw, "GET", "/pub", &[]);
+        assert_eq!(reply.status, 200);
+        let page =
+            String::from_utf8(crate::test_support::reply_bytes(&reply).unwrap().to_vec()).unwrap();
+        assert!(page.contains("href=\"pub/a.txt\""), "{page}");
+        let json_reply = get_with(&mw, "GET", "/pub", &[("accept", "application/json")]);
+        assert_eq!(json(&json_reply)["path"], "/pub/");
     }
 }

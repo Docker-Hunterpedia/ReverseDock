@@ -1,0 +1,270 @@
+Html 400 accept=- -> text/html; charset=utf-8 400 Bad Request
+Html 400 accept=*/* -> text/html; charset=utf-8 400 Bad Request
+Html 400 accept=application/json -> application/json {"error":"Bad Request","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400}
+Html 400 accept=application/problem+json -> text/html; charset=utf-8 400 Bad Request
+Html 400 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 400 Bad Request
+Html 400 accept=text/plain -> text/html; charset=utf-8 400 Bad Request
+Html 401 accept=- -> text/html; charset=utf-8 401 Unauthorized
+Html 401 accept=*/* -> text/html; charset=utf-8 401 Unauthorized
+Html 401 accept=application/json -> application/json {"error":"Unauthorized","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401}
+Html 401 accept=application/problem+json -> text/html; charset=utf-8 401 Unauthorized
+Html 401 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 401 Unauthorized
+Html 401 accept=text/plain -> text/html; charset=utf-8 401 Unauthorized
+Html 403 accept=- -> text/html; charset=utf-8 403 Forbidden
+Html 403 accept=*/* -> text/html; charset=utf-8 403 Forbidden
+Html 403 accept=application/json -> application/json {"error":"Forbidden","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403}
+Html 403 accept=application/problem+json -> text/html; charset=utf-8 403 Forbidden
+Html 403 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 403 Forbidden
+Html 403 accept=text/plain -> text/html; charset=utf-8 403 Forbidden
+Html 404 accept=- -> text/html; charset=utf-8 404 Not Found
+Html 404 accept=*/* -> text/html; charset=utf-8 404 Not Found
+Html 404 accept=application/json -> application/json {"error":"Not Found","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404}
+Html 404 accept=application/problem+json -> text/html; charset=utf-8 404 Not Found
+Html 404 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 404 Not Found
+Html 404 accept=text/plain -> text/html; charset=utf-8 404 Not Found
+Html 405 accept=- -> text/html; charset=utf-8 405 Method Not Allowed
+Html 405 accept=*/* -> text/html; charset=utf-8 405 Method Not Allowed
+Html 405 accept=application/json -> application/json {"error":"Method Not Allowed","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405}
+Html 405 accept=application/problem+json -> text/html; charset=utf-8 405 Method Not Allowed
+Html 405 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 405 Method Not Allowed
+Html 405 accept=text/plain -> text/html; charset=utf-8 405 Method Not Allowed
+Html 408 accept=- -> text/html; charset=utf-8 408 Request Timeout
+Html 408 accept=*/* -> text/html; charset=utf-8 408 Request Timeout
+Html 408 accept=application/json -> application/json {"error":"Request Timeout","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408}
+Html 408 accept=application/problem+json -> text/html; charset=utf-8 408 Request Timeout
+Html 408 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 408 Request Timeout
+Html 408 accept=text/plain -> text/html; charset=utf-8 408 Request Timeout
+Html 413 accept=- -> text/html; charset=utf-8 413 Payload Too Large
+Html 413 accept=*/* -> text/html; charset=utf-8 413 Payload Too Large
+Html 413 accept=application/json -> application/json {"error":"Payload Too Large","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413}
+Html 413 accept=application/problem+json -> text/html; charset=utf-8 413 Payload Too Large
+Html 413 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 413 Payload Too Large
+Html 413 accept=text/plain -> text/html; charset=utf-8 413 Payload Too Large
+Html 414 accept=- -> text/html; charset=utf-8 414 URI Too Long
+Html 414 accept=*/* -> text/html; charset=utf-8 414 URI Too Long
+Html 414 accept=application/json -> application/json {"error":"URI Too Long","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414}
+Html 414 accept=application/problem+json -> text/html; charset=utf-8 414 URI Too Long
+Html 414 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 414 URI Too Long
+Html 414 accept=text/plain -> text/html; charset=utf-8 414 URI Too Long
+Html 417 accept=- -> text/html; charset=utf-8 417 Expectation Failed
+Html 417 accept=*/* -> text/html; charset=utf-8 417 Expectation Failed
+Html 417 accept=application/json -> application/json {"error":"Expectation Failed","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417}
+Html 417 accept=application/problem+json -> text/html; charset=utf-8 417 Expectation Failed
+Html 417 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 417 Expectation Failed
+Html 417 accept=text/plain -> text/html; charset=utf-8 417 Expectation Failed
+Html 429 accept=- -> text/html; charset=utf-8 429 Too Many Requests
+Html 429 accept=*/* -> text/html; charset=utf-8 429 Too Many Requests
+Html 429 accept=application/json -> application/json {"error":"Too Many Requests","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":429}
+Html 429 accept=application/problem+json -> text/html; charset=utf-8 429 Too Many Requests
+Html 429 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 429 Too Many Requests
+Html 429 accept=text/plain -> text/html; charset=utf-8 429 Too Many Requests
+Html 431 accept=- -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Html 431 accept=*/* -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Html 431 accept=application/json -> application/json {"error":"Request Header Fields Too Large","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431}
+Html 431 accept=application/problem+json -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Html 431 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Html 431 accept=text/plain -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Html 500 accept=- -> text/html; charset=utf-8 500 Internal Server Error
+Html 500 accept=*/* -> text/html; charset=utf-8 500 Internal Server Error
+Html 500 accept=application/json -> application/json {"error":"Internal Server Error","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500}
+Html 500 accept=application/problem+json -> text/html; charset=utf-8 500 Internal Server Error
+Html 500 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 500 Internal Server Error
+Html 500 accept=text/plain -> text/html; charset=utf-8 500 Internal Server Error
+Html 502 accept=- -> text/html; charset=utf-8 502 Bad Gateway
+Html 502 accept=*/* -> text/html; charset=utf-8 502 Bad Gateway
+Html 502 accept=application/json -> application/json {"error":"Bad Gateway","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502}
+Html 502 accept=application/problem+json -> text/html; charset=utf-8 502 Bad Gateway
+Html 502 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 502 Bad Gateway
+Html 502 accept=text/plain -> text/html; charset=utf-8 502 Bad Gateway
+Html 503 accept=- -> text/html; charset=utf-8 503 Service Unavailable
+Html 503 accept=*/* -> text/html; charset=utf-8 503 Service Unavailable
+Html 503 accept=application/json -> application/json {"error":"Service Unavailable","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":503}
+Html 503 accept=application/problem+json -> text/html; charset=utf-8 503 Service Unavailable
+Html 503 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 503 Service Unavailable
+Html 503 accept=text/plain -> text/html; charset=utf-8 503 Service Unavailable
+Html 504 accept=- -> text/html; charset=utf-8 504 Gateway Timeout
+Html 504 accept=*/* -> text/html; charset=utf-8 504 Gateway Timeout
+Html 504 accept=application/json -> application/json {"error":"Gateway Timeout","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504}
+Html 504 accept=application/problem+json -> text/html; charset=utf-8 504 Gateway Timeout
+Html 504 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 504 Gateway Timeout
+Html 504 accept=text/plain -> text/html; charset=utf-8 504 Gateway Timeout
+Problem 400 accept=- -> application/problem+json {"detail":"The request is malformed or repeats a credential.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400,"title":"Bad request","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request"}
+Problem 400 accept=*/* -> application/problem+json {"detail":"The request is malformed or repeats a credential.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400,"title":"Bad request","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request"}
+Problem 400 accept=application/json -> application/problem+json {"detail":"The request is malformed or repeats a credential.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400,"title":"Bad request","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request"}
+Problem 400 accept=application/problem+json -> application/problem+json {"detail":"The request is malformed or repeats a credential.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400,"title":"Bad request","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request"}
+Problem 400 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 400 Bad Request
+Problem 400 accept=text/plain -> text/html; charset=utf-8 400 Bad Request
+Problem 401 accept=- -> application/problem+json {"detail":"The request carries no valid credential for this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401,"title":"Authentication required","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated"}
+Problem 401 accept=*/* -> application/problem+json {"detail":"The request carries no valid credential for this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401,"title":"Authentication required","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated"}
+Problem 401 accept=application/json -> application/problem+json {"detail":"The request carries no valid credential for this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401,"title":"Authentication required","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated"}
+Problem 401 accept=application/problem+json -> application/problem+json {"detail":"The request carries no valid credential for this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401,"title":"Authentication required","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated"}
+Problem 401 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 401 Unauthorized
+Problem 401 accept=text/plain -> text/html; charset=utf-8 401 Unauthorized
+Problem 403 accept=- -> application/problem+json {"detail":"The request is not allowed on this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403,"title":"Forbidden","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden"}
+Problem 403 accept=*/* -> application/problem+json {"detail":"The request is not allowed on this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403,"title":"Forbidden","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden"}
+Problem 403 accept=application/json -> application/problem+json {"detail":"The request is not allowed on this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403,"title":"Forbidden","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden"}
+Problem 403 accept=application/problem+json -> application/problem+json {"detail":"The request is not allowed on this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403,"title":"Forbidden","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden"}
+Problem 403 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 403 Forbidden
+Problem 403 accept=text/plain -> text/html; charset=utf-8 403 Forbidden
+Problem 404 accept=- -> application/problem+json {"detail":"Nothing is served at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+Problem 404 accept=*/* -> application/problem+json {"detail":"Nothing is served at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+Problem 404 accept=application/json -> application/problem+json {"detail":"Nothing is served at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+Problem 404 accept=application/problem+json -> application/problem+json {"detail":"Nothing is served at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+Problem 404 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 404 Not Found
+Problem 404 accept=text/plain -> text/html; charset=utf-8 404 Not Found
+Problem 405 accept=- -> application/problem+json {"detail":"This method is not allowed at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405,"title":"Method not allowed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed"}
+Problem 405 accept=*/* -> application/problem+json {"detail":"This method is not allowed at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405,"title":"Method not allowed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed"}
+Problem 405 accept=application/json -> application/problem+json {"detail":"This method is not allowed at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405,"title":"Method not allowed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed"}
+Problem 405 accept=application/problem+json -> application/problem+json {"detail":"This method is not allowed at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405,"title":"Method not allowed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed"}
+Problem 405 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 405 Method Not Allowed
+Problem 405 accept=text/plain -> text/html; charset=utf-8 405 Method Not Allowed
+Problem 408 accept=- -> application/problem+json {"detail":"The request body did not arrive in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408,"title":"Request timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout"}
+Problem 408 accept=*/* -> application/problem+json {"detail":"The request body did not arrive in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408,"title":"Request timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout"}
+Problem 408 accept=application/json -> application/problem+json {"detail":"The request body did not arrive in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408,"title":"Request timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout"}
+Problem 408 accept=application/problem+json -> application/problem+json {"detail":"The request body did not arrive in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408,"title":"Request timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout"}
+Problem 408 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 408 Request Timeout
+Problem 408 accept=text/plain -> text/html; charset=utf-8 408 Request Timeout
+Problem 413 accept=- -> application/problem+json {"detail":"The request body is larger than this route accepts.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413,"title":"Request body too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large"}
+Problem 413 accept=*/* -> application/problem+json {"detail":"The request body is larger than this route accepts.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413,"title":"Request body too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large"}
+Problem 413 accept=application/json -> application/problem+json {"detail":"The request body is larger than this route accepts.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413,"title":"Request body too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large"}
+Problem 413 accept=application/problem+json -> application/problem+json {"detail":"The request body is larger than this route accepts.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413,"title":"Request body too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large"}
+Problem 413 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 413 Payload Too Large
+Problem 413 accept=text/plain -> text/html; charset=utf-8 413 Payload Too Large
+Problem 414 accept=- -> application/problem+json {"detail":"The request target is longer than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414,"title":"Request target too long","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long"}
+Problem 414 accept=*/* -> application/problem+json {"detail":"The request target is longer than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414,"title":"Request target too long","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long"}
+Problem 414 accept=application/json -> application/problem+json {"detail":"The request target is longer than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414,"title":"Request target too long","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long"}
+Problem 414 accept=application/problem+json -> application/problem+json {"detail":"The request target is longer than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414,"title":"Request target too long","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long"}
+Problem 414 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 414 URI Too Long
+Problem 414 accept=text/plain -> text/html; charset=utf-8 414 URI Too Long
+Problem 417 accept=- -> application/problem+json {"detail":"Only `Expect: 100-continue` is supported.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417,"title":"Expectation failed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed"}
+Problem 417 accept=*/* -> application/problem+json {"detail":"Only `Expect: 100-continue` is supported.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417,"title":"Expectation failed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed"}
+Problem 417 accept=application/json -> application/problem+json {"detail":"Only `Expect: 100-continue` is supported.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417,"title":"Expectation failed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed"}
+Problem 417 accept=application/problem+json -> application/problem+json {"detail":"Only `Expect: 100-continue` is supported.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417,"title":"Expectation failed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed"}
+Problem 417 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 417 Expectation Failed
+Problem 417 accept=text/plain -> text/html; charset=utf-8 417 Expectation Failed
+Problem 429 accept=- -> application/problem+json {"detail":"Too many requests. Wait for the time given in `Retry-After` before retrying.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":429,"title":"Rate limit exceeded","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited"}
+Problem 429 accept=*/* -> application/problem+json {"detail":"Too many requests. Wait for the time given in `Retry-After` before retrying.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":429,"title":"Rate limit exceeded","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited"}
+Problem 429 accept=application/json -> application/problem+json {"detail":"Too many requests. Wait for the time given in `Retry-After` before retrying.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":429,"title":"Rate limit exceeded","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited"}
+Problem 429 accept=application/problem+json -> application/problem+json {"detail":"Too many requests. Wait for the time given in `Retry-After` before retrying.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":429,"title":"Rate limit exceeded","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited"}
+Problem 429 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 429 Too Many Requests
+Problem 429 accept=text/plain -> text/html; charset=utf-8 429 Too Many Requests
+Problem 431 accept=- -> application/problem+json {"detail":"The request headers are larger or more than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431,"title":"Request headers too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large"}
+Problem 431 accept=*/* -> application/problem+json {"detail":"The request headers are larger or more than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431,"title":"Request headers too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large"}
+Problem 431 accept=application/json -> application/problem+json {"detail":"The request headers are larger or more than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431,"title":"Request headers too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large"}
+Problem 431 accept=application/problem+json -> application/problem+json {"detail":"The request headers are larger or more than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431,"title":"Request headers too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large"}
+Problem 431 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Problem 431 accept=text/plain -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Problem 500 accept=- -> application/problem+json {"detail":"The proxy could not complete the request.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500,"title":"Internal error","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error"}
+Problem 500 accept=*/* -> application/problem+json {"detail":"The proxy could not complete the request.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500,"title":"Internal error","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error"}
+Problem 500 accept=application/json -> application/problem+json {"detail":"The proxy could not complete the request.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500,"title":"Internal error","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error"}
+Problem 500 accept=application/problem+json -> application/problem+json {"detail":"The proxy could not complete the request.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500,"title":"Internal error","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error"}
+Problem 500 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 500 Internal Server Error
+Problem 500 accept=text/plain -> text/html; charset=utf-8 500 Internal Server Error
+Problem 502 accept=- -> application/problem+json {"detail":"The upstream service could not be reached or answered badly.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502,"title":"Bad gateway","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway"}
+Problem 502 accept=*/* -> application/problem+json {"detail":"The upstream service could not be reached or answered badly.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502,"title":"Bad gateway","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway"}
+Problem 502 accept=application/json -> application/problem+json {"detail":"The upstream service could not be reached or answered badly.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502,"title":"Bad gateway","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway"}
+Problem 502 accept=application/problem+json -> application/problem+json {"detail":"The upstream service could not be reached or answered badly.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502,"title":"Bad gateway","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway"}
+Problem 502 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 502 Bad Gateway
+Problem 502 accept=text/plain -> text/html; charset=utf-8 502 Bad Gateway
+Problem 503 accept=- -> application/problem+json {"detail":"The service cannot take the request now.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":503,"title":"Service unavailable","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable"}
+Problem 503 accept=*/* -> application/problem+json {"detail":"The service cannot take the request now.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":503,"title":"Service unavailable","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable"}
+Problem 503 accept=application/json -> application/problem+json {"detail":"The service cannot take the request now.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":503,"title":"Service unavailable","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable"}
+Problem 503 accept=application/problem+json -> application/problem+json {"detail":"The service cannot take the request now.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":503,"title":"Service unavailable","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable"}
+Problem 503 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 503 Service Unavailable
+Problem 503 accept=text/plain -> text/html; charset=utf-8 503 Service Unavailable
+Problem 504 accept=- -> application/problem+json {"detail":"The upstream service did not answer in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504,"title":"Gateway timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout"}
+Problem 504 accept=*/* -> application/problem+json {"detail":"The upstream service did not answer in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504,"title":"Gateway timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout"}
+Problem 504 accept=application/json -> application/problem+json {"detail":"The upstream service did not answer in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504,"title":"Gateway timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout"}
+Problem 504 accept=application/problem+json -> application/problem+json {"detail":"The upstream service did not answer in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504,"title":"Gateway timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout"}
+Problem 504 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 504 Gateway Timeout
+Problem 504 accept=text/plain -> text/html; charset=utf-8 504 Gateway Timeout
+Auto 400 accept=- -> text/html; charset=utf-8 400 Bad Request
+Auto 400 accept=*/* -> text/html; charset=utf-8 400 Bad Request
+Auto 400 accept=application/json -> application/problem+json {"detail":"The request is malformed or repeats a credential.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400,"title":"Bad request","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request"}
+Auto 400 accept=application/problem+json -> application/problem+json {"detail":"The request is malformed or repeats a credential.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":400,"title":"Bad request","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request"}
+Auto 400 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 400 Bad Request
+Auto 400 accept=text/plain -> text/html; charset=utf-8 400 Bad Request
+Auto 401 accept=- -> text/html; charset=utf-8 401 Unauthorized
+Auto 401 accept=*/* -> text/html; charset=utf-8 401 Unauthorized
+Auto 401 accept=application/json -> application/problem+json {"detail":"The request carries no valid credential for this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401,"title":"Authentication required","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated"}
+Auto 401 accept=application/problem+json -> application/problem+json {"detail":"The request carries no valid credential for this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":401,"title":"Authentication required","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated"}
+Auto 401 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 401 Unauthorized
+Auto 401 accept=text/plain -> text/html; charset=utf-8 401 Unauthorized
+Auto 403 accept=- -> text/html; charset=utf-8 403 Forbidden
+Auto 403 accept=*/* -> text/html; charset=utf-8 403 Forbidden
+Auto 403 accept=application/json -> application/problem+json {"detail":"The request is not allowed on this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403,"title":"Forbidden","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden"}
+Auto 403 accept=application/problem+json -> application/problem+json {"detail":"The request is not allowed on this route.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":403,"title":"Forbidden","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden"}
+Auto 403 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 403 Forbidden
+Auto 403 accept=text/plain -> text/html; charset=utf-8 403 Forbidden
+Auto 404 accept=- -> text/html; charset=utf-8 404 Not Found
+Auto 404 accept=*/* -> text/html; charset=utf-8 404 Not Found
+Auto 404 accept=application/json -> application/problem+json {"detail":"Nothing is served at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+Auto 404 accept=application/problem+json -> application/problem+json {"detail":"Nothing is served at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":404,"title":"Not found","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found"}
+Auto 404 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 404 Not Found
+Auto 404 accept=text/plain -> text/html; charset=utf-8 404 Not Found
+Auto 405 accept=- -> text/html; charset=utf-8 405 Method Not Allowed
+Auto 405 accept=*/* -> text/html; charset=utf-8 405 Method Not Allowed
+Auto 405 accept=application/json -> application/problem+json {"detail":"This method is not allowed at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405,"title":"Method not allowed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed"}
+Auto 405 accept=application/problem+json -> application/problem+json {"detail":"This method is not allowed at this address.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":405,"title":"Method not allowed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed"}
+Auto 405 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 405 Method Not Allowed
+Auto 405 accept=text/plain -> text/html; charset=utf-8 405 Method Not Allowed
+Auto 408 accept=- -> text/html; charset=utf-8 408 Request Timeout
+Auto 408 accept=*/* -> text/html; charset=utf-8 408 Request Timeout
+Auto 408 accept=application/json -> application/problem+json {"detail":"The request body did not arrive in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408,"title":"Request timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout"}
+Auto 408 accept=application/problem+json -> application/problem+json {"detail":"The request body did not arrive in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":408,"title":"Request timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout"}
+Auto 408 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 408 Request Timeout
+Auto 408 accept=text/plain -> text/html; charset=utf-8 408 Request Timeout
+Auto 413 accept=- -> text/html; charset=utf-8 413 Payload Too Large
+Auto 413 accept=*/* -> text/html; charset=utf-8 413 Payload Too Large
+Auto 413 accept=application/json -> application/problem+json {"detail":"The request body is larger than this route accepts.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413,"title":"Request body too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large"}
+Auto 413 accept=application/problem+json -> application/problem+json {"detail":"The request body is larger than this route accepts.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":413,"title":"Request body too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large"}
+Auto 413 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 413 Payload Too Large
+Auto 413 accept=text/plain -> text/html; charset=utf-8 413 Payload Too Large
+Auto 414 accept=- -> text/html; charset=utf-8 414 URI Too Long
+Auto 414 accept=*/* -> text/html; charset=utf-8 414 URI Too Long
+Auto 414 accept=application/json -> application/problem+json {"detail":"The request target is longer than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414,"title":"Request target too long","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long"}
+Auto 414 accept=application/problem+json -> application/problem+json {"detail":"The request target is longer than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":414,"title":"Request target too long","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long"}
+Auto 414 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 414 URI Too Long
+Auto 414 accept=text/plain -> text/html; charset=utf-8 414 URI Too Long
+Auto 417 accept=- -> text/html; charset=utf-8 417 Expectation Failed
+Auto 417 accept=*/* -> text/html; charset=utf-8 417 Expectation Failed
+Auto 417 accept=application/json -> application/problem+json {"detail":"Only `Expect: 100-continue` is supported.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417,"title":"Expectation failed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed"}
+Auto 417 accept=application/problem+json -> application/problem+json {"detail":"Only `Expect: 100-continue` is supported.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":417,"title":"Expectation failed","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed"}
+Auto 417 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 417 Expectation Failed
+Auto 417 accept=text/plain -> text/html; charset=utf-8 417 Expectation Failed
+Auto 429 accept=- -> text/html; charset=utf-8 429 Too Many Requests
+Auto 429 accept=*/* -> text/html; charset=utf-8 429 Too Many Requests
+Auto 429 accept=application/json -> application/problem+json {"detail":"Too many requests. Wait for the time given in `Retry-After` before retrying.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":429,"title":"Rate limit exceeded","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited"}
+Auto 429 accept=application/problem+json -> application/problem+json {"detail":"Too many requests. Wait for the time given in `Retry-After` before retrying.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":429,"title":"Rate limit exceeded","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited"}
+Auto 429 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 429 Too Many Requests
+Auto 429 accept=text/plain -> text/html; charset=utf-8 429 Too Many Requests
+Auto 431 accept=- -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Auto 431 accept=*/* -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Auto 431 accept=application/json -> application/problem+json {"detail":"The request headers are larger or more than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431,"title":"Request headers too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large"}
+Auto 431 accept=application/problem+json -> application/problem+json {"detail":"The request headers are larger or more than allowed.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":431,"title":"Request headers too large","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large"}
+Auto 431 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Auto 431 accept=text/plain -> text/html; charset=utf-8 431 Request Header Fields Too Large
+Auto 500 accept=- -> text/html; charset=utf-8 500 Internal Server Error
+Auto 500 accept=*/* -> text/html; charset=utf-8 500 Internal Server Error
+Auto 500 accept=application/json -> application/problem+json {"detail":"The proxy could not complete the request.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500,"title":"Internal error","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error"}
+Auto 500 accept=application/problem+json -> application/problem+json {"detail":"The proxy could not complete the request.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":500,"title":"Internal error","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error"}
+Auto 500 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 500 Internal Server Error
+Auto 500 accept=text/plain -> text/html; charset=utf-8 500 Internal Server Error
+Auto 502 accept=- -> text/html; charset=utf-8 502 Bad Gateway
+Auto 502 accept=*/* -> text/html; charset=utf-8 502 Bad Gateway
+Auto 502 accept=application/json -> application/problem+json {"detail":"The upstream service could not be reached or answered badly.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502,"title":"Bad gateway","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway"}
+Auto 502 accept=application/problem+json -> application/problem+json {"detail":"The upstream service could not be reached or answered badly.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":502,"title":"Bad gateway","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway"}
+Auto 502 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 502 Bad Gateway
+Auto 502 accept=text/plain -> text/html; charset=utf-8 502 Bad Gateway
+Auto 503 accept=- -> text/html; charset=utf-8 503 Service Unavailable
+Auto 503 accept=*/* -> text/html; charset=utf-8 503 Service Unavailable
+Auto 503 accept=application/json -> application/problem+json {"detail":"The service cannot take the request now.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":503,"title":"Service unavailable","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable"}
+Auto 503 accept=application/problem+json -> application/problem+json {"detail":"The service cannot take the request now.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","retry_after":5,"status":503,"title":"Service unavailable","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable"}
+Auto 503 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 503 Service Unavailable
+Auto 503 accept=text/plain -> text/html; charset=utf-8 503 Service Unavailable
+Auto 504 accept=- -> text/html; charset=utf-8 504 Gateway Timeout
+Auto 504 accept=*/* -> text/html; charset=utf-8 504 Gateway Timeout
+Auto 504 accept=application/json -> application/problem+json {"detail":"The upstream service did not answer in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504,"title":"Gateway timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout"}
+Auto 504 accept=application/problem+json -> application/problem+json {"detail":"The upstream service did not answer in time.","instance":"urn:uuid:0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","request_id":"0190d4c4-8b6e-7a3c-9d2e-1f2a3b4c5d6e","status":504,"title":"Gateway timeout","type":"https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout"}
+Auto 504 accept=text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8 -> text/html; charset=utf-8 504 Gateway Timeout
+Auto 504 accept=text/plain -> text/html; charset=utf-8 504 Gateway Timeout

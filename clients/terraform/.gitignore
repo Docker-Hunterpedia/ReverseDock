@@ -1,0 +1,7 @@
+/dist/
+/terraform-provider-reversedock
+.terraform/
+.terraform.lock.hcl
+*.tfstate
+*.tfstate.backup
+crash.log

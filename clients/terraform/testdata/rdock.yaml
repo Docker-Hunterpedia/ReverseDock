@@ -1,0 +1,29 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+#
+# The smallest rdock the provider's acceptance tests need: the admin API on loopback with
+# configuration writes on (the API provider is always there when they are), a plain HTTP
+# listener so that routes created by the tests need no certificate, and one service owned
+# by this file, which the tests use to check that file-owned objects are read-only.
+#
+#   RDOCK_DATA_DIR=$(mktemp -d) rdock run --config testdata/rdock.yaml
+#   rdock tokens create terraform-acc --role operator --days 1 \
+#     --config testdata/rdock.yaml --data-dir "$RDOCK_DATA_DIR"      # over the admin socket, no token needed
+#   export RDOCK_ADMIN_URL=http://127.0.0.1:12080 RDOCK_ADMIN_TOKEN=rdk_pat_…
+listeners:
+  web: { address: "127.0.0.1:18080" }
+
+defaults:
+  listeners: [web]
+  tls: off
+
+acme: false
+
+admin:
+  enabled: true
+  listener: "127.0.0.1:12080"
+  dashboard: false
+  api_writes: true
+
+services:
+  file-owned:
+    backends: [{ address: "127.0.0.1:9" }]

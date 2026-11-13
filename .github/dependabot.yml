@@ -27,10 +27,6 @@ updates:
       cargo-minor-and-patch:
         update-types: [minor, patch]
     ignore:
-      # Pingora 0.9.0 panics on every connection with tokio >= 1.54 (zero-capacity BufStream).
-      # Lift together with the cap in Cargo.toml once the weekly tokio-canary job passes.
-      - dependency-name: tokio
-        versions: [">= 1.54"]
       # parking_lot 0.13 needs Rust 1.95; our MSRV is 1.89 (docs/06-repo-layout.md §2).
       - dependency-name: parking_lot
         versions: [">= 0.13"]
@@ -48,8 +44,6 @@ updates:
       prefix: build
       include: scope
     ignore:
-      - dependency-name: tokio
-        versions: [">= 1.54"]
       # The fuzz crate shares the workspace's brotli line (see the root cargo block).
       - dependency-name: brotli
         update-types: ["version-update:semver-major"]
@@ -85,3 +79,16 @@ updates:
       # The types follow the Node major the website runs on (24, see .github/workflows/website.yml).
       - dependency-name: "@types/node"
         update-types: ["version-update:semver-major"]
+  - package-ecosystem: gomod
+    directory: /clients/terraform
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 14
+    labels: ["dependencies", "type/chore"]
+    commit-message:
+      prefix: build
+      include: scope
+    groups:
+      go-minor-and-patch:
+        update-types: [minor, patch]

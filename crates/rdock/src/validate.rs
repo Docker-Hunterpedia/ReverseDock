@@ -10,7 +10,7 @@ use rdock_model::{Diagnostic, Severity};
 use rdock_proxy::{CompileEnv, Mode, compile};
 use serde::Serialize;
 
-use crate::{OutputFormat, ValidateArgs, print};
+use crate::{OutputFormat, Registry, ValidateArgs, print};
 
 /// Result of validating one file, as printed by `--format json`.
 #[derive(Serialize)]
@@ -22,11 +22,11 @@ struct FileReport {
     diagnostics: Vec<Diagnostic>,
 }
 
-pub(crate) fn validate(args: &ValidateArgs) -> anyhow::Result<ExitCode> {
+pub(crate) fn validate(args: &ValidateArgs, plugins: &Registry) -> anyhow::Result<ExitCode> {
     let reports: Vec<FileReport> = args
         .files
         .iter()
-        .map(|file| report(file, args.strict))
+        .map(|file| report(file, args.strict, plugins))
         .collect();
     match args.format {
         OutputFormat::Json => print(&format!("{}\n", serde_json::to_string_pretty(&reports)?))?,
@@ -40,13 +40,16 @@ pub(crate) fn validate(args: &ValidateArgs) -> anyhow::Result<ExitCode> {
 }
 
 /// Load, validation and compile diagnostics of one file.
-pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
+pub(crate) fn diagnostics(file: &Path, plugins: &Registry) -> Vec<Diagnostic> {
     match load_file_with_includes(file).map(|(loaded, _)| loaded) {
         Ok(Loaded {
             config,
             mut diagnostics,
             ..
         }) => {
+            if !diagnostics.iter().any(Diagnostic::is_error) {
+                diagnostics.extend(read_vault(&config));
+            }
             if !diagnostics.iter().any(Diagnostic::is_error) {
                 let dns = rdock_proxy::upstream::Dns::default();
                 let cloudflare = rdock_proxy::forwarded::CloudflareRanges::default();
@@ -63,6 +66,10 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
                         backends: &backends,
                         sticky_key: b"validate",
                         live: &rdock_observability::live::Live::default(),
+                        caches: None,
+                        plugins,
+                        metrics: None,
+                        quotas: None,
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);
@@ -73,8 +80,41 @@ pub(crate) fn diagnostics(file: &Path) -> Vec<Diagnostic> {
     }
 }
 
-fn report(file: &Path, strict: bool) -> FileReport {
-    let mut diagnostics = diagnostics(file);
+/// Reads the configuration's `${vault:…}` references, as a start would: secret fields that
+/// are checked when compiled (a JWT key's length) need their value. On its own thread with its
+/// own runtime, so it works whether or not the caller runs in one.
+fn read_vault(config: &rdock_model::Config) -> Vec<Diagnostic> {
+    let Some(settings) = config.secrets.vault.clone() else {
+        return Vec::new();
+    };
+    let references = crate::engine::vault_references(config);
+    if references.is_empty() {
+        return Vec::new();
+    }
+    let read = std::thread::spawn(move || {
+        tokio::runtime::Builder::new_current_thread()
+            .enable_all()
+            .build()
+            .map_or_else(
+                |e| {
+                    vec![Diagnostic::error(
+                        "secrets.vault",
+                        format!("cannot start the Vault client: {e}"),
+                    )]
+                },
+                |runtime| runtime.block_on(crate::engine::read_vault_once(&settings, &references)),
+            )
+    });
+    read.join().unwrap_or_else(|_| {
+        vec![Diagnostic::error(
+            "secrets.vault",
+            "reading from Vault failed",
+        )]
+    })
+}
+
+fn report(file: &Path, strict: bool, plugins: &Registry) -> FileReport {
+    let mut diagnostics = diagnostics(file, plugins);
     if strict {
         for d in &mut diagnostics {
             d.severity = Severity::Error;

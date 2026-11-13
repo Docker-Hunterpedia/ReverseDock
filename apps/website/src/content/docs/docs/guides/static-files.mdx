@@ -60,12 +60,12 @@ Middlewares before `static` run as usual, so you can put `basic_auth`, `ip_allow
 | `cache_control` | `default: no-cache` | `Cache-Control` by path prefix; see [caching](#caching). |
 | `symlinks` | `none` | `none`, `within_root` or `all`; see [safety](#what-is-never-served). |
 | `hidden` | `refuse` | `refuse` answers 404 for any name starting with `.`; `allow` serves them. |
-| `directory_redirect` | `true` | `/docs` → `/docs/` with 308 when the directory has an index file. |
+| `directory_redirect` | `true` | `/docs` → `/docs/` with 308 when the directory has an index file or is [listed](#directory-listings). |
 | `max_ranges` | `1` | Most byte ranges in one request, 1 to 16; more get the whole file. |
 | `nosniff` | `true` | Send `X-Content-Type-Options: nosniff`. |
 | `types` | `{}` | Extension → media type, overriding the built-in table. |
 | `pass_through` | `false` | Send requests that name no file on to the route's service. |
-| `listing` | `false` | Directory listings are <Status planned="v0.8" />; `true` is refused until then. |
+| `listing` | `false` | List a directory that has no index file <Status planned="v0.8" />; see [directory listings](#directory-listings). |
 
 ## A single-page app
 
@@ -194,6 +194,125 @@ unknown extension are sent as `application/octet-stream`, and `X-Content-Type-Op
 stops browsers from guessing. `.ts` is MPEG transport stream video in the table; set
 `types: { ts: text/typescript }` if you serve TypeScript sources.
 
+## Directory listings
+
+With `listing: true` <Status planned="v0.8" />, a request for a directory that has no index file
+answers with the names in it instead of 404, like NGINX's `autoindex`, Caddy's `browse` and
+Apache's `Indexes`. It is off by default.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.pem
+    key_file: /etc/rdock/certs/example.key
+
+routes:
+  downloads:
+    match: "Host(`downloads.example.com`)"
+    middlewares: [downloads]
+
+middlewares:
+  downloads:
+    type: static
+    root: /srv/www/downloads
+    listing: true
+```
+
+A directory is listed when the path names a directory, has a trailing slash (a `308` adds it, as
+for index files, unless `directory_redirect: false`) and none of the `index` files exists in it.
+The root is a directory like any other. The order of precedence is fixed:
+
+1. A file that exists is served, and an index file wins over the listing.
+2. A directory that exists is listed. The `fallback` is never used for it, so an SPA with
+   `listing: true` shows the listing for a real directory without an index and still gets its
+   `index.html` for `/settings/profile`, which is no directory.
+3. A path that does not exist gets the `fallback`, or 404, or goes on to the service with
+   `pass_through`, exactly as without listings. With `listing: false` nothing changes at all:
+   a directory without an index is still a 404 (or goes to the service).
+
+### HTML and JSON
+
+The answer is HTML unless the client prefers JSON in `Accept`. The weights (`q=`) are
+compared, the most specific range decides a type's weight, and a tie, a missing header or an
+`Accept` that mentions neither gives HTML. Every answer carries `Vary: Accept`.
+
+```sh
+curl -s -H 'Accept: application/json' https://downloads.example.com/releases/
+```
+
+```json
+{
+  "path": "/releases/",
+  "entries": [
+    { "name": "archive", "type": "dir", "modified": "2026-11-10T09:12:44Z" },
+    { "name": "rdock-0.8.0.tar.gz", "type": "file", "size": 18234567, "modified": "2026-11-11T08:00:01Z" },
+    { "name": "latest", "type": "file", "size": 1024, "modified": "2026-11-11T08:00:01Z", "symlink": true }
+  ],
+  "truncated": false
+}
+```
+
+- `path` is the directory as `static` sees it (after `strip_prefix`), with a trailing slash.
+- `type` is `file` or `dir`. A symbolic link that `symlinks` allows is typed by what it leads to
+  and has `"symlink": true`; it is never shown under `symlinks: none`.
+- `size` is in bytes and only present for files. `modified` is UTC in RFC 3339 form to the
+  second, and left out when the file system gives none.
+- `truncated` is `true` when the directory has more entries than the listing holds (see below).
+- Entries are sorted by name, byte by byte on the UTF-8 name, with directories and files mixed
+  (`B` before `a`, `10` before `9`). The order does not depend on a locale. There are no sort
+  parameters in the query string.
+
+The HTML page is built in, with no templates and no styles or scripts. Names are escaped as text
+and percent-encoded in links, which are relative to the directory (`./name`, `./dir/`), so a
+`strip_prefix` before `static` keeps them working and a file named `javascript:alert(1)` is a
+link to a file, not to a script. Directories end in `/`, there is a link to the parent
+directory except at the root, and control characters and Unicode direction overrides in a name
+are shown as `U+FFFD` so a name cannot disguise itself (the JSON keeps names as they are).
+Names that are not valid UTF-8, or contain a backslash, cannot be requested at all and are
+left out of both formats.
+
+### What a listing shows
+
+- **Only what a request could fetch.** `hidden: refuse` (the default) leaves out every name
+  starting with `.`, and `symlinks` decides about links: `none` shows none, `within_root` shows
+  those that lead to a file or directory inside the root, `all` shows every link that leads
+  somewhere (and reports its target's size and date, which `rdock validate` warns about
+  together with `listing`). Dangling links, sockets, FIFOs and devices are never listed.
+  Metadata is read through the same directory handle that serves files, so a listing cannot
+  follow a link out of the root.
+- **At most 10,000 entries**, from the first 100,000 names read, so a huge directory costs
+  bounded time. When there are more, `truncated` is `true` and the page says so; the entries
+  shown are then an arbitrary part of the directory (the file system's order), sorted among
+  themselves. There is no pagination.
+- **No recursion.** One directory per request.
+- The directory is read on the blocking thread pool, like file reads, and never stalls other
+  requests.
+
+`rdock validate` warns when `listing: true` is combined with `hidden: allow` (`.env` and `.git/`
+would be listed) or `symlinks: all` (links out of `root` would be listed).
+
+### Headers
+
+| Header | Value |
+|---|---|
+| `Content-Type` | `text/html; charset=utf-8` or `application/json` |
+| `Vary` | `Accept` |
+| `Content-Security-Policy` | `default-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'`: the page loads and runs nothing. |
+| `X-Content-Type-Options` | `nosniff` (always, whatever `nosniff` says for files) |
+| `Referrer-Policy` | `no-referrer` |
+| `Cache-Control` | `no-cache`, or the value of the longest matching `cache_control` prefix, matched against the directory path with its trailing slash (`/downloads/`) |
+
+A listing has **no `ETag` and no `Last-Modified`**: the modification time of a directory does
+not change when a file inside it is rewritten, and the entries' sizes and dates have to be read
+for every answer anyway. So `If-None-Match`, `If-Modified-Since`, `If-Match` and `Range` are
+ignored and the answer is always `200` with the whole page; HEAD answers the same headers
+without the body, and other methods get `405`. `compress` before `static` compresses listings
+like any text or JSON answer.
+
 ## What is never served
 
 - **Paths that leave the directory.** The path is decoded once more after ReverseDock's
@@ -205,7 +324,7 @@ stops browsers from guessing. `.ts` is MPEG transport stream video in the table;
 - **Symbolic links.** With `symlinks: none`, a path with a link in it answers 404.
   `within_root` follows links that stay inside the directory; `all` follows every link, also
   out of it, and `rdock validate` warns about it.
-- **Directory listings.** A directory without an index file answers 404.
+- **Directory listings, unless you turn them on.** A directory without an index file answers 404.
 - **Other methods.** Methods other than GET and HEAD get `405` with `Allow: GET, HEAD`.
 
 When the directory is renamed or deleted while ReverseDock runs, the open handle keeps serving
