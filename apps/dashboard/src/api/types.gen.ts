@@ -2194,6 +2194,16 @@ export type RdockHsts = {
     [key: string]: unknown | boolean | RdockDuration | undefined;
 };
 
+/**
+ * QUIC congestion controllers (quinn 0.11).
+ */
+export type RdockHttp3Congestion = 'cubic' | 'newreno' | 'bbr';
+
+/**
+ * When an HTTP/3 listener sends QUIC Retry packets.
+ */
+export type RdockHttp3Retry = 'auto' | 'always' | 'never';
+
 export type RdockHttpUrl = string;
 
 /**
@@ -2483,6 +2493,12 @@ export type RdockListener = {
      */
     http2?: RdockListenerHttp2 | null;
     /**
+     * HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
+     * the listener then also owns the UDP socket of its address. Needs a build with the
+     * `http3` cargo feature; off by default.
+     */
+    http3?: RdockListenerHttp3 | null;
+    /**
      * A path answered `200 OK` for any host before routing, for load-balancer health
      * monitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.
      */
@@ -2518,7 +2534,7 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | RdockListenerHttp2 | null | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockListenerSocket | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | RdockListenerHttp2 | null | RdockListenerHttp3 | null | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockListenerSocket | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
 };
 
 /**
@@ -2569,6 +2585,96 @@ export type RdockListenerHttp2 = {
      */
     max_send_buffer?: RdockByteSize | null;
     [key: string]: unknown | RdockByteSize | null | RdockByteSize | null | RdockFloodLimit | null | RdockByteSize | null | RdockByteSize | null | RdockFloodLimit | null | RdockFloodLimit | null | RdockByteSize | null | undefined;
+};
+
+/**
+ * HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
+ * nothing is unlimited.
+ */
+export type RdockListenerHttp3 = {
+    /**
+     * Add `Alt-Svc: h3=":<port>"` to this listener's HTTP/1 and HTTP/2 responses while the
+     * QUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.
+     */
+    advertise?: boolean;
+    /**
+     * How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default
+     * is 24h; shorter while experimental); 1s to 30d.
+     */
+    advertise_max_age?: RdockDuration;
+    /**
+     * The UDP port to advertise when it differs from the listener's (a port mapping such as
+     * public 443 to container 8443). Default: the listener's port.
+     */
+    advertise_port?: number | null;
+    /**
+     * Congestion controller. Default `cubic`.
+     */
+    congestion?: RdockHttp3Congestion;
+    /**
+     * HTTP/3 datagrams (RFC 9297). Not supported (planned).
+     */
+    datagrams?: boolean;
+    /**
+     * Accept 0-RTT early data. Not supported (planned): early data can be replayed.
+     */
+    early_data?: boolean;
+    /**
+     * Serve HTTP/3 on the UDP port of the listener's address. Default `false`.
+     */
+    enabled?: boolean;
+    /**
+     * Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported
+     * (planned).
+     */
+    extended_connect?: boolean;
+    /**
+     * UDP generic segmentation offload where the kernel supports it. Default `true`.
+     */
+    gso?: boolean;
+    /**
+     * Request streams a client may have open at once per connection
+     * (`initial_max_streams_bidi`). Default 100; 1 to 10000.
+     */
+    max_concurrent_streams?: number;
+    /**
+     * QUIC connections the listener holds at once. Default 10000; 1 to 1000000.
+     */
+    max_connections?: number;
+    /**
+     * QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.
+     */
+    max_connections_per_client?: number;
+    /**
+     * Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114
+     * §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB.
+     */
+    max_header_size?: RdockByteSize;
+    /**
+     * Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default
+     * 30s (HAProxy's); 1s to 10m.
+     */
+    max_idle?: RdockDuration;
+    /**
+     * Let clients move a connection to another address (active migration). Not supported
+     * (planned); NAT rebinding is handled either way.
+     */
+    migration?: boolean;
+    /**
+     * Write qlog traces into this directory. Not supported in this version (planned).
+     */
+    qlog?: string | null;
+    /**
+     * When to make clients prove their address with a QUIC Retry before any handshake work
+     * (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are
+     * half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`.
+     */
+    retry?: RdockHttp3Retry;
+    /**
+     * WebTransport over HTTP/3. Not supported (planned).
+     */
+    webtransport?: boolean;
+    [key: string]: unknown | boolean | RdockDuration | number | null | RdockHttp3Congestion | number | RdockByteSize | string | null | RdockHttp3Retry | undefined;
 };
 
 /**
@@ -4842,7 +4948,7 @@ export type RdockSameSite = 'lax' | 'strict' | 'none';
 /**
  * Protocols spoken to backends.
  */
-export type RdockScheme = 'http' | 'https' | 'h2c';
+export type RdockScheme = 'http' | 'https' | 'h2c' | 'h3';
 
 /**
  * External secret stores.
