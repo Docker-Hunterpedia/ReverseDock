@@ -150,7 +150,7 @@ trailers, such as a gRPC status from an h2c backend, are passed on.
 
 The access log says `"proto": "HTTP/3"` for these requests, with the SNI and `"tls_version":
 "TLSv1.3"` (`tls_cipher` reads `unknown`: quinn does not expose it). The
-[metrics](/docs/reference/metrics/#http3) `rdock_http3_connections_total`,
+[metrics](/docs/reference/metrics/#rdock_http3_connections_total) `rdock_http3_connections_total`,
 `rdock_http3_connections`, `rdock_http3_retries_total`,
 `rdock_http3_connections_closed_total{reason}`, `rdock_http3_malformed_requests_total{reason}` and
 `rdock_http3_requests_total{status_class}` count connections, Retry packets, why connections ended,
