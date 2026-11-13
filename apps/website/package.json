@@ -26,7 +26,7 @@
     "@lezer/highlight": "1.2.5",
     "@reversedock/harbor-tokens": "workspace:*",
     "@valtown/codemirror-json-schema": "1.0.0",
-    "astro": "7.4.2",
+    "astro": "7.4.4",
     "codemirror": "6.0.2",
     "sharp": "0.35.5",
     "starlight-links-validator": "0.27.0",
