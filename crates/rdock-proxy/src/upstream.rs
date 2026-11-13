@@ -120,19 +120,22 @@ fn eligible(service: &ServiceRuntime, members: &[Arc<Member>], now: Instant) -> 
     let candidates = members
         .iter()
         .filter(|m| m.weight > 0 && has_room(m) && !m.state.is_drained());
-    let up: Vec<&Arc<Member>> = candidates
+    // One pass over the backends that are up: primaries, and backups in case no primary is.
+    let mut primaries: Vec<Arc<Member>> = Vec::new();
+    let mut backups: Vec<Arc<Member>> = Vec::new();
+    for member in candidates
         .clone()
         .filter(|m| m.state.availability(now) != Availability::Down)
-        .collect();
-    let primaries: Vec<Arc<Member>> = up
-        .iter()
-        .filter(|m| !m.backup)
-        .map(|m| (*m).clone())
-        .collect();
+    {
+        if member.backup {
+            backups.push(member.clone());
+        } else {
+            primaries.push(member.clone());
+        }
+    }
     if !primaries.is_empty() {
         return primaries;
     }
-    let backups: Vec<Arc<Member>> = up.iter().map(|m| (*m).clone()).collect();
     if !backups.is_empty() || !service.health.fail_open {
         return backups;
     }

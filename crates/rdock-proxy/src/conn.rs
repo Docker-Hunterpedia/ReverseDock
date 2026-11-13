@@ -176,15 +176,18 @@ impl AsyncRead for ConnStream {
         }
         let before = buf.filled().len();
         let result = Pin::new(&mut this.inner).poll_read(cx, buf);
-        if let Poll::Ready(Ok(())) = result {
-            let filled = buf.filled()[before..].to_vec();
-            if this.on_read(&filled).is_err() {
-                buf.set_filled(before);
-                return Poll::Ready(Err(io::Error::new(
-                    io::ErrorKind::InvalidData,
-                    "bare LF in request headers",
-                )));
-            }
+        // Only headers are scanned, and a response in progress waits for the next request's
+        // first byte; a body (`Request`) or a connection without deadlines (`Off`) is not
+        // looked at, so its bytes are neither copied nor scanned.
+        if let Poll::Ready(Ok(())) = result
+            && !matches!(this.phase, Phase::Request | Phase::Off)
+            && this.on_read(&buf.filled()[before..]).is_err()
+        {
+            buf.set_filled(before);
+            return Poll::Ready(Err(io::Error::new(
+                io::ErrorKind::InvalidData,
+                "bare LF in request headers",
+            )));
         }
         result
     }

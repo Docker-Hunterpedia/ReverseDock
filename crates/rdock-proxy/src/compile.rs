@@ -858,6 +858,8 @@ fn compile_listeners(
                 .then_with(|| a.name.cmp(&b.name))
         });
         report_shadowed(&listener.name, &listener.routes, out);
+        listener.route_index =
+            crate::router::RouteIndex::build(listener.routes.iter().map(|r| &r.rule));
         if listener.protocol == ListenerProtocol::Http
             && !is_provider_listener(&listener.name)
             && config.defaults.redirect_http_to_https
@@ -892,9 +894,12 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         starttls: listener.starttls,
         tls,
         timeouts: listener.timeouts,
+        socket: listener.socket(),
+        max_handshakes: listener.tls.as_ref().and_then(|t| t.max_handshakes),
         proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),
+        route_index: crate::router::RouteIndex::default(),
         tcp_routes: Arc::new([]),
         udp_routes: Arc::new([]),
         udp_sessions: listener.sessions.unwrap_or_default(),

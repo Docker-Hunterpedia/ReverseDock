@@ -1,0 +1,174 @@
+---
+title: Sockets and threads
+description: Tune listener sockets (backlog, SO_REUSEPORT, buffers, keep-alive, Fast Open, DSCP), bound concurrent TLS handshakes and set the proxy's threads.
+sidebar:
+  order: 13
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock <Status planned="v0.9" /> lets you set the options of each listener's socket, bound
+how many TLS handshakes a listener runs at once, and choose how many threads serve connections.
+The defaults suit most servers: leave everything unset unless a measurement points at one of
+these settings. The design is [ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md).
+
+## The configuration
+
+```yaml title="rdock.yaml"
+runtime:
+  worker_threads: 4
+  max_blocking_threads: 64
+
+listeners:
+  web:
+    address: ":80"
+    socket:
+      backlog: 8192
+      keepalive: { idle: 60s, interval: 10s, count: 5 }
+  websecure:
+    address: ":443"
+    tls: { max_handshakes: 64 }
+    socket:
+      backlog: 8192
+      receive_buffer: 256KiB
+      send_buffer: 256KiB
+      user_timeout: 30s
+      dscp: 10
+
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends: [{ address: "10.0.0.5:3000" }]
+```
+
+## Listener sockets
+
+Every option under `listeners.<name>.socket` is unset by default, which keeps the kernel's
+behaviour, except `backlog`.
+
+| Option | Applies to | What it does |
+|---|---|---|
+| `backlog` | TCP | Connections the kernel has completed and ReverseDock has not accepted yet. Default **4096**. |
+| `reuse_port` | TCP | `SO_REUSEPORT`: several sockets may bind the same address and the kernel spreads connections over them. Off by default. Refused on `udp` listeners. |
+| `receive_buffer`, `send_buffer` | TCP, UDP | `SO_RCVBUF` and `SO_SNDBUF`. Unset: the kernel sizes buffers itself, which is usually best. |
+| `keepalive` | TCP | Keep-alive probes on accepted connections: `idle` before the first probe, `interval` between probes, `count` unanswered probes before the connection is dropped. `keepalive: {}` turns probes on with the kernel's timings. |
+| `user_timeout` | TCP | `TCP_USER_TIMEOUT`: how long sent data may stay unacknowledged before the connection is dropped. Linux only. |
+| `fast_open` | TCP | Accept TCP Fast Open, with this many pending requests. Linux only, and the kernel must allow it for servers (below). |
+| `ipv6_only` | TCP, UDP | For an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only, `false` IPv6 and IPv4. Unset: the system default (`net.ipv6.bindv6only`). |
+| `dscp` | TCP, UDP | DSCP value (0–63) of the packets ReverseDock sends on the listener's connections, for networks that prioritise traffic by class. |
+
+Options that do not fit the listener are refused when the configuration is validated: a TCP
+option on a `udp` listener, `ipv6_only` on an IPv4 address, `user_timeout` or `fast_open` on a
+system other than Linux. A refused option is never silently ignored.
+
+### The backlog
+
+When connections arrive faster than ReverseDock accepts them, for example a burst of new TLS
+connections or a short pause of the process, they wait in the listen queue. A full queue makes
+the kernel drop new connection attempts, which clients see as a pause of a second or more
+before they retry. Before v0.9 the queue was 128 long, the value the Rust standard library
+asks for. The default is now 4096, the default of Linux's `net.core.somaxconn` since kernel 5.4,
+which also caps whatever a program asks for
+([kernel ip-sysctl documentation](https://docs.kernel.org/networking/ip-sysctl.html), checked
+2026-11-13). To use a longer queue, raise both:
+
+```sh
+sysctl -w net.core.somaxconn=16384
+```
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls: {}
+    socket: { backlog: 16384 }
+```
+
+### `reuse_port`
+
+With `reuse_port`, another process of the same user can bind the same address without an
+error, and the kernel then shares connections with it. Turn it on only when that is what you
+want (two instances on one host during a migration, for example). ReverseDock itself accepts on
+one socket per listener and spreads connections over all its threads, so it needs no
+`reuse_port` to use several CPUs.
+
+### Fast Open
+
+TCP Fast Open lets a returning client send its first request in the connection's first packet.
+The kernel accepts it for servers only when bit 2 of `net.ipv4.tcp_fastopen` is set (the
+default, `1`, allows clients only; ip-sysctl documentation, checked 2026-11-13). ReverseDock
+warns at start when `fast_open` is set and the kernel does not allow it:
+
+```sh
+sysctl -w net.ipv4.tcp_fastopen=3
+```
+
+### Reloads
+
+A reload applies `backlog`, the buffers and `fast_open` to the running socket, without binding
+again: connections waiting in the queue stay there. `keepalive`, `user_timeout` and `dscp` apply
+to connections accepted after the reload. `reuse_port` and `ipv6_only` are set before the socket
+is bound, so a changed value keeps the running socket as it is until rdock restarts or the
+listener's address changes; the reload report says so with a warning.
+
+## Bound concurrent TLS handshakes
+
+A TLS handshake costs far more CPU than a request on an open connection. When hundreds of new
+TLS connections arrive at once, their handshakes can take every CPU for tens of milliseconds,
+and requests on connections that are already open wait behind them.
+
+`tls.max_handshakes` bounds how many handshakes of an `https` listener run at the same time.
+While the bound is reached, ReverseDock stops accepting on that listener: new connections wait
+in the listen queue (so keep `backlog` large enough), they are not reset, and connections that
+are already open are served as usual. Unset, the default, there is no bound.
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls: { max_handshakes: 64 }
+```
+
+A handshake counts from the moment its connection is accepted until it completes or fails,
+including the wait for a PROXY header and the `ClientHello`, so a client that connects and sends
+nothing holds a slot until `timeouts.request_header` (10 s by default) closes it. A bound that is
+too low lets a few such clients delay every new connection; size it well above the number of
+handshakes your CPUs complete in a few milliseconds (the benchmark lab measured about 5,800 new
+TLS connections a second on 2 CPUs with a P-256 certificate, so about 3 per core per
+millisecond; [v0.6 results](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/benchmarks/results/2026-11-07-v06/report.md)). Two metrics show it working:
+`rdock_tls_handshakes_in_flight` and `rdock_tls_handshake_waits_total`.
+
+The bound covers `https` listeners. On a `tcp` listener that terminates TLS it is planned for a
+later version, and `rdock run` refuses it there.
+
+## Runtime threads
+
+`runtime.worker_threads` is the number of threads that serve connections. Unset, it is the
+number of CPUs the process may use as Rust's `available_parallelism` reports it, which counts
+the CPU affinity mask and a cgroup CPU quota such as a container's `--cpus` (or the
+`TOKIO_WORKER_THREADS` environment variable when it is set). Set it when ReverseDock shares a
+machine and should leave cores to other services. `runtime.max_blocking_threads` bounds the
+threads for blocking work such as file reads; the default is 512, tokio's.
+
+These are read when ReverseDock starts. A reload that changes them is applied without them and
+reports a warning; restart to apply. `rdock status` and the metric `rdock_runtime_threads` show
+the values in use:
+
+```text
+runtime      4 worker threads, at most 64 blocking
+```
+
+## Related
+
+- [Timeouts and limits](/docs/guides/timeouts-and-limits/)
+- [Reload the configuration](/docs/guides/reloads/)
+- [Metrics](/docs/reference/metrics/)

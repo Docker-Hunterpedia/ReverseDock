@@ -31,9 +31,12 @@ use clap::{Args, Parser, Subcommand, ValueEnum};
 /// musl's malloc took a global lock on every allocation and mapped and unmapped memory for
 /// the 64 KiB connection buffers, which was about a quarter of the CPU per request on 2 CPUs
 /// (perf, 2026-11-02, #93). mimalloc keeps freed memory per thread and reuses it.
-#[cfg(feature = "mimalloc")]
+#[cfg(all(feature = "mimalloc", not(feature = "alloc-count")))]
 #[global_allocator]
 static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
+#[cfg(feature = "alloc-count")]
+mod alloc_count;
 
 pub use rdock_plugin_api as plugin_api;
 pub use rdock_plugin_api::Registry;
@@ -291,6 +294,10 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         }
     };
     let plugins = std::sync::Arc::new(registry);
+    #[cfg(feature = "alloc-count")]
+    if matches!(cli.command, Command::Run(_)) {
+        alloc_count::serve_from_env();
+    }
     let result = match cli.command {
         Command::Run(args) => run::run(&args, &plugins),
         Command::Validate(args) => validate::validate(&args, &plugins),

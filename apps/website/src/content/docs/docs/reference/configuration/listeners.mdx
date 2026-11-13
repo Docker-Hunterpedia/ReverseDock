@@ -74,6 +74,84 @@ Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluste
 
 Sessions per client IP address (any source port). Default 64, so one source (or one forged address) can take at most 1/64 of the listener's default budget; a resolver that forwards many parallel queries from one address may need more. `unlimited` removes the cap.
 
+## `listeners.<name>.socket`
+
+**Type:** object
+
+Options of the listening socket and of the connections it accepts (ADR-0031). Unset options keep the kernel's behaviour, except `backlog`, which defaults to 4096.
+
+### `listeners.<name>.socket.backlog`
+
+**Type:** `integer`
+
+TCP: how many connections the kernel holds that have completed their handshake and that ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn` default since 5.4, which also caps it (before v0.9 it was 128).
+
+### `listeners.<name>.socket.dscp`
+
+**Type:** `integer`
+
+DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of IPv4's TOS byte or IPv6's traffic class).
+
+### `listeners.<name>.socket.fast_open`
+
+**Type:** `integer`
+
+TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel must allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.
+
+### `listeners.<name>.socket.ipv6_only`
+
+**Type:** `boolean`
+
+`IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only, `false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).
+
+### `listeners.<name>.socket.keepalive`
+
+**Type:** object
+
+TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.
+
+#### `listeners.<name>.socket.keepalive.count`
+
+**Type:** `integer`
+
+Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).
+
+#### `listeners.<name>.socket.keepalive.idle`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+Idle time before the first probe (`TCP_KEEPIDLE`).
+
+#### `listeners.<name>.socket.keepalive.interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+Time between probes (`TCP_KEEPINTVL`).
+
+### `listeners.<name>.socket.receive_buffer`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize)
+
+`SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is negotiated with it. Unset: the kernel's automatic sizing.
+
+### `listeners.<name>.socket.reuse_port`
+
+**Type:** `boolean` · **Default:** `false`
+
+TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and the kernel spreads connections over them. Off by default: with it, another process of the same user can bind the address unnoticed. Refused on `udp` listeners.
+
+### `listeners.<name>.socket.send_buffer`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize)
+
+`SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.
+
+### `listeners.<name>.socket.user_timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay unacknowledged before the connection is dropped. Linux only.
+
 ## `listeners.<name>.starttls`
 
 **Type:** `postgres`
@@ -150,6 +228,12 @@ Also trust Cloudflare's CA for global Authenticated Origin Pulls.
 
 - `required`: Every connection needs a valid certificate.
 - `optional`: A certificate is optional; routes can demand one with the `client_cert` middleware.
+
+### `listeners.<name>.tls.max_handshakes`
+
+**Type:** `integer`
+
+`https` listeners: TLS handshakes in progress at once. While the bound is reached, new connections wait in the listen backlog instead of taking CPU from established ones. Unset: no bound (ADR-0031).
 
 ### `listeners.<name>.tls.policy`
 

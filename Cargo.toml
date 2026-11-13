@@ -23,6 +23,8 @@ members = [
   "crates/rdock-dns-providers",
   "crates/rdock-migrate",
   "crates/rdock-testkit",
+  # The per-request measurement helper (benchmarks/README.md, "Per-request cost without Docker").
+  "benchmarks/perreq",
   "crates/providers/rdock-provider-file",
   "crates/providers/rdock-provider-docker",
   "crates/providers/rdock-provider-swarm",
@@ -103,6 +105,10 @@ pingora = { version = "0.9.1", default-features = false, features = ["proxy", "r
 # tokio 1.54.1 (1.54.0 is yanked) declares rust-version 1.85, within our MSRV.
 tokio = { version = "1.54.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
 arc-swap = "1.9.3"
+# Listener sockets with a backlog and options before `bind` (H-PERF-01, ADR-0031); 0.6.5 is already
+# locked through tokio and hyper-util (checked 2026-11-13). `all` adds the keep-alive interval and
+# count, `SO_REUSEPORT` and `TCP_USER_TIMEOUT` setters.
+socket2 = { version = "0.6.5", features = ["all"] }
 async-trait = "0.1.92"
 bytes = "1.12.1"
 flate2 = { version = "1.1.5", default-features = false, features = ["zlib-ng"] }
@@ -170,6 +176,9 @@ prometheus = { version = "0.14.0", default-features = false }
 sd-notify = "0.5.0"
 # Global allocator (0.1.52 released 2026-05-22): musl's malloc mapped and unmapped memory on the request path (#93).
 mimalloc = "0.1.52"
+# Counting allocator for the per-request measurement helper (benchmarks/perreq); only behind the
+# bench-only `alloc-count` feature of `rdock`, never in a release build (0.1.10, MIT, checked 2026-11-13).
+stats_alloc = "0.1.10"
 # Raises the open-file limit at start (nix 0.31.3 released 2026-05-11; pingora-core builds it already).
 nix = { version = "0.31.3", default-features = false, features = ["resource"] }
 tracing = "0.1.44"

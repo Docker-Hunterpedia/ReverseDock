@@ -91,6 +91,20 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
+        // The handshake bound covers `https` listeners; a `tcp` listener that terminates TLS
+        // does its handshake inside the relay (ADR-0031).
+        if listener.effective_protocol() == ListenerProtocol::Tcp
+            && listener
+                .tls
+                .as_ref()
+                .is_some_and(|t| t.max_handshakes.is_some())
+        {
+            gate.unsupported(
+                format!("{path}.tls.max_handshakes"),
+                "`tls.max_handshakes` on `tcp` listeners",
+                "a later version",
+            );
+        }
         // The PROXY protocol specification defines no framing for datagrams (ADR-0030).
         if listener.effective_protocol() == ListenerProtocol::Udp
             && listener.proxy_protocol.is_some()
@@ -115,6 +129,15 @@ mod tests {
         let mut out = Vec::new();
         check(&config, mode, &mut out);
         out
+    }
+
+    #[test]
+    fn the_handshake_bound_on_tcp_listeners_is_planned() {
+        let yaml = "listeners:\n  raw: { address: \":5432\", protocol: tcp, tls: { max_handshakes: 8 } }\n  web: { address: \":443\", tls: { max_handshakes: 8 } }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "listeners.raw.tls.max_handshakes");
+        assert!(run[0].is_error() && run[0].message.ends_with("(planned for a later version)"));
     }
 
     #[test]

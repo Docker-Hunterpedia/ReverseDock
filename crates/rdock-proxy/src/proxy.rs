@@ -303,10 +303,13 @@ pub struct RequestCtx {
     started: Instant,
     started_at: SystemTime,
     runtime: Arc<Runtime>,
-    request_id: Arc<str>,
+    /// Set by `early_request_filter`; `None` only for a request refused before that.
+    request_id: Option<Arc<str>>,
     peer: Option<IpAddr>,
     client_ip: Option<IpAddr>,
     tls: bool,
+    /// The `Host` header (or the URI's authority) as sent; moved into the middleware context
+    /// when the route's `request` phase starts, and empty after that.
     authority: String,
     host: String,
     path: String,
@@ -357,6 +360,13 @@ pub struct RequestCtx {
 enum Hold {
     Collecting(BodyHolder),
     Released(Bytes),
+}
+
+impl RequestCtx {
+    /// The request's ID; empty for a request refused before it got one.
+    fn request_id(&self) -> &str {
+        self.request_id.as_deref().unwrap_or_default()
+    }
 }
 
 /// How rdock's own answers are rendered for this request: the route's `errors.format`, or
@@ -503,7 +513,7 @@ impl RdockProxy {
                 .and_then(|v| v.to_str().ok());
             let page = errorpage::render(&errorpage::ErrorInfo {
                 status: reply.status,
-                request_id: &ctx.request_id,
+                request_id: ctx.request_id(),
                 accept,
                 format: error_format(ctx),
                 kind: reply.problem,
@@ -532,7 +542,7 @@ impl RdockProxy {
             .as_mut()
             .and_then(|cx| cx.replace_body.take())
             .map_or(body, Body::Bytes);
-        resp.insert_header("x-request-id", &*ctx.request_id)?;
+        resp.insert_header("x-request-id", ctx.request_id())?;
         let head = session.req_header().method == http::Method::HEAD;
         let compressed = ctx.mw.as_ref().is_some_and(|cx| cx.compression.is_some());
         if compressed && !head && session.req_header().version == Version::HTTP_11 {
@@ -559,8 +569,9 @@ impl RdockProxy {
             client_ip,
             ctx.tls,
             route.name.clone(),
-            ctx.request_id.clone(),
-            ctx.authority.clone(),
+            ctx.request_id.clone().unwrap_or_else(|| Arc::from("")),
+            // Read only up to here; the middleware context takes it instead of a copy.
+            std::mem::take(&mut ctx.authority),
         );
         cx.client_cert = client_identity(session);
         cx.has_body = !session.is_body_empty() && !is_upgrade(session.req_header());
@@ -586,8 +597,7 @@ impl RdockProxy {
             .await?;
             return Ok(true);
         }
-        let spool = self.shared.spool.get().cloned();
-        start_hold(session, ctx, route, spool)?;
+        start_hold(session, ctx, route, &self.shared.spool)?;
         start_mirror(session.req_header(), ctx, route);
         Ok(false)
     }
@@ -719,7 +729,7 @@ impl RdockProxy {
         let ssl = session.digest().and_then(|d| d.ssl_digest.clone());
         AccessRecord {
             ts: rfc3339(ctx.started_at),
-            request_id: ctx.request_id.to_string(),
+            request_id: ctx.request_id().to_owned(),
             client_ip: ctx.client_ip.map(|ip| ip.to_string()).unwrap_or_default(),
             proxy_peer: session
                 .digest()
@@ -785,7 +795,7 @@ impl ProxyHttp for RdockProxy {
             started: Instant::now(),
             started_at: SystemTime::now(),
             runtime: self.shared.runtime.load_full(),
-            request_id: Arc::from(""),
+            request_id: None,
             peer: None,
             client_ip: None,
             tls: false,
@@ -876,7 +886,14 @@ impl ProxyHttp for RdockProxy {
             .and_then(|v| v.to_str().ok())
             .filter(|v| trusted && valid_request_id(v))
             .map(Arc::from);
-        ctx.request_id = incoming_id.unwrap_or_else(|| Arc::from(uuid::Uuid::now_v7().to_string()));
+        // Encoded on the stack and copied once into the shared string.
+        ctx.request_id = Some(incoming_id.unwrap_or_else(|| {
+            Arc::from(
+                &*uuid::Uuid::now_v7()
+                    .hyphenated()
+                    .encode_lower(&mut uuid::Uuid::encode_buffer()),
+            )
+        }));
         Self::check_request(&runtime, req)
     }
 
@@ -919,9 +936,12 @@ impl ProxyHttp for RdockProxy {
                 query: &query,
                 client_ip,
             };
+            // Only the routes that can match this host, in evaluation order (the index
+            // keeps the result of a scan over every route).
             listener
-                .routes
-                .iter()
+                .route_index
+                .candidates(&ctx.host)
+                .filter_map(|i| listener.routes.get(i))
                 .find(|r| r.rule.matches(&facts))
                 .cloned()
         };
@@ -949,7 +969,7 @@ impl ProxyHttp for RdockProxy {
         );
         session
             .req_header_mut()
-            .insert_header("x-request-id", &*ctx.request_id)?;
+            .insert_header("x-request-id", ctx.request_id())?;
         if let Some(trace) = &ctx.trace {
             trace.route(session.req_header().method.as_str(), &route.name, client_ip);
         }
@@ -1205,7 +1225,7 @@ impl ProxyHttp for RdockProxy {
         if let Some(trace) = &ctx.trace {
             trace.inject(upstream_request);
         }
-        let Some(route) = ctx.route.clone() else {
+        let Some(route) = ctx.route.as_ref() else {
             return Ok(());
         };
         let flags = route.middlewares.flags();
@@ -1310,11 +1330,11 @@ impl ProxyHttp for RdockProxy {
             crate::cache::decorate(session, upstream_response, cc);
             if crate::cache::from_store(session) {
                 // A stored response's ID belongs to the request that filled the cache.
-                upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
+                upstream_response.insert_header("x-request-id", ctx.request_id())?;
             }
         }
         if !upstream_response.headers.contains_key("x-request-id") {
-            upstream_response.insert_header("x-request-id", &*ctx.request_id)?;
+            upstream_response.insert_header("x-request-id", ctx.request_id())?;
         }
         Ok(())
     }
@@ -1512,7 +1532,7 @@ impl ProxyHttp for RdockProxy {
                 || {
                     errorpage::render(&errorpage::ErrorInfo {
                         status: code,
-                        request_id: &ctx.request_id,
+                        request_id: ctx.request_id(),
                         accept: accept.as_deref(),
                         format: error_format(ctx),
                         kind: None,
@@ -1533,7 +1553,7 @@ impl ProxyHttp for RdockProxy {
                     let _ = resp.insert_header(http::header::CONTENT_LANGUAGE, language);
                 }
                 let _ = resp.insert_header(http::header::CACHE_CONTROL, "no-store");
-                let _ = resp.insert_header("x-request-id", &*ctx.request_id);
+                let _ = resp.insert_header("x-request-id", ctx.request_id());
                 if let Some(cc) = ctx.cache.as_mut() {
                     crate::cache::decorate(session, &mut resp, cc);
                 }
@@ -1629,18 +1649,23 @@ impl ProxyHttp for RdockProxy {
                 });
             }
         }
-        let sample = rdock_observability::live::Sample {
-            status,
-            elapsed,
-            bytes_in: session.body_bytes_read() as u64,
-            bytes_out: session.body_bytes_sent() as u64,
-        };
-        let now = std::time::SystemTime::now();
-        if let Some(route) = route {
-            route.live.record(sample, now);
-        }
-        if let Some(service) = &service {
-            service.live.record(sample, now);
+        let route_ring = route.map(|r| &r.live).filter(|r| r.is_recording());
+        let service_ring = service
+            .as_ref()
+            .map(|s| &s.live)
+            .filter(|r| r.is_recording());
+        // Off unless the admin API or a threshold alert reads the rings.
+        if route_ring.is_some() || service_ring.is_some() {
+            let sample = rdock_observability::live::Sample {
+                status,
+                elapsed,
+                bytes_in: session.body_bytes_read() as u64,
+                bytes_out: session.body_bytes_sent() as u64,
+            };
+            let now = std::time::SystemTime::now();
+            for ring in route_ring.into_iter().chain(service_ring) {
+                ring.record(sample, now);
+            }
         }
         let feed = &self.shared.metrics.feeds.logs;
         // Building the record is about twenty allocations; skip it when nobody reads it.
@@ -1773,7 +1798,7 @@ fn start_hold(
     session: &mut Session,
     ctx: &mut RequestCtx,
     route: &RouteRuntime,
-    spool: Option<Arc<rdock_middleware::Spool>>,
+    spool: &std::sync::OnceLock<Arc<rdock_middleware::Spool>>,
 ) -> pingora::Result<()> {
     if route.middlewares.flags().request_body.is_none()
         || session.is_body_empty()
@@ -1798,6 +1823,8 @@ fn start_hold(
     if declared_length(session.req_header()).is_some_and(|length| length > limit) {
         return Err(status_error(413, "request body too large to hold"));
     }
+    // The spool is shared by the process; only a route that holds a body takes a handle.
+    let spool = spool.get().cloned();
     ctx.hold = Some(Hold::Collecting(BodyHolder::new(hold, limit, spool)));
     Ok(())
 }

@@ -4,14 +4,19 @@
 //! no lock and no allocation. A slot is cleared by the first request of a new second; counts
 //! that race with that clearing can be lost, which the dashboard tolerates.
 //!
+//! A ring's slots are allocated by its first request, so a route or service without traffic
+//! costs a few bytes, not 190 KiB (10,000 idle routes would otherwise hold 1.9 GiB). When
+//! nothing can read the rings (no admin API and no error-rate or latency alert), the process
+//! turns recording off with [`Live::set_recording`] and requests touch no ring at all.
+//!
 //! Latency buckets are logarithmic with two per octave from 50 µs: bucket `i` holds
 //! `[50 µs × 2^(i/2), 50 µs × 2^((i+1)/2))`, so 40 buckets reach about 52 s and the last also
 //! takes anything slower. Reported percentiles interpolate inside the bucket; the error is at
 //! most 19 % at a bucket edge and usually far less.
 
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicU32, AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, PoisonError, Weak};
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
+use std::sync::{Arc, Mutex, OnceLock, PoisonError, Weak};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use serde::Serialize;
@@ -116,14 +121,15 @@ pub struct Sample {
 
 /// 900 seconds of one route or service.
 pub struct Ring {
-    slots: Box<[Slot]>,
+    /// Allocated by the first recorded request; until then every second reads as empty.
+    slots: OnceLock<Box<[Slot]>>,
+    /// Shared by every ring of a [`Rings`]: off when nothing reads them.
+    recording: Arc<AtomicBool>,
 }
 
 impl Default for Ring {
     fn default() -> Self {
-        Self {
-            slots: (0..SLOTS).map(|_| Slot::default()).collect(),
-        }
+        Self::new(Arc::new(AtomicBool::new(true)))
     }
 }
 
@@ -138,10 +144,36 @@ fn unix_second(now: SystemTime) -> u64 {
 }
 
 impl Ring {
-    /// Records one request at `now`. Lock-free and allocation-free.
+    fn new(recording: Arc<AtomicBool>) -> Self {
+        Self {
+            slots: OnceLock::new(),
+            recording,
+        }
+    }
+
+    /// Whether requests are recorded into this ring now.
+    #[must_use]
+    pub fn is_recording(&self) -> bool {
+        self.recording.load(Ordering::Relaxed)
+    }
+
+    /// Whether the slots exist (the ring has recorded a request).
+    #[must_use]
+    pub fn is_allocated(&self) -> bool {
+        self.slots.get().is_some()
+    }
+
+    /// Records one request at `now`. Lock-free and allocation-free, except for the first
+    /// request, which allocates the slots. Nothing happens while recording is off.
     pub fn record(&self, sample: Sample, now: SystemTime) {
+        if !self.recording.load(Ordering::Relaxed) {
+            return;
+        }
+        let slots = self
+            .slots
+            .get_or_init(|| (0..SLOTS).map(|_| Slot::default()).collect());
         let second = unix_second(now);
-        let slot = &self.slots[index(second)];
+        let slot = &slots[index(second)];
         let held = slot.second.load(Ordering::Acquire);
         if held != second
             && slot
@@ -184,7 +216,10 @@ pub fn combined(rings: &[&Ring], window: Duration, now: SystemTime) -> Summary {
             ..Point::default()
         };
         for ring in rings {
-            let slot = &ring.slots[index(second)];
+            let Some(slots) = ring.slots.get() else {
+                continue;
+            };
+            let slot = &slots[index(second)];
             if slot.second.load(Ordering::Acquire) != second {
                 continue;
             }
@@ -276,12 +311,33 @@ pub struct Summary {
 }
 
 /// Rings by name, shared by every configuration generation while one uses them.
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct Rings {
     rings: Mutex<HashMap<String, Weak<Ring>>>,
+    recording: Arc<AtomicBool>,
+}
+
+impl Default for Rings {
+    fn default() -> Self {
+        Self {
+            rings: Mutex::default(),
+            recording: Arc::new(AtomicBool::new(true)),
+        }
+    }
 }
 
 impl Rings {
+    /// Turns recording on or off for every ring of this set, existing and future.
+    pub fn set_recording(&self, on: bool) {
+        self.recording.store(on, Ordering::Relaxed);
+    }
+
+    /// Whether requests are recorded.
+    #[must_use]
+    pub fn recording(&self) -> bool {
+        self.recording.load(Ordering::Relaxed)
+    }
+
     /// The ring for `name`, created when no live generation has one.
     pub fn ring(&self, name: &str) -> Arc<Ring> {
         let mut rings = self.rings.lock().unwrap_or_else(PoisonError::into_inner);
@@ -289,7 +345,7 @@ impl Rings {
         if let Some(ring) = rings.get(name).and_then(Weak::upgrade) {
             return ring;
         }
-        let ring = Arc::new(Ring::default());
+        let ring = Arc::new(Ring::new(self.recording.clone()));
         rings.insert(name.to_owned(), Arc::downgrade(&ring));
         ring
     }
@@ -312,6 +368,16 @@ pub struct Live {
     pub routes: Rings,
     /// By service name.
     pub services: Rings,
+}
+
+impl Live {
+    /// Records into the route rings only when `routes` (the admin API reads them) and into
+    /// the service rings only when `services` (the admin API or a threshold alert reads them).
+    /// Both start on.
+    pub fn set_recording(&self, routes: bool, services: bool) {
+        self.routes.set_recording(routes);
+        self.services.set_recording(services);
+    }
 }
 
 #[cfg(test)]
@@ -403,5 +469,55 @@ mod tests {
             std::mem::size_of::<Slot>() * SLOTS <= 192 * 1024,
             "about 190 KiB a ring"
         );
+    }
+
+    #[test]
+    fn idle_rings_hold_no_slots_and_read_as_zero() {
+        let rings = Rings::default();
+        let held: Vec<Arc<Ring>> = (0..10_000).map(|i| rings.ring(&format!("r{i}"))).collect();
+        assert!(
+            held.iter().all(|r| !r.is_allocated()),
+            "no slots before traffic"
+        );
+        assert!(
+            std::mem::size_of::<Ring>() <= 32,
+            "an idle ring is a few bytes, not {} KiB",
+            std::mem::size_of::<Slot>() * SLOTS / 1024
+        );
+        let idle = held[0].summary(Duration::from_secs(60), at(1_000));
+        assert_eq!(idle.requests, 0);
+        assert_eq!(
+            idle.series.len(),
+            60,
+            "the same shape as a ring with traffic"
+        );
+        assert!(idle.series.iter().all(|p| p.requests == 0));
+        assert_eq!(idle.p99, None);
+        held[1].record(sample(200, 1), at(1_000));
+        assert!(held[1].is_allocated() && !held[2].is_allocated());
+        let refs: Vec<&Ring> = held.iter().map(AsRef::as_ref).collect();
+        assert_eq!(
+            combined(&refs, Duration::from_secs(5), at(1_000)).requests,
+            1
+        );
+    }
+
+    #[test]
+    fn nothing_is_recorded_while_recording_is_off() {
+        let live = Live::default();
+        let (route, service) = (live.routes.ring("r"), live.services.ring("s"));
+        live.set_recording(false, true);
+        route.record(sample(200, 1), at(50));
+        service.record(sample(200, 1), at(50));
+        assert!(!route.is_allocated(), "an unread ring stays empty");
+        assert_eq!(service.summary(Duration::from_secs(1), at(50)).requests, 1);
+        // Rings made later follow the same switch.
+        assert!(!live.routes.recording());
+        let later = live.routes.ring("later");
+        later.record(sample(200, 1), at(50));
+        assert!(!later.is_allocated());
+        live.set_recording(true, true);
+        later.record(sample(200, 1), at(51));
+        assert_eq!(later.summary(Duration::from_secs(1), at(51)).requests, 1);
     }
 }

@@ -12,8 +12,8 @@ use crate::middleware::Middleware;
 use crate::providers::Providers;
 use crate::route::{Route, RouteTls, TcpRoute, TlsMode, UdpRoute};
 use crate::service::{Service, TcpService, UdpService};
-use crate::settings::{Admin, Lifecycle, Observability, Security};
-use crate::values::{Duration, IpNetwork, ListenAddress};
+use crate::settings::{Admin, Lifecycle, Observability, RuntimeSettings, Security};
+use crate::values::{ByteSize, Duration, IpNetwork, ListenAddress};
 
 /// A complete ReverseDock configuration, as written in `rdock.yaml`.
 ///
@@ -67,6 +67,9 @@ pub struct Config {
     pub observability: Observability,
     /// Start-up and shutdown behaviour.
     pub lifecycle: Lifecycle,
+    /// The proxy's worker threads; read at start, so a change needs a restart.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub runtime: Option<RuntimeSettings>,
     /// External secret stores that secret fields can reference (`${vault:…}`).
     #[serde(skip_serializing_if = "crate::secrets::Secrets::is_empty")]
     pub secrets: crate::secrets::Secrets,
@@ -226,6 +229,79 @@ pub struct Listener {
     /// upstream socket) may exist at once. Capped by default even when omitted.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub sessions: Option<UdpSessions>,
+    /// Options of the listening socket and of the connections it accepts (ADR-0031). Unset
+    /// options keep the kernel's behaviour, except `backlog`, which defaults to 4096.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub socket: Option<ListenerSocket>,
+}
+
+/// Socket options of a listener. Options that do not apply to the listener's transport are
+/// refused, and so are options this platform cannot set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ListenerSocket {
+    /// TCP: how many connections the kernel holds that have completed their handshake and
+    /// that ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`
+    /// default since 5.4, which also caps it (before v0.9 it was 128).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub backlog: Option<u32>,
+    /// TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and
+    /// the kernel spreads connections over them. Off by default: with it, another process of
+    /// the same user can bind the address unnoticed. Refused on `udp` listeners.
+    pub reuse_port: bool,
+    /// `SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is
+    /// negotiated with it. Unset: the kernel's automatic sizing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub receive_buffer: Option<ByteSize>,
+    /// `SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub send_buffer: Option<ByteSize>,
+    /// TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub keepalive: Option<TcpKeepalive>,
+    /// TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay
+    /// unacknowledged before the connection is dropped. Linux only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub user_timeout: Option<Duration>,
+    /// TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel
+    /// must allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fast_open: Option<u32>,
+    /// `IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,
+    /// `false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ipv6_only: Option<bool>,
+    /// DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of
+    /// IPv4's TOS byte or IPv6's traffic class).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub dscp: Option<u8>,
+}
+
+impl ListenerSocket {
+    /// The listen backlog when `backlog` is not set.
+    pub const DEFAULT_BACKLOG: u32 = 4096;
+
+    /// The listen backlog in effect.
+    #[must_use]
+    pub fn effective_backlog(&self) -> u32 {
+        self.backlog.unwrap_or(Self::DEFAULT_BACKLOG)
+    }
+}
+
+/// TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's
+/// (Linux: 7200 s idle, 75 s between probes, 9 probes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TcpKeepalive {
+    /// Idle time before the first probe (`TCP_KEEPIDLE`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub idle: Option<Duration>,
+    /// Time between probes (`TCP_KEEPINTVL`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub interval: Option<Duration>,
+    /// Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub count: Option<u32>,
 }
 
 impl Listener {
@@ -241,7 +317,14 @@ impl Listener {
             timeouts: ListenerTimeouts::default(),
             ping: None,
             sessions: None,
+            socket: None,
         }
+    }
+
+    /// The socket options, with the defaults when `socket` is omitted.
+    #[must_use]
+    pub fn socket(&self) -> ListenerSocket {
+        self.socket.unwrap_or_default()
     }
 
     /// The protocol in effect, inferring `https`/`http` from `tls` when not set.
@@ -415,6 +498,11 @@ pub struct ListenerTls {
     /// serves the shared certificates (`certificates`, automatic ones, `defaults.certificate`).
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub certificates: Vec<String>,
+    /// `https` listeners: TLS handshakes in progress at once. While the bound is reached, new
+    /// connections wait in the listen backlog instead of taking CPU from established ones.
+    /// Unset: no bound (ADR-0031).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_handshakes: Option<u32>,
 }
 
 /// Client certificate verification.

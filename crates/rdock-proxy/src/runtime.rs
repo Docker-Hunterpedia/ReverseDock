@@ -98,10 +98,16 @@ pub struct ListenerRuntime {
     pub tls: Option<ListenerTls>,
     /// Client-side timeouts.
     pub timeouts: ListenerTimeouts,
+    /// Options of the listening socket and of accepted connections.
+    pub socket: rdock_model::config::ListenerSocket,
+    /// `https` listeners: TLS handshakes in progress at once; `None` is no bound.
+    pub max_handshakes: Option<u32>,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.
     pub routes: Vec<Arc<RouteRuntime>>,
+    /// `routes` by host, built once the order is final; requests look routes up here.
+    pub route_index: crate::router::RouteIndex,
     /// TCP routes in evaluation order. A connection keeps these, not the whole runtime, for
     /// as long as it is relayed.
     pub tcp_routes: Arc<[Arc<crate::tcp::TcpRouteRuntime>]>,
@@ -385,6 +391,17 @@ enum Source {
 }
 
 impl Source {
+    /// Whether `endpoint` still has the answer this source was taken from, read in place
+    /// (no reference count is taken).
+    fn is_current(&self, endpoint: &Endpoint) -> bool {
+        match (endpoint, self) {
+            (Endpoint::Tcp { addrs, .. }, Self::Addrs(a)) => Arc::ptr_eq(&addrs.load(), a),
+            (Endpoint::Srv { targets, .. }, Self::Srv(a)) => Arc::ptr_eq(&targets.load(), a),
+            (Endpoint::Unix(_), Self::Fixed) => true,
+            _ => false,
+        }
+    }
+
     fn same(&self, other: &Self) -> bool {
         match (self, other) {
             (Self::Addrs(a), Self::Addrs(b)) => Arc::ptr_eq(a, b),
@@ -406,6 +423,17 @@ impl ServiceRuntime {
     /// Every resolved address of every backend, with the backend's weight and shared state.
     #[must_use]
     pub fn members(&self) -> Arc<[Arc<Member>]> {
+        // The request path: compare the cached answers with the live ones in place.
+        if let Some(cached) = self.members.load().as_ref()
+            && cached.sources.len() == self.backends.len()
+            && cached
+                .sources
+                .iter()
+                .zip(&self.backends)
+                .all(|(source, backend)| source.is_current(&backend.endpoint))
+        {
+            return cached.list.clone();
+        }
         let sources: Vec<Source> = self
             .backends
             .iter()

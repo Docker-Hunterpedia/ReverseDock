@@ -76,6 +76,17 @@ Errors after the connection is open, such as a read timeout, show up as 502 or 5
 **Counter.** TLS handshakes that failed or did not finish within the listener's
 `timeouts.request_header`. Label: `listener`.
 
+### `rdock_tls_handshakes_in_flight` <Status planned="v0.9" />
+
+**Gauge.** TLS connections accepted whose handshake has not finished yet, including the wait
+for the PROXY header and the `ClientHello`. Label: `listener`. With
+[`tls.max_handshakes`](/docs/guides/sockets-and-threads/#bound-concurrent-tls-handshakes) it stays at or below the bound.
+
+### `rdock_tls_handshake_waits_total` <Status planned="v0.9" />
+
+**Counter.** Times a listener stopped accepting because `tls.max_handshakes` was reached; new
+connections waited in the listen backlog meanwhile. Label: `listener`.
+
 ### `rdock_proxy_protocol_rejected_total` <Status since="v0.6" />
 
 **Counter.** Connections closed by the [PROXY protocol](/docs/guides/behind-a-proxy/#proxy-protocol)
@@ -380,6 +391,12 @@ in place.
 ### `rdock_build_info`
 
 **Gauge**, always `1`. Labels: `version` (for example `0.8.0-alpha.1`) and `commit`.
+
+### `rdock_runtime_threads` <Status planned="v0.9" />
+
+**Gauge.** The proxy runtime's threads as started: label `kind` is `worker` (threads that
+serve connections) or `max_blocking` (most threads for blocking work). See
+[`runtime`](/docs/guides/sockets-and-threads/#runtime-threads); a change needs a restart.
 
 ## When series appear
 

@@ -40,6 +40,11 @@ kubernetes = ["dep:rdock-provider-kubernetes"]
 wasm = ["rdock-proxy/wasm", "rdock-middleware/wasm"]
 # Faults for the admin isolation test (benchmarks/isolation, H-ENG-04); never in release builds.
 fault-injection = ["rdock-admin/fault-injection"]
+# Counts allocations for the per-request measurement helper (benchmarks/perreq): the system
+# allocator wrapped in a counter, readable over the Unix socket named by
+# `RDOCK_ALLOC_COUNT_SOCKET`. Replaces mimalloc while on. Debug builds only (a release build with
+# it fails to compile); never in a published binary.
+alloc-count = ["dep:stats_alloc"]
 
 [dependencies]
 anyhow.workspace = true
@@ -68,6 +73,7 @@ rdock-wasm.workspace = true
 rdock-cache.workspace = true
 sd-notify.workspace = true
 mimalloc = { workspace = true, optional = true }
+stats_alloc = { workspace = true, optional = true }
 nix.workspace = true
 serde.workspace = true
 serde_json.workspace = true

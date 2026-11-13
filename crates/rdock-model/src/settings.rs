@@ -586,6 +586,20 @@ const fn one() -> f64 {
     1.0
 }
 
+/// The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct RuntimeSettings {
+    /// Threads that serve connections. Unset: one per CPU the process may use, tokio's
+    /// default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worker_threads: Option<u16>,
+    /// Most threads for blocking work (file reads, DNS lookups by the system resolver).
+    /// Unset: 512, tokio's default.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_blocking_threads: Option<u16>,
+}
+
 /// Start-up and shutdown behaviour.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]

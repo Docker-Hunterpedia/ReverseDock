@@ -170,6 +170,17 @@
       },
       "default": {}
     },
+    "runtime": {
+      "description": "The proxy's worker threads; read at start, so a change needs a restart.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/RuntimeSettings"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "secrets": {
       "description": "External secret stores that secret fields can reference (`${vault:…}`).",
       "$ref": "#/$defs/Secrets"
@@ -3065,6 +3076,17 @@
             }
           ]
         },
+        "socket": {
+          "description": "Options of the listening socket and of the connections it accepts (ADR-0031). Unset\noptions keep the kernel's behaviour, except `backlog`, which defaults to 4096.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerSocket"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "starttls": {
           "description": "`tcp` listeners: answer a protocol's request to start TLS before reading the TLS\nClientHello. Off by default.",
           "anyOf": [
@@ -3133,6 +3155,100 @@
         }
       ]
     },
+    "ListenerSocket": {
+      "description": "Socket options of a listener. Options that do not apply to the listener's transport are\nrefused, and so are options this platform cannot set.",
+      "type": "object",
+      "properties": {
+        "backlog": {
+          "description": "TCP: how many connections the kernel holds that have completed their handshake and\nthat ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`\ndefault since 5.4, which also caps it (before v0.9 it was 128).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "dscp": {
+          "description": "DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of\nIPv4's TOS byte or IPv6's traffic class).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
+        },
+        "fast_open": {
+          "description": "TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel\nmust allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "ipv6_only": {
+          "description": "`IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,\n`false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).",
+          "type": [
+            "boolean",
+            "null"
+          ]
+        },
+        "keepalive": {
+          "description": "TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TcpKeepalive"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "receive_buffer": {
+          "description": "`SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is\nnegotiated with it. Unset: the kernel's automatic sizing.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reuse_port": {
+          "description": "TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and\nthe kernel spreads connections over them. Off by default: with it, another process of\nthe same user can bind the address unnoticed. Refused on `udp` listeners.",
+          "type": "boolean",
+          "default": false
+        },
+        "send_buffer": {
+          "description": "`SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "user_timeout": {
+          "description": "TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay\nunacknowledged before the connection is dropped. Linux only.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "ListenerTimeouts": {
       "description": "Timeouts for the client side of a listener.",
       "type": "object",
@@ -3185,6 +3301,15 @@
             }
           ],
           "default": null
+        },
+        "max_handshakes": {
+          "description": "`https` listeners: TLS handshakes in progress at once. While the bound is reached, new\nconnections wait in the listen backlog instead of taking CPU from established ones.\nUnset: no bound (ADR-0031).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
         },
         "policy": {
           "description": "TLS versions and cipher suites.",
@@ -6471,6 +6596,36 @@
         "^x-": {}
       }
     },
+    "RuntimeSettings": {
+      "description": "The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.",
+      "type": "object",
+      "properties": {
+        "max_blocking_threads": {
+          "description": "Most threads for blocking work (file reads, DNS lookups by the system resolver).\nUnset: 512, tokio's default.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "worker_threads": {
+          "description": "Threads that serve connections. Unset: one per CPU the process may use, tokio's\ndefault.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "SameSite": {
       "description": "`SameSite` cookie attribute.",
       "oneOf": [
@@ -7058,6 +7213,47 @@
           "const": "tls"
         }
       ]
+    },
+    "TcpKeepalive": {
+      "description": "TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's\n(Linux: 7200 s idle, 75 s between probes, 9 probes).",
+      "type": "object",
+      "properties": {
+        "count": {
+          "description": "Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        },
+        "idle": {
+          "description": "Idle time before the first probe (`TCP_KEEPIDLE`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interval": {
+          "description": "Time between probes (`TCP_KEEPINTVL`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "TcpRoute": {
       "description": "A TCP route.",

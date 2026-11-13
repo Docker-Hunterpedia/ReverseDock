@@ -32,6 +32,13 @@ pub struct Metrics {
     pub connections_total: IntCounterVec,
     /// TLS handshakes that failed, by listener.
     pub tls_handshake_errors: IntCounterVec,
+    /// TLS connections between accept and the end of their handshake, by listener.
+    pub tls_handshakes_in_flight: IntGaugeVec,
+    /// Times a listener stopped accepting because `tls.max_handshakes` was reached (new
+    /// connections waited in the listen backlog meanwhile), by listener.
+    pub tls_handshake_waits: IntCounterVec,
+    /// The proxy runtime's thread settings in effect (`kind`: `worker`, `max_blocking`).
+    pub runtime_threads: IntGaugeVec,
     /// Connections closed by the PROXY protocol step, by listener and reason (`untrusted`,
     /// `missing`, `malformed`, `timeout`, `too_large`).
     pub proxy_protocol_rejected: IntCounterVec,
@@ -220,6 +227,24 @@ impl Metrics {
             "rdock_tls_handshake_errors_total",
             "Failed TLS handshakes.",
             &["listener"],
+        )?;
+        let tls_handshakes_in_flight = gauges(
+            &registry,
+            "rdock_tls_handshakes_in_flight",
+            "TLS connections accepted whose handshake has not finished.",
+            &["listener"],
+        )?;
+        let tls_handshake_waits = counters(
+            &registry,
+            "rdock_tls_handshake_waits_total",
+            "Times the listener stopped accepting because tls.max_handshakes was reached; new connections waited in the listen backlog.",
+            &["listener"],
+        )?;
+        let runtime_threads = gauges(
+            &registry,
+            "rdock_runtime_threads",
+            "Thread settings of the proxy runtime (worker threads, most blocking threads).",
+            &["kind"],
         )?;
         let proxy_protocol_rejected = counters(
             &registry,
@@ -535,6 +560,9 @@ impl Metrics {
             connections,
             connections_total,
             tls_handshake_errors,
+            tls_handshakes_in_flight,
+            tls_handshake_waits,
+            runtime_threads,
             proxy_protocol_rejected,
             tcp_connections,
             tcp_bytes,

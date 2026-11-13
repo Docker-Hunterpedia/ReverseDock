@@ -2317,6 +2317,17 @@
             "description": "HTTP routes: which requests go to which service, through which middlewares.",
             "type": "object"
           },
+          "runtime": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.RuntimeSettings"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The proxy's worker threads; read at start, so a change needs a restart."
+          },
           "secrets": {
             "$ref": "#/components/schemas/rdock.Secrets",
             "description": "External secret stores that secret fields can reference (`${vault:…}`)."
@@ -3743,6 +3754,17 @@
             ],
             "description": "`udp` listeners: how many sessions (client address and port, each with its own\nupstream socket) may exist at once. Capped by default even when omitted."
           },
+          "socket": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ListenerSocket"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Options of the listening socket and of the connections it accepts (ADR-0031). Unset\noptions keep the kernel's behaviour, except `backlog`, which defaults to 4096."
+          },
           "starttls": {
             "anyOf": [
               {
@@ -3808,6 +3830,100 @@
           }
         ]
       },
+      "rdock.ListenerSocket": {
+        "additionalProperties": false,
+        "description": "Socket options of a listener. Options that do not apply to the listener's transport are\nrefused, and so are options this platform cannot set.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "backlog": {
+            "description": "TCP: how many connections the kernel holds that have completed their handshake and\nthat ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`\ndefault since 5.4, which also caps it (before v0.9 it was 128).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "dscp": {
+            "description": "DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of\nIPv4's TOS byte or IPv6's traffic class).",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "fast_open": {
+            "description": "TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel\nmust allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "ipv6_only": {
+            "description": "`IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,\n`false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).",
+            "type": [
+              "boolean",
+              "null"
+            ]
+          },
+          "keepalive": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TcpKeepalive"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TCP keep-alive probes on accepted connections. Unset: off, as the kernel does."
+          },
+          "receive_buffer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is\nnegotiated with it. Unset: the kernel's automatic sizing."
+          },
+          "reuse_port": {
+            "default": false,
+            "description": "TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and\nthe kernel spreads connections over them. Off by default: with it, another process of\nthe same user can bind the address unnoticed. Refused on `udp` listeners.",
+            "type": "boolean"
+          },
+          "send_buffer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing."
+          },
+          "user_timeout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay\nunacknowledged before the connection is dropped. Linux only."
+          }
+        },
+        "type": "object"
+      },
       "rdock.ListenerTimeouts": {
         "additionalProperties": false,
         "description": "Timeouts for the client side of a listener.",
@@ -3863,6 +3979,15 @@
             ],
             "default": null,
             "description": "Client certificates (mTLS). A certificate is always verified against these roots."
+          },
+          "max_handshakes": {
+            "description": "`https` listeners: TLS handshakes in progress at once. While the bound is reached, new\nconnections wait in the listen backlog instead of taking CPU from established ones.\nUnset: no bound (ADR-0031).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "policy": {
             "$ref": "#/components/schemas/rdock.TlsPolicy",
@@ -7146,6 +7271,36 @@
         },
         "type": "object"
       },
+      "rdock.RuntimeSettings": {
+        "additionalProperties": false,
+        "description": "The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "max_blocking_threads": {
+            "description": "Most threads for blocking work (file reads, DNS lookups by the system resolver).\nUnset: 512, tokio's default.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "worker_threads": {
+            "description": "Threads that serve connections. Unset: one per CPU the process may use, tokio's\ndefault.",
+            "format": "uint16",
+            "maximum": 65535,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "rdock.SameSite": {
         "description": "`SameSite` cookie attribute.",
         "oneOf": [
@@ -7733,6 +7888,47 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.TcpKeepalive": {
+        "additionalProperties": false,
+        "description": "TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's\n(Linux: 7200 s idle, 75 s between probes, 9 probes).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "count": {
+            "description": "Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
+          "idle": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Idle time before the first probe (`TCP_KEEPIDLE`)."
+          },
+          "interval": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time between probes (`TCP_KEEPINTVL`)."
+          }
+        },
+        "type": "object"
       },
       "rdock.TcpRoute": {
         "additionalProperties": false,

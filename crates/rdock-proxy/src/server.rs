@@ -9,6 +9,7 @@ use std::time::Duration;
 use arc_swap::ArcSwap;
 use rdock_middleware::HttpClient;
 use rdock_model::Config;
+use rdock_model::config::ListenerSocket;
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::{CertIndex, SniResolver};
@@ -73,7 +74,8 @@ struct State {
 /// Sockets and acceptors made ready before a configuration is published.
 #[derive(Default)]
 struct Prepared {
-    sockets: BTreeMap<String, listener::Socket>,
+    /// New sockets with the options they have.
+    sockets: BTreeMap<String, (listener::Socket, ListenerSocket)>,
     acceptors: BTreeMap<String, Arc<pingora::listeners::tls::Acceptor>>,
     /// New listener → the running listener whose socket it takes over: same address and
     /// transport, given up by this reload (removed, or moved to another address).
@@ -89,6 +91,8 @@ struct Wanted {
     proxy_protocol: Option<rdock_model::config::ProxyProtocolIn>,
     protocol: rdock_model::config::ListenerProtocol,
     starttls: Option<rdock_model::config::StartTls>,
+    socket: ListenerSocket,
+    max_handshakes: Option<u32>,
 }
 
 /// The data plane.
@@ -356,19 +360,41 @@ impl DataPlane {
                 protocol: listener.protocol,
                 source,
             };
-            let socket = match listener::Socket::bind(&listener.address, listener.protocol) {
+            let options = &listener.socket;
+            let socket = match listener::Socket::bind(&listener.address, listener.protocol, options)
+            {
                 Ok(socket) => socket,
                 Err(err)
                     if udp
                         && err.kind() == std::io::ErrorKind::AddrInUse
                         && end_draining_on(state, listener.address.port()).await =>
                 {
-                    listener::Socket::bind(&listener.address, listener.protocol)
+                    listener::Socket::bind(&listener.address, listener.protocol, options)
                         .map_err(bind_error)?
                 }
                 Err(err) => return Err(bind_error(err)),
             };
-            prepared.sockets.insert(name.clone(), socket);
+            prepared.sockets.insert(name.clone(), (socket, *options));
+        }
+        // Every bind succeeded: listeners that keep their socket get the options that can
+        // change in place (backlog, buffers, Fast Open). Options set before `bind`
+        // (`reuse_port`, `ipv6_only`) keep their running value until the address changes or
+        // rdock restarts; the engine's reload report says so.
+        for (name, listener) in &runtime.listeners {
+            let udp = listener.protocol == rdock_model::config::ListenerProtocol::Udp;
+            if let Some((running, _)) = state.running.get_mut(name)
+                && running.address == listener.address
+                && running.udp == udp
+            {
+                running
+                    .update_socket(&listener.socket)
+                    .map_err(|source| ApplyError::Bind {
+                        name: name.clone(),
+                        address: listener.address,
+                        protocol: listener.protocol,
+                        source,
+                    })?;
+            }
         }
         Ok(prepared)
     }
@@ -422,6 +448,8 @@ impl DataPlane {
                 proxy_protocol: l.proxy_protocol.clone(),
                 protocol: l.protocol,
                 starttls: l.starttls,
+                socket: l.socket,
+                max_handshakes: l.max_handshakes,
             })
             .collect();
         let generation = runtime.generation;
@@ -466,12 +494,23 @@ impl DataPlane {
                     .and_then(|(r, _)| r.settings.load().tls.clone()),
                 (None, _) => None,
             };
+            // An unchanged bound keeps its semaphore, so handshakes in progress stay counted.
+            let handshakes = w.max_handshakes.map(|limit| {
+                state
+                    .running
+                    .get(&w.name)
+                    .and_then(|(r, _)| r.settings.load().handshakes.clone())
+                    .filter(|current| current.limit() == limit)
+                    .unwrap_or_else(|| listener::Handshakes::new(limit))
+            });
             let settings = Settings {
                 tls,
                 timeouts: w.timeouts,
                 proxy_protocol: w.proxy_protocol,
                 protocol: w.protocol,
                 starttls: w.starttls,
+                connection: listener::ConnectionOptions::of(&w.socket),
+                handshakes,
             };
             if let Some(socket) = prepared.sockets.remove(&w.name) {
                 let running = Running::start(
@@ -526,6 +565,27 @@ impl DataPlane {
         // Requests are over: what the quotas counted is final for this run.
         let quotas = self.quotas.clone();
         let _ = tokio::task::spawn_blocking(move || quotas.flush_all()).await;
+    }
+
+    /// Listeners whose running socket kept an option that is set before `bind` and that the
+    /// served configuration changed: (listener, `reuse_port` or `ipv6_only`).
+    pub async fn kept_socket_options(&self) -> Vec<(String, &'static str)> {
+        let runtime = self.runtime();
+        let state = self.state.lock().await;
+        let mut out = Vec::new();
+        for (name, (running, _)) in &state.running {
+            let (Some(wanted), Some(has)) = (runtime.listeners.get(name), running.socket_options())
+            else {
+                continue;
+            };
+            if wanted.socket.reuse_port != has.reuse_port {
+                out.push((name.clone(), "reuse_port"));
+            }
+            if wanted.socket.ipv6_only != has.ipv6_only {
+                out.push((name.clone(), "ipv6_only"));
+            }
+        }
+        out
     }
 
     /// Listeners currently serving.
@@ -591,28 +651,44 @@ async fn take_over(
     drain: Duration,
 ) -> Result<(), ApplyError> {
     for (new, old) in std::mem::take(&mut prepared.hand_offs) {
-        let Some(protocol) = runtime.listeners.get(&new).map(|l| l.protocol) else {
+        let Some((protocol, options)) = runtime.listeners.get(&new).map(|l| (l.protocol, l.socket))
+        else {
             continue;
         };
         let Some((running, _)) = state.running.remove(&old) else {
             continue;
         };
         let address = running.address;
+        let udp = running.udp;
+        let had = running.socket_options().copied();
         tracing::info!(listener = %new, from = %old, %address, "taking over the socket of a replaced listener");
         let (socket, stopping) = running.hand_off(drain).await;
         tokio::spawn(stopping.finished());
-        let socket = match socket {
-            Some(socket) => socket,
-            None => {
-                listener::Socket::bind(&address, protocol).map_err(|source| ApplyError::Bind {
-                    name: new.clone(),
-                    address,
-                    protocol,
-                    source,
-                })?
-            }
+        let bind_error = |source| ApplyError::Bind {
+            name: new.clone(),
+            address,
+            protocol,
+            source,
         };
-        prepared.sockets.insert(new, socket);
+        let taken = match (socket, had) {
+            // The socket keeps what was set before `bind`; the rest follows the new listener.
+            (Some(socket), Some(had)) => {
+                let control = socket.control().map_err(bind_error)?;
+                listener::update_running(&control, udp, &had, &options).map_err(bind_error)?;
+                let kept = ListenerSocket {
+                    reuse_port: had.reuse_port,
+                    ipv6_only: had.ipv6_only,
+                    ..options
+                };
+                (socket, kept)
+            }
+            (Some(socket), None) => (socket, options),
+            (None, _) => (
+                listener::Socket::bind(&address, protocol, &options).map_err(bind_error)?,
+                options,
+            ),
+        };
+        prepared.sockets.insert(new, taken);
     }
     Ok(())
 }

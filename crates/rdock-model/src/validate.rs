@@ -58,6 +58,7 @@ impl Config {
         };
         v.check_version();
         v.check_listeners();
+        v.check_sockets();
         v.check_defaults();
         v.check_routes();
         v.check_services();
@@ -2542,6 +2543,7 @@ mod extensions;
 mod gateway;
 mod oidc;
 mod shaping;
+mod socket;
 mod static_files;
 mod tcp;
 #[cfg(test)]

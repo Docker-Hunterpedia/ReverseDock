@@ -28,6 +28,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`observability`](/docs/reference/configuration/observability/): Logs, metrics and traces.
 - [`providers`](/docs/reference/configuration/providers/): Dynamic configuration sources (file, Docker, Swarm, Kubernetes).
 - [`routes`](/docs/reference/configuration/routes/): HTTP routes: which requests go to which service, through which middlewares.
+- [`runtime`](/docs/reference/configuration/runtime/): The proxy's worker threads; read at start, so a change needs a restart.
 - [`secrets`](/docs/reference/configuration/secrets/): External secret stores that secret fields can reference (`${vault:…}`).
 - [`security`](/docs/reference/configuration/security/): Client IP trust and request limits.
 - [`services`](/docs/reference/configuration/services/): Backend pools that routes send traffic to.

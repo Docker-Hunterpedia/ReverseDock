@@ -281,6 +281,12 @@ pub(crate) fn status(args: &StatusArgs) -> anyhow::Result<ExitCode> {
         ),
         format!("started      {}", s["started_at"].as_str().unwrap_or("?")),
     ];
+    if let Some(runtime) = s["runtime"].as_object() {
+        lines.push(format!(
+            "runtime      {} worker threads, at most {} blocking",
+            runtime["worker_threads"], runtime["max_blocking_threads"]
+        ));
+    }
     for listener in s["listeners"].as_array().into_iter().flatten() {
         lines.push(format!(
             "listener     {} {} {} ({} routes)",

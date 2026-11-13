@@ -6,22 +6,36 @@ const RATE = Number(__ENV.RATE || 1000);
 const DURATION = __ENV.DURATION || '30s';
 
 const HOSTS = Number(__ENV.HOSTS || 0); // `routes` scenario: a different host per request
+// `tls-ramped`: reach RATE over RAMP, then hold it for DURATION. Without RAMP the scenario is the
+// constant rate the other scenarios use, unchanged.
+const RAMP = __ENV.RAMP || '';
 const params = { timeout: '10s' };
+const VUS = Math.min(2000, Math.max(50, RATE / 20));
+const constant = {
+  executor: 'constant-arrival-rate',
+  rate: RATE,
+  timeUnit: '1s',
+  duration: DURATION,
+  preAllocatedVUs: VUS,
+  maxVUs: 4000,
+};
+const ramped = {
+  executor: 'ramping-arrival-rate',
+  startRate: Math.ceil(RATE / 100),
+  timeUnit: '1s',
+  stages: [
+    { target: RATE, duration: RAMP },
+    { target: RATE, duration: DURATION },
+  ],
+  preAllocatedVUs: VUS,
+  maxVUs: 4000,
+};
 
 export const options = {
   discardResponseBodies: true,
   insecureSkipTLSVerify: true, // the `tls` scenarios use a throwaway certificate
   noConnectionReuse: __ENV.NEW_CONNECTIONS === '1', // `tls-new`: a handshake for every request
-  scenarios: {
-    constant: {
-      executor: 'constant-arrival-rate',
-      rate: RATE,
-      timeUnit: '1s',
-      duration: DURATION,
-      preAllocatedVUs: Math.min(2000, Math.max(50, RATE / 20)),
-      maxVUs: 4000,
-    },
-  },
+  scenarios: { constant: RAMP ? ramped : constant },
   summaryTrendStats: ['min', 'med', 'p(90)', 'p(99)', 'p(99.9)', 'max'],
 };
 

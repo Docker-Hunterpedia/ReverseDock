@@ -167,6 +167,11 @@ pub(crate) struct Engine {
     unbound: tokio::sync::watch::Sender<Unbound>,
     /// The Vault client and the state of the last read of `${vault:…}` references.
     vault: vault::VaultState,
+    /// Whether the admin API runs: decided by the first configuration (`run` starts it then),
+    /// unchanged until a restart.
+    admin_at_boot: std::sync::OnceLock<bool>,
+    /// The proxy runtime's threads, fixed at start (`runtime` needs a restart).
+    threads: std::sync::OnceLock<crate::run::Threads>,
 }
 
 /// What the certificate manager should do for an applied configuration: nothing when
@@ -247,7 +252,49 @@ impl Engine {
             alerts,
             unbound: tokio::sync::watch::Sender::new(Unbound::new()),
             vault: vault::VaultState::default(),
+            admin_at_boot: std::sync::OnceLock::new(),
+            threads: std::sync::OnceLock::new(),
         }
+    }
+
+    /// Records the runtime's threads, set once before the first configuration is applied.
+    pub(crate) fn set_threads(&self, threads: crate::run::Threads) {
+        threads.record(self.plane.metrics());
+        let _ = self.threads.set(threads);
+    }
+
+    /// Settings a reload cannot apply to the running process, as warnings: `runtime` (the
+    /// threads are made at start) and the socket options set before `bind` of listeners that
+    /// keep their socket (`reuse_port`, `ipv6_only`). Both take effect after a restart; the
+    /// socket options also when the listener's address changes.
+    async fn restart_only(&self, config: &Config) -> Vec<Diagnostic> {
+        let mut out = Vec::new();
+        if let Some(threads) = self.threads.get()
+            && config.runtime.unwrap_or_default() != threads.settings
+        {
+            out.push(
+                Diagnostic::warning(
+                    "runtime",
+                    format!(
+                        "the runtime's threads are made at start; this change takes effect after a restart (running with {} worker threads and at most {} blocking threads)",
+                        threads.workers, threads.max_blocking
+                    ),
+                )
+                .with_hint("restart rdock to apply it"),
+            );
+        }
+        for (listener, field) in self.plane.kept_socket_options().await {
+            out.push(
+                Diagnostic::warning(
+                    format!("{}.socket.{field}", rdock_model::diagnostics::path_key("listeners", &listener)),
+                    format!(
+                        "`{field}` is set before the socket is bound; the running socket keeps its value until rdock restarts or the listener's address changes"
+                    ),
+                )
+                .with_hint("restart rdock to apply it"),
+            );
+        }
+        out
     }
 
     /// The provider listeners the applied configuration left out because their address could
@@ -461,6 +508,12 @@ impl Engine {
         self.local_ca.update(local_names);
         self.alerts
             .send_replace(config.observability.alerts.clone());
+        // The live rings are read only by the admin API (routes and services) and the
+        // threshold alerts (services); when nothing reads them, requests do not record.
+        let admin = *self.admin_at_boot.get_or_init(|| config.admin.enabled);
+        let rules = &config.observability.alerts.rules;
+        let thresholds = rules.error_rate.is_some() || rules.latency.is_some();
+        self.plane.live().set_recording(admin, admin || thresholds);
     }
 
     /// Checks error-rate and latency thresholds every 30 seconds against the live rings and
@@ -567,6 +620,7 @@ impl Engine {
             }
         };
         self.update_background(&config, acme_plan, local_names);
+        diagnostics.extend(self.restart_only(&config).await);
         self.unbound.send_if_modified(|current| {
             let changed = *current != unbound;
             if changed {
@@ -1093,6 +1147,10 @@ impl rdock_admin::Control for Engine {
             "providers": self.provider_status(),
             "certificates": self.acme.status(),
             "secrets": { "vault": self.vault.status() },
+            "runtime": self.threads.get().map(|t| serde_json::json!({
+                "worker_threads": t.workers,
+                "max_blocking_threads": t.max_blocking,
+            })),
             "last_reload": last,
         })
     }

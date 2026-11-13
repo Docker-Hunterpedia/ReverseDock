@@ -9,6 +9,19 @@ sidebar:
 
 ## [Unreleased]
 
+### Added
+- **Listener socket options** (H-PERF-01, ADR-0031): `listeners.<l>.socket` with `backlog`, `reuse_port`, `receive_buffer`, `send_buffer`, `keepalive` (`idle`, `interval`, `count`), `user_timeout`, `fast_open`, `ipv6_only` and `dscp`, bound through `socket2`. Unset options keep the kernel's behaviour. Options that do not fit the listener's transport are refused (TCP options on a `udp` listener, `ipv6_only` on an IPv4 address), `reuse_port` on a `udp` listener is refused, and `user_timeout` and `fast_open` are refused outside Linux. A reload changes `backlog`, the buffers and `fast_open` on the running socket without binding again; `keepalive`, `user_timeout` and `dscp` apply to new connections; a changed `reuse_port` or `ipv6_only` keeps the running value until a restart and the reload reports it.
+- **Bound on concurrent TLS handshakes** (H-PERF-01, ADR-0031): `listeners.<l>.tls.max_handshakes` on `https` listeners. While the bound is reached the listener stops accepting, so new connections wait in the listen backlog instead of taking the CPU from established ones; no bound by default. Metrics `rdock_tls_handshakes_in_flight{listener}` and `rdock_tls_handshake_waits_total{listener}`. On `tcp` listeners it is refused as planned.
+- **Runtime threads** (H-PERF-01, ADR-0031): `runtime.worker_threads` and `runtime.max_blocking_threads`, read at start; a reload that changes them reports that a restart is needed. `rdock status` and `rdock_runtime_threads{kind}` show the values in use.
+- **Per-request measurement helper** (issue 181, ADR-0031): `benchmarks/perreq` counts allocations (with the bench-only `alloc-count` cargo feature, never in release builds), system calls and CPU time per proxied request without Docker, and runs the TLS-tail experiment; `benchmarks/cpu-ladder.sh` records the `cpu.stat` ladder in the Docker lab (untested); the `tls-ramped` benchmark scenario reaches its rate over 2 s. Baseline and results: `benchmarks/results/2026-11-13-perreq/`.
+
+### Changed
+- **The listen backlog is 4096**, Linux's `net.core.somaxconn` default since 5.4, instead of the standard library's 128 (ADR-0031).
+- **Routing uses a host index per listener** (issue 181): a request is checked only against the routes for its host (exact names, one-label wildcards) and the routes without a host condition, in the same priority order, so the result is unchanged. CPU per request at 10,000 routes fell from 2.4× to about 1.0× that of one route in a sandbox measurement.
+- **Fewer allocations per request** (issue 181): about 12 fewer per plain request and 29 fewer with 20 browser-like headers (forwarded-header cleanup, the client stream's read copy, the request ID, the path, backend selection).
+- **Live statistics rings are lazy** (issue 181, ADR-0031): a route's or service's 190 KiB ring is allocated by its first request, so idle routes cost no ring memory, and requests record nothing when neither the admin API nor an error-rate or latency alert can read the rings.
+- **Nightly benchmark gate**: CPU time per request from each proxy's cgroup is recorded at every rate and gated at 1.6× NGINX's; the throughput floor rises from 0.95× to 0.98× NGINX's.
+
 ## [0.8.0-alpha.1] — v0.7 "Kubernetes" and v0.8 "Cache and extensibility"
 
 ### Added

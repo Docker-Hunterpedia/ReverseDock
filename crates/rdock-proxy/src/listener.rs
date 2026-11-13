@@ -20,12 +20,14 @@ use pingora::protocols::{GetSocketDigest, SocketDigest, Stream};
 use pingora::proxy::HttpProxy;
 use pingora::server::configuration::ServerConf;
 use rdock_middleware::ClientIdentity;
-use rdock_model::config::{ListenerProtocol, ListenerTimeouts, ProxyProtocolIn, StartTls};
+use rdock_model::config::{
+    ListenerProtocol, ListenerSocket, ListenerTimeouts, ProxyProtocolIn, StartTls,
+};
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
 use rdock_tls::ListenerResolver;
 use tokio::io::AsyncReadExt;
-use tokio::sync::{oneshot, watch};
+use tokio::sync::{OwnedSemaphorePermit, Semaphore, oneshot, watch};
 use tokio::task::JoinSet;
 
 use crate::conn::ConnStream;
@@ -128,42 +130,309 @@ pub fn acceptor(tls: &ListenerTls, resolver: Arc<ListenerResolver>) -> Result<Ac
     Ok(acceptor)
 }
 
-/// Binds a listening socket. `:port` binds all interfaces, IPv6 and IPv4 when available.
+/// Binds a listening socket with the default options. `:port` binds all interfaces, IPv6 and
+/// IPv4 when available.
 pub fn bind(address: &ListenAddress) -> io::Result<std::net::TcpListener> {
-    let listener = match address.ip() {
-        Some(ip) => std::net::TcpListener::bind(SocketAddr::new(ip, address.port()))?,
-        None => std::net::TcpListener::bind(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            address.port(),
-        ))
-        .or_else(|_| {
-            std::net::TcpListener::bind(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                address.port(),
-            ))
-        })?,
-    };
-    listener.set_nonblocking(true)?;
-    Ok(listener)
+    bind_with(address, &ListenerSocket::default())
 }
 
-/// Binds a UDP socket. `:port` binds all interfaces, IPv6 and IPv4 when available.
-pub fn bind_udp(address: &ListenAddress) -> io::Result<std::net::UdpSocket> {
-    let socket = match address.ip() {
-        Some(ip) => std::net::UdpSocket::bind(SocketAddr::new(ip, address.port()))?,
-        None => std::net::UdpSocket::bind(SocketAddr::new(
-            IpAddr::V6(Ipv6Addr::UNSPECIFIED),
-            address.port(),
-        ))
-        .or_else(|_| {
-            std::net::UdpSocket::bind(SocketAddr::new(
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED),
-                address.port(),
-            ))
-        })?,
-    };
-    socket.set_nonblocking(true)?;
+/// The addresses to try for `address`: the address itself, or for `:port` the IPv6 and then
+/// the IPv4 wildcard.
+fn bind_addresses(address: &ListenAddress) -> Vec<SocketAddr> {
+    match address.ip() {
+        Some(ip) => vec![SocketAddr::new(ip, address.port())],
+        None => vec![
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), address.port()),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), address.port()),
+        ],
+    }
+}
+
+/// Tries each address in turn; the last error if none binds.
+fn bind_first<T>(
+    address: &ListenAddress,
+    bind: impl Fn(SocketAddr) -> io::Result<T>,
+) -> io::Result<T> {
+    let mut last = io::Error::new(io::ErrorKind::AddrNotAvailable, "no address to bind");
+    for addr in bind_addresses(address) {
+        match bind(addr) {
+            Ok(socket) => return Ok(socket),
+            Err(err) => last = err,
+        }
+    }
+    Err(last)
+}
+
+/// A socket with the options that must be set before `bind`.
+fn new_socket(
+    addr: SocketAddr,
+    kind: socket2::Type,
+    protocol: socket2::Protocol,
+    options: &ListenerSocket,
+) -> io::Result<socket2::Socket> {
+    let socket = socket2::Socket::new(socket2::Domain::for_address(addr), kind, Some(protocol))?;
+    // What the standard library's `bind` set before v0.9: a restart can bind an address
+    // whose old connections are still in TIME_WAIT.
+    #[cfg(unix)]
+    if kind == socket2::Type::STREAM {
+        socket.set_reuse_address(true)?;
+    }
+    #[cfg(unix)]
+    if options.reuse_port {
+        socket.set_reuse_port(true)?;
+    }
+    if addr.is_ipv6()
+        && let Some(only) = options.ipv6_only
+    {
+        socket.set_only_v6(only)?;
+    }
+    set_buffers(&socket, options)?;
     Ok(socket)
+}
+
+/// `SO_RCVBUF` and `SO_SNDBUF`, when set. Before `listen`, so the TCP window scale is
+/// negotiated with the receive buffer.
+fn set_buffers(socket: &socket2::Socket, options: &ListenerSocket) -> io::Result<()> {
+    if let Some(size) = options.receive_buffer {
+        socket.set_recv_buffer_size(usize::try_from(size.as_u64()).unwrap_or(usize::MAX))?;
+    }
+    if let Some(size) = options.send_buffer {
+        socket.set_send_buffer_size(usize::try_from(size.as_u64()).unwrap_or(usize::MAX))?;
+    }
+    Ok(())
+}
+
+/// The listen backlog as the system call takes it.
+fn backlog(options: &ListenerSocket) -> i32 {
+    i32::try_from(options.effective_backlog()).unwrap_or(i32::MAX)
+}
+
+/// `TCP_FASTOPEN` on a listening socket: the queue of pending Fast Open requests (0 turns it
+/// off). Validation refuses it on other platforms.
+#[cfg(target_os = "linux")]
+fn set_fast_open(socket: &socket2::Socket, queue: u32) -> io::Result<()> {
+    use std::os::unix::io::AsRawFd;
+    let queue = usize::try_from(queue).unwrap_or(usize::MAX);
+    pingora::protocols::l4::ext::set_tcp_fastopen_backlog(socket.as_raw_fd(), queue)
+        .map_err(|e| io::Error::other(e.to_string()))
+}
+
+#[cfg(not(target_os = "linux"))]
+fn set_fast_open(_socket: &socket2::Socket, _queue: u32) -> io::Result<()> {
+    Err(io::Error::new(
+        io::ErrorKind::Unsupported,
+        "TCP Fast Open is only supported on Linux",
+    ))
+}
+
+/// Binds a TCP listening socket with `options` (ADR-0031). `:port` binds all interfaces,
+/// IPv6 and IPv4 when available. The backlog is `socket.backlog`, 4096 by default; the
+/// standard library's `bind`, used before v0.9, always asked for 128.
+pub fn bind_with(
+    address: &ListenAddress,
+    options: &ListenerSocket,
+) -> io::Result<std::net::TcpListener> {
+    bind_first(address, |addr| {
+        let socket = new_socket(addr, socket2::Type::STREAM, socket2::Protocol::TCP, options)?;
+        socket.bind(&addr.into())?;
+        socket.listen(backlog(options))?;
+        if let Some(queue) = options.fast_open {
+            set_fast_open(&socket, queue)?;
+            warn_if_fast_open_is_off();
+        }
+        socket.set_nonblocking(true)?;
+        Ok(socket.into())
+    })
+}
+
+/// Fast Open needs the server bit of `net.ipv4.tcp_fastopen`; without it the option is set
+/// but clients fall back to a normal handshake.
+fn warn_if_fast_open_is_off() {
+    if let Ok(text) = std::fs::read_to_string("/proc/sys/net/ipv4/tcp_fastopen")
+        && let Ok(value) = text.trim().parse::<u32>()
+        && value & 2 == 0
+    {
+        tracing::warn!(
+            sysctl = value,
+            "`socket.fast_open` is set, but the kernel does not accept Fast Open as a server; set net.ipv4.tcp_fastopen to 3"
+        );
+    }
+}
+
+/// Binds a UDP socket with the default options. `:port` binds all interfaces, IPv6 and IPv4
+/// when available.
+pub fn bind_udp(address: &ListenAddress) -> io::Result<std::net::UdpSocket> {
+    bind_udp_with(address, &ListenerSocket::default())
+}
+
+/// Binds a UDP socket with `options` (buffers, `ipv6_only`, `dscp`; validation refuses the
+/// TCP options).
+pub fn bind_udp_with(
+    address: &ListenAddress,
+    options: &ListenerSocket,
+) -> io::Result<std::net::UdpSocket> {
+    bind_first(address, |addr| {
+        let socket = new_socket(addr, socket2::Type::DGRAM, socket2::Protocol::UDP, options)?;
+        socket.bind(&addr.into())?;
+        if let Some(dscp) = options.dscp {
+            set_dscp(&socket, addr, dscp)?;
+        }
+        socket.set_nonblocking(true)?;
+        Ok(socket.into())
+    })
+}
+
+/// DSCP as the top six bits of IPv4's TOS byte or IPv6's traffic class. `addr` is the local
+/// address; an IPv6 socket that serves IPv4 clients (mapped addresses) gets both.
+fn set_dscp(socket: &socket2::Socket, addr: SocketAddr, dscp: u8) -> io::Result<()> {
+    let value = u32::from(dscp) << 2;
+    if addr.is_ipv6() {
+        socket.set_tclass_v6(value)?;
+        // Dual-stack sockets: IPv4 clients' packets carry the IPv4 TOS byte. A socket that is
+        // IPv6-only refuses this, which is fine.
+        let _ = socket.set_tos_v4(value);
+        Ok(())
+    } else {
+        socket.set_tos_v4(value)
+    }
+}
+
+/// Changes the options of a running listening socket (`control` is a duplicate of its
+/// descriptor) that apply without binding again: the backlog (`listen` again), the buffers
+/// and Fast Open; DSCP of a UDP socket. `reuse_port` and `ipv6_only` are set before `bind`, so
+/// a change of those keeps the running socket as it is (the reload says so).
+pub(crate) fn update_running(
+    control: &socket2::Socket,
+    udp: bool,
+    old: &ListenerSocket,
+    new: &ListenerSocket,
+) -> io::Result<()> {
+    if old.receive_buffer != new.receive_buffer || old.send_buffer != new.send_buffer {
+        set_buffers(control, new)?;
+    }
+    if udp {
+        if old.dscp != new.dscp
+            && let Some(dscp) = new.dscp
+            && let Some(addr) = control.local_addr()?.as_socket()
+        {
+            set_dscp(control, addr, dscp)?;
+        }
+        return Ok(());
+    }
+    if old.effective_backlog() != new.effective_backlog() {
+        // Linux applies the new length to a socket that is already listening.
+        control.listen(backlog(new))?;
+    }
+    if old.fast_open != new.fast_open {
+        set_fast_open(control, new.fast_open.unwrap_or(0))?;
+    }
+    Ok(())
+}
+
+/// Options of accepted TCP connections: keep-alive, `TCP_USER_TIMEOUT` and DSCP.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ConnectionOptions {
+    keepalive: Option<rdock_model::config::TcpKeepalive>,
+    user_timeout: Option<Duration>,
+    dscp: Option<u8>,
+}
+
+impl ConnectionOptions {
+    /// The per-connection part of a listener's socket options.
+    #[must_use]
+    pub fn of(socket: &ListenerSocket) -> Self {
+        Self {
+            keepalive: socket.keepalive,
+            user_timeout: socket
+                .user_timeout
+                .map(rdock_model::values::Duration::as_std),
+            dscp: socket.dscp,
+        }
+    }
+
+    /// Sets them on an accepted connection; nothing (no system call) when none is set. A
+    /// failure is logged and the connection served anyway.
+    fn apply(&self, tcp: &tokio::net::TcpStream, listener: &str) {
+        if *self == Self::default() {
+            return;
+        }
+        let socket = socket2::SockRef::from(tcp);
+        let result = (|| -> io::Result<()> {
+            if let Some(k) = self.keepalive {
+                let mut params = socket2::TcpKeepalive::new();
+                if let Some(idle) = k.idle {
+                    params = params.with_time(idle.as_std());
+                }
+                if let Some(interval) = k.interval {
+                    params = params.with_interval(interval.as_std());
+                }
+                if let Some(count) = k.count {
+                    params = params.with_retries(count);
+                }
+                socket.set_tcp_keepalive(&params)?;
+            }
+            #[cfg(target_os = "linux")]
+            if let Some(timeout) = self.user_timeout {
+                socket.set_tcp_user_timeout(Some(timeout))?;
+            }
+            if let Some(dscp) = self.dscp {
+                let local = tcp.local_addr()?;
+                set_dscp(&socket, local, dscp)?;
+            }
+            Ok(())
+        })();
+        if let Err(err) = result {
+            tracing::debug!(listener, error = %err, "cannot set connection socket options");
+        }
+    }
+}
+
+/// The bound on concurrent TLS handshakes of a listener (`tls.max_handshakes`).
+#[derive(Debug, Clone)]
+pub struct Handshakes {
+    limit: u32,
+    permits: Arc<Semaphore>,
+}
+
+impl Handshakes {
+    /// A bound of `limit` handshakes.
+    #[must_use]
+    pub fn new(limit: u32) -> Self {
+        Self {
+            limit,
+            permits: Arc::new(Semaphore::new(usize::try_from(limit).unwrap_or(usize::MAX))),
+        }
+    }
+
+    /// The bound.
+    #[must_use]
+    pub fn limit(&self) -> u32 {
+        self.limit
+    }
+}
+
+/// A TLS connection between accept and the end of its handshake: counted in
+/// `rdock_tls_handshakes_in_flight`, and holding a permit of the listener's bound if it has one.
+struct InHandshake {
+    gauge: rdock_observability::IntGauge,
+    permit: Option<OwnedSemaphorePermit>,
+}
+
+impl InHandshake {
+    fn new(metrics: &Metrics, listener: &str, permit: Option<OwnedSemaphorePermit>) -> Self {
+        let gauge = metrics
+            .tls_handshakes_in_flight
+            .with_label_values(&[listener]);
+        gauge.inc();
+        Self { gauge, permit }
+    }
+}
+
+impl Drop for InHandshake {
+    fn drop(&mut self) {
+        self.gauge.dec();
+        drop(self.permit.take());
+    }
 }
 
 /// A bound socket, before its listener starts.
@@ -176,17 +445,33 @@ pub enum Socket {
 }
 
 impl Socket {
-    /// Binds `address` for a listener of `protocol`.
+    /// Binds `address` for a listener of `protocol` with `options`.
     ///
     /// # Errors
     ///
-    /// The address cannot be bound.
-    pub fn bind(address: &ListenAddress, protocol: ListenerProtocol) -> io::Result<Self> {
+    /// The address cannot be bound, or an option cannot be set.
+    pub fn bind(
+        address: &ListenAddress,
+        protocol: ListenerProtocol,
+        options: &ListenerSocket,
+    ) -> io::Result<Self> {
         Ok(if protocol == ListenerProtocol::Udp {
-            Self::Udp(tokio::net::UdpSocket::from_std(bind_udp(address)?)?)
+            Self::Udp(tokio::net::UdpSocket::from_std(bind_udp_with(
+                address, options,
+            )?)?)
         } else {
-            Self::Tcp(tokio::net::TcpListener::from_std(bind(address)?)?)
+            Self::Tcp(tokio::net::TcpListener::from_std(bind_with(
+                address, options,
+            )?)?)
         })
+    }
+
+    /// A duplicate descriptor of the socket, to change its options while the listener runs.
+    pub(crate) fn control(&self) -> io::Result<socket2::Socket> {
+        match self {
+            Self::Tcp(socket) => socket2::SockRef::from(socket).try_clone(),
+            Self::Udp(socket) => socket2::SockRef::from(socket).try_clone(),
+        }
     }
 }
 
@@ -229,6 +514,10 @@ pub struct Settings {
     pub protocol: ListenerProtocol,
     /// `tcp` listeners: the protocol whose request to start TLS is answered.
     pub starttls: Option<StartTls>,
+    /// Options set on each accepted connection.
+    pub connection: ConnectionOptions,
+    /// The bound on concurrent TLS handshakes, if the listener has one.
+    pub handshakes: Option<Handshakes>,
 }
 
 /// How a listener is asked to stop.
@@ -261,6 +550,10 @@ pub struct Running {
     pub udp: bool,
     /// Changeable settings.
     pub settings: Arc<ArcSwap<Settings>>,
+    /// A duplicate of the socket's descriptor, to change its options in place on a reload,
+    /// and the options it has. Dropped when the listener stops, so it never keeps the socket
+    /// open after the listener closed it.
+    control: Option<(socket2::Socket, ListenerSocket)>,
     stop: watch::Sender<Option<Stop>>,
     /// Resolves once the listener's socket is closed (the sender is dropped) or handed back.
     released: oneshot::Receiver<Socket>,
@@ -268,17 +561,25 @@ pub struct Running {
 }
 
 impl Running {
-    /// Starts accepting on `socket` (or, for a UDP socket, receiving datagrams).
+    /// Starts accepting on `socket` (or, for a UDP socket, receiving datagrams); `options`
+    /// are the socket options it was bound (or last updated) with.
     pub fn start(
         name: Arc<str>,
         address: ListenAddress,
-        socket: Socket,
+        (socket, options): (Socket, ListenerSocket),
         settings: Settings,
         shared: Arc<Shared>,
     ) -> Self {
         let (stop, stop_rx) = watch::channel(None);
         let (hand_back, released) = oneshot::channel();
         let udp = matches!(socket, Socket::Udp(_));
+        let control = match socket.control() {
+            Ok(control) => Some((control, options)),
+            Err(err) => {
+                tracing::warn!(listener = %name, error = %err, "cannot keep a handle on the socket; option changes will need a restart");
+                None
+            }
+        };
         let settings = Arc::new(ArcSwap::from_pointee(settings));
         let task = match socket {
             Socket::Tcp(socket) => {
@@ -300,10 +601,42 @@ impl Running {
             address,
             udp,
             settings,
+            control,
             stop,
             released,
             task,
         }
+    }
+
+    /// Applies changed socket options to the running socket: the backlog, the buffers and Fast
+    /// Open (DSCP of a UDP socket). An option that is set before `bind` (`reuse_port`,
+    /// `ipv6_only`) stays as it was.
+    ///
+    /// # Errors
+    ///
+    /// An option cannot be set.
+    pub fn update_socket(&mut self, options: &ListenerSocket) -> io::Result<()> {
+        let Some((control, current)) = self.control.as_mut() else {
+            return Ok(());
+        };
+        if current == options {
+            return Ok(());
+        }
+        update_running(control, self.udp, current, options)?;
+        // What was not changed in place (set before `bind`) keeps its running value.
+        let (reuse_port, ipv6_only) = (current.reuse_port, current.ipv6_only);
+        *current = ListenerSocket {
+            reuse_port,
+            ipv6_only,
+            ..*options
+        };
+        Ok(())
+    }
+
+    /// The socket options the running socket has.
+    #[must_use]
+    pub fn socket_options(&self) -> Option<&ListenerSocket> {
+        self.control.as_ref().map(|(_, options)| options)
     }
 
     /// Stops accepting (or opening UDP sessions); open connections (or sessions) may run for up
@@ -390,8 +723,35 @@ async fn accept_loop(
     let metrics: &Metrics = &shared.metrics;
     let (closing, closing_rx) = watch::channel(false);
     let mut connections = JoinSet::new();
+    // A permit of `tls.max_handshakes` taken before the next accept: while none is free, new
+    // connections wait in the kernel's backlog and established ones keep the CPU.
+    let mut permit: Option<OwnedSemaphorePermit> = None;
     let request = loop {
         while connections.try_join_next().is_some() {}
+        if permit.is_none()
+            && let Some(bound) = settings.load().handshakes.clone()
+        {
+            if let Ok(p) = bound.permits.clone().try_acquire_owned() {
+                permit = Some(p);
+            } else {
+                metrics
+                    .tls_handshake_waits
+                    .with_label_values(&[&name])
+                    .inc();
+                tokio::select! {
+                    changed = stop.changed() => {
+                        let requested = *stop.borrow();
+                        if changed.is_err() || requested.is_some() {
+                            break requested.unwrap_or(Stop::drain(Duration::ZERO));
+                        }
+                        continue;
+                    }
+                    acquired = bound.permits.clone().acquire_owned() => {
+                        permit = acquired.ok();
+                    }
+                }
+            }
+        }
         tokio::select! {
             changed = stop.changed() => {
                 let requested = *stop.borrow();
@@ -403,11 +763,14 @@ async fn accept_loop(
                 Ok((tcp, peer)) => {
                     metrics.connections_total.with_label_values(&[&name]).inc();
                     let current = settings.load_full();
+                    // The permit goes with the connection if it still belongs to the
+                    // listener's current bound (a reload may have changed it).
+                    let taken = permit.take().filter(|_| current.handshakes.is_some());
                     connections.spawn(serve(
                         name.clone(),
                         tcp,
                         peer,
-                        current,
+                        (current, taken),
                         engine.clone(),
                         closing_rx.clone(),
                         shared.clone(),
@@ -482,7 +845,7 @@ async fn serve(
     name: Arc<str>,
     tcp: tokio::net::TcpStream,
     peer: SocketAddr,
-    settings: Arc<Settings>,
+    (settings, permit): (Arc<Settings>, Option<OwnedSemaphorePermit>),
     engine: Arc<HttpProxy<RdockProxy>>,
     closing: watch::Receiver<bool>,
     shared: Arc<Shared>,
@@ -490,6 +853,12 @@ async fn serve(
     shared.metrics.connections.with_label_values(&[&name]).inc();
     let _open = Open(&shared.metrics, &name);
     let _ = tcp.set_nodelay(true);
+    settings.connection.apply(&tcp, &name);
+    // Until its handshake ends, a TLS connection counts as one in flight and holds its permit.
+    let mut in_handshake = settings
+        .tls
+        .is_some()
+        .then(|| InHandshake::new(&shared.metrics, &name, permit));
     // Only connections that may become TCP relays look up routes and pay for `getsockname`.
     let tcp_side = tcp_routes_of(&shared, &name, &settings)
         .map(|routes| (routes, tcp.local_addr().unwrap_or(peer)));
@@ -532,28 +901,34 @@ async fn serve(
             deadline,
         };
         if settings.protocol == ListenerProtocol::Tcp {
+            // `tcp` listeners relay; the bound covers only `https` handshakes.
+            drop(in_handshake.take());
             crate::tcp::serve(accepted, l4, context, &shared.metrics).await;
             return;
         }
+        // A diverted connection is relayed for as long as it lasts, so it gives its permit
+        // back first; one that stays here takes a permit again for its own handshake.
+        let bounded = in_handshake.take().is_some_and(|h| h.permit.is_some());
         match crate::tcp::divert(accepted, l4, context, &shared.metrics).await {
             Some(stream) => l4 = stream,
             None => return,
         }
+        let permit = match (bounded, settings.handshakes.as_ref()) {
+            (true, Some(bound)) => bound.permits.clone().acquire_owned().await.ok(),
+            _ => None,
+        };
+        in_handshake = Some(InHandshake::new(&shared.metrics, &name, permit));
     }
     let stream: ConnStream = if let Some(acceptor) = &settings.tls {
         let handshake = tokio::time::timeout_at(deadline, acceptor.tls_handshake(l4)).await;
+        // The handshake is over, whatever its outcome: the permit and the gauge go.
+        drop(in_handshake.take());
         let tls = match handshake {
             Ok(Ok(tls)) => tls,
-            Ok(Err(err)) => {
-                tracing::debug!(listener = %name, error = %err, "TLS handshake failed");
-                shared
-                    .metrics
-                    .tls_handshake_errors
-                    .with_label_values(&[&name])
-                    .inc();
-                return;
-            }
-            Err(_) => {
+            failed => {
+                if let Ok(Err(err)) = &failed {
+                    tracing::debug!(listener = %name, error = %err, "TLS handshake failed");
+                }
                 shared
                     .metrics
                     .tls_handshake_errors
@@ -597,5 +972,114 @@ async fn read_preface(stream: &mut L4Stream) -> Option<Vec<u8>> {
         if seen.len() >= H2_PREFACE.len() || seen[..check] != H2_PREFACE[..check] {
             return Some(seen);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rdock_model::config::TcpKeepalive;
+    use rdock_model::values::{ByteSize, Duration as ModelDuration};
+
+    fn loopback() -> ListenAddress {
+        ListenAddress::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)
+    }
+
+    #[test]
+    fn bind_sets_the_options_before_listening() {
+        let options = ListenerSocket {
+            reuse_port: true,
+            receive_buffer: Some(ByteSize::kib(256)),
+            send_buffer: Some(ByteSize::kib(128)),
+            ..ListenerSocket::default()
+        };
+        let listener = bind_with(&loopback(), &options).unwrap();
+        let socket = socket2::SockRef::from(&listener);
+        #[cfg(unix)]
+        assert!(socket.reuse_port().unwrap());
+        assert!(
+            socket.reuse_address().unwrap(),
+            "as the standard library set it"
+        );
+        // Linux doubles the requested size for its own bookkeeping.
+        assert!(socket.recv_buffer_size().unwrap() >= 256 * 1024);
+        assert!(socket.send_buffer_size().unwrap() >= 128 * 1024);
+        // A second socket with SO_REUSEPORT binds the same address.
+        let port = listener.local_addr().unwrap().port();
+        let again = ListenAddress::new(IpAddr::V4(Ipv4Addr::LOCALHOST), port);
+        assert!(bind_with(&again, &options).is_ok());
+        assert!(bind(&again).is_err(), "without it the address is in use");
+    }
+
+    #[test]
+    fn ipv6_only_applies_to_ipv6_sockets() {
+        let v6 = ListenAddress::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0);
+        let options = ListenerSocket {
+            ipv6_only: Some(true),
+            ..ListenerSocket::default()
+        };
+        // Some sandboxes have no IPv6.
+        if let Ok(listener) = bind_with(&v6, &options) {
+            assert!(socket2::SockRef::from(&listener).only_v6().unwrap());
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    #[tokio::test]
+    async fn accepted_connections_get_keepalive_user_timeout_and_dscp() {
+        let options = ListenerSocket {
+            keepalive: Some(TcpKeepalive {
+                idle: Some(ModelDuration::from_secs(60)),
+                interval: Some(ModelDuration::from_secs(10)),
+                count: Some(3),
+            }),
+            user_timeout: Some(ModelDuration::from_secs(30)),
+            dscp: Some(10),
+            ..ListenerSocket::default()
+        };
+        let listener =
+            tokio::net::TcpListener::from_std(bind_with(&loopback(), &options).unwrap()).unwrap();
+        let addr = listener.local_addr().unwrap();
+        let _client = tokio::net::TcpStream::connect(addr).await.unwrap();
+        let (accepted, _) = listener.accept().await.unwrap();
+        ConnectionOptions::of(&options).apply(&accepted, "test");
+        let socket = socket2::SockRef::from(&accepted);
+        assert!(socket.keepalive().unwrap());
+        assert_eq!(
+            socket.tcp_keepalive_time().unwrap(),
+            Duration::from_secs(60)
+        );
+        assert_eq!(
+            socket.tcp_keepalive_interval().unwrap(),
+            Duration::from_secs(10)
+        );
+        assert_eq!(socket.tcp_keepalive_retries().unwrap(), 3);
+        assert_eq!(
+            socket.tcp_user_timeout().unwrap(),
+            Some(Duration::from_secs(30))
+        );
+        assert_eq!(
+            socket.tos_v4().unwrap(),
+            10 << 2,
+            "DSCP is the TOS byte's top six bits"
+        );
+    }
+
+    #[test]
+    fn running_sockets_take_a_new_backlog_and_buffers_in_place() {
+        let listener = bind_with(&loopback(), &ListenerSocket::default()).unwrap();
+        let control = socket2::SockRef::from(&listener).try_clone().unwrap();
+        let new = ListenerSocket {
+            backlog: Some(16),
+            receive_buffer: Some(ByteSize::kib(512)),
+            ..ListenerSocket::default()
+        };
+        update_running(&control, false, &ListenerSocket::default(), &new).unwrap();
+        assert!(
+            socket2::SockRef::from(&listener)
+                .recv_buffer_size()
+                .unwrap()
+                >= 512 * 1024
+        );
     }
 }

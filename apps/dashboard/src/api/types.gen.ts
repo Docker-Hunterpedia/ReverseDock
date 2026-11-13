@@ -1119,6 +1119,10 @@ export type RdockConfig = {
         [key: string]: RdockRoute;
     };
     /**
+     * The proxy's worker threads; read at start, so a change needs a restart.
+     */
+    runtime?: RdockRuntimeSettings | null;
+    /**
      * External secret stores that secret fields can reference (`${vault:…}`).
      */
     secrets?: RdockSecrets;
@@ -1172,7 +1176,7 @@ export type RdockConfig = {
         [key: string]: RdockMiddleware;
     } | RdockObservability | RdockProviders | {
         [key: string]: RdockRoute;
-    } | RdockSecrets | RdockSecurity | {
+    } | RdockRuntimeSettings | null | RdockSecrets | RdockSecurity | {
         [key: string]: RdockService;
     } | {
         [key: string]: RdockTcpRoute;
@@ -1848,6 +1852,11 @@ export type RdockListener = {
      */
     sessions?: RdockUdpSessions | null;
     /**
+     * Options of the listening socket and of the connections it accepts (ADR-0031). Unset
+     * options keep the kernel's behaviour, except `backlog`, which defaults to 4096.
+     */
+    socket?: RdockListenerSocket | null;
+    /**
      * `tcp` listeners: answer a protocol's request to start TLS before reading the TLS
      * ClientHello. Off by default.
      */
@@ -1860,13 +1869,66 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockListenerSocket | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
 };
 
 /**
  * Listener protocols.
  */
 export type RdockListenerProtocol = 'http' | 'https' | 'tcp' | 'udp';
+
+/**
+ * Socket options of a listener. Options that do not apply to the listener's transport are
+ * refused, and so are options this platform cannot set.
+ */
+export type RdockListenerSocket = {
+    /**
+     * TCP: how many connections the kernel holds that have completed their handshake and
+     * that ReverseDock has not accepted yet. Default 4096, Linux's `net.core.somaxconn`
+     * default since 5.4, which also caps it (before v0.9 it was 128).
+     */
+    backlog?: number | null;
+    /**
+     * DSCP value (0–63) of the traffic sent on accepted connections (the top six bits of
+     * IPv4's TOS byte or IPv6's traffic class).
+     */
+    dscp?: number | null;
+    /**
+     * TCP: accept TCP Fast Open with this many pending requests (`TCP_FASTOPEN`). The kernel
+     * must allow it for servers (`net.ipv4.tcp_fastopen` bit 2). Linux only; off by default.
+     */
+    fast_open?: number | null;
+    /**
+     * `IPV6_V6ONLY` for an IPv6 or all-interfaces (`:port`) address: `true` serves IPv6 only,
+     * `false` IPv6 and IPv4. Unset: the system's default (`net.ipv6.bindv6only`).
+     */
+    ipv6_only?: boolean | null;
+    /**
+     * TCP keep-alive probes on accepted connections. Unset: off, as the kernel does.
+     */
+    keepalive?: RdockTcpKeepalive | null;
+    /**
+     * `SO_RCVBUF`: the receive buffer, set before `listen` so the TCP window scale is
+     * negotiated with it. Unset: the kernel's automatic sizing.
+     */
+    receive_buffer?: RdockByteSize | null;
+    /**
+     * TCP: `SO_REUSEPORT`, so several sockets (or processes) can bind the same address and
+     * the kernel spreads connections over them. Off by default: with it, another process of
+     * the same user can bind the address unnoticed. Refused on `udp` listeners.
+     */
+    reuse_port?: boolean;
+    /**
+     * `SO_SNDBUF`: the send buffer. Unset: the kernel's automatic sizing.
+     */
+    send_buffer?: RdockByteSize | null;
+    /**
+     * TCP: `TCP_USER_TIMEOUT` on accepted connections, how long sent data may stay
+     * unacknowledged before the connection is dropped. Linux only.
+     */
+    user_timeout?: RdockDuration | null;
+    [key: string]: unknown | number | null | number | null | number | null | boolean | null | RdockTcpKeepalive | null | RdockByteSize | null | boolean | RdockByteSize | null | RdockDuration | null | undefined;
+};
 
 /**
  * Timeouts for the client side of a listener.
@@ -1908,10 +1970,16 @@ export type RdockListenerTls = {
      */
     client_auth?: RdockClientAuth | null;
     /**
+     * `https` listeners: TLS handshakes in progress at once. While the bound is reached, new
+     * connections wait in the listen backlog instead of taking CPU from established ones.
+     * Unset: no bound (ADR-0031).
+     */
+    max_handshakes?: number | null;
+    /**
      * TLS versions and cipher suites.
      */
     policy?: RdockTlsPolicy;
-    [key: string]: unknown | Array<string> | RdockClientAuth | null | RdockTlsPolicy | undefined;
+    [key: string]: unknown | Array<string> | RdockClientAuth | null | number | null | RdockTlsPolicy | undefined;
 };
 
 /**
@@ -3707,6 +3775,23 @@ export type RdockRouteTlsOptions = {
 };
 
 /**
+ * The proxy's async runtime (ADR-0031). Read at start: a change takes effect after a restart.
+ */
+export type RdockRuntimeSettings = {
+    /**
+     * Most threads for blocking work (file reads, DNS lookups by the system resolver).
+     * Unset: 512, tokio's default.
+     */
+    max_blocking_threads?: number | null;
+    /**
+     * Threads that serve connections. Unset: one per CPU the process may use, tokio's
+     * default.
+     */
+    worker_threads?: number | null;
+    [key: string]: unknown | number | null | number | null | undefined;
+};
+
+/**
  * `SameSite` cookie attribute.
  */
 export type RdockSameSite = 'lax' | 'strict' | 'none';
@@ -4008,6 +4093,26 @@ export type RdockSymlinkPolicy = 'none' | 'within_root' | 'all';
  * How syslog messages travel.
  */
 export type RdockSyslogTransport = 'udp' | 'tcp' | 'tls';
+
+/**
+ * TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's
+ * (Linux: 7200 s idle, 75 s between probes, 9 probes).
+ */
+export type RdockTcpKeepalive = {
+    /**
+     * Unanswered probes before the connection is dropped (`TCP_KEEPCNT`).
+     */
+    count?: number | null;
+    /**
+     * Idle time before the first probe (`TCP_KEEPIDLE`).
+     */
+    idle?: RdockDuration | null;
+    /**
+     * Time between probes (`TCP_KEEPINTVL`).
+     */
+    interval?: RdockDuration | null;
+    [key: string]: unknown | number | null | RdockDuration | null | RdockDuration | null | undefined;
+};
 
 /**
  * A TCP route.

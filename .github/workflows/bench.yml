@@ -1,8 +1,9 @@
 # Nightly benchmark regression check (H-ENG-01). Not a required check.
 # Runs ReverseDock and NGINX one after the other in the same job on a shared runner and fails
-# when ReverseDock falls clearly behind NGINX (benchmarks/compare.py). Shared runners are too
-# noisy for absolute numbers, so these results are never published; published reports come
-# from fixed hardware (benchmarks/README.md).
+# when ReverseDock falls clearly behind NGINX (benchmarks/compare.py): throughput, p99, failed
+# requests, and CPU time per request read from each proxy's cgroup at every rate. Shared runners
+# are too noisy for absolute numbers, so these results are never published; published reports
+# come from fixed hardware (benchmarks/README.md).
 name: bench
 
 on:
@@ -51,6 +52,8 @@ jobs:
           RATES: ${{ inputs.rates || '5000 10000' }}
           DURATION: ${{ inputs.duration || '30s' }}
           VERSION: ci
+          # The proxy's cgroup CPU time over each rate (benchmarks/cpu-stat.sh, cgroup v2).
+          CPU_STAT: "1"
         run: benchmarks/run.sh
       - name: Compare with NGINX
         shell: bash

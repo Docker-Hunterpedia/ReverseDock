@@ -28,12 +28,81 @@ pub(crate) fn run(
         LogFormatArg::Text => LogFormat::Text,
     };
     init_logging(format, &args.log).map_err(anyhow::Error::msg)?;
-    let runtime = tokio::runtime::Builder::new_multi_thread()
-        .enable_all()
-        .thread_name("rdock")
-        .build()
-        .context("starting the async runtime")?;
-    runtime.block_on(serve(args, plugins))
+    let threads = Threads::from_config(args);
+    let mut builder = tokio::runtime::Builder::new_multi_thread();
+    builder.enable_all().thread_name("rdock");
+    if let Some(workers) = threads.settings.worker_threads {
+        builder.worker_threads(usize::from(workers));
+    }
+    if let Some(blocking) = threads.settings.max_blocking_threads {
+        builder.max_blocking_threads(usize::from(blocking));
+    }
+    let runtime = builder.build().context("starting the async runtime")?;
+    runtime.block_on(serve(args, plugins, threads))
+}
+
+/// The proxy runtime's threads: the `runtime` section as read before the runtime starts, and
+/// the values in effect.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Threads {
+    /// As configured.
+    pub(crate) settings: rdock_model::settings::RuntimeSettings,
+    /// Worker threads in effect.
+    pub(crate) workers: usize,
+    /// Most blocking threads in effect.
+    pub(crate) max_blocking: usize,
+}
+
+impl Threads {
+    /// tokio's default for `max_blocking_threads` (tokio 1.54.1 `Builder` documentation).
+    const TOKIO_MAX_BLOCKING: usize = 512;
+
+    /// Reads `runtime` from the configuration file: the runtime is built before the
+    /// configuration is applied, so this is the one setting read ahead, and a change needs a
+    /// restart. A file that cannot be loaded or has errors leaves the defaults; the start
+    /// reports its problems as usual.
+    fn from_config(args: &RunArgs) -> Self {
+        let source = Source::choose(args.config.as_deref(), Path::new(crate::DEFAULT_CONFIG));
+        let settings = match source {
+            Source::File(path) => rdock_config::load_file(&path)
+                .ok()
+                .filter(|loaded| !loaded.has_errors())
+                .and_then(|loaded| loaded.config.runtime)
+                .unwrap_or_default(),
+            Source::ZeroConfig => rdock_model::settings::RuntimeSettings::default(),
+        };
+        Self::of(settings)
+    }
+
+    /// Shows the values in effect as `rdock_runtime_threads`.
+    pub(crate) fn record(&self, metrics: &Metrics) {
+        for (kind, value) in [
+            ("worker", self.workers),
+            ("max_blocking", self.max_blocking),
+        ] {
+            metrics
+                .runtime_threads
+                .with_label_values(&[kind])
+                .set(i64::try_from(value).unwrap_or(i64::MAX));
+        }
+    }
+
+    fn of(settings: rdock_model::settings::RuntimeSettings) -> Self {
+        // tokio's default: `TOKIO_WORKER_THREADS`, else the CPUs the process may use.
+        let default_workers = std::env::var("TOKIO_WORKER_THREADS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|&n| n > 0)
+            .or_else(|| std::thread::available_parallelism().ok().map(usize::from))
+            .unwrap_or(1);
+        Self {
+            settings,
+            workers: settings.worker_threads.map_or(default_workers, usize::from),
+            max_blocking: settings
+                .max_blocking_threads
+                .map_or(Self::TOKIO_MAX_BLOCKING, usize::from),
+        }
+    }
 }
 
 /// Raises the soft open-file limit to the hard one, as Go programs do at start (Go 1.19
@@ -140,6 +209,7 @@ fn data_plane(
 async fn serve(
     args: &RunArgs,
     plugins: &Arc<rdock_plugin_api::Registry>,
+    threads: Threads,
 ) -> anyhow::Result<ExitCode> {
     // Before anything else: the default action of SIGHUP would end the process.
     let mut signals = Signals::install()?;
@@ -163,6 +233,7 @@ async fn serve(
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
     let plane = data_plane(&args.data_dir, metrics, plugins)?;
     let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
+    engine.set_threads(threads);
     tokio::spawn(engine.clone().watch_thresholds());
 
     log_start(&source, plugins);

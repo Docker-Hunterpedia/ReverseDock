@@ -43,10 +43,36 @@ pub fn normalize(raw: &str) -> Result<NormalizedPath, PathError> {
             routing: raw.to_owned(),
         });
     }
+    if already_normal(raw) {
+        // The common case: nothing to decode or remove, so both forms are the path itself.
+        return Ok(NormalizedPath {
+            forwarded: raw.to_owned(),
+            routing: raw.to_owned(),
+        });
+    }
     let escaped = normalize_escapes(raw)?;
     let forwarded = remove_dot_segments(&escaped);
     let routing = decode_for_routing(&forwarded).into_owned();
     Ok(NormalizedPath { forwarded, routing })
+}
+
+/// Whether the steps below would return `raw` unchanged for both forms: it starts with `/`,
+/// has no escapes, and no `.` or `..` segment and no empty segment except a trailing slash.
+fn already_normal(raw: &str) -> bool {
+    let Some(rest) = raw.strip_prefix('/') else {
+        return false;
+    };
+    if raw.contains('%') {
+        return false;
+    }
+    let mut segments = rest.split('/').peekable();
+    while let Some(segment) = segments.next() {
+        let last = segments.peek().is_none();
+        if (segment.is_empty() && !last) || segment == "." || segment == ".." {
+            return false;
+        }
+    }
+    true
 }
 
 fn is_unreserved(b: u8) -> bool {
@@ -184,6 +210,45 @@ mod tests {
     fn n(raw: &str) -> (String, String) {
         let p = normalize(raw).unwrap();
         (p.forwarded, p.routing)
+    }
+
+    /// The shortcut for paths that are already normal gives what the full steps give.
+    #[test]
+    fn already_normal_paths_take_the_shortcut_with_the_same_result() {
+        let paths = [
+            "/", "/a", "/a/", "/a/b", "/a/b/", "/a//b", "//", "/./a", "/a/.", "/a/..", "/..",
+            "/a/./b", "/.a", "/a.", "/..a", "/a/...", "/%41", "/a%2Fb", "", "a", "a/b", "/a b",
+            "/ä/ö", "/a/b//", "/a?b", "/~x", "/.", "/..%2e",
+        ];
+        for raw in paths {
+            let full = {
+                let escaped = normalize_escapes(raw);
+                escaped.map(|e| {
+                    let forwarded = remove_dot_segments(&e);
+                    let routing = decode_for_routing(&forwarded).into_owned();
+                    NormalizedPath { forwarded, routing }
+                })
+            };
+            if already_normal(raw) {
+                let full = full.as_ref().unwrap();
+                assert_eq!(full.forwarded, raw, "{raw}");
+                assert_eq!(full.routing, raw, "{raw}");
+            }
+            assert_eq!(normalize(raw), full, "{raw}");
+        }
+    }
+
+    proptest::proptest! {
+        /// The same on random paths over the characters that matter.
+        #[test]
+        fn the_shortcut_never_changes_a_result(raw in "[/.a%2F]{0,12}") {
+            let full = normalize_escapes(&raw).map(|e| {
+                let forwarded = remove_dot_segments(&e);
+                let routing = decode_for_routing(&forwarded).into_owned();
+                NormalizedPath { forwarded, routing }
+            });
+            proptest::prop_assert_eq!(normalize(&raw), full);
+        }
     }
 
     #[test]
