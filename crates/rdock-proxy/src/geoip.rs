@@ -67,13 +67,24 @@ impl std::fmt::Debug for Database {
 struct Stamp {
     len: u64,
     modified: Option<SystemTime>,
+    /// Device and inode on Unix: a file written aside and renamed into place is a new inode,
+    /// even with the same length and a modification time in the same clock tick.
+    inode: Option<(u64, u64)>,
 }
 
 fn stamp(path: &Path) -> Result<Stamp, String> {
     let meta = std::fs::metadata(path).map_err(|e| format!("`{}`: {e}", path.display()))?;
+    #[cfg(unix)]
+    let inode = {
+        use std::os::unix::fs::MetadataExt;
+        Some((meta.dev(), meta.ino()))
+    };
+    #[cfg(not(unix))]
+    let inode = None;
     Ok(Stamp {
         len: meta.len(),
         modified: meta.modified().ok(),
+        inode,
     })
 }
 
