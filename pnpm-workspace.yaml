@@ -10,3 +10,10 @@ saveExact: true
 # GHSA-2883-xcg3-v3hh (fixed in 4.3.2). Remove when a parser release depends on >= 4.3.2.
 overrides:
   '@hey-api/json-schema-ref-parser>js-yaml': 4.3.2
+  # lighthouse 13.6 -> @sentry/bundler-plugins 11.10.0 -> glob 13 -> minimatch 10.2.6, which has an
+  # advisory fixed in 11.0.1; glob 14 depends on minimatch ^11.0.5. Development tooling only.
+  # Remove when the bundler plugin depends on glob >= 14.
+  '@sentry/bundler-plugins>glob': 14.0.6
+
+minimumReleaseAgeExclude:
+  - glob@14.0.6
