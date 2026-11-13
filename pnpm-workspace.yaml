@@ -14,6 +14,10 @@ overrides:
   # advisory fixed in 11.0.1; glob 14 depends on minimatch ^11.0.5. Development tooling only.
   # Remove when the bundler plugin depends on glob >= 14.
   '@sentry/bundler-plugins>glob': 14.0.6
+  # @napi-rs/wasm-runtime accepts @emnapi/runtime "^1.7.1 || 2.0.0-beta.2", and a fresh resolution
+  # picks the beta, with which `astro check` cannot load @astrojs/check. Stay on the 1.x line.
+  # Remove when a stable 2.x exists and astro check works with it.
+  '@emnapi/runtime@>=2.0.0-0': 1.11.3
 
 minimumReleaseAgeExclude:
   - glob@14.0.6
