@@ -101,6 +101,21 @@ impl History {
         decompress(&bytes).map(Some)
     }
 
+    /// The compressed bundle with `revision`, as served, if it is still kept.
+    pub fn bytes(&self, revision: u64) -> Result<Option<Vec<u8>>, Error> {
+        if let Some((bundle, bytes)) = &self.latest
+            && bundle.revision == revision
+        {
+            return Ok(Some(bytes.clone()));
+        }
+        if !self.revisions.contains(&revision) {
+            return Ok(None);
+        }
+        std::fs::read(self.dir.join(file_name(revision)))
+            .map(Some)
+            .map_err(|e| Error::State(e.to_string()))
+    }
+
     /// Every kept bundle, newest first.
     pub fn list(&self) -> Result<Vec<Bundle>, Error> {
         let mut out = Vec::new();
@@ -113,8 +128,9 @@ impl History {
     }
 
     /// Stores `bundle` (whose revision must be the next one) and forgets the oldest beyond
-    /// `keep`.
-    pub fn add(&mut self, bundle: Bundle) -> Result<(), Error> {
+    /// `keep`, except `pinned` (the stable revision of a running rollout, which instances not
+    /// yet given the new one may still need).
+    pub fn add(&mut self, bundle: Bundle, pinned: u64) -> Result<(), Error> {
         if bundle.revision != self.latest_revision() + 1 {
             return Err(Error::State(format!(
                 "revision {} does not follow {}",
@@ -127,7 +143,13 @@ impl History {
             .map_err(|e| Error::State(e.to_string()))?;
         self.revisions.push(bundle.revision);
         while self.revisions.len() > self.keep {
-            let old = self.revisions.remove(0);
+            let Some(index) = self.revisions.iter().position(|r| *r != pinned) else {
+                break;
+            };
+            if index + 1 == self.revisions.len() {
+                break;
+            }
+            let old = self.revisions.remove(index);
             let _ = std::fs::remove_file(self.dir.join(file_name(old)));
         }
         self.latest = Some((bundle, bytes));

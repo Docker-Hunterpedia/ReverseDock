@@ -30,6 +30,112 @@ pub struct Cluster {
     /// the control plane when `control` is set.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub store: Option<ClusterStore>,
+    /// How `rate_limit` and `quota` with `scope: cluster` share their budgets.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub limits: Option<ClusterLimits>,
+}
+
+/// Where cluster-scoped limits keep their shared counters.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitStoreType {
+    /// The cluster store (`cluster.store`: the control plane or the shared directory).
+    #[default]
+    Cluster,
+    /// A Redis-compatible server (`redis`).
+    Redis,
+}
+
+/// What an instance enforces while the limit store cannot be reached.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitFallback {
+    /// Its share: the limit divided by the number of instances it last knew of, against what
+    /// it admitted itself in the window. The cluster stays near the limit under even load.
+    #[default]
+    Share,
+    /// The whole limit on its own, as with `scope: instance` (N instances admit up to N times
+    /// the limit).
+    Instance,
+}
+
+/// Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).
+///
+/// Each instance claims a part of each key's budget from the store ahead of use and admits
+/// requests against what it claimed, so the request path never waits on the store. The
+/// cluster admits at most `L + N × c` per key and window, where `L` is the limit, `N` the
+/// number of instances and `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the headroom an
+/// instance may use beyond its claims.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct ClusterLimits {
+    /// `cluster` (default) or `redis`.
+    pub store: LimitStoreType,
+    /// The Redis-compatible server, for `store: redis`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redis: Option<RedisStore>,
+    /// How often claims, membership and recovery are attended to (claims a request needs are
+    /// sent at once). Default 1s (100ms–10s).
+    pub sync_interval: Duration,
+    /// How far an instance may admit beyond the budget it has claimed, as a percentage of the
+    /// limit split between the instances: larger values absorb store latency at high request
+    /// rates, smaller ones tighten the bound. Default 10 (0–100).
+    pub headroom_percent: u8,
+    /// `share` (default) or `instance`: what an instance enforces while the store is away.
+    pub fallback: LimitFallback,
+}
+
+impl Default for ClusterLimits {
+    fn default() -> Self {
+        Self {
+            store: LimitStoreType::Cluster,
+            redis: None,
+            sync_interval: Duration::from_secs(1),
+            headroom_percent: 10,
+            fallback: LimitFallback::Share,
+        }
+    }
+}
+
+/// A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses
+/// `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `AUTH`, `SELECT` and
+/// `PING`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(deny_unknown_fields)]
+pub struct RedisStore {
+    /// `rediss://host:6379/0` (TLS) or `redis://host:6379/0`; the path is the database
+    /// number. Plain `redis://` is accepted for loopback addresses only, unless
+    /// `allow_plaintext` is set. Credentials belong in `username` and `password`, not here.
+    pub url: String,
+    /// The ACL user name (Redis 6 and later); without it `AUTH` sends only the password.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub username: Option<String>,
+    /// The password. A secret: reference a file or a variable, e.g.
+    /// `"${file:/run/secrets/redis}"`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub password: Option<String>,
+    /// CA certificates (PEM) to verify the server with instead of the system's roots.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ca_file: Option<PathBuf>,
+    /// The longest a connection or a command may take before the store counts as away.
+    /// Default 1s (100ms–10s).
+    #[serde(default = "default_redis_timeout")]
+    pub timeout: Duration,
+    /// Prefix of every key rdock writes. Default `rdock:`.
+    #[serde(default = "default_redis_prefix")]
+    pub key_prefix: String,
+    /// Allow `redis://` (no TLS) to an address that is not a loopback address. Off by default:
+    /// the password and the counters would cross the network in clear.
+    #[serde(default)]
+    pub allow_plaintext: bool,
+}
+
+fn default_redis_timeout() -> Duration {
+    Duration::from_secs(1)
+}
+
+fn default_redis_prefix() -> String {
+    "rdock:".to_owned()
 }
 
 /// How a data plane reaches its control plane.
@@ -146,9 +252,57 @@ pub struct ControlPlane {
     pub join_token_ttl: Duration,
     /// Published revisions kept for listing and rollback. Default 50 (1–1000).
     pub history: u32,
-    /// A data plane that has not asked for a bundle for this long is shown as away and is not
-    /// waited for by challenge barriers. Default 90s (10s–1h).
+    /// A data plane that has not asked for a bundle for this long is shown as offline and is
+    /// not chosen as a canary. Default 90s (10s–1h).
     pub offline_after: Duration,
+    /// How a published revision reaches the data planes: one canary first, then the rest.
+    pub rollout: Rollout,
+}
+
+/// How a revision is rolled out.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum RolloutMode {
+    /// One canary takes the revision first; the rest follow after `soak` once it acknowledged
+    /// it. A refusal (NACK) by any instance halts the rollout.
+    #[default]
+    Canary,
+    /// Every connected data plane takes the revision at once.
+    All,
+}
+
+/// Staged rollout of published revisions (H-HA-02, ADR-0031).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct Rollout {
+    /// `canary` (default) or `all`. The first revision of a cluster and rollbacks (including
+    /// an abandoned rollout) always go to every instance at once.
+    pub mode: RolloutMode,
+    /// The instance that takes each revision first. When it is offline or not set, the first
+    /// online instance by name is chosen.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub canary: Option<String>,
+    /// How long the canary serves a revision it acknowledged before the rest take it. Default
+    /// 60s (0s–24h).
+    pub soak: Duration,
+    /// How long the canary has to report on a revision; without a report by then the rollout
+    /// halts. Default 2m (10s–1h).
+    pub canary_timeout: Duration,
+    /// Rolling back automatically when the canary's health drops: planned, only `false` is
+    /// accepted.
+    pub auto_rollback: bool,
+}
+
+impl Default for Rollout {
+    fn default() -> Self {
+        Self {
+            mode: RolloutMode::Canary,
+            canary: None,
+            soak: Duration::from_secs(60),
+            canary_timeout: Duration::from_secs(120),
+            auto_rollback: false,
+        }
+    }
 }
 
 impl Default for ControlPlane {
@@ -161,6 +315,7 @@ impl Default for ControlPlane {
             join_token_ttl: Duration::from_secs(3600),
             history: 50,
             offline_after: Duration::from_secs(90),
+            rollout: Rollout::default(),
         }
     }
 }
@@ -292,5 +447,67 @@ mod tests {
             compose(&bundle, &local),
             json!({ "routes": { "a": 1 }, "admin": { "enabled": true }, "lifecycle": 1, "cluster": { "instance": "x" } })
         );
+    }
+}
+
+/// A parsed `cluster.limits.redis.url`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RedisAddress {
+    /// `rediss://`.
+    pub tls: bool,
+    /// The host name or IP address (without brackets).
+    pub host: String,
+    /// The port (6379 by default).
+    pub port: u16,
+    /// The database number (0 by default).
+    pub database: u32,
+}
+
+impl RedisAddress {
+    /// Parses `redis://host:port/db` or `rediss://…`; the message says what is wrong.
+    pub fn parse(text: &str) -> Result<Self, String> {
+        let url = url::Url::parse(text).map_err(|e| format!("not a URL: {e}"))?;
+        let tls = match url.scheme() {
+            "rediss" => true,
+            "redis" => false,
+            other => return Err(format!("the scheme is `redis` or `rediss`, not `{other}`")),
+        };
+        if !url.username().is_empty() || url.password().is_some() {
+            return Err(
+                "credentials do not belong in the URL; use `username` and `password`".to_owned(),
+            );
+        }
+        if url.query().is_some() || url.fragment().is_some() {
+            return Err("the URL takes no query or fragment".to_owned());
+        }
+        let host = match url.host() {
+            Some(url::Host::Domain(d)) => d.to_owned(),
+            Some(url::Host::Ipv4(ip)) => ip.to_string(),
+            Some(url::Host::Ipv6(ip)) => ip.to_string(),
+            None => return Err("the URL names no host".to_owned()),
+        };
+        let path = url.path().trim_matches('/');
+        let database = if path.is_empty() {
+            0
+        } else {
+            path.parse::<u32>()
+                .map_err(|_| "the path is the database number, e.g. `/0`".to_owned())?
+        };
+        Ok(Self {
+            tls,
+            host,
+            port: url.port().unwrap_or(6379),
+            database,
+        })
+    }
+
+    /// Whether the host is a loopback address or `localhost`.
+    #[must_use]
+    pub fn is_loopback(&self) -> bool {
+        self.host == "localhost"
+            || self
+                .host
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| ip.is_loopback())
     }
 }

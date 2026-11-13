@@ -355,6 +355,19 @@ Period of `average`; defaults to the middleware's.
 
 Period of `average`.
 
+### `middlewares.<name>.scope`
+
+**Type:** `instance` · `cluster`
+
+`instance` (default) or `cluster`. With `cluster`, the cluster admits at most `average` requests per key in each `period` (fixed windows from the Unix epoch), within the bound of `cluster.limits`; each instance's own token bucket still shapes bursts.
+
+- `instance`: Each instance counts on its own: N instances admit up to N times the limit.
+- `cluster`: The instances of a cluster share the limit through `cluster.limits` (the cluster store or Redis), within a documented bound; each falls back to its share when the store is away. Without a cluster it counts per instance.
+
+:::note[Planned for a later version]
+A cluster-wide count of requests in flight (in_flight with scope: cluster): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
 ## `type: in_flight`
 
 A cap on requests in flight, with an optional queue (Traefik's `inFlightReq`).
@@ -382,6 +395,19 @@ Requests over the limit that wait for a slot; more get `429` at once.
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
 
 How long a queued request waits before it gets `429`.
+
+### `middlewares.<name>.scope`
+
+**Type:** `instance` · `cluster`
+
+Only `instance`: a cluster-wide count of requests in flight is planned.
+
+- `instance`: Each instance counts on its own: N instances admit up to N times the limit.
+- `cluster`: The instances of a cluster share the limit through `cluster.limits` (the cluster store or Redis), within a documented bound; each falls back to its share when the store is away. Without a cluster it counts per instance.
+
+:::note[Planned for a later version]
+A cluster-wide count of requests in flight (in_flight with scope: cluster): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ## `type: bandwidth`
 
@@ -1384,6 +1410,19 @@ Requests allowed per window.
 **Type:** map of names to `integer`
 
 Group → limit, for consumers in that group (the first of the consumer's groups that has one wins).
+
+### `middlewares.<name>.scope`
+
+**Type:** `instance` · `cluster`
+
+`instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each key's quota through `cluster.limits`, within its documented bound.
+
+- `instance`: Each instance counts on its own: N instances admit up to N times the limit.
+- `cluster`: The instances of a cluster share the limit through `cluster.limits` (the cluster store or Redis), within a documented bound; each falls back to its share when the store is away. Without a cluster it counts per instance.
+
+:::note[Planned for a later version]
+A cluster-wide count of requests in flight (in_flight with scope: cluster): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ### `middlewares.<name>.window`
 

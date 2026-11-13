@@ -1854,6 +1854,17 @@
             "null"
           ]
         },
+        "limits": {
+          "description": "How `rate_limit` and `quota` with `scope: cluster` share their budgets.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClusterLimits"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "store": {
           "description": "Where certificates, the ACME account, leases and challenge answers are shared. Default:\nthe control plane when `control` is set.",
           "anyOf": [
@@ -1917,6 +1928,47 @@
       "required": [
         "url"
       ]
+    },
+    "ClusterLimits": {
+      "description": "Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).\n\nEach instance claims a part of each key's budget from the store ahead of use and admits\nrequests against what it claimed, so the request path never waits on the store. The\ncluster admits at most `L + N × c` per key and window, where `L` is the limit, `N` the\nnumber of instances and `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the headroom an\ninstance may use beyond its claims.",
+      "type": "object",
+      "properties": {
+        "fallback": {
+          "description": "`share` (default) or `instance`: what an instance enforces while the store is away.",
+          "$ref": "#/$defs/LimitFallback",
+          "default": "share"
+        },
+        "headroom_percent": {
+          "description": "How far an instance may admit beyond the budget it has claimed, as a percentage of the\nlimit split between the instances: larger values absorb store latency at high request\nrates, smaller ones tighten the bound. Default 10 (0–100).",
+          "type": "integer",
+          "format": "uint8",
+          "default": 10,
+          "maximum": 255,
+          "minimum": 0
+        },
+        "redis": {
+          "description": "The Redis-compatible server, for `store: redis`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/RedisStore"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "store": {
+          "description": "`cluster` (default) or `redis`.",
+          "$ref": "#/$defs/LimitStoreType",
+          "default": "cluster"
+        },
+        "sync_interval": {
+          "description": "How often claims, membership and recovery are attended to (claims a request needs are\nsent at once). Default 1s (100ms–10s).",
+          "$ref": "#/$defs/Duration",
+          "default": "1s"
+        }
+      },
+      "additionalProperties": false
     },
     "ClusterStore": {
       "description": "Where a cluster shares certificates, the ACME account, leases and challenge answers.",
@@ -2051,9 +2103,19 @@
           }
         },
         "offline_after": {
-          "description": "A data plane that has not asked for a bundle for this long is shown as away and is not\nwaited for by challenge barriers. Default 90s (10s–1h).",
+          "description": "A data plane that has not asked for a bundle for this long is shown as offline and is\nnot chosen as a canary. Default 90s (10s–1h).",
           "$ref": "#/$defs/Duration",
           "default": "1m30s"
+        },
+        "rollout": {
+          "description": "How a published revision reaches the data planes: one canary first, then the rest.",
+          "$ref": "#/$defs/Rollout",
+          "default": {
+            "auto_rollback": false,
+            "canary_timeout": "2m",
+            "mode": "canary",
+            "soak": "1m"
+          }
         }
       },
       "additionalProperties": false
@@ -3448,6 +3510,21 @@
         "^x-": {}
       }
     },
+    "LimitFallback": {
+      "description": "What an instance enforces while the limit store cannot be reached.",
+      "oneOf": [
+        {
+          "description": "Its share: the limit divided by the number of instances it last knew of, against what\nit admitted itself in the window. The cluster stays near the limit under even load.",
+          "type": "string",
+          "const": "share"
+        },
+        {
+          "description": "The whole limit on its own, as with `scope: instance` (N instances admit up to N times\nthe limit).",
+          "type": "string",
+          "const": "instance"
+        }
+      ]
+    },
     "LimitHeaders": {
       "description": "Rate-limit response headers.",
       "oneOf": [
@@ -3460,6 +3537,36 @@
           "description": "`RateLimit-Policy` and `RateLimit` as in `draft-ietf-httpapi-ratelimit-headers-11`.",
           "type": "string",
           "const": "draft"
+        }
+      ]
+    },
+    "LimitScope": {
+      "description": "Where a limit is counted (ADR-0031).",
+      "oneOf": [
+        {
+          "description": "Each instance counts on its own: N instances admit up to N times the limit.",
+          "type": "string",
+          "const": "instance"
+        },
+        {
+          "description": "The instances of a cluster share the limit through `cluster.limits` (the cluster store\nor Redis), within a documented bound; each falls back to its share when the store is\naway. Without a cluster it counts per instance.",
+          "type": "string",
+          "const": "cluster"
+        }
+      ]
+    },
+    "LimitStoreType": {
+      "description": "Where cluster-scoped limits keep their shared counters.",
+      "oneOf": [
+        {
+          "description": "The cluster store (`cluster.store`: the control plane or the shared directory).",
+          "type": "string",
+          "const": "cluster"
+        },
+        {
+          "description": "A Redis-compatible server (`redis`).",
+          "type": "string",
+          "const": "redis"
         }
       ]
     },
@@ -4679,6 +4786,10 @@
               "$ref": "#/$defs/Duration",
               "default": "1s"
             },
+            "scope": {
+              "description": "`instance` (default) or `cluster`. With `cluster`, the cluster admits at most\n`average` requests per key in each `period` (fixed windows from the Unix epoch), within\nthe bound of `cluster.limits`; each instance's own token bucket still shapes bursts.",
+              "$ref": "#/$defs/LimitScope"
+            },
             "type": {
               "type": "string",
               "const": "rate_limit"
@@ -4719,6 +4830,10 @@
               "description": "How long a queued request waits before it gets `429`.",
               "$ref": "#/$defs/Duration",
               "default": "5s"
+            },
+            "scope": {
+              "description": "Only `instance`: a cluster-wide count of requests in flight is planned.",
+              "$ref": "#/$defs/LimitScope"
             },
             "type": {
               "type": "string",
@@ -5922,6 +6037,10 @@
                 "minimum": 0
               }
             },
+            "scope": {
+              "description": "`instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each\nkey's quota through `cluster.limits`, within its documented bound.",
+              "$ref": "#/$defs/LimitScope"
+            },
             "type": {
               "type": "string",
               "const": "quota"
@@ -7085,6 +7204,56 @@
         }
       ]
     },
+    "RedisStore": {
+      "description": "A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses\n`INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `AUTH`, `SELECT` and\n`PING`.",
+      "type": "object",
+      "properties": {
+        "allow_plaintext": {
+          "description": "Allow `redis://` (no TLS) to an address that is not a loopback address. Off by default:\nthe password and the counters would cross the network in clear.",
+          "type": "boolean",
+          "default": false
+        },
+        "ca_file": {
+          "description": "CA certificates (PEM) to verify the server with instead of the system's roots.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "key_prefix": {
+          "description": "Prefix of every key rdock writes. Default `rdock:`.",
+          "type": "string",
+          "default": "rdock:"
+        },
+        "password": {
+          "description": "The password. A secret: reference a file or a variable, e.g.\n`\"${file:/run/secrets/redis}\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "timeout": {
+          "description": "The longest a connection or a command may take before the store counts as away.\nDefault 1s (100ms–10s).",
+          "$ref": "#/$defs/Duration",
+          "default": "1s"
+        },
+        "url": {
+          "description": "`rediss://host:6379/0` (TLS) or `redis://host:6379/0`; the path is the database\nnumber. Plain `redis://` is accepted for loopback addresses only, unless\n`allow_plaintext` is set. Credentials belong in `username` and `password`, not here.",
+          "type": "string"
+        },
+        "username": {
+          "description": "The ACL user name (Redis 6 and later); without it `AUTH` sends only the password.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
     "RequestDirectives": {
       "description": "The client's request directives.",
       "oneOf": [
@@ -7259,6 +7428,55 @@
       },
       "required": [
         "nameserver"
+      ]
+    },
+    "Rollout": {
+      "description": "Staged rollout of published revisions (H-HA-02, ADR-0031).",
+      "type": "object",
+      "properties": {
+        "auto_rollback": {
+          "description": "Rolling back automatically when the canary's health drops: planned, only `false` is\naccepted.",
+          "type": "boolean",
+          "default": false
+        },
+        "canary": {
+          "description": "The instance that takes each revision first. When it is offline or not set, the first\nonline instance by name is chosen.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "canary_timeout": {
+          "description": "How long the canary has to report on a revision; without a report by then the rollout\nhalts. Default 2m (10s–1h).",
+          "$ref": "#/$defs/Duration",
+          "default": "2m"
+        },
+        "mode": {
+          "description": "`canary` (default) or `all`. The first revision of a cluster and rollbacks (including\nan abandoned rollout) always go to every instance at once.",
+          "$ref": "#/$defs/RolloutMode",
+          "default": "canary"
+        },
+        "soak": {
+          "description": "How long the canary serves a revision it acknowledged before the rest take it. Default\n60s (0s–24h).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        }
+      },
+      "additionalProperties": false
+    },
+    "RolloutMode": {
+      "description": "How a revision is rolled out.",
+      "oneOf": [
+        {
+          "description": "One canary takes the revision first; the rest follow after `soak` once it acknowledged\nit. A refusal (NACK) by any instance halts the rollout.",
+          "type": "string",
+          "const": "canary"
+        },
+        {
+          "description": "Every connected data plane takes the revision at once.",
+          "type": "string",
+          "const": "all"
+        }
       ]
     },
     "Route": {

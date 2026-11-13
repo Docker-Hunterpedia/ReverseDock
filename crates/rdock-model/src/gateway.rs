@@ -159,6 +159,13 @@ pub struct QuotaConfig {
     /// How often counters are written to disk.
     #[serde(default = "ten_seconds")]
     pub flush_interval: Duration,
+    /// `instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each
+    /// key's quota through `cluster.limits`, within its documented bound.
+    #[serde(
+        default,
+        skip_serializing_if = "crate::middleware::LimitScope::is_instance"
+    )]
+    pub scope: crate::middleware::LimitScope,
 }
 
 fn consumer_key() -> crate::values::RateLimitKey {

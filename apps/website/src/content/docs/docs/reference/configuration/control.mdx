@@ -51,4 +51,47 @@ DNS names and IP addresses on the control plane's server certificate, as data pl
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m30s`
 
-A data plane that has not asked for a bundle for this long is shown as away and is not waited for by challenge barriers. Default 90s (10s–1h).
+A data plane that has not asked for a bundle for this long is shown as offline and is not chosen as a canary. Default 90s (10s–1h).
+
+## `control.rollout`
+
+**Type:** object · **Default:** `{"auto_rollback":false,"canary_timeout":"2m","mode":"canary","soak":"1m"}`
+
+How a published revision reaches the data planes: one canary first, then the rest.
+
+### `control.rollout.auto_rollback`
+
+**Type:** `boolean` · **Default:** `false`
+
+Rolling back automatically when the canary's health drops: planned, only `false` is accepted.
+
+:::note[Planned for a later version]
+Automatic rollback of a rollout on the canary's health: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `control.rollout.canary`
+
+**Type:** `string`
+
+The instance that takes each revision first. When it is offline or not set, the first online instance by name is chosen.
+
+### `control.rollout.canary_timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `2m`
+
+How long the canary has to report on a revision; without a report by then the rollout halts. Default 2m (10s–1h).
+
+### `control.rollout.mode`
+
+**Type:** `canary` · `all` · **Default:** `canary`
+
+`canary` (default) or `all`. The first revision of a cluster and rollbacks (including an abandoned rollout) always go to every instance at once.
+
+- `canary`: One canary takes the revision first; the rest follow after `soak` once it acknowledged it. A refusal (NACK) by any instance halts the rollout.
+- `all`: Every connected data plane takes the revision at once.
+
+### `control.rollout.soak`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
+
+How long the canary serves a revision it acknowledged before the rest take it. Default 60s (0s–24h).

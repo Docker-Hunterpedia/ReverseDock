@@ -482,7 +482,11 @@ labels:
 
 **Shared certificates.** `ClusterStore` on the control plane (fencing enforced) or a shared directory (best effort: lock files judged by each instance's clock). Per name: lease, re-check, journalled order (URL and new key, resumed by the next holder), fenced write with compare-and-swap; one ACME account and one renewal time per certificate, shared. HTTP-01 and TLS-ALPN-01 answers are copied by every member into its own maps (no store access on the request path) and confirmed; the orderer waits for every live member (heartbeat younger than 20 s) or `cluster.store.barrier_timeout` before validation. DNS-01 needs none of this and is the recommendation for clusters.
 
-**Not in the request path.** The agent and the replication are background tasks; a data plane never waits on the control plane to serve a request (ADR-0009, ADR-0012).
+**Rollout.** `control.rollout` (`mode: canary` by default): a published revision goes to one canary (named, else the first online instance by name) and to the rest after the canary's ACK and `soak`; a NACK or a canary silent past `canary_timeout` halts the rollout, the others stay on the stable revision (the last completed one); operators resume or abandon (abandon republishes the stable document as a new revision). The first revision and rollbacks go everywhere at once. The instance view (`GET /api/v1/cluster/instances`, the dashboard's Cluster page) shows each instance's state (`synced`, `behind`, `error`, `offline`, `revoked`), serving and target revision, version, last seen, last error and identity expiry.
+
+**Distributed limits.** `scope: cluster` on `rate_limit` and `quota`: each key's budget per window is a counter in the cluster store or a Redis-compatible server that only grows by claims and never past the limit; instances claim ahead of use in the background and admit against their claims plus a headroom, so the cluster admits at most `L + N × c` (`c = max(1, ⌈L × headroom_percent / (100 × N)⌉)`); while the store is away each enforces `⌈L / N⌉` and reconciles afterwards (ADR-0031, step 6).
+
+**Not in the request path.** The agent, the limit claims and the replication are background tasks; a data plane never waits on the control plane to serve a request (ADR-0009, ADR-0012).
 
 ## 20. Failure modes (what happens when…)
 

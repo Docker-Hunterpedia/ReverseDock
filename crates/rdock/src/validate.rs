@@ -84,6 +84,7 @@ pub(crate) fn compile_diagnostics(
             metrics: None,
             quotas: None,
             abuse: None,
+            shared_limits: None,
         },
     )
     .diagnostics

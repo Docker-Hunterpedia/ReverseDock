@@ -61,6 +61,60 @@ func (e AuditResult) Valid() bool {
 	}
 }
 
+// Defines values for ClusterInstanceState.
+const (
+	Behind  ClusterInstanceState = "behind"
+	Error   ClusterInstanceState = "error"
+	Offline ClusterInstanceState = "offline"
+	Revoked ClusterInstanceState = "revoked"
+	Synced  ClusterInstanceState = "synced"
+)
+
+// Valid indicates whether the value is a known member of the ClusterInstanceState enum.
+func (e ClusterInstanceState) Valid() bool {
+	switch e {
+	case Behind:
+		return true
+	case Error:
+		return true
+	case Offline:
+		return true
+	case Revoked:
+		return true
+	case Synced:
+		return true
+	default:
+		return false
+	}
+}
+
+// Defines values for ClusterRolloutPhase.
+const (
+	Canary   ClusterRolloutPhase = "canary"
+	Complete ClusterRolloutPhase = "complete"
+	Halted   ClusterRolloutPhase = "halted"
+	None     ClusterRolloutPhase = "none"
+	Soaking  ClusterRolloutPhase = "soaking"
+)
+
+// Valid indicates whether the value is a known member of the ClusterRolloutPhase enum.
+func (e ClusterRolloutPhase) Valid() bool {
+	switch e {
+	case Canary:
+		return true
+	case Complete:
+		return true
+	case Halted:
+		return true
+	case None:
+		return true
+	case Soaking:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for Role.
 const (
 	RoleAdmin    Role = "admin"
@@ -220,6 +274,70 @@ type BackendRef struct {
 	Service string `json:"service"`
 }
 
+// ClusterHalt Why a rollout halted.
+type ClusterHalt struct {
+	// At RFC 3339.
+	At string `json:"at"`
+
+	// Instance The instance that refused, or the canary that did not report.
+	Instance *string `json:"instance,omitempty"`
+	Reason   string  `json:"reason"`
+}
+
+// ClusterInstance One enrolled data plane.
+type ClusterInstance struct {
+	// CertificateNotAfter Expiry of its client certificate (its cluster identity), RFC 3339.
+	CertificateNotAfter string `json:"certificate_not_after"`
+
+	// EnrolledAt RFC 3339.
+	EnrolledAt string `json:"enrolled_at"`
+
+	// LastError The reason of its last refusal, `revision N: message`.
+	LastError  *string        `json:"last_error,omitempty"`
+	LastReport *ClusterReport `json:"last_report,omitempty"`
+
+	// LastSeen When it last called the control plane, RFC 3339.
+	LastSeen *string `json:"last_seen,omitempty"`
+
+	// Latest The newest published revision.
+	Latest int64 `json:"latest"`
+
+	// Name Its name in the cluster.
+	Name    string `json:"name"`
+	Revoked bool   `json:"revoked"`
+
+	// Serving The revision it serves, as it last reported.
+	Serving int64 `json:"serving"`
+
+	// State How an instance stands.
+	State ClusterInstanceState `json:"state"`
+
+	// Target The revision the rollout gives it now (the newest, or the stable one while a canary
+	// runs or after a halt).
+	Target int64 `json:"target"`
+
+	// Version The rdock version it last reported.
+	Version *string `json:"version,omitempty"`
+}
+
+// ClusterInstanceState How an instance stands.
+type ClusterInstanceState string
+
+// ClusterInstances `GET /api/v1/cluster/instances`.
+type ClusterInstances struct {
+	ClusterId string            `json:"cluster_id"`
+	Instances []ClusterInstance `json:"instances"`
+
+	// Latest The newest published revision.
+	Latest int64 `json:"latest"`
+
+	// Name `control.name`.
+	Name *string `json:"name,omitempty"`
+
+	// Rollout The rollout of the newest revision.
+	Rollout ClusterRollout `json:"rollout"`
+}
+
 // ClusterPublishRequest `POST /api/v1/cluster/revisions`: a document to publish, or a revision to roll back to.
 type ClusterPublishRequest struct {
 	// Document The configuration to publish (an `rdock.yaml` as JSON, without `cluster` and
@@ -228,6 +346,98 @@ type ClusterPublishRequest struct {
 
 	// RollbackTo Publish this earlier revision's document again, as a new revision.
 	RollbackTo *int64 `json:"rollback_to,omitempty"`
+}
+
+// ClusterReport A data plane's last report on a bundle.
+type ClusterReport struct {
+	// At RFC 3339.
+	At string `json:"at"`
+
+	// Diagnostics The data plane's diagnostics (`severity`, `path`, `message`, `hint`) for a NACK, or
+	// its warnings.
+	Diagnostics []map[string]interface{} `json:"diagnostics"`
+
+	// Revision The revision reported on.
+	Revision int64 `json:"revision"`
+
+	// Verdict `ack` or `nack`.
+	Verdict string `json:"verdict"`
+}
+
+// ClusterRevision One published revision.
+type ClusterRevision struct {
+	PublishedAt string  `json:"published_at"`
+	PublishedBy *string `json:"published_by,omitempty"`
+
+	// RefusedBy Instances whose last report refused this revision, with their diagnostics.
+	RefusedBy []map[string]interface{} `json:"refused_by"`
+	Revision  int64                    `json:"revision"`
+
+	// RollbackOf The revision whose document this one republishes.
+	RollbackOf *int64 `json:"rollback_of,omitempty"`
+
+	// Rollout How its rollout ended or stands: `state` (`canary`, `soaking`, `halted`, `complete`,
+	// `abandoned`, `superseded`), `reason`, `at`.
+	Rollout *map[string]interface{} `json:"rollout,omitempty"`
+
+	// Sha256 SHA-256 of the document's canonical JSON.
+	Sha256 string `json:"sha256"`
+}
+
+// ClusterRevisions `GET /api/v1/cluster/revisions`.
+type ClusterRevisions struct {
+	ClusterId string            `json:"cluster_id"`
+	Latest    int64             `json:"latest"`
+	Revisions []ClusterRevision `json:"revisions"`
+
+	// Rollout The rollout of the newest revision.
+	Rollout ClusterRollout `json:"rollout"`
+}
+
+// ClusterRollout The rollout of the newest revision.
+type ClusterRollout struct {
+	Canary        *string      `json:"canary,omitempty"`
+	CanaryAckedAt *string      `json:"canary_acked_at,omitempty"`
+	CompletedAt   *string      `json:"completed_at,omitempty"`
+	Halt          *ClusterHalt `json:"halt,omitempty"`
+
+	// Mode `canary`, or `all` (mode `all`, the first revision, rollbacks).
+	Mode string `json:"mode"`
+
+	// Offered Instances given `revision`.
+	Offered []string `json:"offered"`
+
+	// Phase Where a rollout stands.
+	Phase ClusterRolloutPhase `json:"phase"`
+
+	// ResumedBy Who resumed it.
+	ResumedBy *string `json:"resumed_by,omitempty"`
+
+	// Revision The revision being rolled out.
+	Revision int64 `json:"revision"`
+
+	// Settings The rollout settings in effect (`control.rollout`).
+	Settings ClusterRolloutSettings `json:"settings"`
+
+	// SoakEndsAt While soaking: when the rest are given the revision.
+	SoakEndsAt *string `json:"soak_ends_at,omitempty"`
+
+	// Stable The last revision whose rollout completed; instances not given `revision` serve it.
+	Stable    int64   `json:"stable"`
+	StartedAt *string `json:"started_at,omitempty"`
+}
+
+// ClusterRolloutPhase Where a rollout stands.
+type ClusterRolloutPhase string
+
+// ClusterRolloutSettings The rollout settings in effect (`control.rollout`).
+type ClusterRolloutSettings struct {
+	Canary               *string `json:"canary,omitempty"`
+	CanaryTimeoutSeconds int64   `json:"canary_timeout_seconds"`
+
+	// Mode `canary` or `all`.
+	Mode        string `json:"mode"`
+	SoakSeconds int64  `json:"soak_seconds"`
 }
 
 // Code defines model for Code.
@@ -1029,9 +1239,9 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/certificates/{name}/renew (the `Renew` operationId).
 	Renew(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// ListClusterInstances Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+	// ListClusterInstances Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout
 	//
-	// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+	// Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout.
 	//
 	// Corresponds with GET /api/v1/cluster/instances (the `ListClusterInstances` operationId).
 	ListClusterInstances(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1067,6 +1277,27 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
 	PublishClusterRevision(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetClusterRollout The rollout of the newest revision
+	//
+	// The rollout of the newest revision.
+	//
+	// Corresponds with GET /api/v1/cluster/rollout (the `GetClusterRollout` operationId).
+	GetClusterRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// AbandonClusterRollout (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back
+	//
+	// (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back. Audited.
+	//
+	// Corresponds with POST /api/v1/cluster/rollout/abandon (the `AbandonClusterRollout` operationId).
+	AbandonClusterRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResumeClusterRollout (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now
+	//
+	// (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now. Audited.
+	//
+	// Corresponds with POST /api/v1/cluster/rollout/resume (the `ResumeClusterRollout` operationId).
+	ResumeClusterRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// CreateJoinTokenWithBody (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
 	//
@@ -2127,9 +2358,9 @@ func (c *Client) Renew(ctx context.Context, name string, reqEditors ...RequestEd
 	return c.Client.Do(req)
 }
 
-// ListClusterInstances Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+// ListClusterInstances Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout
 //
-// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+// Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout.
 //
 // Corresponds with GET /api/v1/cluster/instances (the `ListClusterInstances` operationId).
 func (c *Client) ListClusterInstances(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2206,6 +2437,57 @@ func (c *Client) PublishClusterRevisionWithBody(ctx context.Context, contentType
 // Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
 func (c *Client) PublishClusterRevision(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewPublishClusterRevisionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// GetClusterRollout The rollout of the newest revision
+//
+// The rollout of the newest revision.
+//
+// Corresponds with GET /api/v1/cluster/rollout (the `GetClusterRollout` operationId).
+func (c *Client) GetClusterRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetClusterRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// AbandonClusterRollout (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back
+//
+// (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back. Audited.
+//
+// Corresponds with POST /api/v1/cluster/rollout/abandon (the `AbandonClusterRollout` operationId).
+func (c *Client) AbandonClusterRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewAbandonClusterRolloutRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ResumeClusterRollout (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now
+//
+// (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now. Audited.
+//
+// Corresponds with POST /api/v1/cluster/rollout/resume (the `ResumeClusterRollout` operationId).
+func (c *Client) ResumeClusterRollout(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResumeClusterRolloutRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -4268,6 +4550,87 @@ func NewPublishClusterRevisionRequestWithBody(server string, contentType string,
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewGetClusterRolloutRequest constructs an http.Request for the GetClusterRollout method
+func NewGetClusterRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/rollout")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewAbandonClusterRolloutRequest constructs an http.Request for the AbandonClusterRollout method
+func NewAbandonClusterRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/rollout/abandon")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewResumeClusterRolloutRequest constructs an http.Request for the ResumeClusterRollout method
+func NewResumeClusterRolloutRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/rollout/resume")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -6512,9 +6875,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/certificates/{name}/renew (the `Renew` operationId).
 	RenewWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*RenewResponse, error)
 
-	// ListClusterInstancesWithResponse Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+	// ListClusterInstancesWithResponse Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout
 	//
-	// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+	// Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -6556,6 +6919,33 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
 	PublishClusterRevisionWithResponse(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*PublishClusterRevisionResponse, error)
+
+	// GetClusterRolloutWithResponse The rollout of the newest revision
+	//
+	// The rollout of the newest revision.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/cluster/rollout (the `GetClusterRollout` operationId).
+	GetClusterRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClusterRolloutResponse, error)
+
+	// AbandonClusterRolloutWithResponse (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back
+	//
+	// (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back. Audited.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/rollout/abandon (the `AbandonClusterRollout` operationId).
+	AbandonClusterRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AbandonClusterRolloutResponse, error)
+
+	// ResumeClusterRolloutWithResponse (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now
+	//
+	// (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now. Audited.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/rollout/resume (the `ResumeClusterRollout` operationId).
+	ResumeClusterRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeClusterRolloutResponse, error)
 
 	// CreateJoinTokenWithBodyWithResponse (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
 	//
@@ -8861,7 +9251,7 @@ type ListClusterInstancesResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
+	JSON200 *ClusterInstances
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthenticated
 	// JSON403 the response for an HTTP 403 `application/json` response
@@ -8875,7 +9265,7 @@ type ListClusterInstancesResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListClusterInstancesResponse) GetJSON200() *map[string]interface{} {
+func (r ListClusterInstancesResponse) GetJSON200() *ClusterInstances {
 	return r.JSON200
 }
 
@@ -9013,7 +9403,7 @@ type ListClusterRevisionsResponse struct {
 	Body         []byte
 	HTTPResponse *http.Response
 	// JSON200 the response for an HTTP 200 `application/json` response
-	JSON200 *map[string]interface{}
+	JSON200 *ClusterRevisions
 	// JSON401 the response for an HTTP 401 `application/json` response
 	JSON401 *Unauthenticated
 	// JSON403 the response for an HTTP 403 `application/json` response
@@ -9027,7 +9417,7 @@ type ListClusterRevisionsResponse struct {
 }
 
 // GetJSON200 returns the response for an HTTP 200 `application/json` response
-func (r ListClusterRevisionsResponse) GetJSON200() *map[string]interface{} {
+func (r ListClusterRevisionsResponse) GetJSON200() *ClusterRevisions {
 	return r.JSON200
 }
 
@@ -9164,6 +9554,248 @@ func (r PublishClusterRevisionResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r PublishClusterRevisionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// GetClusterRolloutResponse429Headers the declared response headers of an HTTP 429 response for GetClusterRollout
+type GetClusterRolloutResponse429Headers struct {
+	RetryAfter *int
+}
+
+type GetClusterRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterRollout
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *GetClusterRolloutResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r GetClusterRolloutResponse) GetJSON200() *ClusterRollout {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r GetClusterRolloutResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r GetClusterRolloutResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r GetClusterRolloutResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r GetClusterRolloutResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r GetClusterRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r GetClusterRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetClusterRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r GetClusterRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// AbandonClusterRolloutResponse429Headers the declared response headers of an HTTP 429 response for AbandonClusterRollout
+type AbandonClusterRolloutResponse429Headers struct {
+	RetryAfter *int
+}
+
+type AbandonClusterRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *AbandonClusterRolloutResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON409() *ErrorBody {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r AbandonClusterRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r AbandonClusterRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r AbandonClusterRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r AbandonClusterRolloutResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ResumeClusterRolloutResponse429Headers the declared response headers of an HTTP 429 response for ResumeClusterRollout
+type ResumeClusterRolloutResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ResumeClusterRolloutResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *ClusterRollout
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ResumeClusterRolloutResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON200() *ClusterRollout {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON409() *ErrorBody {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ResumeClusterRolloutResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ResumeClusterRolloutResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResumeClusterRolloutResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ResumeClusterRolloutResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12931,9 +13563,9 @@ func (c *ClientWithResponses) RenewWithResponse(ctx context.Context, name string
 	return ParseRenewResponse(rsp)
 }
 
-// ListClusterInstancesWithResponse Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+// ListClusterInstancesWithResponse Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout
 //
-// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+// Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -13004,6 +13636,51 @@ func (c *ClientWithResponses) PublishClusterRevisionWithResponse(ctx context.Con
 		return nil, err
 	}
 	return ParsePublishClusterRevisionResponse(rsp)
+}
+
+// GetClusterRolloutWithResponse The rollout of the newest revision
+//
+// The rollout of the newest revision.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/cluster/rollout (the `GetClusterRollout` operationId).
+func (c *ClientWithResponses) GetClusterRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetClusterRolloutResponse, error) {
+	rsp, err := c.GetClusterRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetClusterRolloutResponse(rsp)
+}
+
+// AbandonClusterRolloutWithResponse (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back
+//
+// (operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back. Audited.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/rollout/abandon (the `AbandonClusterRollout` operationId).
+func (c *ClientWithResponses) AbandonClusterRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*AbandonClusterRolloutResponse, error) {
+	rsp, err := c.AbandonClusterRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseAbandonClusterRolloutResponse(rsp)
+}
+
+// ResumeClusterRolloutWithResponse (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now
+//
+// (operator): a halted (or still soaking) rollout goes on: every instance is given the revision now. Audited.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/rollout/resume (the `ResumeClusterRollout` operationId).
+func (c *ClientWithResponses) ResumeClusterRolloutWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ResumeClusterRolloutResponse, error) {
+	rsp, err := c.ResumeClusterRollout(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResumeClusterRolloutResponse(rsp)
 }
 
 // CreateJoinTokenWithBodyWithResponse (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
@@ -15453,7 +16130,7 @@ func ParseListClusterInstancesResponse(rsp *http.Response) (*ListClusterInstance
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest ClusterInstances
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -15587,7 +16264,7 @@ func ParseListClusterRevisionsResponse(rsp *http.Response) (*ListClusterRevision
 
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest map[string]interface{}
+		var dest ClusterRevisions
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -15707,6 +16384,221 @@ func ParsePublishClusterRevisionResponse(rsp *http.Response) (*PublishClusterRev
 	switch {
 	case rsp.StatusCode == 429:
 		var headers PublishClusterRevisionResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseGetClusterRolloutResponse parses an HTTP response from a GetClusterRolloutWithResponse call
+func ParseGetClusterRolloutResponse(rsp *http.Response) (*GetClusterRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetClusterRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers GetClusterRolloutResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseAbandonClusterRolloutResponse parses an HTTP response from a AbandonClusterRolloutWithResponse call
+func ParseAbandonClusterRolloutResponse(rsp *http.Response) (*AbandonClusterRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &AbandonClusterRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers AbandonClusterRolloutResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseResumeClusterRolloutResponse parses an HTTP response from a ResumeClusterRolloutWithResponse call
+func ParseResumeClusterRolloutResponse(rsp *http.Response) (*ResumeClusterRolloutResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResumeClusterRolloutResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ClusterRollout
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ResumeClusterRolloutResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

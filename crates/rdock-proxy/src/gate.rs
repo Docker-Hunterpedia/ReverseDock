@@ -77,6 +77,17 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
                 );
             }
         }
+        // A cluster-wide count of requests in flight needs decrements and the cleanup of a
+        // crashed member's count (ADR-0031); `rate_limit` and `quota` share leased budgets.
+        if let rdock_model::middleware::Middleware::InFlight(f) = middleware
+            && f.scope == rdock_model::middleware::LimitScope::Cluster
+        {
+            gate.unsupported(
+                format!("{}.scope", path_key("middlewares", name)),
+                "a cluster-wide count of requests in flight (`in_flight` with `scope: cluster`)",
+                "a later version",
+            );
+        }
         // Background refresh re-runs the whole pipeline for a request no client waits on
         // (ADR-0030); `stale-while-revalidate` is honoured as plain staleness instead.
         if let rdock_model::middleware::Middleware::Cache(cache) = middleware
@@ -100,6 +111,19 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
                 "a later version",
             );
         }
+    }
+    // Rolling back on the canary's health needs a health signal from data planes, which they
+    // do not send yet (ADR-0031); a refusal or a silent canary halts the rollout.
+    if config
+        .control
+        .as_ref()
+        .is_some_and(|c| c.rollout.auto_rollback)
+    {
+        gate.unsupported(
+            "control.rollout.auto_rollback",
+            "automatic rollback on the canary's health (`auto_rollback`)",
+            "a later version",
+        );
     }
     // `control` belongs to `rdock control run`; a data plane never reads it.
     if config.control.is_some() && mode == Mode::Run {
@@ -168,6 +192,30 @@ services:
         assert!(run[0].message.ends_with("(planned for a later version)"));
         let validate = diagnostics(yaml, Mode::Validate);
         assert!(!validate[0].is_error());
+    }
+
+    #[test]
+    fn cluster_scoped_in_flight_and_automatic_rollback_are_planned() {
+        let yaml = r"
+middlewares:
+  slots: { type: in_flight, amount: 4, scope: cluster }
+  shared: { type: rate_limit, average: 10, scope: cluster }
+";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert_eq!(run[0].path, "middlewares.slots.scope");
+        assert!(run[0].is_error());
+        let run = diagnostics("control:\n  rollout: { auto_rollback: true }\n", Mode::Run);
+        assert!(
+            run.iter()
+                .any(|d| d.path == "control.rollout.auto_rollback" && d.is_error()),
+            "{run:?}"
+        );
+        let validate = diagnostics(
+            "control:\n  rollout: { auto_rollback: true }\n",
+            Mode::Validate,
+        );
+        assert!(validate.iter().all(|d| !d.is_error()), "{validate:?}");
     }
 
     #[test]

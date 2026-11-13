@@ -47,6 +47,7 @@ services:
             metrics: None,
             quotas: None,
             abuse: None,
+            shared_limits: None,
         },
     );
     let runtime = compiled.runtime.expect("compiles");

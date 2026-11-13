@@ -1100,6 +1100,27 @@ pub struct IpListConfig {
     pub cidrs: Vec<IpNetwork>,
 }
 
+/// Where a limit is counted (ADR-0031).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum LimitScope {
+    /// Each instance counts on its own: N instances admit up to N times the limit.
+    #[default]
+    Instance,
+    /// The instances of a cluster share the limit through `cluster.limits` (the cluster store
+    /// or Redis), within a documented bound; each falls back to its share when the store is
+    /// away. Without a cluster it counts per instance.
+    Cluster,
+}
+
+impl LimitScope {
+    /// Whether this is the default (`instance`).
+    #[must_use]
+    pub fn is_instance(&self) -> bool {
+        *self == Self::Instance
+    }
+}
+
 /// Token-bucket rate limit: `average` requests per `period`, bursts up to `burst`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
@@ -1123,6 +1144,11 @@ pub struct RateLimitConfig {
     /// (`draft-ietf-httpapi-ratelimit-headers-11`). Off by default.
     #[serde(default)]
     pub headers: crate::gateway::LimitHeaders,
+    /// `instance` (default) or `cluster`. With `cluster`, the cluster admits at most
+    /// `average` requests per key in each `period` (fixed windows from the Unix epoch), within
+    /// the bound of `cluster.limits`; each instance's own token bucket still shapes bursts.
+    #[serde(default, skip_serializing_if = "LimitScope::is_instance")]
+    pub scope: LimitScope,
 }
 
 const fn one_second() -> Duration {
@@ -1144,6 +1170,9 @@ pub struct InFlightConfig {
     /// How long a queued request waits before it gets `429`.
     #[serde(default = "five_seconds")]
     pub queue_timeout: Duration,
+    /// Only `instance`: a cluster-wide count of requests in flight is planned.
+    #[serde(default, skip_serializing_if = "LimitScope::is_instance")]
+    pub scope: LimitScope,
 }
 
 /// Response bytes per second per key.

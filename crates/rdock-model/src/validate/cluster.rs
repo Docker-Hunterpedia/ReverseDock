@@ -5,9 +5,18 @@ use std::time::Duration as StdDuration;
 
 use super::Validator;
 use crate::acme::Challenge;
-use crate::cluster::{Cluster, ClusterStoreType, ControlPlane, is_ca_pin, is_instance_name};
+use crate::cluster::{
+    Cluster, ClusterLimits, ClusterStoreType, ControlPlane, LimitStoreType, RedisAddress,
+    RedisStore, Rollout, RolloutMode, is_ca_pin, is_instance_name,
+};
 use crate::diagnostics::{Diagnostic, path_index};
 use crate::route::{RouteTls, TlsMode};
+
+/// Whether `value` lies within `min..=max` milliseconds.
+fn within_ms(value: StdDuration, min: u64, max: u64) -> bool {
+    let ms = value.as_millis();
+    ms >= u128::from(min) && ms <= u128::from(max)
+}
 
 /// Whether `value` lies within `min..=max` seconds.
 fn within(value: StdDuration, min: u64, max: u64) -> bool {
@@ -95,13 +104,102 @@ impl Validator<'_> {
         }
         self.check_cluster_store(cluster);
         self.check_cluster_challenges(cluster);
+        if let Some(limits) = &cluster.limits {
+            self.check_cluster_limits(cluster, limits);
+        }
+    }
+
+    fn check_cluster_limits(&mut self, cluster: &Cluster, limits: &ClusterLimits) {
+        if !(100..=10_000).contains(&limits.sync_interval.as_std().as_millis()) {
+            self.error(
+                "cluster.limits.sync_interval",
+                "must be between 100ms and 10s",
+            );
+        }
+        if limits.headroom_percent > 100 {
+            self.error(
+                "cluster.limits.headroom_percent",
+                "must be between 0 and 100",
+            );
+        }
+        match (limits.store, &limits.redis) {
+            (LimitStoreType::Cluster, Some(_)) => self.warning(
+                "cluster.limits.redis",
+                "ignored with `store: cluster`; set `store: redis` to use it",
+            ),
+            (LimitStoreType::Cluster, None) if cluster.effective_store().is_none() => self.error(
+                "cluster.limits.store",
+                "`cluster` needs a cluster store (`cluster.control` or `cluster.store`)",
+            ),
+            (LimitStoreType::Redis, None) => {
+                self.error("cluster.limits.redis", "required with `store: redis`");
+            }
+            (LimitStoreType::Redis, Some(redis)) => self.check_redis(redis),
+            (LimitStoreType::Cluster, None) => {}
+        }
+    }
+
+    fn check_redis(&mut self, redis: &RedisStore) {
+        match RedisAddress::parse(&redis.url) {
+            Err(message) => self.error("cluster.limits.redis.url", message),
+            Ok(address) if !address.tls && !address.is_loopback() && !redis.allow_plaintext => {
+                self.push(
+                    Diagnostic::error(
+                        "cluster.limits.redis.url",
+                        "`redis://` sends the password and the counters in clear to another machine",
+                    )
+                    .with_hint("use `rediss://` (TLS); `allow_plaintext: true` accepts the risk on a private network"),
+                );
+            }
+            Ok(address) if address.tls && redis.allow_plaintext => self.warning(
+                "cluster.limits.redis.allow_plaintext",
+                "has no effect with `rediss://`",
+            ),
+            Ok(_) => {}
+        }
+        if let Some(password) = &redis.password {
+            self.check_secret_reference("cluster.limits.redis.password", password, "redis");
+        } else if redis.username.is_some() {
+            self.error(
+                "cluster.limits.redis.username",
+                "a user name needs a `password`",
+            );
+        }
+        if let Some(path) = &redis.ca_file
+            && !path.is_absolute()
+        {
+            self.error("cluster.limits.redis.ca_file", "must be an absolute path");
+        }
+        if !within_ms(redis.timeout.as_std(), 100, 10_000) {
+            self.error(
+                "cluster.limits.redis.timeout",
+                "must be between 100ms and 10s",
+            );
+        }
+        if redis.key_prefix.is_empty()
+            || redis.key_prefix.len() > 64
+            || !redis
+                .key_prefix
+                .bytes()
+                .all(|b| b.is_ascii_graphic() && b != b'*' && b != b'?')
+        {
+            self.error(
+                "cluster.limits.redis.key_prefix",
+                "1 to 64 visible characters, without `*` or `?`",
+            );
+        }
     }
 
     fn check_cluster_store(&mut self, cluster: &Cluster) {
+        let redis_only = cluster
+            .limits
+            .as_ref()
+            .is_some_and(|l| l.store == LimitStoreType::Redis);
         match (&cluster.store, &cluster.control) {
+            (None, None) if redis_only => {}
             (None, None) => self.push(Diagnostic::error(
                 "cluster",
-                "a cluster needs `control` (a control plane) or a `store` of type `directory`",
+                "a cluster needs `control` (a control plane), a `store` of type `directory`, or `limits` on Redis",
             )),
             (Some(store), control) => {
                 match store.kind {
@@ -208,6 +306,7 @@ impl Validator<'_> {
         if !within(control.offline_after.as_std(), 10, 3600) {
             self.error("control.offline_after", "must be between 10s and 1h");
         }
+        self.check_rollout(&control.rollout);
         if control.listener.ip().is_none_or(|ip| !ip.is_loopback()) && control.names.is_empty() {
             self.push(
                 Diagnostic::warning(
@@ -215,6 +314,34 @@ impl Validator<'_> {
                     "data planes on other machines must name the control plane as its certificate does",
                 )
                 .with_hint("list the DNS names or addresses data planes use in `cluster.control.url`"),
+            );
+        }
+    }
+}
+
+impl Validator<'_> {
+    fn check_rollout(&mut self, rollout: &Rollout) {
+        if let Some(canary) = &rollout.canary
+            && !is_instance_name(canary)
+        {
+            self.error(
+                "control.rollout.canary",
+                "an instance name: letters, digits, `.`, `-` and `_`, at most 63 characters",
+            );
+        }
+        if !within(rollout.soak.as_std(), 0, 24 * 3600) {
+            self.error("control.rollout.soak", "must be between 0s and 24h");
+        }
+        if !within(rollout.canary_timeout.as_std(), 10, 3600) {
+            self.error(
+                "control.rollout.canary_timeout",
+                "must be between 10s and 1h",
+            );
+        }
+        if rollout.mode == RolloutMode::All && rollout.canary.is_some() {
+            self.warning(
+                "control.rollout.canary",
+                "ignored with `mode: all`: every instance takes a revision at once",
             );
         }
     }
@@ -234,5 +361,21 @@ mod tests {
         assert!(!is_ca_pin(&format!("sha256:{}", "AB".repeat(32))));
         assert!(!is_ca_pin("sha256:abc"));
         assert!(!is_ca_pin(&"ab".repeat(32)));
+    }
+
+    #[test]
+    fn redis_addresses() {
+        use crate::cluster::RedisAddress;
+        let a = RedisAddress::parse("rediss://cache.example.com:6380/2").unwrap();
+        assert!(a.tls);
+        assert_eq!(
+            (a.host.as_str(), a.port, a.database),
+            ("cache.example.com", 6380, 2)
+        );
+        let b = RedisAddress::parse("redis://[::1]").unwrap();
+        assert!(!b.tls && b.is_loopback() && b.port == 6379 && b.database == 0);
+        assert!(RedisAddress::parse("redis://user:pw@localhost").is_err());
+        assert!(RedisAddress::parse("http://localhost").is_err());
+        assert!(RedisAddress::parse("redis://localhost/x").is_err());
     }
 }

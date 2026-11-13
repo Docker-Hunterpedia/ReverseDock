@@ -4,6 +4,7 @@ pub mod abuse;
 mod bandwidth;
 mod concurrency;
 pub mod quota;
+pub mod shared;
 
 pub use bandwidth::ByteLimiter;
 pub use concurrency::{Admitted, ConcurrencyLimiter, Refused};

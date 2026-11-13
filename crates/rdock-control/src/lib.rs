@@ -4,6 +4,7 @@ pub mod bundles;
 pub mod ca;
 mod plane;
 pub mod registry;
+pub mod rollout;
 pub mod server;
 mod store;
 pub mod tokens;
@@ -17,6 +18,9 @@ pub enum Error {
     /// safe to show to the caller.
     #[error("{0}")]
     Refused(String),
+    /// The request conflicts with the current state (nothing to resume or abandon).
+    #[error("{0}")]
+    Conflict(String),
     /// The caller is not an enrolled, unrevoked instance.
     #[error("not enrolled or revoked")]
     Forbidden,

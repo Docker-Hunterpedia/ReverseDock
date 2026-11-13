@@ -203,6 +203,7 @@ mod tests {
             key: RateLimitKey::ClientIp,
             queue: 0,
             queue_timeout: rdock_model::values::Duration::from_secs(1),
+            scope: rdock_model::middleware::LimitScope::Instance,
         });
         let mut first = cx();
         let mut req = request("GET", "/", &[]);

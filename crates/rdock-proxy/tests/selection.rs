@@ -39,6 +39,7 @@ fn runtime(yaml: &str, registry: &rdock_balancer::Registry) -> Runtime {
             metrics: None,
             quotas: None,
             abuse: None,
+            shared_limits: None,
         },
     )
     .runtime

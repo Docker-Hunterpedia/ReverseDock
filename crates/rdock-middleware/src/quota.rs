@@ -8,6 +8,7 @@ use async_trait::async_trait;
 use http::HeaderValue;
 use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_limits::quota::{QuotaCounter, QuotaRegistry, Taken, Window};
+use rdock_limits::shared::{Budget, SharedLimits, Take, WindowKind};
 use rdock_model::gateway::{LimitHeaders, QuotaConfig, QuotaWindow};
 
 use crate::phase::{Capabilities, Phases};
@@ -21,6 +22,8 @@ pub(crate) struct Quota {
     overrides: Vec<(String, u64)>,
     headers: LimitHeaders,
     counter: Arc<QuotaCounter>,
+    /// The cluster-wide budget with `scope: cluster`.
+    cluster: Option<Arc<Budget>>,
     metrics: Option<rdock_observability::Metrics>,
 }
 
@@ -37,6 +40,7 @@ impl Quota {
         config: &QuotaConfig,
         registry: &QuotaRegistry,
         metrics: Option<&rdock_observability::Metrics>,
+        shared: Option<&SharedLimits>,
     ) -> Self {
         let window = match config.window {
             QuotaWindow::Hour => Window::Hour,
@@ -55,6 +59,14 @@ impl Quota {
                 .collect(),
             headers: config.headers,
             counter,
+            cluster: shared
+                .filter(|_| config.scope == rdock_model::middleware::LimitScope::Cluster)
+                .map(|s| {
+                    s.budget(
+                        &crate::ratelimit::budget_id("q", name, None),
+                        WindowKind::Calendar(window),
+                    )
+                }),
             metrics: metrics.cloned(),
         }
     }
@@ -96,6 +108,13 @@ impl Middleware for Quota {
 
     async fn request(&self, _req: &mut RequestHeader, cx: &mut Context) -> Flow {
         let (key, limit) = self.key_and_limit(cx);
+        if let Some(budget) = self.cluster.as_ref().filter(|b| b.attached()) {
+            let taken = match budget.take(&key, limit) {
+                Take::Allowed { remaining, reset } => Taken::Allowed { remaining, reset },
+                Take::Exceeded { reset } => Taken::Exceeded { reset },
+            };
+            return self.answer(taken, &key, limit, cx);
+        }
         let (taken, overflowed) = self.counter.take_counted(&key, limit);
         if let Some(class) = overflowed {
             tracing::debug!(middleware = %self.name, class = class.label(), "quota keys full; shared counter used");
@@ -105,6 +124,22 @@ impl Middleware for Quota {
                     .inc();
             }
         }
+        self.answer(taken, &key, limit, cx)
+    }
+
+    async fn response(&self, resp: &mut ResponseHeader, cx: &mut Context) {
+        if let Some(r) = cx.take_state::<Remaining>() {
+            for (name, value) in
+                draft_headers(&self.name, r.limit, self.window_seconds(), r.left, r.reset)
+            {
+                let _ = resp.insert_header(name, value);
+            }
+        }
+    }
+}
+
+impl Quota {
+    fn answer(&self, taken: Taken, key: &str, limit: u64, cx: &mut Context) -> Flow {
         match taken {
             Taken::Allowed { remaining, reset } => {
                 if self.headers == LimitHeaders::Draft {
@@ -128,16 +163,6 @@ impl Middleware for Quota {
                     }
                 }
                 Flow::Reply(reply)
-            }
-        }
-    }
-
-    async fn response(&self, resp: &mut ResponseHeader, cx: &mut Context) {
-        if let Some(r) = cx.take_state::<Remaining>() {
-            for (name, value) in
-                draft_headers(&self.name, r.limit, self.window_seconds(), r.left, r.reset)
-            {
-                let _ = resp.insert_header(name, value);
             }
         }
     }

@@ -11,6 +11,10 @@ dependency on the admin API:
   either *exclusive* (one process owns the directory: a single instance's ACME storage, the
   control plane's store; fencing enforced) or *shared* (a directory several instances mount:
   best effort, see below); and the control plane's store reached over mutual TLS.
+- **Cluster-scoped limits** (`limits`): the background task that claims parts of each key's
+  budget for `rdock-limits`' shared budgets, from a `ClusterStore` (compare-and-swap) or a
+  Redis-compatible server (`resp`, a small RESP2 client over tokio-rustls), counts members and
+  notices when the store goes away and comes back. The request path never waits on it.
 
 ## The shared directory is best effort
 

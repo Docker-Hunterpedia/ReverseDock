@@ -45,6 +45,7 @@ const SECRETS: &[&[&str]] = &[
     &["middlewares", "*", "session", "key"],
     &["middlewares", "*", "session", "keys", "*"],
     &["cluster", "control", "join_token"],
+    &["cluster", "limits", "redis", "password"],
 ];
 
 /// Locations taken literally.
@@ -107,5 +108,9 @@ mod tests {
             FieldKind::Interpolated
         );
         assert_eq!(field_kind(&["acme", "email"]), FieldKind::Interpolated);
+        assert_eq!(
+            field_kind(&["cluster", "limits", "redis", "password"]),
+            FieldKind::Secret
+        );
     }
 }

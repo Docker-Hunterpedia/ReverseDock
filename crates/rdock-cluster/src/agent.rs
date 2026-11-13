@@ -302,12 +302,16 @@ fn https_client(
         }
         None => builder.with_no_client_auth(),
     };
+    // Store operations are small requests in quick succession: no Nagle delay.
+    let mut http = HttpConnector::new();
+    http.enforce_http(false);
+    http.set_nodelay(true);
     let connector = hyper_rustls::HttpsConnectorBuilder::new()
         .with_tls_config(config)
         .https_only()
         .enable_http1()
         .enable_http2()
-        .build();
+        .wrap_connector(http);
     Ok(Client::builder(TokioExecutor::new()).build(connector))
 }
 

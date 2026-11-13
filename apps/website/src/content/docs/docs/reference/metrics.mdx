@@ -465,14 +465,31 @@ certificate was stored) or `error` (the store failed).
 **Counter.** Challenge barriers before validation, by `result`: `complete` (every live member
 holds the HTTP-01 or TLS-ALPN-01 answers) or `timeout` (validation went ahead without some).
 
+### `rdock_cluster_limits_store_up` <Status planned="v0.9" />
+
+**Gauge.** 1 while the store of [cluster-scoped limits](/docs/guides/rate-limiting/#share-a-limit-across-instances)
+answers, 0 while limits fall back to each instance's share.
+
+### `rdock_cluster_limit_claims_total` <Status planned="v0.9" />
+
+**Counter.** Claims of cluster-scoped limits, by `outcome`: `granted`, `exhausted` (less than
+asked was left), `forced` (what was admitted while the store was away, added when it returned) or
+`failed` (the store did not answer).
+
+### `rdock_cluster_limits_members` <Status planned="v0.9" />
+
+**Gauge.** Instances sharing cluster-scoped limits, as this instance last counted them (the `N`
+of the bound).
+
 ### `rdock_control_revision` <Status planned="v0.9" />
 
 **Gauge.** On the control plane: the newest published revision.
 
 ### `rdock_control_instances` <Status planned="v0.9" />
 
-**Gauge.** On the control plane: enrolled data planes by `state`: `synced`, `stale`, `error`
-(refused the newest revision), `away` (silent longer than `control.offline_after`) or `revoked`.
+**Gauge.** On the control plane: enrolled data planes by `state`: `synced`, `behind` (an older
+revision, for example held by a rollout), `error` (refused the newest revision), `offline` (silent
+longer than `control.offline_after`) or `revoked`.
 
 ## Binary upgrades
 

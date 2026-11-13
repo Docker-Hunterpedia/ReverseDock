@@ -1,14 +1,16 @@
 //! `rate_limit`: token buckets per client IP, route, consumer, header or cookie value, with
 //! per-group limits for consumers (F-GW-02) and the draft `RateLimit` headers on request.
 
+use std::sync::Arc;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use http::HeaderValue;
 use pingora::http::{RequestHeader, ResponseHeader};
+use rdock_limits::shared::{Budget, SharedLimits, Take, WindowKind};
 use rdock_limits::{Decision, RateLimiter};
 use rdock_model::gateway::LimitHeaders;
-use rdock_model::middleware::RateLimitConfig;
+use rdock_model::middleware::{LimitScope, RateLimitConfig};
 use rdock_model::values::RateLimitKey;
 
 use crate::phase::{Capabilities, Phases};
@@ -16,22 +18,56 @@ use crate::{Context, Flow, Middleware, ProblemKind, Reply};
 
 use crate::limits::MAX_KEYS;
 
-/// One limit: its bucket set and what `RateLimit-Policy` says about it.
+/// One limit: its bucket set, its share of a cluster-wide budget with `scope: cluster`, and
+/// what `RateLimit-Policy` says about it.
 #[derive(Debug)]
 struct Limit {
     limiter: RateLimiter,
     average: u32,
     period_secs: u64,
+    cluster: Option<Arc<Budget>>,
 }
 
 impl Limit {
-    fn new(average: u32, period: std::time::Duration, burst: u32) -> Self {
+    fn new(
+        average: u32,
+        period: std::time::Duration,
+        burst: u32,
+        cluster: Option<(&SharedLimits, String)>,
+    ) -> Self {
         Self {
             limiter: RateLimiter::new(average, period, burst, MAX_KEYS),
             average,
             period_secs: period.as_secs().max(1),
+            cluster: cluster.map(|(shared, id)| shared.budget(&id, WindowKind::Fixed(period))),
         }
     }
+}
+
+/// A store-safe, collision-free budget id for middleware `name` (and `group`).
+pub(crate) fn budget_id(kind: &str, name: &str, group: Option<&str>) -> String {
+    use std::fmt::Write as _;
+    let full = match group {
+        Some(g) => format!("{name}\u{0}{g}"),
+        None => name.to_owned(),
+    };
+    let readable: String = full
+        .chars()
+        .take(40)
+        .map(|c| {
+            if c.is_ascii_alphanumeric() || c == '-' || c == '_' {
+                c
+            } else {
+                '-'
+            }
+        })
+        .collect();
+    let digest = ring::digest::digest(&ring::digest::SHA256, full.as_bytes());
+    let mut id = format!("{kind}-{readable}-");
+    for b in &digest.as_ref()[..4] {
+        let _ = write!(id, "{b:02x}");
+    }
+    id
 }
 
 /// The `rate_limit` middleware.
@@ -54,8 +90,9 @@ struct Remaining {
 }
 
 impl RateLimit {
-    pub(crate) fn new(name: &str, config: &RateLimitConfig) -> Self {
+    pub(crate) fn new(name: &str, config: &RateLimitConfig, shared: Option<&SharedLimits>) -> Self {
         let period = config.period.as_std();
+        let shared = shared.filter(|_| config.scope == LimitScope::Cluster);
         Self {
             name: name.to_owned(),
             key: config.key.clone(),
@@ -63,6 +100,7 @@ impl RateLimit {
                 config.average,
                 period,
                 config.burst.unwrap_or(config.average),
+                shared.map(|s| (s, budget_id("rl", name, None))),
             ),
             overrides: config
                 .overrides
@@ -75,6 +113,7 @@ impl RateLimit {
                             o.period
                                 .map_or(period, rdock_model::values::Duration::as_std),
                             o.burst.unwrap_or(o.average),
+                            shared.map(|s| (s, budget_id("rl", name, Some(group)))),
                         ),
                     )
                 })
@@ -117,7 +156,16 @@ impl Middleware for RateLimit {
         let now = Instant::now();
         let limit = self.limit(cx);
         let key = crate::limits::key_of(&self.key, req, cx);
-        let (decision, remaining, full) = limit.limiter.check_remaining(&key, now);
+        let (mut decision, remaining, full) = limit.limiter.check_remaining(&key, now);
+        if decision == Decision::Allow
+            && let Some(budget) = limit.cluster.as_ref().filter(|b| b.attached())
+            && let Take::Exceeded { reset } =
+                budget.take(&String::from_utf8_lossy(&key), u64::from(limit.average))
+        {
+            decision = Decision::Deny {
+                retry_after: std::time::Duration::from_secs(reset),
+            };
+        }
         match decision {
             Decision::Allow => {
                 if self.headers == LimitHeaders::Draft {
@@ -186,7 +234,9 @@ mod tests {
                 period: Duration::from_secs(10),
                 overrides: std::collections::BTreeMap::new(),
                 headers: LimitHeaders::Off,
+                scope: rdock_model::middleware::LimitScope::Instance,
             },
+            None,
         );
         let mut req = request("GET", "/", &[]);
         assert_eq!(block_on(mw.request(&mut req, &mut cx())), Flow::Next);
@@ -203,6 +253,57 @@ mod tests {
     }
 
     #[test]
+    fn cluster_scope_uses_the_shared_budget_once_a_driver_is_attached() {
+        let config = RateLimitConfig {
+            key: RateLimitKey::ClientIp,
+            average: 10,
+            burst: Some(100),
+            period: Duration::from_secs(3600),
+            overrides: std::collections::BTreeMap::new(),
+            headers: LimitHeaders::Off,
+            scope: LimitScope::Cluster,
+        };
+        let shared = SharedLimits::default();
+        let mw = RateLimit::new("rl", &config, Some(&shared));
+        let admitted = |mw: &RateLimit| {
+            (0..50)
+                .filter(|_| {
+                    let mut req = request("GET", "/", &[]);
+                    block_on(mw.request(&mut req, &mut cx())) == Flow::Next
+                })
+                .count()
+        };
+        // No driver: counted per instance (the token bucket's burst of 100).
+        assert_eq!(admitted(&mw), 50);
+        // A driver whose store is away, two members: the share ⌈10 / 2⌉, then 429 with the
+        // window's reset as Retry-After.
+        shared.attach();
+        shared.set_members(2);
+        let mw = RateLimit::new("rl2", &config, Some(&shared));
+        assert_eq!(admitted(&mw), 5);
+        let mut req = request("GET", "/", &[]);
+        let Flow::Reply(reply) = block_on(mw.request(&mut req, &mut cx())) else {
+            panic!("over the share must be limited")
+        };
+        assert_eq!(reply.status, 429);
+        let seconds: u64 = reply_header(&reply, "retry-after")
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((1..=3600).contains(&seconds), "{seconds}");
+        // `scope: instance` ignores the shared budgets.
+        let local = RateLimit::new(
+            "rl3",
+            &RateLimitConfig {
+                scope: LimitScope::Instance,
+                ..config
+            },
+            Some(&shared),
+        );
+        assert_eq!(admitted(&local), 50);
+    }
+
+    #[test]
     fn header_keys_get_their_own_buckets() {
         let mw = RateLimit::new(
             "rl",
@@ -213,7 +314,9 @@ mod tests {
                 period: Duration::from_secs(60),
                 overrides: std::collections::BTreeMap::new(),
                 headers: LimitHeaders::Off,
+                scope: rdock_model::middleware::LimitScope::Instance,
             },
+            None,
         );
         let mut a = request("GET", "/", &[("x-api-key", "a")]);
         let mut b = request("GET", "/", &[("x-api-key", "b")]);

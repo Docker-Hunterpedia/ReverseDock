@@ -420,7 +420,16 @@ async fn serve(
     // stored bundle yet boots from the first one it delivers (ADR-0031).
     let (_agent_stop, agent_stop_rx) = watch::channel(false);
     if let Some(context) = &cluster {
-        crate::cluster::start_agent(context, &engine, plane.metrics(), agent_stop_rx);
+        crate::cluster::start_agent(context, &engine, plane.metrics(), agent_stop_rx.clone());
+        if let Err(err) = crate::cluster::start_limits(
+            context,
+            plane.shared_limits(),
+            plane.metrics(),
+            agent_stop_rx,
+        ) {
+            eprintln!("error: {err:#}");
+            return Ok(ExitCode::from(1));
+        }
     }
     engine.restore_snapshots();
     let report = match engine.boot().await {

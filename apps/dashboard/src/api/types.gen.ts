@@ -42,6 +42,89 @@ export type BackendRef = {
 };
 
 /**
+ * Why a rollout halted.
+ */
+export type ClusterHalt = {
+    /**
+     * RFC 3339.
+     */
+    at: string;
+    /**
+     * The instance that refused, or the canary that did not report.
+     */
+    instance?: string | null;
+    reason: string;
+};
+
+/**
+ * One enrolled data plane.
+ */
+export type ClusterInstance = {
+    /**
+     * Expiry of its client certificate (its cluster identity), RFC 3339.
+     */
+    certificate_not_after: string;
+    /**
+     * RFC 3339.
+     */
+    enrolled_at: string;
+    /**
+     * The reason of its last refusal, `revision N: message`.
+     */
+    last_error?: string | null;
+    last_report?: ClusterReport | null;
+    /**
+     * When it last called the control plane, RFC 3339.
+     */
+    last_seen?: string | null;
+    /**
+     * The newest published revision.
+     */
+    latest: number;
+    /**
+     * Its name in the cluster.
+     */
+    name: string;
+    revoked: boolean;
+    /**
+     * The revision it serves, as it last reported.
+     */
+    serving: number;
+    state: ClusterInstanceState;
+    /**
+     * The revision the rollout gives it now (the newest, or the stable one while a canary
+     * runs or after a halt).
+     */
+    target: number;
+    /**
+     * The rdock version it last reported.
+     */
+    version?: string | null;
+};
+
+/**
+ * How an instance stands.
+ */
+export type ClusterInstanceState = 'synced' | 'behind' | 'error' | 'offline' | 'revoked';
+
+/**
+ * `GET /api/v1/cluster/instances`.
+ */
+export type ClusterInstances = {
+    cluster_id: string;
+    instances: Array<ClusterInstance>;
+    /**
+     * The newest published revision.
+     */
+    latest: number;
+    /**
+     * `control.name`.
+     */
+    name?: string | null;
+    rollout: ClusterRollout;
+};
+
+/**
  * `POST /api/v1/cluster/revisions`: a document to publish, or a revision to roll back to.
  */
 export type ClusterPublishRequest = {
@@ -54,6 +137,126 @@ export type ClusterPublishRequest = {
      * Publish this earlier revision's document again, as a new revision.
      */
     rollback_to?: number | null;
+};
+
+/**
+ * A data plane's last report on a bundle.
+ */
+export type ClusterReport = {
+    /**
+     * RFC 3339.
+     */
+    at: string;
+    /**
+     * The data plane's diagnostics (`severity`, `path`, `message`, `hint`) for a NACK, or
+     * its warnings.
+     */
+    diagnostics: Array<{
+        [key: string]: unknown;
+    }>;
+    /**
+     * The revision reported on.
+     */
+    revision: number;
+    /**
+     * `ack` or `nack`.
+     */
+    verdict: string;
+};
+
+/**
+ * One published revision.
+ */
+export type ClusterRevision = {
+    published_at: string;
+    published_by?: string | null;
+    /**
+     * Instances whose last report refused this revision, with their diagnostics.
+     */
+    refused_by: Array<{
+        [key: string]: unknown;
+    }>;
+    revision: number;
+    /**
+     * The revision whose document this one republishes.
+     */
+    rollback_of?: number | null;
+    /**
+     * How its rollout ended or stands: `state` (`canary`, `soaking`, `halted`, `complete`,
+     * `abandoned`, `superseded`), `reason`, `at`.
+     */
+    rollout?: {
+        [key: string]: unknown;
+    } | null;
+    /**
+     * SHA-256 of the document's canonical JSON.
+     */
+    sha256: string;
+};
+
+/**
+ * `GET /api/v1/cluster/revisions`.
+ */
+export type ClusterRevisions = {
+    cluster_id: string;
+    latest: number;
+    revisions: Array<ClusterRevision>;
+    rollout: ClusterRollout;
+};
+
+/**
+ * The rollout of the newest revision.
+ */
+export type ClusterRollout = {
+    canary?: string | null;
+    canary_acked_at?: string | null;
+    completed_at?: string | null;
+    halt?: ClusterHalt | null;
+    /**
+     * `canary`, or `all` (mode `all`, the first revision, rollbacks).
+     */
+    mode: string;
+    /**
+     * Instances given `revision`.
+     */
+    offered: Array<string>;
+    phase: ClusterRolloutPhase;
+    /**
+     * Who resumed it.
+     */
+    resumed_by?: string | null;
+    /**
+     * The revision being rolled out.
+     */
+    revision: number;
+    settings: ClusterRolloutSettings;
+    /**
+     * While soaking: when the rest are given the revision.
+     */
+    soak_ends_at?: string | null;
+    /**
+     * The last revision whose rollout completed; instances not given `revision` serve it.
+     */
+    stable: number;
+    started_at?: string | null;
+};
+
+/**
+ * Where a rollout stands.
+ */
+export type ClusterRolloutPhase = 'none' | 'canary' | 'soaking' | 'complete' | 'halted';
+
+/**
+ * The rollout settings in effect (`control.rollout`).
+ */
+export type ClusterRolloutSettings = {
+    canary?: string | null;
+    canary_timeout_seconds: number;
+    /**
+     * `canary` or `all`.
+     */
+    mode: string;
+    soak_seconds: number;
 };
 
 export type Code = {
@@ -1112,11 +1315,15 @@ export type RdockCluster = {
      */
     instance?: string | null;
     /**
+     * How `rate_limit` and `quota` with `scope: cluster` share their budgets.
+     */
+    limits?: RdockClusterLimits | null;
+    /**
      * Where certificates, the ACME account, leases and challenge answers are shared. Default:
      * the control plane when `control` is set.
      */
     store?: RdockClusterStore | null;
-    [key: string]: unknown | RdockClusterControl | null | string | null | RdockClusterStore | null | undefined;
+    [key: string]: unknown | RdockClusterControl | null | string | null | RdockClusterLimits | null | RdockClusterStore | null | undefined;
 };
 
 /**
@@ -1155,6 +1362,41 @@ export type RdockClusterControl = {
      * `https`.
      */
     url: RdockHttpUrl;
+};
+
+/**
+ * Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).
+ *
+ * Each instance claims a part of each key's budget from the store ahead of use and admits
+ * requests against what it claimed, so the request path never waits on the store. The
+ * cluster admits at most `L + N × c` per key and window, where `L` is the limit, `N` the
+ * number of instances and `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the headroom an
+ * instance may use beyond its claims.
+ */
+export type RdockClusterLimits = {
+    /**
+     * `share` (default) or `instance`: what an instance enforces while the store is away.
+     */
+    fallback?: RdockLimitFallback;
+    /**
+     * How far an instance may admit beyond the budget it has claimed, as a percentage of the
+     * limit split between the instances: larger values absorb store latency at high request
+     * rates, smaller ones tighten the bound. Default 10 (0–100).
+     */
+    headroom_percent?: number;
+    /**
+     * The Redis-compatible server, for `store: redis`.
+     */
+    redis?: RdockRedisStore | null;
+    /**
+     * `cluster` (default) or `redis`.
+     */
+    store?: RdockLimitStoreType;
+    /**
+     * How often claims, membership and recovery are attended to (claims a request needs are
+     * sent at once). Default 1s (100ms–10s).
+     */
+    sync_interval?: RdockDuration;
 };
 
 /**
@@ -1423,10 +1665,14 @@ export type RdockControlPlane = {
      */
     names?: Array<string>;
     /**
-     * A data plane that has not asked for a bundle for this long is shown as away and is not
-     * waited for by challenge barriers. Default 90s (10s–1h).
+     * A data plane that has not asked for a bundle for this long is shown as offline and is
+     * not chosen as a canary. Default 90s (10s–1h).
      */
     offline_after?: RdockDuration;
+    /**
+     * How a published revision reaches the data planes: one canary first, then the rest.
+     */
+    rollout?: RdockRollout;
 };
 
 /**
@@ -2110,9 +2356,24 @@ export type RdockLifecycle = {
 };
 
 /**
+ * What an instance enforces while the limit store cannot be reached.
+ */
+export type RdockLimitFallback = 'share' | 'instance';
+
+/**
  * Rate-limit response headers.
  */
 export type RdockLimitHeaders = 'off' | 'draft';
+
+/**
+ * Where a limit is counted (ADR-0031).
+ */
+export type RdockLimitScope = 'instance' | 'cluster';
+
+/**
+ * Where cluster-scoped limits keep their shared counters.
+ */
+export type RdockLimitStoreType = 'cluster' | 'redis';
 
 /**
  * Request size limits. Requests over a limit are answered with 431, 414 or 413.
@@ -2727,10 +2988,16 @@ export type RdockMiddleware = {
      * Period of `average`.
      */
     period?: RdockDuration;
+    /**
+     * `instance` (default) or `cluster`. With `cluster`, the cluster admits at most
+     * `average` requests per key in each `period` (fixed windows from the Unix epoch), within
+     * the bound of `cluster.limits`; each instance's own token bucket still shapes bursts.
+     */
+    scope?: RdockLimitScope;
     type: 'rate_limit';
     [key: string]: unknown | number | number | null | RdockLimitHeaders | RdockRateLimitKey | {
         [key: string]: RdockRateOverride;
-    } | RdockDuration | 'rate_limit' | undefined;
+    } | RdockDuration | RdockLimitScope | 'rate_limit' | undefined;
 } | {
     /**
      * Requests in flight allowed per key.
@@ -2748,8 +3015,12 @@ export type RdockMiddleware = {
      * How long a queued request waits before it gets `429`.
      */
     queue_timeout?: RdockDuration;
+    /**
+     * Only `instance`: a cluster-wide count of requests in flight is planned.
+     */
+    scope?: RdockLimitScope;
     type: 'in_flight';
-    [key: string]: unknown | number | RdockRateLimitKey | RdockDuration | 'in_flight' | undefined;
+    [key: string]: unknown | number | RdockRateLimitKey | RdockDuration | RdockLimitScope | 'in_flight' | undefined;
 } | {
     /**
      * Bytes that may be sent at once before the rate applies; defaults to `rate`.
@@ -3473,6 +3744,11 @@ export type RdockMiddleware = {
     overrides?: {
         [key: string]: number;
     };
+    /**
+     * `instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each
+     * key's quota through `cluster.limits`, within its documented bound.
+     */
+    scope?: RdockLimitScope;
     type: 'quota';
     /**
      * The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
@@ -4112,6 +4388,47 @@ export type RdockRedirectPrefix = {
 export type RdockRedirectScheme = 'http' | 'https';
 
 /**
+ * A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses
+ * `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `AUTH`, `SELECT` and
+ * `PING`.
+ */
+export type RdockRedisStore = {
+    /**
+     * Allow `redis://` (no TLS) to an address that is not a loopback address. Off by default:
+     * the password and the counters would cross the network in clear.
+     */
+    allow_plaintext?: boolean;
+    /**
+     * CA certificates (PEM) to verify the server with instead of the system's roots.
+     */
+    ca_file?: string | null;
+    /**
+     * Prefix of every key rdock writes. Default `rdock:`.
+     */
+    key_prefix?: string;
+    /**
+     * The password. A secret: reference a file or a variable, e.g.
+     * `"${file:/run/secrets/redis}"`.
+     */
+    password?: string | null;
+    /**
+     * The longest a connection or a command may take before the store counts as away.
+     * Default 1s (100ms–10s).
+     */
+    timeout?: RdockDuration;
+    /**
+     * `rediss://host:6379/0` (TLS) or `redis://host:6379/0`; the path is the database
+     * number. Plain `redis://` is accepted for loopback addresses only, unless
+     * `allow_plaintext` is set. Credentials belong in `username` and `password`, not here.
+     */
+    url: string;
+    /**
+     * The ACL user name (Redis 6 and later); without it `AUTH` sends only the password.
+     */
+    username?: string | null;
+};
+
+/**
  * The client's request directives.
  */
 export type RdockRequestDirectives = 'honour' | 'ignore';
@@ -4201,6 +4518,42 @@ export type RdockRfc2136Provider = {
     zone?: string | null;
     [key: string]: unknown | boolean | string | RdockDnsTransport | RdockTsigAlgorithm | string | null | string | null | string | null | undefined;
 };
+
+/**
+ * Staged rollout of published revisions (H-HA-02, ADR-0031).
+ */
+export type RdockRollout = {
+    /**
+     * Rolling back automatically when the canary's health drops: planned, only `false` is
+     * accepted.
+     */
+    auto_rollback?: boolean;
+    /**
+     * The instance that takes each revision first. When it is offline or not set, the first
+     * online instance by name is chosen.
+     */
+    canary?: string | null;
+    /**
+     * How long the canary has to report on a revision; without a report by then the rollout
+     * halts. Default 2m (10s–1h).
+     */
+    canary_timeout?: RdockDuration;
+    /**
+     * `canary` (default) or `all`. The first revision of a cluster and rollbacks (including
+     * an abandoned rollout) always go to every instance at once.
+     */
+    mode?: RdockRolloutMode;
+    /**
+     * How long the canary serves a revision it acknowledged before the rest take it. Default
+     * 60s (0s–24h).
+     */
+    soak?: RdockDuration;
+};
+
+/**
+ * How a revision is rolled out.
+ */
+export type RdockRolloutMode = 'canary' | 'all';
 
 /**
  * An HTTP route: which requests it matches, which middlewares run, which service answers.
@@ -6406,11 +6759,9 @@ export type ListClusterInstancesError = ListClusterInstancesErrors[keyof ListClu
 
 export type ListClusterInstancesResponses = {
     /**
-     * `cluster_id`, `latest` and `instances`
+     * The instances and the rollout
      */
-    200: {
-        [key: string]: unknown;
-    };
+    200: ClusterInstances;
 };
 
 export type ListClusterInstancesResponse = ListClusterInstancesResponses[keyof ListClusterInstancesResponses];
@@ -6489,11 +6840,9 @@ export type ListClusterRevisionsError = ListClusterRevisionsErrors[keyof ListClu
 
 export type ListClusterRevisionsResponses = {
     /**
-     * `cluster_id`, `latest` and `revisions`
+     * Revisions and the rollout
      */
-    200: {
-        [key: string]: unknown;
-    };
+    200: ClusterRevisions;
 };
 
 export type ListClusterRevisionsResponse = ListClusterRevisionsResponses[keyof ListClusterRevisionsResponses];
@@ -6546,6 +6895,127 @@ export type PublishClusterRevisionResponses = {
 };
 
 export type PublishClusterRevisionResponse = PublishClusterRevisionResponses[keyof PublishClusterRevisionResponses];
+
+export type GetClusterRolloutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/rollout';
+};
+
+export type GetClusterRolloutErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type GetClusterRolloutError = GetClusterRolloutErrors[keyof GetClusterRolloutErrors];
+
+export type GetClusterRolloutResponses = {
+    /**
+     * The rollout
+     */
+    200: ClusterRollout;
+};
+
+export type GetClusterRolloutResponse = GetClusterRolloutResponses[keyof GetClusterRolloutResponses];
+
+export type AbandonClusterRolloutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/rollout/abandon';
+};
+
+export type AbandonClusterRolloutErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * Nothing to abandon, or no complete revision to return to
+     */
+    409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type AbandonClusterRolloutError = AbandonClusterRolloutErrors[keyof AbandonClusterRolloutErrors];
+
+export type AbandonClusterRolloutResponses = {
+    /**
+     * The rollback: `revision`, `sha256`, `published_at`, `rollback_of`
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type AbandonClusterRolloutResponse = AbandonClusterRolloutResponses[keyof AbandonClusterRolloutResponses];
+
+export type ResumeClusterRolloutData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/rollout/resume';
+};
+
+export type ResumeClusterRolloutErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * Nothing to resume (the rollout is complete)
+     */
+    409: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ResumeClusterRolloutError = ResumeClusterRolloutErrors[keyof ResumeClusterRolloutErrors];
+
+export type ResumeClusterRolloutResponses = {
+    /**
+     * The rollout, now complete
+     */
+    200: ClusterRollout;
+};
+
+export type ResumeClusterRolloutResponse = ResumeClusterRolloutResponses[keyof ResumeClusterRolloutResponses];
 
 export type CreateJoinTokenData = {
     body: JoinTokenRequest;

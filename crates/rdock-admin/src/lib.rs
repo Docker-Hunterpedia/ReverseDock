@@ -35,7 +35,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 pub use cache::{CachePurge, PurgeOutcome};
-pub use cluster::ClusterPublish;
+pub use cluster::{ClusterPublish, RolloutAction};
 pub use openapi::json as openapi_json;
 pub use server::{Running, Sockets, StartError, start, start_with};
 
@@ -140,6 +140,21 @@ pub trait Control: Send + Sync {
         actor: String,
     ) -> Option<ClusterPublish> {
         let _ = (request, actor);
+        None
+    }
+    /// The rollout of the newest revision; `None` on a data plane.
+    async fn cluster_rollout(&self) -> Option<serde_json::Value> {
+        None
+    }
+    /// Resumes a halted or soaking rollout on behalf of `actor`; `None` on a data plane.
+    async fn cluster_rollout_resume(&self, actor: String) -> Option<RolloutAction> {
+        let _ = actor;
+        None
+    }
+    /// Abandons a running or halted rollout on behalf of `actor` (publishes the stable
+    /// revision again); `None` on a data plane.
+    async fn cluster_rollout_abandon(&self, actor: String) -> Option<RolloutAction> {
+        let _ = actor;
         None
     }
     /// Replaces the running binary by handing the listeners to a new process (ADR-0031);

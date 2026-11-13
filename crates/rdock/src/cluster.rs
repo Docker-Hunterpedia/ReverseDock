@@ -17,6 +17,10 @@ pub(crate) struct ClusterContext {
     pub(crate) acme: Option<rdock_acme::ClusterAcme>,
     /// The channel to the control plane, with `cluster.control`.
     pub(crate) channel: Option<rdock_cluster::agent::Channel>,
+    /// The cluster store, when there is one.
+    pub(crate) store: Option<Arc<dyn ClusterStore>>,
+    /// This instance's name.
+    pub(crate) instance: String,
 }
 
 /// Reads `cluster` from the configuration file. A file that cannot be loaded or has errors
@@ -119,6 +123,7 @@ pub(crate) async fn context(
         Some(channel) => channel.identity().instance,
         None => instance_name(&settings, data_dir)?,
     };
+    let mut shared_store: Option<Arc<dyn ClusterStore>> = None;
     let acme = match settings.effective_store() {
         Some(store) => {
             let shared: Arc<dyn ClusterStore> = match store.kind {
@@ -133,6 +138,7 @@ pub(crate) async fn context(
                     .context("`cluster.store.type: control` needs `cluster.control`")?
                     .store(),
             };
+            shared_store = Some(shared.clone());
             Some(rdock_acme::ClusterAcme {
                 store: shared,
                 instance: instance.clone(),
@@ -147,6 +153,8 @@ pub(crate) async fn context(
         settings,
         acme,
         channel,
+        store: shared_store,
+        instance,
     })
 }
 
@@ -204,4 +212,119 @@ pub(crate) fn start_agent(
         metrics: metrics.clone(),
     });
     tokio::spawn(channel.run(sink, stop));
+}
+
+/// Reports the limit driver's state as metrics.
+struct LimitMetrics(rdock_observability::Metrics);
+
+impl rdock_cluster::limits::Observer for LimitMetrics {
+    fn store(&self, up: bool) {
+        self.0.cluster_limits_store_up.set(i64::from(up));
+    }
+
+    fn claim(&self, outcome: &'static str) {
+        self.0
+            .cluster_limit_claims
+            .with_label_values(&[outcome])
+            .inc();
+    }
+
+    fn members(&self, count: u64) {
+        self.0
+            .cluster_limits_members
+            .set(i64::try_from(count).unwrap_or(i64::MAX));
+    }
+}
+
+/// The backend of cluster-scoped limits: Redis with `cluster.limits.store: redis`, else the
+/// cluster store.
+fn limit_backend(
+    context: &ClusterContext,
+    limits: &rdock_model::cluster::ClusterLimits,
+) -> anyhow::Result<Option<(Arc<dyn rdock_cluster::limits::ShareBackend>, &'static str)>> {
+    use rdock_model::cluster::LimitStoreType;
+    match (limits.store, &limits.redis) {
+        (LimitStoreType::Redis, Some(redis)) => {
+            let address = rdock_model::cluster::RedisAddress::parse(&redis.url)
+                .map_err(|e| anyhow::anyhow!("cluster.limits.redis.url: {e}"))?;
+            let tls = if address.tls {
+                let ca = match &redis.ca_file {
+                    Some(path) => Some(std::fs::read_to_string(path).with_context(|| {
+                        format!("reading cluster.limits.redis.ca_file {}", path.display())
+                    })?),
+                    None => None,
+                };
+                Some(
+                    rdock_cluster::resp::tls_config(ca.as_deref())
+                        .map_err(|e| anyhow::anyhow!("cluster.limits.redis TLS: {e}"))?,
+                )
+            } else {
+                None
+            };
+            // The password is resolved here, from its reference, and kept only in the client.
+            let password = match &redis.password {
+                Some(reference) => Some(
+                    rdock_config::interpolate::expand(reference, &rdock_config::System)
+                        .map_err(|e| anyhow::anyhow!("cluster.limits.redis.password: {e}"))?
+                        .trim_end_matches(['\r', '\n'])
+                        .to_owned(),
+                ),
+                None => None,
+            };
+            let client = rdock_cluster::resp::RespClient::new(rdock_cluster::resp::RespSettings {
+                host: address.host,
+                port: address.port,
+                database: address.database,
+                tls,
+                username: redis.username.clone(),
+                password,
+                timeout: redis.timeout.as_std(),
+            });
+            Ok(Some((
+                Arc::new(rdock_cluster::limits::RedisShares::new(
+                    client,
+                    &redis.key_prefix,
+                )),
+                "redis",
+            )))
+        }
+        (LimitStoreType::Redis, None) => Ok(None),
+        (LimitStoreType::Cluster, _) => Ok(context.store.clone().map(|store| {
+            (
+                Arc::new(rdock_cluster::limits::StoreShares::new(store))
+                    as Arc<dyn rdock_cluster::limits::ShareBackend>,
+                "cluster store",
+            )
+        })),
+    }
+}
+
+/// Starts sharing cluster-scoped limits (`scope: cluster`) through the store `cluster.limits`
+/// names; runs until `stop` turns true. Without a store, cluster-scoped limits count per
+/// instance.
+pub(crate) fn start_limits(
+    context: &ClusterContext,
+    shared: &rdock_limits::shared::SharedLimits,
+    metrics: &rdock_observability::Metrics,
+    stop: tokio::sync::watch::Receiver<bool>,
+) -> anyhow::Result<()> {
+    let limits = context.settings.limits.clone().unwrap_or_default();
+    let Some((backend, store_name)) = limit_backend(context, &limits)? else {
+        return Ok(());
+    };
+    shared.configure(
+        limits.headroom_percent,
+        limits.fallback == rdock_model::cluster::LimitFallback::Instance,
+    );
+    metrics.cluster_limits_store_up.set(0);
+    let driver = rdock_cluster::limits::LimitsDriver {
+        limits: shared.clone(),
+        backend,
+        instance: context.instance.clone(),
+        sync_interval: limits.sync_interval.as_std(),
+        observer: Arc::new(LimitMetrics(metrics.clone())),
+        store_name,
+    };
+    tokio::spawn(driver.run(stop));
+    Ok(())
 }

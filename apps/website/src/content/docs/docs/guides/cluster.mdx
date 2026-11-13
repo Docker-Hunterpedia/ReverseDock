@@ -101,10 +101,8 @@ answers:
 - **NACK**: it could not use it (a port in use, a missing local file, an option its version does
   not know); it keeps serving the previous revision and sends the diagnostics.
 
-`rdock control revisions` lists revisions with the instances that refused each, and
-`rdock control instances` (or `GET /api/v1/cluster/instances`) shows every data plane as
-`synced`, `stale`, `error` (refused the newest revision), `away` or `revoked`, with the revision
-it serves and its version.
+`rdock control revisions` lists revisions with the instances that refused each and how their
+rollout ended.
 
 A data plane refuses without trying a revision of **another cluster**, a revision **not newer**
 than the one it serves, an **empty** one and one that does not match its SHA-256.
@@ -115,11 +113,75 @@ than the one it serves, an **empty** one and one that does not match its SHA-256
 rdock control rollback 6 -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
 ```
 
-Every connected data plane takes a revision as soon as it is published. One canary, halt on a
-refusal and waves are planned.
+A rollback goes to every data plane at once (its configuration already ran), whatever the
+rollout mode.
+
+## Roll out to a canary first
+
+By default a new revision goes to **one canary** first and to the other data planes only after
+the canary acknowledged it and a **soak time** passed:
+
+```yaml title="control.yaml"
+control:
+  listener: "0.0.0.0:7443"
+  rollout:
+    mode: canary        # the default; `all` gives every instance each revision at once
+    canary: edge-1      # optional; otherwise the first online instance by name
+    soak: 5m            # default 60s (0s–24h)
+    canary_timeout: 2m  # default 2m (10s–1h)
+```
+
+- **Which instance is the canary.** `rollout.canary` when that instance is online (it called
+  within `control.offline_after`); otherwise the first online, unrevoked instance by name. When
+  none is online at publication, the first one that comes online.
+- **Meanwhile** every other instance stays on the **stable** revision: the last one whose rollout
+  completed.
+- **A refusal halts the rollout.** If the canary refuses the revision (NACK), or does not report
+  on it within `canary_timeout`, the rollout halts: the other instances stay on the stable
+  revision until you decide. The halt shows in `rdock control rollout status`, in
+  `rdock control revisions`, on the dashboard's Cluster page and in the audit log
+  (`cluster.rollout.halt`).
+- **Resume** gives every instance the revision now (also during the soak, to promote early):
+
+  ```sh
+  rdock control rollout resume -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+  ```
+
+- **Abandon** publishes the stable revision's configuration again as a new revision, which every
+  instance takes at once, so the canary goes back:
+
+  ```sh
+  rdock control rollout abandon -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+  # abandoned; published revision 9 with the configuration of revision 7
+  ```
+
+Both are `POST /api/v1/cluster/rollout/resume` and `…/abandon` (operator role, audited);
+`GET /api/v1/cluster/rollout` shows the state. Publishing a new revision while a rollout runs or
+is halted starts a new rollout from the same stable revision. The first revision of a cluster has
+nothing to stay on and goes everywhere at once. A refusal after the other instances were given the
+revision is listed with it but holds nobody back. Rolling back automatically when the canary's
+health drops is planned: `auto_rollback: true` is refused.
+
+## See every instance
+
+`rdock control instances`, `GET /api/v1/cluster/instances` and the dashboard's **Cluster** page
+on the control plane show every data plane with:
+
+| Field | Meaning |
+|---|---|
+| state | `synced` (serves the newest revision), `behind` (an older one, for example held by a rollout), `error` (refused the newest), `offline` (has not called within `control.offline_after`), `revoked` |
+| serving, target | The revision it serves, and the one the rollout gives it now |
+| version | The rdock version it last reported |
+| last seen | When it last called the control plane |
+| identity expires | The expiry of its client certificate |
+| last error | Why it refused its last revision |
+
+On a data plane the Cluster page says "Not a control plane": the cluster API answers `404` there.
 
 ## When the control plane is away
 
+- Cluster-scoped limits fall back to each instance's share
+  ([rate limiting](/docs/guides/rate-limiting/#share-a-limit-across-instances)).
 - Data planes keep serving the revision they have; `rdock status` shows
   `"cluster": { "connected": false, "serving": 7 }` and `rdock_cluster_control_connected` is 0.
 - A data plane that restarts meanwhile serves the stored revision.

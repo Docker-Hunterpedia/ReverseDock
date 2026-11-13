@@ -62,6 +62,7 @@ impl Harness {
                 metrics: Some(&metrics),
                 quotas: None,
                 abuse: None,
+                shared_limits: None,
             },
         );
         let errors: Vec<_> = compiled

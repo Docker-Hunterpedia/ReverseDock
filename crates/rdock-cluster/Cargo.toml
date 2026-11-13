@@ -20,18 +20,23 @@ hyper.workspace = true
 hyper-rustls.workspace = true
 hyper-util.workspace = true
 rcgen.workspace = true
+rdock-limits.workspace = true
 ring.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
+# The system's roots for `rediss://` (already used by rdock-admin).
+rustls-platform-verifier = "0.7.1"
 serde.workspace = true
 serde_json.workspace = true
 thiserror.workspace = true
 tokio.workspace = true
+tokio-rustls.workspace = true
 tracing.workspace = true
 x509-parser.workspace = true
 zstd.workspace = true
 
 [dev-dependencies]
+rdock-testkit.workspace = true
 tempfile.workspace = true
 tokio = { workspace = true, features = ["test-util"] }
 

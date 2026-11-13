@@ -42,14 +42,21 @@ impl Drop for Control {
 }
 
 impl Control {
+    /// A control plane that rolls revisions out to every instance at once (the behaviour the
+    /// outage proof was written for).
     fn start() -> Self {
+        Self::start_with("  rollout: { mode: all }\n")
+    }
+
+    /// A control plane with extra lines under `control:`.
+    fn start_with(extra: &str) -> Self {
         let dir = tempfile::tempdir().unwrap();
         let cluster = free_port();
         let admin = free_port();
         std::fs::write(
             dir.path().join("control.yaml"),
             format!(
-                "control:\n  listener: \"127.0.0.1:{cluster}\"\n  identity_lifetime: 1h\n  offline_after: 15s\nadmin: {{ listener: \"127.0.0.1:{admin}\" }}\n"
+                "control:\n  listener: \"127.0.0.1:{cluster}\"\n  identity_lifetime: 1h\n  offline_after: 15s\n{extra}admin: {{ listener: \"127.0.0.1:{admin}\" }}\n"
             ),
         )
         .unwrap();
@@ -85,6 +92,7 @@ impl Control {
             .env("DP_PORT", "1")
             .env("DP_BUSY_PORT", "2")
             .env("DP_TLS_PORT", "3")
+            .env("DP_EXTRA", "control-plane")
             .stdout(Stdio::null())
             .stderr(log)
             .stdin(Stdio::null())
@@ -211,13 +219,25 @@ fn join_with(
     port: u16,
     env: &[(&str, &str)],
 ) -> Member {
+    join_full(control, index, dir, port, env, "")
+}
+
+/// A data plane with `extra` lines under `cluster:`.
+fn join_full(
+    control: &Control,
+    index: usize,
+    dir: &Path,
+    port: u16,
+    env: &[(&str, &str)],
+    extra: &str,
+) -> Member {
     let (token, pin) = control.token();
     let token_file = dir.join(format!("join-{index}"));
     std::fs::write(&token_file, &token).unwrap();
     let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
     let busy_port = busy.local_addr().unwrap().port().to_string();
     let config = format!(
-        "cluster:\n  instance: edge-{index}\n  control:\n    url: \"https://127.0.0.1:{}\"\n    ca_pin: \"{pin}\"\n    join_token: \"${{file:{}}}\"\n    poll_timeout: 5s\n",
+        "cluster:\n  instance: edge-{index}\n  control:\n    url: \"https://127.0.0.1:{}\"\n    ca_pin: \"{pin}\"\n    join_token: \"${{file:{}}}\"\n    poll_timeout: 5s\n{extra}",
         control.cluster,
         token_file.display()
     );
@@ -570,6 +590,494 @@ async fn three_data_planes_survive_a_control_plane_outage() {
         .expect("a data plane started against a control plane whose CA does not match its pin");
     assert!(log.contains("pinned digest"), "{log}");
     members.clear();
+}
+
+fn rollout(control: &Control) -> Value {
+    let (status, body) = control.admin("GET", "/api/v1/cluster/rollout", None);
+    assert_eq!(status, 200, "{body}");
+    body
+}
+
+/// Staged rollout (H-HA-02): a revision reaches the canary (named in `control.rollout.canary`)
+/// first and the other instances only after the soak time; abandoning a rollout during the
+/// soak sends the canary back; a refusal by the canary halts the rollout with the other
+/// instances left on the stable revision, visible and audited; resuming lets them take it.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one scenario, in order
+async fn a_revision_reaches_the_canary_first_and_a_refusal_halts_the_rollout() {
+    const SOAK: u64 = 8;
+    let backend = Backend::start("app").await;
+    let control = Control::start_with(&format!(
+        "  rollout: {{ canary: edge-1, soak: {SOAK}s, canary_timeout: 60s }}\n"
+    ));
+    let dir = tempfile::tempdir().unwrap();
+    control.publish(&bundle("1", backend.addr, false));
+    // Only edge-0 and edge-2 have DP_EXTRA: a revision that needs it is refused by the canary.
+    let members: Vec<Member> = (0..3)
+        .map(|i| {
+            let env: &[(&str, &str)] = if i == 1 { &[] } else { &[("DP_EXTRA", "here")] };
+            join_with(&control, i, dir.path(), free_port(), env)
+        })
+        .collect();
+    let all: Vec<&Member> = members.iter().collect();
+    let others = [&members[0], &members[2]];
+    // The first revision of a cluster goes everywhere at once.
+    wait_serving(&all, "1", Duration::from_secs(60), &control).await;
+    wait_for("three online instances", Duration::from_secs(30), || {
+        control.instances()["instances"]
+            .as_array()
+            .is_some_and(|l| l.len() == 3 && l.iter().all(|i| i["state"] == "synced"))
+    })
+    .await;
+
+    // Revision 2: the canary first, the others only after the soak time.
+    control.publish(&bundle("2", backend.addr, false));
+    wait_serving(&[&members[1]], "2", Duration::from_secs(60), &control).await;
+    let canary_took = Instant::now();
+    let state = rollout(&control);
+    assert_eq!(state["canary"], "edge-1", "{state}");
+    assert_eq!(state["stable"], 1, "{state}");
+    while canary_took.elapsed() < Duration::from_secs(SOAK - 2) {
+        for m in others {
+            assert_eq!(
+                probe(m.addr()).await.as_deref(),
+                Some("1"),
+                "an instance took revision 2 before the canary's soak time ended"
+            );
+        }
+        tokio::time::sleep(Duration::from_millis(250)).await;
+    }
+    let instances = control.instances();
+    let edge0 = instances["instances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "edge-0")
+        .unwrap()
+        .clone();
+    assert_eq!(edge0["state"], "behind", "{instances}");
+    assert_eq!(edge0["target"], 1, "{instances}");
+    wait_serving(&all, "2", Duration::from_secs(60), &control).await;
+    wait_for(
+        "the rollout of revision 2 to complete",
+        Duration::from_secs(30),
+        || {
+            let state = rollout(&control);
+            state["phase"] == "complete" && state["stable"] == 2
+        },
+    )
+    .await;
+
+    // Revision 3 reaches the canary; abandoning during the soak sends it back: revision 4
+    // republishes revision 2's configuration and every instance takes it at once.
+    control.publish(&bundle("3", backend.addr, false));
+    wait_serving(&[&members[1]], "3", Duration::from_secs(60), &control).await;
+    wait_for(
+        "the canary's acknowledgement",
+        Duration::from_secs(30),
+        || rollout(&control)["phase"] == "soaking",
+    )
+    .await;
+    let (status, body) = control.admin("POST", "/api/v1/cluster/rollout/abandon", Some(&json!({})));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["revision"], 4, "{body}");
+    assert_eq!(body["rollback_of"], 2, "{body}");
+    wait_serving(&all, "2", Duration::from_secs(30), &control).await;
+    wait_for(
+        "every instance on revision 4",
+        Duration::from_secs(30),
+        || {
+            members
+                .iter()
+                .all(|m| m.status()["cluster"]["serving"] == 4)
+        },
+    )
+    .await;
+    let revisions = control.admin("GET", "/api/v1/cluster/revisions", None).1;
+    let three = revisions["revisions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|r| r["revision"] == 3)
+        .unwrap()
+        .clone();
+    assert_eq!(three["rollout"]["state"], "abandoned", "{revisions}");
+    // Nothing left to abandon or resume.
+    assert_eq!(
+        control
+            .admin("POST", "/api/v1/cluster/rollout/abandon", Some(&json!({})))
+            .0,
+        409
+    );
+
+    // Revision 5 needs DP_EXTRA, which the canary lacks: it refuses, the rollout halts, and
+    // the others stay on revision 4 well past the soak time.
+    let mut five = bundle("5", backend.addr, false);
+    five["middlewares"]["tag"]["response"]["set"]["X-Extra"] = json!("${env:DP_EXTRA}");
+    control.publish(&five);
+    wait_for(
+        "the rollout of revision 5 to halt",
+        Duration::from_secs(60),
+        || rollout(&control)["phase"] == "halted",
+    )
+    .await;
+    let state = rollout(&control);
+    assert_eq!(state["halt"]["instance"], "edge-1", "{state}");
+    assert!(
+        state["halt"]["reason"]
+            .as_str()
+            .is_some_and(|r| r.contains("edge-1 refused revision 5")),
+        "{state}"
+    );
+    tokio::time::sleep(Duration::from_secs(SOAK + 3)).await;
+    for m in &members {
+        assert_eq!(probe(m.addr()).await.as_deref(), Some("2"));
+        assert_eq!(m.status()["cluster"]["serving"], 4);
+    }
+    let instances = control.instances();
+    let edge1 = instances["instances"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|i| i["name"] == "edge-1")
+        .unwrap()
+        .clone();
+    assert_eq!(edge1["state"], "error", "{instances}");
+    assert!(
+        edge1["last_error"]
+            .as_str()
+            .is_some_and(|e| e.starts_with("revision 5:")),
+        "{instances}"
+    );
+    let revisions = control.admin("GET", "/api/v1/cluster/revisions", None).1;
+    assert_eq!(revisions["revisions"][0]["revision"], 5);
+    assert_eq!(revisions["revisions"][0]["rollout"]["state"], "halted");
+    let audit = control.admin("GET", "/api/v1/audit?limit=50", None).1;
+    let actions: Vec<&str> = audit
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|r| r["action"].as_str())
+        .collect();
+    assert!(actions.contains(&"cluster.rollout.halt"), "{audit}");
+    assert!(actions.contains(&"cluster.rollout.abandon"), "{audit}");
+
+    // Resume: the others take revision 5; the canary, which refused it, stays on 4.
+    let (status, body) = control.admin("POST", "/api/v1/cluster/rollout/resume", Some(&json!({})));
+    assert_eq!(status, 200, "{body}");
+    assert_eq!(body["phase"], "complete", "{body}");
+    wait_serving(&others, "5", Duration::from_secs(30), &control).await;
+    assert_eq!(probe(members[1].addr()).await.as_deref(), Some("2"));
+    let audit = control.admin("GET", "/api/v1/audit?limit=50", None).1;
+    assert!(
+        audit
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["action"] == "cluster.rollout.resume"),
+        "{audit}"
+    );
+}
+
+/// The status of `GET <path>` on `addr`, sent from the loopback address `source` (each phase
+/// of the limits test is its own client), or `None` when the request fails.
+async fn status_from(addr: SocketAddr, path: &str, source: std::net::Ipv4Addr) -> Option<u16> {
+    let work = async {
+        let socket = tokio::net::TcpSocket::new_v4().ok()?;
+        socket.bind(SocketAddr::from((source, 0))).ok()?;
+        let mut stream = socket.connect(addr).await.ok()?;
+        stream
+            .write_all(
+                format!(
+                    "GET {path} HTTP/1.1\r\nHost: app.example.com\r\nConnection: close\r\n\r\n"
+                )
+                .as_bytes(),
+            )
+            .await
+            .ok()?;
+        let mut raw = Vec::new();
+        stream.read_to_end(&mut raw).await.ok()?;
+        String::from_utf8_lossy(&raw)
+            .split_whitespace()
+            .nth(1)?
+            .parse()
+            .ok()
+    };
+    tokio::time::timeout(Duration::from_secs(5), work)
+        .await
+        .ok()
+        .flatten()
+}
+
+/// Requests to `path` from `source`, `rounds` times round-robin over the members: how many
+/// each admitted (`200`); every other answer must be `429`.
+async fn admitted(
+    members: &[Member],
+    path: &str,
+    source: std::net::Ipv4Addr,
+    rounds: usize,
+) -> Vec<u64> {
+    let mut counts = vec![0u64; members.len()];
+    for _ in 0..rounds {
+        for (i, m) in members.iter().enumerate() {
+            match status_from(m.addr(), path, source).await {
+                Some(200) => counts[i] += 1,
+                Some(429) => {}
+                other => panic!("{path} on edge-{i}: {other:?}\n{}", m.rdock.log()),
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(5)).await;
+    }
+    counts
+}
+
+fn metric(member: &Member, name: &str) -> Option<f64> {
+    let (_, text) = member.rdock.get_admin("/metrics").unwrap_or_default();
+    text.lines()
+        .find(|l| l.starts_with(name) && l[name.len()..].starts_with(' '))
+        .and_then(|l| l.split_whitespace().nth(1))
+        .and_then(|v| v.parse().ok())
+}
+
+/// Cluster-scoped limits (H-HA-04): three data planes share a `rate_limit` and a `quota` of
+/// 30 through the control plane's store and admit no more than the documented bound
+/// `L + N × c` = 30 + 3 × ⌈30 × 10 / 300⌉ = 33; with the control plane stopped each falls back
+/// to its share ⌈30 / 3⌉ = 10 (counted by a metric and logged); when it returns they share
+/// again within the bound.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+#[allow(clippy::too_many_lines)] // one scenario, in order
+async fn three_data_planes_share_cluster_scoped_limits() {
+    const LIMIT: u64 = 30;
+    const BOUND: u64 = 33;
+    // Fixed windows of an hour from the epoch: do not start within two minutes of the end of
+    // one, so the scenario stays inside a single window.
+    let into_hour = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        % 3600;
+    if into_hour > 3600 - 120 {
+        tokio::time::sleep(Duration::from_secs(3600 - into_hour + 2)).await;
+    }
+    let backend = Backend::start("app").await;
+    let mut control = Control::start();
+    let dir = tempfile::tempdir().unwrap();
+    let document = json!({
+        "acme": false,
+        "listeners": { "web": { "address": "127.0.0.1:${env:DP_PORT}" } },
+        "defaults": { "listeners": ["web"], "tls": "off" },
+        "routes": {
+            "rl": { "match": "PathPrefix(`/rl`)", "service": "app", "middlewares": ["shared-rate"] },
+            "q": { "match": "PathPrefix(`/q`)", "service": "app", "middlewares": ["keys", "shared-quota"] },
+            "app": { "match": "PathPrefix(`/`)", "service": "app", "priority": 1, "middlewares": ["tag"] },
+        },
+        "services": { "app": { "backends": [{ "address": backend.addr.to_string() }] } },
+        "middlewares": {
+            "tag": { "type": "headers", "response": { "set": { "X-Revision": "1" } } },
+            "shared-rate": { "type": "rate_limit", "average": LIMIT, "period": "1h", "burst": 1000, "scope": "cluster" },
+            "keys": { "type": "api_key", "anonymous": "allow" },
+            "shared-quota": { "type": "quota", "limit": LIMIT, "window": "hour", "scope": "cluster" },
+        },
+    });
+    control.publish(&document);
+    let extra = "  limits:\n    sync_interval: 200ms\n    headroom_percent: 10\n";
+    let members: Vec<Member> = (0..3)
+        .map(|i| join_full(&control, i, dir.path(), free_port(), &[], extra))
+        .collect();
+    wait_serving(
+        &members.iter().collect::<Vec<_>>(),
+        "1",
+        Duration::from_secs(60),
+        &control,
+    )
+    .await;
+    wait_for(
+        "three members sharing limits",
+        Duration::from_secs(60),
+        || {
+            members.iter().all(|m| {
+                metric(m, "rdock_cluster_limits_members") == Some(3.0)
+                    && metric(m, "rdock_cluster_limits_store_up") == Some(1.0)
+            })
+        },
+    )
+    .await;
+
+    // Shared: the cluster admits at least the limit and at most the bound.
+    let first = std::net::Ipv4Addr::new(127, 0, 0, 11);
+    for path in ["/rl", "/q"] {
+        let counts = admitted(&members, path, first, 60).await;
+        let total: u64 = counts.iter().sum();
+        assert!(
+            (LIMIT - 3..=BOUND).contains(&total),
+            "{path}: the cluster admitted {total} ({counts:?}), bound {BOUND}\n{}",
+            members
+                .iter()
+                .map(|m| m.rdock.log())
+                .collect::<Vec<_>>()
+                .join("\n----\n")
+        );
+        assert!(
+            counts.iter().all(|c| *c > 0),
+            "{path}: every instance took part ({counts:?})"
+        );
+    }
+
+    // The store goes away: each instance falls back to its share of a fresh client's budget,
+    // says so in its log and its metric, and no request fails for it.
+    control.kill();
+    wait_for(
+        "every instance to see the limit store away",
+        Duration::from_secs(60),
+        || {
+            members
+                .iter()
+                .all(|m| metric(m, "rdock_cluster_limits_store_up") == Some(0.0))
+        },
+    )
+    .await;
+    let second = std::net::Ipv4Addr::new(127, 0, 0, 12);
+    for path in ["/rl", "/q"] {
+        let counts = admitted(&members, path, second, 25).await;
+        assert_eq!(
+            counts,
+            vec![10, 10, 10],
+            "{path}: ⌈30 / 3⌉ per instance while the store is away"
+        );
+    }
+    for m in &members {
+        assert!(
+            m.rdock
+                .log()
+                .contains("cluster-scoped limits fall back to each instance's share"),
+            "{}",
+            m.rdock.log()
+        );
+    }
+
+    // It returns: shared again, within the bound, for a third client.
+    control.spawn();
+    wait_for(
+        "every instance to see the limit store again",
+        Duration::from_secs(90),
+        || {
+            members
+                .iter()
+                .all(|m| metric(m, "rdock_cluster_limits_store_up") == Some(1.0))
+        },
+    )
+    .await;
+    let third = std::net::Ipv4Addr::new(127, 0, 0, 13);
+    for path in ["/rl", "/q"] {
+        let counts = admitted(&members, path, third, 60).await;
+        let total: u64 = counts.iter().sum();
+        assert!(
+            (LIMIT - 3..=BOUND).contains(&total),
+            "{path} after the store returned: {total} ({counts:?}), bound {BOUND}"
+        );
+    }
+    // The second client's fallback admissions were added to the store's count: nothing more
+    // is admitted for it (beyond each instance's headroom of 1).
+    let counts = admitted(&members, "/q", second, 10).await;
+    assert!(counts.iter().sum::<u64>() <= 3, "{counts:?}");
+    assert!(
+        members.iter().all(
+            |m| metric(m, "rdock_cluster_limit_claims_total{outcome=\"forced\"}").unwrap_or(0.0)
+                >= 1.0
+        ),
+        "fallback admissions were reconciled"
+    );
+}
+
+/// Cluster-scoped limits through a Redis-compatible server (the testkit's in-process RESP
+/// server, with a password read from a file reference): three `rdock run` without a control
+/// plane share a `rate_limit` within the bound, fall back to their share while the server is
+/// stopped, and share again when it returns. The password never reaches the logs.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn three_instances_share_a_limit_through_redis() {
+    const PASSWORD: &str = "redis-test-password-0123456789";
+    let into_hour = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_secs()
+        % 3600;
+    if into_hour > 3600 - 120 {
+        tokio::time::sleep(Duration::from_secs(3600 - into_hour + 2)).await;
+    }
+    let backend = Backend::start("app").await;
+    let mut redis = rdock_testkit::redis::FakeRedis::start(Some(PASSWORD)).await;
+    let dir = tempfile::tempdir().unwrap();
+    let secret = dir.path().join("redis-password");
+    std::fs::write(&secret, format!("{PASSWORD}\n")).unwrap();
+    let members: Vec<Member> = (0..3)
+        .map(|i| {
+            let port = free_port();
+            let config = format!(
+                "cluster:\n  instance: edge-{i}\n  limits:\n    store: redis\n    sync_interval: 200ms\n    redis:\n      url: \"redis://127.0.0.1:{}/1\"\n      password: \"${{file:{}}}\"\n      timeout: 300ms\n\
+acme: false\nlisteners: {{ web: {{ address: \"127.0.0.1:{port}\" }} }}\n\
+defaults: {{ listeners: [web], tls: \"off\" }}\n\
+routes:\n  rl: {{ match: \"PathPrefix(`/rl`)\", service: app, middlewares: [shared-rate] }}\n\
+services: {{ app: {{ backends: [{{ address: \"{}\" }}] }} }}\n\
+middlewares:\n  shared-rate: {{ type: rate_limit, average: 30, period: 1h, burst: 1000, scope: cluster }}\n",
+                redis.addr.port(),
+                secret.display(),
+                backend.addr
+            );
+            let rdock = Rdock::try_start_with_env(RDOCK, &config, &[])
+                .unwrap_or_else(|log| panic!("edge-{i} did not start:\n{log}"));
+            let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+            Member { rdock, port, _busy: busy }
+        })
+        .collect();
+    wait_for(
+        "three members sharing limits through redis",
+        Duration::from_secs(60),
+        || {
+            members.iter().all(|m| {
+                metric(m, "rdock_cluster_limits_members") == Some(3.0)
+                    && metric(m, "rdock_cluster_limits_store_up") == Some(1.0)
+            })
+        },
+    )
+    .await;
+    let counts = admitted(&members, "/rl", std::net::Ipv4Addr::new(127, 0, 0, 21), 60).await;
+    let total: u64 = counts.iter().sum();
+    assert!((27..=33).contains(&total), "{total} ({counts:?})");
+    assert!(redis.commands() > 0);
+    // Stopped: each instance admits its share ⌈30 / 3⌉ of a fresh client's budget.
+    redis.stop();
+    wait_for(
+        "every instance to see redis away",
+        Duration::from_secs(60),
+        || {
+            members
+                .iter()
+                .all(|m| metric(m, "rdock_cluster_limits_store_up") == Some(0.0))
+        },
+    )
+    .await;
+    let counts = admitted(&members, "/rl", std::net::Ipv4Addr::new(127, 0, 0, 22), 25).await;
+    assert_eq!(counts, vec![10, 10, 10]);
+    // Back: shared again within the bound.
+    redis.resume().await;
+    wait_for(
+        "every instance to see redis again",
+        Duration::from_secs(60),
+        || {
+            members
+                .iter()
+                .all(|m| metric(m, "rdock_cluster_limits_store_up") == Some(1.0))
+        },
+    )
+    .await;
+    let counts = admitted(&members, "/rl", std::net::Ipv4Addr::new(127, 0, 0, 23), 60).await;
+    let total: u64 = counts.iter().sum();
+    assert!((27..=33).contains(&total), "{total} ({counts:?})");
+    for m in &members {
+        let log = m.rdock.log();
+        assert!(!log.contains(PASSWORD), "the password is in a log:\n{log}");
+        assert!(log.contains("cluster-scoped limits fall back"), "{log}");
+    }
 }
 
 #[test]

@@ -7,7 +7,7 @@ use std::sync::Arc;
 use axum::extract::{Extension, Path, State as Extract};
 use axum::response::{IntoResponse, Response};
 use http::StatusCode;
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use utoipa::ToSchema;
 
@@ -51,6 +51,184 @@ pub(crate) struct ClusterPublishRequest {
     rollback_to: Option<u64>,
 }
 
+/// How an instance stands.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[expect(
+    dead_code,
+    reason = "documents the control plane's JSON for the schema only"
+)]
+pub(crate) enum ClusterInstanceState {
+    /// Serves the newest revision.
+    Synced,
+    /// Serves an older revision and has not refused the newest; a running rollout may hold it
+    /// on the stable revision (`target`).
+    Behind,
+    /// Refused the newest revision (`last_error` says why).
+    Error,
+    /// Has not called for longer than `control.offline_after`.
+    Offline,
+    /// Revoked: it keeps serving its last bundle and receives no other.
+    Revoked,
+}
+
+/// A data plane's last report on a bundle.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterReport {
+    /// The revision reported on.
+    revision: u64,
+    /// `ack` or `nack`.
+    verdict: String,
+    /// The data plane's diagnostics (`severity`, `path`, `message`, `hint`) for a NACK, or
+    /// its warnings.
+    #[schema(value_type = Vec<Object>)]
+    diagnostics: Vec<Value>,
+    /// RFC 3339.
+    at: String,
+}
+
+/// One enrolled data plane.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterInstance {
+    /// Its name in the cluster.
+    name: String,
+    state: ClusterInstanceState,
+    /// The revision it serves, as it last reported.
+    serving: u64,
+    /// The revision the rollout gives it now (the newest, or the stable one while a canary
+    /// runs or after a halt).
+    target: u64,
+    /// The newest published revision.
+    latest: u64,
+    /// The rdock version it last reported.
+    version: Option<String>,
+    /// RFC 3339.
+    enrolled_at: String,
+    /// When it last called the control plane, RFC 3339.
+    last_seen: Option<String>,
+    /// Expiry of its client certificate (its cluster identity), RFC 3339.
+    certificate_not_after: String,
+    revoked: bool,
+    /// The reason of its last refusal, `revision N: message`.
+    last_error: Option<String>,
+    last_report: Option<ClusterReport>,
+}
+
+/// Why a rollout halted.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterHalt {
+    /// RFC 3339.
+    at: String,
+    /// The instance that refused, or the canary that did not report.
+    instance: Option<String>,
+    reason: String,
+}
+
+/// Where a rollout stands.
+#[derive(Serialize, ToSchema)]
+#[serde(rename_all = "snake_case")]
+#[expect(
+    dead_code,
+    reason = "documents the control plane's JSON for the schema only"
+)]
+pub(crate) enum ClusterRolloutPhase {
+    /// Nothing published yet.
+    None,
+    /// The canary has the revision and has not acknowledged it (or no instance is online).
+    Canary,
+    /// The canary acknowledged; the rest follow at `soak_ends_at`.
+    Soaking,
+    /// Every instance is given the revision.
+    Complete,
+    /// Stopped by a refusal or a silent canary; resume or abandon it.
+    Halted,
+}
+
+/// The rollout settings in effect (`control.rollout`).
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterRolloutSettings {
+    /// `canary` or `all`.
+    mode: String,
+    canary: Option<String>,
+    soak_seconds: u64,
+    canary_timeout_seconds: u64,
+}
+
+/// The rollout of the newest revision.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterRollout {
+    /// The revision being rolled out.
+    revision: u64,
+    /// The last revision whose rollout completed; instances not given `revision` serve it.
+    stable: u64,
+    /// `canary`, or `all` (mode `all`, the first revision, rollbacks).
+    mode: String,
+    phase: ClusterRolloutPhase,
+    canary: Option<String>,
+    started_at: Option<String>,
+    canary_acked_at: Option<String>,
+    /// While soaking: when the rest are given the revision.
+    soak_ends_at: Option<String>,
+    completed_at: Option<String>,
+    /// Instances given `revision`.
+    offered: Vec<String>,
+    halt: Option<ClusterHalt>,
+    /// Who resumed it.
+    resumed_by: Option<String>,
+    settings: ClusterRolloutSettings,
+}
+
+/// `GET /api/v1/cluster/instances`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterInstances {
+    cluster_id: String,
+    /// `control.name`.
+    name: Option<String>,
+    /// The newest published revision.
+    latest: u64,
+    rollout: ClusterRollout,
+    instances: Vec<ClusterInstance>,
+}
+
+/// One published revision.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterRevision {
+    revision: u64,
+    /// SHA-256 of the document's canonical JSON.
+    sha256: String,
+    published_at: String,
+    published_by: Option<String>,
+    /// The revision whose document this one republishes.
+    rollback_of: Option<u64>,
+    /// Instances whose last report refused this revision, with their diagnostics.
+    #[schema(value_type = Vec<Object>)]
+    refused_by: Vec<Value>,
+    /// How its rollout ended or stands: `state` (`canary`, `soaking`, `halted`, `complete`,
+    /// `abandoned`, `superseded`), `reason`, `at`.
+    #[schema(value_type = Option<Object>)]
+    rollout: Option<Value>,
+}
+
+/// `GET /api/v1/cluster/revisions`.
+#[derive(Serialize, ToSchema)]
+pub(crate) struct ClusterRevisions {
+    cluster_id: String,
+    latest: u64,
+    rollout: ClusterRollout,
+    revisions: Vec<ClusterRevision>,
+}
+
+/// The outcome of resuming or abandoning a rollout.
+#[derive(Debug)]
+pub enum RolloutAction {
+    /// Done: the rollout's new state (resume) or the published rollback (abandon).
+    Done(Value),
+    /// Nothing to resume or abandon (`409`).
+    Conflict(String),
+    /// The control plane failed.
+    Failed(String),
+}
+
 async fn on_main<T: Send + 'static>(
     state: &State,
     work: impl std::future::Future<Output = T> + Send + 'static,
@@ -64,10 +242,11 @@ async fn on_main<T: Send + 'static>(
 }
 
 /// `GET /api/v1/cluster/instances`: every enrolled data plane with its state (`synced`,
-/// `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+/// `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version,
+/// identity expiry and last error; and the rollout.
 #[utoipa::path(get, path = "/cluster/instances", tag = "cluster", operation_id = "list_cluster_instances",
     responses(
-        (status = OK, description = "`cluster_id`, `latest` and `instances`", body = Object),
+        (status = OK, description = "The instances and the rollout", body = ClusterInstances),
         (status = NOT_FOUND, description = "Not a control plane", body = crate::openapi::ErrorBody)))]
 pub(crate) async fn instances(
     Extract(state): Extract<Arc<State>>,
@@ -172,7 +351,7 @@ pub(crate) async fn create_token(
 /// that refused each and why.
 #[utoipa::path(get, path = "/cluster/revisions", tag = "cluster", operation_id = "list_cluster_revisions",
     responses(
-        (status = OK, description = "`cluster_id`, `latest` and `revisions`", body = Object),
+        (status = OK, description = "Revisions and the rollout", body = ClusterRevisions),
         (status = NOT_FOUND, description = "Not a control plane", body = crate::openapi::ErrorBody)))]
 pub(crate) async fn revisions(
     Extract(state): Extract<Arc<State>>,
@@ -253,4 +432,104 @@ pub(crate) async fn publish(
         }
         Some(ClusterPublish::Invalid(message)) => error(StatusCode::BAD_REQUEST, &message),
     }
+}
+
+/// `GET /api/v1/cluster/rollout`: the rollout of the newest revision.
+#[utoipa::path(get, path = "/cluster/rollout", tag = "cluster", operation_id = "get_cluster_rollout",
+    responses(
+        (status = OK, description = "The rollout", body = ClusterRollout),
+        (status = NOT_FOUND, description = "Not a control plane", body = crate::openapi::ErrorBody)))]
+pub(crate) async fn rollout(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
+    if let Err(denied) = need(&caller, Access::Viewer) {
+        return denied.into_response();
+    }
+    let control = state.control.clone();
+    match on_main(&state, async move { control.cluster_rollout().await }).await {
+        Ok(Some(value)) => axum::Json(value).into_response(),
+        Ok(None) => error(StatusCode::NOT_FOUND, NOT_A_CONTROL_PLANE),
+        Err(response) => *response,
+    }
+}
+
+async fn rollout_action(state: &Arc<State>, caller: &Caller, resume: bool) -> Response {
+    if let Err(denied) = need(caller, Access::Operator) {
+        return denied.into_response();
+    }
+    let control = state.control.clone();
+    let actor = caller.name().to_owned();
+    let outcome = match on_main(state, async move {
+        if resume {
+            control.cluster_rollout_resume(actor).await
+        } else {
+            control.cluster_rollout_abandon(actor).await
+        }
+    })
+    .await
+    {
+        Ok(outcome) => outcome,
+        Err(response) => return *response,
+    };
+    let action = if resume {
+        "cluster.rollout.resume"
+    } else {
+        "cluster.rollout.abandon"
+    };
+    match outcome {
+        None => error(StatusCode::NOT_FOUND, NOT_A_CONTROL_PLANE),
+        Some(RolloutAction::Done(value)) => {
+            let resource = if resume {
+                value["revision"].as_u64().map(|r| format!("revision {r}"))
+            } else {
+                value["rollback_of"]
+                    .as_u64()
+                    .map(|r| format!("revision {} (rollback to {r})", value["revision"]))
+            };
+            state.audit.record(Event {
+                resource,
+                ..caller.event(action)
+            });
+            axum::Json(value).into_response()
+        }
+        Some(RolloutAction::Conflict(message)) => {
+            state.audit.record(Event {
+                outcome: Outcome::Failed,
+                reason: Some(message.clone()),
+                ..caller.event(action)
+            });
+            error(StatusCode::CONFLICT, &message)
+        }
+        Some(RolloutAction::Failed(message)) => error(StatusCode::INTERNAL_SERVER_ERROR, &message),
+    }
+}
+
+/// `POST /api/v1/cluster/rollout/resume` (operator): a halted (or still soaking) rollout goes
+/// on: every instance is given the revision now. Audited.
+#[utoipa::path(post, path = "/cluster/rollout/resume", tag = "cluster", operation_id = "resume_cluster_rollout",
+    responses(
+        (status = OK, description = "The rollout, now complete", body = ClusterRollout),
+        (status = CONFLICT, description = "Nothing to resume (the rollout is complete)", body = crate::openapi::ErrorBody),
+        (status = NOT_FOUND, description = "Not a control plane", body = crate::openapi::ErrorBody)))]
+pub(crate) async fn resume(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
+    rollout_action(&state, &caller, true).await
+}
+
+/// `POST /api/v1/cluster/rollout/abandon` (operator): the stable revision's document is
+/// published again as a new revision, which every instance takes at once; instances already
+/// given the abandoned revision are sent back. Audited.
+#[utoipa::path(post, path = "/cluster/rollout/abandon", tag = "cluster", operation_id = "abandon_cluster_rollout",
+    responses(
+        (status = OK, description = "The rollback: `revision`, `sha256`, `published_at`, `rollback_of`", body = Object),
+        (status = CONFLICT, description = "Nothing to abandon, or no complete revision to return to", body = crate::openapi::ErrorBody),
+        (status = NOT_FOUND, description = "Not a control plane", body = crate::openapi::ErrorBody)))]
+pub(crate) async fn abandon(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+) -> Response {
+    rollout_action(&state, &caller, false).await
 }

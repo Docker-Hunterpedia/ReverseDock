@@ -42,6 +42,9 @@ pub(crate) enum ControlCommand {
     Instances(ControlCtl),
     /// Revoke a data plane: it can no longer fetch bundles or use the store.
     Revoke(RevokeArgs),
+    /// The rollout of the newest revision: show it, resume a halted one, or abandon it.
+    #[command(subcommand)]
+    Rollout(RolloutCommand),
     /// Join tokens for enrolling data planes.
     #[command(subcommand)]
     Token(TokenCommand),
@@ -117,6 +120,17 @@ pub(crate) struct RevokeArgs {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum RolloutCommand {
+    /// Show the rollout: phase, canary, stable revision, why it halted.
+    Status(ControlCtl),
+    /// Let a halted (or soaking) rollout go on: every instance takes the revision now.
+    Resume(ControlCtl),
+    /// Abandon the rollout: the stable revision is published again and every instance takes
+    /// it at once.
+    Abandon(ControlCtl),
+}
+
+#[derive(Subcommand)]
 pub(crate) enum TokenCommand {
     /// Create a single-use join token; prints it once, with the `ca_pin` line for data planes.
     Create(TokenCreateArgs),
@@ -151,6 +165,30 @@ fn expect(answer: Answer, ok: &[u16]) -> anyhow::Result<Answer> {
         }
     }
     bail!("{} ({})", message, answer.status)
+}
+
+/// The rollout in a few lines.
+fn render_rollout(value: &Value) -> String {
+    let mut out = format!(
+        "rollout of revision {}: {} (mode {}, stable revision {})\n",
+        value["revision"],
+        text(&value["phase"]),
+        text(&value["mode"]),
+        value["stable"]
+    );
+    if let Some(canary) = value["canary"].as_str() {
+        let _ = writeln!(out, "  canary: {canary}");
+    }
+    if let Some(at) = value["soak_ends_at"].as_str() {
+        let _ = writeln!(out, "  the rest follow at {at}");
+    }
+    if let Some(reason) = value["halt"]["reason"].as_str() {
+        let _ = writeln!(
+            out,
+            "  halted: {reason}\n  resume with `rdock control rollout resume` or abandon with `rdock control rollout abandon`"
+        );
+    }
+    out
 }
 
 fn text(value: &Value) -> String {
@@ -219,10 +257,18 @@ pub(crate) fn control(
             let value = answer.json();
             let mut out = String::new();
             for r in value["revisions"].as_array().into_iter().flatten() {
-                let rollback = r["rollback_of"]
+                let mut rollback = r["rollback_of"]
                     .as_u64()
                     .map(|o| format!(" (rollback of {o})"))
                     .unwrap_or_default();
+                if let Some(state) = r["rollout"]["state"].as_str()
+                    && state != "complete"
+                {
+                    let _ = write!(rollback, "  rollout {state}");
+                    if let Some(reason) = r["rollout"]["reason"].as_str() {
+                        let _ = write!(rollback, ": {reason}");
+                    }
+                }
                 let refused: Vec<String> = r["refused_by"]
                     .as_array()
                     .into_iter()
@@ -242,6 +288,32 @@ pub(crate) fn control(
                     &text(&r["sha256"])[..12.min(text(&r["sha256"]).len())]
                 );
             }
+            if value["rollout"].is_object() {
+                out.push_str(&render_rollout(&value["rollout"]));
+            }
+            print(&out)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        ControlCommand::Rollout(command) => {
+            let (ctl, call_spec) = match command {
+                RolloutCommand::Status(ctl) => (ctl, Call::new("GET", "/api/v1/cluster/rollout")),
+                RolloutCommand::Resume(ctl) => (
+                    ctl,
+                    Call::new("POST", "/api/v1/cluster/rollout/resume").json(&json!({})),
+                ),
+                RolloutCommand::Abandon(ctl) => (
+                    ctl,
+                    Call::new("POST", "/api/v1/cluster/rollout/abandon").json(&json!({})),
+                ),
+            };
+            let value = expect(call(&ctl.ctl(), &call_spec)?, &[200])?.json();
+            let out = match command {
+                RolloutCommand::Abandon(_) => format!(
+                    "abandoned; published revision {} with the configuration of revision {}\n",
+                    value["revision"], value["rollback_of"]
+                ),
+                _ => render_rollout(&value),
+            };
             print(&out)?;
             Ok(ExitCode::SUCCESS)
         }
@@ -253,14 +325,21 @@ pub(crate) fn control(
             let value = answer.json();
             let mut out = String::new();
             for i in value["instances"].as_array().into_iter().flatten() {
-                let _ = writeln!(
-                    out,
-                    "{:<24} {:<8} serving {:<4} {}",
+                let mut line = format!(
+                    "{:<24} {:<8} serving {:<4} target {:<4} {}",
                     text(&i["name"]),
                     text(&i["state"]),
                     i["serving"],
+                    i["target"],
                     text(&i["version"])
                 );
+                if let Some(error) = i["last_error"].as_str() {
+                    let _ = write!(line, "  {error}");
+                }
+                let _ = writeln!(out, "{}", line.trim_end());
+            }
+            if value["rollout"].is_object() {
+                out.push_str(&render_rollout(&value["rollout"]));
             }
             print(&out)?;
             Ok(ExitCode::SUCCESS)
@@ -340,6 +419,14 @@ fn load(path: &Path) -> anyhow::Result<rdock_model::Config> {
             );
         }
     }
+    // Settings this version does not implement yet (ADR-0014), for the control plane.
+    let mut gated = Vec::new();
+    rdock_proxy::gate::check(&loaded.config, rdock_proxy::Mode::Run, &mut gated);
+    problems.extend(
+        gated
+            .into_iter()
+            .filter(|d| d.is_error() && d.path.starts_with("control.")),
+    );
     if loaded.config.control.is_none() {
         problems.push(Diagnostic::error(
             "control",
@@ -387,6 +474,8 @@ async fn serve(
         listener,
         stop_rx.clone(),
     ));
+    let events = plane.events();
+    tokio::spawn(plane.clone().drive(stop_rx.clone()));
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
     let admin = ControlAdmin {
         plane: plane.clone(),
@@ -410,7 +499,9 @@ async fn serve(
             rdock_admin::Sockets::default(),
         )?;
         tracing::info!(address = %crate::run::admin_address(&config.admin.listener), socket = %socket.display(), "admin API listening");
-        Some(running)
+        let running = Arc::new(running);
+        let auditor = tokio::spawn(audit_rollouts(events, running.clone(), stop_rx.clone()));
+        Some((running, auditor))
     } else {
         None
     };
@@ -429,10 +520,50 @@ async fn serve(
     tracing::info!("stopping the control plane");
     let _ = stop.send(true);
     let _ = tokio::time::timeout(Duration::from_secs(5), server).await;
-    if let Some(running) = running {
-        running.stopped().await;
+    if let Some((running, auditor)) = running {
+        // The audit task holds the other reference and ends on the stop signal.
+        let _ = tokio::time::timeout(Duration::from_secs(5), auditor).await;
+        if let Ok(running) = Arc::try_unwrap(running) {
+            running.stopped().await;
+        }
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// Writes the rollout's automatic steps that need an operator's attention (a halt) and its
+/// completion to the audit log, as the control plane (actor `rdock-control`).
+async fn audit_rollouts(
+    mut events: tokio::sync::broadcast::Receiver<rdock_control::rollout::Event>,
+    admin: Arc<rdock_admin::Running>,
+    mut stop: watch::Receiver<bool>,
+) {
+    use rdock_admin::audit::{Event, Outcome};
+    use rdock_control::rollout::Event as Step;
+    loop {
+        let received = tokio::select! {
+            _ = stop.changed() => return,
+            received = events.recv() => received,
+        };
+        let event = match received {
+            Ok(event) => event,
+            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
+            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+        };
+        let record = match event {
+            Step::Halted { revision, halt } => Event {
+                resource: Some(format!("revision {revision}")),
+                outcome: Outcome::Failed,
+                reason: Some(halt.reason),
+                ..Event::new("rdock-control", "control", "cluster.rollout.halt")
+            },
+            Step::Completed { revision } => Event {
+                resource: Some(format!("revision {revision}")),
+                ..Event::new("rdock-control", "control", "cluster.rollout.complete")
+            },
+            Step::CanaryChosen { .. } | Step::Soaking { .. } => continue,
+        };
+        admin.audit(record);
+    }
 }
 
 /// The lookup a publication is validated with. The control plane publishes `${file:…}` and
@@ -662,6 +793,33 @@ impl rdock_admin::Control for ControlAdmin {
                 })
                 .map_err(|e| e.to_string()),
         )
+    }
+
+    async fn cluster_rollout(&self) -> Option<Value> {
+        Some(self.plane.rollout().await)
+    }
+
+    async fn cluster_rollout_resume(&self, actor: String) -> Option<rdock_admin::RolloutAction> {
+        use rdock_admin::RolloutAction;
+        Some(match self.plane.resume(&actor).await {
+            Ok(view) => RolloutAction::Done(view),
+            Err(rdock_control::Error::Conflict(message)) => RolloutAction::Conflict(message),
+            Err(e) => RolloutAction::Failed(e.to_string()),
+        })
+    }
+
+    async fn cluster_rollout_abandon(&self, actor: String) -> Option<rdock_admin::RolloutAction> {
+        use rdock_admin::RolloutAction;
+        Some(match self.plane.abandon(&actor).await {
+            Ok(bundle) => RolloutAction::Done(json!({
+                "revision": bundle.revision,
+                "sha256": bundle.sha256,
+                "published_at": bundle.published_at,
+                "rollback_of": bundle.rollback_of,
+            })),
+            Err(rdock_control::Error::Conflict(message)) => RolloutAction::Conflict(message),
+            Err(e) => RolloutAction::Failed(e.to_string()),
+        })
     }
 
     async fn cluster_revisions(&self) -> Option<Value> {

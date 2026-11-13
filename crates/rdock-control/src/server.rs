@@ -100,6 +100,8 @@ pub async fn serve(
                 }
             },
         };
+        // Small request and answer frames (store operations): no Nagle delay.
+        let _ = tcp.set_nodelay(true);
         let (acceptor, plane, stop) = (acceptor.clone(), plane.clone(), stop.clone());
         tokio::spawn(async move {
             let tls =
@@ -228,7 +230,7 @@ async fn route(
         (Method::GET, "/cluster/v1/bundle") => {
             let after = query(&request, "after").unwrap_or(0);
             let wait = Duration::from_secs(query(&request, "wait").unwrap_or(30)).min(MAX_WAIT);
-            let bundle = plane.bundle_after(after, wait).await;
+            let bundle = plane.bundle_after(instance, after, wait).await;
             // A revocation while the request waited ends it without a bundle.
             if !plane.admit(instance).await {
                 return error(StatusCode::FORBIDDEN, "this instance was revoked");

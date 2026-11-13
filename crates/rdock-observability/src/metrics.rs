@@ -91,6 +91,14 @@ pub struct Metrics {
     pub cluster_leases: IntCounterVec,
     /// Challenge barriers, by result (`complete`: every live member confirmed; `timeout`).
     pub cluster_barriers: IntCounterVec,
+    /// Whether the store of cluster-scoped limits answers (1) or limits fall back to each
+    /// instance's share (0).
+    pub cluster_limits_store_up: IntGauge,
+    /// Claims of cluster-scoped limits, by outcome (`granted`, `exhausted`, `forced`,
+    /// `failed`).
+    pub cluster_limit_claims: IntCounterVec,
+    /// Instances sharing cluster-scoped limits, as this instance last counted them.
+    pub cluster_limits_members: IntGauge,
     /// The control plane's latest published revision (control plane only).
     pub control_revision: IntGauge,
     /// Enrolled data planes by state (`synced`, `stale`, `error`, `away`, `revoked`; control
@@ -425,6 +433,26 @@ impl Metrics {
             "Certificate leases asked for, by result (acquired, busy, lost, error).",
             &["result"],
         )?;
+        let cluster_limits_store_up = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_limits_store_up",
+                "Whether the store of cluster-scoped limits answers (1) or limits fall back to each instance's share (0).",
+            ),
+        )?;
+        let cluster_limit_claims = counters(
+            &registry,
+            "rdock_cluster_limit_claims_total",
+            "Claims of cluster-scoped limits, by outcome (granted, exhausted, forced, failed).",
+            &["outcome"],
+        )?;
+        let cluster_limits_members = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_limits_members",
+                "Instances sharing cluster-scoped limits, as this instance last counted them.",
+            ),
+        )?;
         let cluster_barriers = counters(
             &registry,
             "rdock_cluster_challenge_barriers_total",
@@ -742,6 +770,9 @@ impl Metrics {
             cluster_control_connected,
             cluster_leases,
             cluster_barriers,
+            cluster_limits_store_up,
+            cluster_limit_claims,
+            cluster_limits_members,
             control_revision,
             control_instances,
             backend_up,

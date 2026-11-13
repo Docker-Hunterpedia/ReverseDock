@@ -14,12 +14,13 @@ use rdock_cluster::{ClusterStore, DirStore};
 use rdock_credentials::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, watch};
-use tracing::info;
+use tokio::sync::{Mutex, broadcast, watch};
+use tracing::{info, warn};
 
 use crate::bundles::History;
 use crate::ca::ClusterCa;
 use crate::registry::{Instance, LastReport, Registry};
+use crate::rollout::{self, Refusal, Rollout};
 use crate::tokens::{TokenRecord, Tokens};
 use crate::{Error, unix_now};
 
@@ -34,6 +35,7 @@ struct Mutable {
     tokens: Tokens,
     registry: Registry,
     history: History,
+    rollout: Rollout,
     /// When each instance last called (Unix seconds); kept in memory, written with reports.
     seen: BTreeMap<String, i64>,
 }
@@ -44,7 +46,10 @@ pub struct ControlPlane {
     cluster_id: String,
     ca: ClusterCa,
     state: Mutex<Mutable>,
-    revisions: watch::Sender<u64>,
+    /// Bumped on every change that can alter which revision an instance is given (a
+    /// publication, a rollout step), to wake long polls.
+    changes: watch::Sender<u64>,
+    events: broadcast::Sender<rollout::Event>,
     store: DirStore,
     root: PathBuf,
 }
@@ -63,12 +68,13 @@ impl std::fmt::Debug for ControlPlane {
 pub enum InstanceState {
     /// Serves the newest revision.
     Synced,
-    /// Serves an older revision and has not refused the newest.
-    Stale,
+    /// Serves an older revision and has not refused the newest (a running rollout may be
+    /// holding it on the stable revision).
+    Behind,
     /// Refused the newest revision (NACK).
     Error,
     /// Has not called for longer than `control.offline_after`.
-    Away,
+    Offline,
     /// Revoked.
     Revoked,
 }
@@ -79,9 +85,9 @@ impl InstanceState {
     pub fn as_str(self) -> &'static str {
         match self {
             Self::Synced => "synced",
-            Self::Stale => "stale",
+            Self::Behind => "behind",
             Self::Error => "error",
-            Self::Away => "away",
+            Self::Offline => "offline",
             Self::Revoked => "revoked",
         }
     }
@@ -127,7 +133,9 @@ impl ControlPlane {
             &root.join("bundles"),
             usize::try_from(settings.history).unwrap_or(50),
         )?;
-        let (revisions, _) = watch::channel(history.latest_revision());
+        let rollout = Rollout::load(&root, settings.rollout.clone(), history.latest_revision())?;
+        let (changes, _) = watch::channel(0);
+        let (events, _) = broadcast::channel(64);
         let plane = Self {
             cluster_id: cluster.id,
             ca,
@@ -135,9 +143,11 @@ impl ControlPlane {
                 tokens: Tokens::load(&root)?,
                 registry: Registry::load(&root)?,
                 history,
+                rollout,
                 seen: BTreeMap::new(),
             }),
-            revisions,
+            changes,
+            events,
             store: DirStore::exclusive(root.join("store")),
             root,
             settings,
@@ -276,25 +286,179 @@ impl ControlPlane {
         allowed
     }
 
-    /// The compressed newest bundle when its revision is above `after`, waiting up to `wait`
-    /// for one; `None` when none came.
-    pub async fn bundle_after(&self, after: u64, wait: Duration) -> Option<Vec<u8>> {
-        let mut revisions = self.revisions.subscribe();
+    /// The compressed bundle `instance` is to take when its revision is above `after` (the
+    /// rollout decides which: the newest, or the stable one while a canary runs), waiting up
+    /// to `wait` for one; `None` when none came.
+    pub async fn bundle_after(
+        &self,
+        instance: &str,
+        after: u64,
+        wait: Duration,
+    ) -> Option<Vec<u8>> {
+        let mut changes = self.changes.subscribe();
         let deadline = tokio::time::Instant::now() + wait;
         loop {
             {
-                let state = self.state.lock().await;
-                if let Some((bundle, bytes)) = state.history.latest()
-                    && bundle.revision > after
-                {
-                    return Some(bytes.clone());
+                let mut state = self.state.lock().await;
+                let target = state.rollout.target(instance);
+                if target > after {
+                    match state.history.bytes(target) {
+                        Ok(Some(bytes)) => {
+                            if state.rollout.offered(instance, target)
+                                && let Err(e) = state.rollout.save()
+                            {
+                                warn!(error = %e, "cannot write the rollout state");
+                            }
+                            return Some(bytes);
+                        }
+                        Ok(None) => {
+                            warn!(%instance, revision = target, "the revision to serve is no longer kept");
+                        }
+                        Err(e) => warn!(error = %e, "cannot read a published bundle"),
+                    }
                 }
             }
-            match tokio::time::timeout_at(deadline, revisions.changed()).await {
+            match tokio::time::timeout_at(deadline, changes.changed()).await {
                 Ok(Ok(())) => {}
                 Ok(Err(_)) | Err(_) => return None,
             }
         }
+    }
+
+    /// Subscribes to rollout events (canary chosen, soaking, complete, halted), for the audit
+    /// log.
+    #[must_use]
+    pub fn events(&self) -> broadcast::Receiver<rollout::Event> {
+        self.events.subscribe()
+    }
+
+    fn announce(&self, events: Vec<rollout::Event>) {
+        if events.is_empty() {
+            return;
+        }
+        for event in events {
+            match &event {
+                rollout::Event::CanaryChosen {
+                    revision,
+                    canary,
+                    instead_of,
+                } => {
+                    if let Some(wanted) = instead_of {
+                        warn!(revision, %canary, configured = %wanted, "the configured canary is offline; another instance takes the revision first");
+                    } else {
+                        info!(revision, %canary, "the canary takes the revision first");
+                    }
+                }
+                rollout::Event::Soaking { revision } => {
+                    info!(
+                        revision,
+                        "the canary took the revision; the rest follow after the soak time"
+                    );
+                }
+                rollout::Event::Completed { revision } => {
+                    info!(revision, "every instance is given the revision");
+                }
+                rollout::Event::Halted { revision, halt } => {
+                    warn!(revision, reason = %halt.reason, "the rollout halted; instances not given the revision stay on the stable one");
+                }
+            }
+            let _ = self.events.send(event);
+        }
+        self.changes.send_modify(|n| *n = n.wrapping_add(1));
+    }
+
+    /// The online, unrevoked instances by name (for choosing a canary).
+    fn online(&self, state: &Mutable, now: i64) -> Vec<String> {
+        let offline_after =
+            i64::try_from(self.settings.offline_after.as_std().as_secs()).unwrap_or(90);
+        state
+            .registry
+            .all()
+            .filter(|i| !i.revoked)
+            .filter(|i| {
+                state
+                    .seen
+                    .get(&i.name)
+                    .copied()
+                    .or(i.last_seen)
+                    .is_some_and(|s| now - s <= offline_after)
+            })
+            .map(|i| i.name.clone())
+            .collect()
+    }
+
+    /// Moves rollouts on with time (a canary coming online, a silent canary, the end of the
+    /// soak time) until `stop` turns true.
+    pub async fn drive(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
+        let mut tick = tokio::time::interval(Duration::from_secs(1));
+        tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        loop {
+            tokio::select! {
+                _ = stop.changed() => return,
+                _ = tick.tick() => {}
+            }
+            let events = {
+                let mut state = self.state.lock().await;
+                let now = unix_now();
+                let online = self.online(&state, now);
+                let events = state.rollout.tick(&online, now);
+                if !events.is_empty()
+                    && let Err(e) = state.rollout.save()
+                {
+                    warn!(error = %e, "cannot write the rollout state");
+                }
+                events
+            };
+            self.announce(events);
+        }
+    }
+
+    /// The rollout's state, for the API.
+    pub async fn rollout(&self) -> Value {
+        self.state.lock().await.rollout.view()
+    }
+
+    /// An operator lets a halted or soaking rollout go on to every instance.
+    pub async fn resume(&self, by: &str) -> Result<Value, Error> {
+        let (events, view) = {
+            let mut state = self.state.lock().await;
+            let events = state
+                .rollout
+                .resume(by, unix_now())
+                .map_err(|Refusal::Conflict(m)| Error::Conflict(m))?;
+            state.rollout.save()?;
+            (events, state.rollout.view())
+        };
+        info!(by, "the rollout was resumed");
+        self.announce(events);
+        Ok(view)
+    }
+
+    /// An operator abandons a halted or running rollout: the stable revision's document is
+    /// published again as a new revision, which every instance takes at once (the instances
+    /// already given the abandoned revision are sent back).
+    pub async fn abandon(&self, by: &str) -> Result<Bundle, Error> {
+        let (stable, document) = {
+            let state = self.state.lock().await;
+            let stable = state
+                .rollout
+                .abandon_target()
+                .map_err(|Refusal::Conflict(m)| Error::Conflict(m))?;
+            let document = state
+                .history
+                .get(stable)?
+                .map(|b| b.document)
+                .ok_or_else(|| Error::Conflict(format!("revision {stable} is no longer kept")))?;
+            (stable, document)
+        };
+        {
+            let mut state = self.state.lock().await;
+            state.rollout.abandoned(by, unix_now());
+            state.rollout.save()?;
+        }
+        info!(by, stable, "the rollout was abandoned");
+        self.publish(document, Some(stable), Some(by.to_owned()))
+            .await
     }
 
     /// Records a data plane's report on a bundle.
@@ -315,6 +479,11 @@ impl ControlPlane {
         } else {
             info!(%instance, revision = report.revision, "a data plane applied a bundle");
         }
+        let reason = report
+            .diagnostics
+            .first()
+            .and_then(|d| d["message"].as_str())
+            .map(str::to_owned);
         entry.last_report = Some(LastReport {
             revision: report.revision,
             verdict: report.verdict,
@@ -322,7 +491,20 @@ impl ControlPlane {
             at: now,
         });
         state.seen.insert(instance.to_owned(), now);
-        state.registry.save()
+        state.registry.save()?;
+        let events = state.rollout.report(
+            instance,
+            report.revision,
+            report.verdict,
+            reason.as_deref(),
+            now,
+        );
+        if !events.is_empty() {
+            state.rollout.save()?;
+        }
+        drop(state);
+        self.announce(events);
+        Ok(())
     }
 
     /// Publishes `document` (already validated by the caller) as the next revision.
@@ -358,10 +540,17 @@ impl ControlPlane {
             rollback_of,
             document,
         };
-        state.history.add(bundle.clone())?;
+        let pinned = state.rollout.state().stable;
+        state.history.add(bundle.clone(), pinned)?;
+        let now = unix_now();
+        let online = self.online(&state, now);
+        let events = state
+            .rollout
+            .start(revision, rollback_of.is_some(), &online, now);
+        state.rollout.save()?;
         drop(state);
-        self.revisions.send_replace(revision);
         info!(revision, sha256 = %bundle.sha256, rollback_of, "published a bundle");
+        self.announce(events);
         Ok(bundle)
     }
 
@@ -399,11 +588,15 @@ impl ControlPlane {
                 "published_by": bundle.published_by,
                 "rollback_of": bundle.rollback_of,
                 "refused_by": refused,
+                "rollout": state.rollout.outcome_of(bundle.revision),
             }));
         }
-        Ok(
-            json!({ "cluster_id": self.cluster_id, "latest": state.history.latest_revision(), "revisions": out }),
-        )
+        Ok(json!({
+            "cluster_id": self.cluster_id,
+            "latest": state.history.latest_revision(),
+            "rollout": state.rollout.view(),
+            "revisions": out,
+        }))
     }
 
     /// Revokes `instance`: it can no longer fetch bundles or use the store. `false` when
@@ -432,11 +625,25 @@ impl ControlPlane {
             .map(|i| {
                 let seen = state.seen.get(&i.name).copied().or(i.last_seen);
                 let status = instance_state(i, seen, latest, now, away_after);
+                let last_error = i
+                    .last_report
+                    .as_ref()
+                    .filter(|r| r.verdict == Verdict::Nack)
+                    .map(|r| {
+                        let message = r
+                            .diagnostics
+                            .first()
+                            .and_then(|d| d["message"].as_str())
+                            .unwrap_or("refused");
+                        format!("revision {}: {message}", r.revision)
+                    });
                 json!({
                     "name": i.name,
                     "state": status,
                     "serving": i.serving,
+                    "target": state.rollout.target(&i.name),
                     "latest": latest,
+                    "last_error": last_error,
                     "version": i.version,
                     "enrolled_at": rfc3339(i.enrolled_at),
                     "last_seen": seen.map(rfc3339),
@@ -451,7 +658,13 @@ impl ControlPlane {
                 })
             })
             .collect();
-        json!({ "cluster_id": self.cluster_id, "latest": latest, "instances": list })
+        json!({
+            "cluster_id": self.cluster_id,
+            "name": self.settings.name,
+            "latest": latest,
+            "rollout": state.rollout.view(),
+            "instances": list,
+        })
     }
 
     /// How many instances are in each state, for `rdock_control_instances`.
@@ -461,10 +674,11 @@ impl ControlPlane {
         let now = unix_now();
         let away_after =
             i64::try_from(self.settings.offline_after.as_std().as_secs()).unwrap_or(90);
-        let mut out: BTreeMap<&'static str, i64> = ["synced", "stale", "error", "away", "revoked"]
-            .into_iter()
-            .map(|s| (s, 0))
-            .collect();
+        let mut out: BTreeMap<&'static str, i64> =
+            ["synced", "behind", "error", "offline", "revoked"]
+                .into_iter()
+                .map(|s| (s, 0))
+                .collect();
         for i in state.registry.all() {
             let seen = state.seen.get(&i.name).copied().or(i.last_seen);
             *out.entry(instance_state(i, seen, latest, now, away_after).as_str())
@@ -490,7 +704,7 @@ fn instance_state(
     if i.revoked {
         InstanceState::Revoked
     } else if seen.is_none_or(|s| now - s > away_after) {
-        InstanceState::Away
+        InstanceState::Offline
     } else if i
         .last_report
         .as_ref()
@@ -500,7 +714,7 @@ fn instance_state(
     } else if i.serving >= latest {
         InstanceState::Synced
     } else {
-        InstanceState::Stale
+        InstanceState::Behind
     }
 }
 

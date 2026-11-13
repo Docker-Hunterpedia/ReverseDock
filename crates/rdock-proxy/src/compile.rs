@@ -64,6 +64,9 @@ pub struct CompileEnv<'a> {
     pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
     /// Abuse counters and bans that outlive a configuration; `None` when validating.
     pub abuse: Option<&'a rdock_limits::abuse::AbuseRegistry>,
+    /// Budgets of cluster-scoped limits that outlive a configuration; `None` when validating
+    /// (limits then count per instance).
+    pub shared_limits: Option<&'a rdock_limits::shared::SharedLimits>,
 }
 
 /// The result of compilation.
@@ -777,6 +780,7 @@ fn build_middlewares(
         quotas: env.quotas,
         route_hosts: Arc::new(route_hosts(config)),
         abuse: env.abuse,
+        shared_limits: env.shared_limits,
         trusted_proxies: config
             .security
             .trusted_proxies

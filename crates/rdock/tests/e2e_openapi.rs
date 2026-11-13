@@ -582,6 +582,24 @@ fn cluster_operations(rdock: &Rdock, check: &mut Checker) {
             "/api/v1/cluster/revisions",
             r#"{"document":{"routes":{}}}"#,
         ),
+        (
+            "GET",
+            "/api/v1/cluster/rollout",
+            "/api/v1/cluster/rollout",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/rollout/resume",
+            "/api/v1/cluster/rollout/resume",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/rollout/abandon",
+            "/api/v1/cluster/rollout/abandon",
+            "",
+        ),
     ] {
         let answer = check.call(rdock, (method, template, path), &json, body);
         assert_eq!(

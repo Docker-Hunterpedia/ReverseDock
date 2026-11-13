@@ -111,6 +111,7 @@ pub struct DataPlane {
     caches: rdock_cache::Registry,
     quotas: Arc<rdock_limits::quota::QuotaRegistry>,
     abuse: Arc<rdock_limits::abuse::AbuseRegistry>,
+    shared_limits: rdock_limits::shared::SharedLimits,
     plugins: Arc<rdock_plugin_api::Registry>,
     state: Mutex<State>,
     generation: AtomicU64,
@@ -192,6 +193,7 @@ impl DataPlane {
             caches,
             quotas: Arc::default(),
             abuse: Arc::default(),
+            shared_limits: rdock_limits::shared::SharedLimits::default(),
             plugins: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
@@ -365,6 +367,13 @@ impl DataPlane {
         });
     }
 
+    /// The budgets of cluster-scoped limits (`scope: cluster`), which the cluster's limit
+    /// driver shares.
+    #[must_use]
+    pub fn shared_limits(&self) -> &rdock_limits::shared::SharedLimits {
+        &self.shared_limits
+    }
+
     /// The abuse counters and bans, for the admin API (list and unban).
     #[must_use]
     pub fn abuse(&self) -> &Arc<rdock_limits::abuse::AbuseRegistry> {
@@ -453,6 +462,7 @@ impl DataPlane {
                 metrics: Some(&self.shared.metrics),
                 quotas: Some(&self.quotas),
                 abuse: Some(&self.abuse),
+                shared_limits: Some(&self.shared_limits),
             },
         )
     }

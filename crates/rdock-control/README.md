@@ -14,6 +14,9 @@ tokens, audit log and dashboard without any other crate depending on `rdock-admi
 - **Bundle history**: each publication gets the next revision, the SHA-256 of its canonical
   JSON and the cluster id, stored compressed with zstd. Rollback publishes an earlier document
   as a new revision.
+- **Rollout**: a published revision goes to one canary first and to the rest after a soak
+  time; a NACK or a silent canary halts it with the others on the stable revision; resume and
+  abandon (`control/rollout.json`; the rules are in `rollout.rs` and tested without processes).
 - **Store server**: the `ClusterStore` of `rdock-cluster`, served to enrolled members over
   mutual TLS, on a directory only this process writes, so fenced writes are checked atomically.
 - **Cluster listener**: TLS (client certificate optional for enrolment only), HTTP/2 or

@@ -117,7 +117,8 @@ middlewares:
 ## What to know
 
 - **Per process, in memory.** Buckets live in the ReverseDock process. Two instances each
-  enforce the limit on their own, and buckets start full after every applied reload or restart.
+  enforce the limit on their own (unless the limit has `scope: cluster`, below), and buckets
+  start full after every applied reload or restart.
 - **Bounded memory.** Each `rate_limit` middleware tracks at most 65,536 keys. When that is
   reached, idle clients (full buckets) are dropped first, then the least recently used, so a
   flood of distinct addresses cannot exhaust memory.
@@ -126,6 +127,80 @@ middlewares:
   separate limits.
 - **Order matters.** Put `rate_limit` after `ip_allow` or `ip_deny` so blocked clients do not
   use up tokens, and before `basic_auth` to slow down password guessing.
+
+## Share a limit across instances
+
+With `scope: cluster` <Status planned="v0.9" />, the instances of a
+[cluster](/docs/guides/cluster/) share a `rate_limit` or a [`quota`](/docs/guides/quotas/)
+instead of each enforcing it alone:
+
+```yaml title="published configuration (excerpt)"
+middlewares:
+  api-rate:
+    type: rate_limit
+    average: 600
+    period: 1m
+    burst: 100
+    scope: cluster        # default: instance
+```
+
+```yaml title="rdock.yaml on each instance (optional)"
+cluster:
+  limits:
+    store: cluster          # the cluster store (control plane or shared directory); or `redis`
+    sync_interval: 1s       # 100ms–10s
+    headroom_percent: 10    # 0–100
+    fallback: share         # or `instance`
+```
+
+**How it works.** For each key and window, the budget `L` is a counter in the store. Each
+instance **claims** parts of it ahead of use, from a background task, and admits requests
+against what it claimed plus a small headroom; the store never grants more than `L` in total.
+A request never waits for the store.
+
+**The bound.** While the store answers, a cluster of `N` instances admits at most
+
+> `L + N × c` requests per key and window, with `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)`
+
+For `L = 600`, `N = 3` and the default 10 %: `c = 20`, so at most 660. A larger
+`headroom_percent` absorbs store latency at high request rates; a smaller one tightens the bound.
+Once the store says the budget is used up, no headroom is used.
+
+**What `scope: cluster` counts.** For `rate_limit`, the cluster admits at most `average`
+requests per key in each `period`, in fixed windows from the Unix epoch (so up to twice
+`average` around a window boundary), and each instance's own token bucket still shapes bursts.
+For `quota`, each calendar window's `limit`.
+
+**When the store is away**, each instance enforces its **share** on its own: `⌈L / N⌉` per
+window against what it admitted itself (with `fallback: instance`, the whole `L`). It logs
+"the limit store is away" once and `rdock_cluster_limits_store_up` drops to 0; clients see no
+error from it. When the store answers again, what each instance admitted meanwhile is added to
+the store's count, and the limit is shared again.
+
+**Redis.** `store: redis` keeps the counters in a Redis-compatible server (Redis, Valkey) and
+needs no control plane or shared directory:
+
+```yaml title="rdock.yaml"
+cluster:
+  instance: edge-1
+  limits:
+    store: redis
+    redis:
+      url: rediss://redis.example.com:6380/0        # TLS; the path is the database
+      username: rdock                               # optional ACL user
+      password: "${file:/run/secrets/redis}"        # a reference, never the value
+      ca_file: /etc/rdock/redis-ca.pem              # optional; else the system's roots
+      timeout: 1s                                   # 100ms–10s, per connect and command
+```
+
+rdock uses `AUTH`, `SELECT`, `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE` and
+`ZCARD`; keys start with `key_prefix` (`rdock:`) and expire a minute after their window. Plain
+`redis://` is accepted for a loopback address only, unless you set `allow_plaintext: true`.
+
+**Not shared:** `in_flight` (`scope: cluster` is refused, a cluster-wide count is planned),
+`bandwidth`, and [abuse](/docs/guides/abuse-protection/) counters. Without a `cluster` section a
+limit with `scope: cluster` counts per instance. Cluster-scoped quotas do not appear in
+`GET /api/v1/quotas`.
 
 ## Requests in flight: `in_flight` <Status since="v0.4" />
 

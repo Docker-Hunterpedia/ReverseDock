@@ -25,6 +25,7 @@ pub mod postgres;
 pub mod proxy_protocol;
 pub mod rdock;
 pub mod receiver;
+pub mod redis;
 pub mod tcp;
 pub mod toxiproxy;
 pub mod udp;

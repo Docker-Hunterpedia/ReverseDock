@@ -40,5 +40,19 @@
     "what": "Hedged requests (a second upstream attempt while the first runs)",
     "value": true,
     "fixture": "routes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    hedge: { delay: 50ms }\n"
+  },
+  {
+    "path": "middlewares.<name>.scope",
+    "planned": "a later version",
+    "what": "A cluster-wide count of requests in flight (in_flight with scope: cluster)",
+    "value": true,
+    "fixture": "middlewares:\n  slots: { type: in_flight, amount: 10, scope: cluster }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [slots] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "control.rollout.auto_rollback",
+    "planned": "a later version",
+    "what": "Automatic rollback of a rollout on the canary's health",
+    "value": true,
+    "fixture": "control:\n  rollout: { auto_rollback: true }\n"
   }
 ]

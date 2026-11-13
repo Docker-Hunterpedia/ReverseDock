@@ -464,6 +464,8 @@ pub struct BuildEnv<'a> {
     pub route_hosts: Arc<std::collections::HashMap<String, Vec<String>>>,
     /// Abuse counters and bans that outlive the configuration; `None` when validating.
     pub abuse: Option<&'a rdock_limits::abuse::AbuseRegistry>,
+    /// Budgets of cluster-scoped limits; `None` when validating (limits count per instance).
+    pub shared_limits: Option<&'a rdock_limits::shared::SharedLimits>,
     /// The fixed networks of `security.trusted_proxies`,
     /// which `abuse` never counts or bans.
     pub trusted_proxies: Arc<[rdock_model::values::IpNetwork]>,
@@ -568,7 +570,7 @@ pub fn build(
         Config::ForwardAuth(c) => Arc::new(forward_auth::ForwardAuth::new(c, env.client.clone())?),
         Config::IpAllow(c) => Arc::new(ip::IpFilter::allow(c)),
         Config::IpDeny(c) => Arc::new(ip::IpFilter::deny(c)),
-        Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c)),
+        Config::RateLimit(c) => Arc::new(ratelimit::RateLimit::new(name, c, env.shared_limits)),
         Config::InFlight(c) => Arc::new(limits::InFlight::new(c)),
         Config::ClientCert(c) => Arc::new(client_cert::ClientCert::new(c)),
         Config::Jwt(c) => Arc::new(jwt::Jwt::new(
@@ -607,12 +609,19 @@ pub fn build(
         Config::Oidc(c) => Arc::new(oidc::Oidc::new(name, c, env)?),
         Config::Abuse(c) => Arc::new(abuse::AbuseGuard::new(name, c, env)),
         Config::Quota(c) => match env.quotas {
-            Some(registry) => Arc::new(quota::Quota::new(name, c, registry, env.metrics)),
+            Some(registry) => Arc::new(quota::Quota::new(
+                name,
+                c,
+                registry,
+                env.metrics,
+                env.shared_limits,
+            )),
             None => Arc::new(quota::Quota::new(
                 name,
                 c,
                 &rdock_limits::quota::QuotaRegistry::default(),
                 env.metrics,
+                env.shared_limits,
             )),
         },
     })
