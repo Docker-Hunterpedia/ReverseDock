@@ -403,6 +403,7 @@ fn config_operations(rdock: &Rdock, check: &mut Checker, backend: &str) {
 fn resource_operations(rdock: &Rdock, check: &mut Checker) {
     let json_type = [("Content-Type", "application/json")];
     consumer_operations(rdock, check);
+    abuse_operations(rdock, check);
     for path in [
         "/api/v1/certificates",
         "/api/v1/backends",
@@ -538,6 +539,26 @@ fn consumer_operations(rdock: &Rdock, check: &mut Checker) {
             "DELETE",
             "/api/v1/quota/{consumer}",
             "/api/v1/quota/openapi",
+        ),
+        &[],
+        "",
+    );
+}
+
+/// Abuse bans (H-SEC-01): none here, so the unban is the documented 404.
+fn abuse_operations(rdock: &Rdock, check: &mut Checker) {
+    check.call(
+        rdock,
+        ("GET", "/api/v1/abuse/bans", "/api/v1/abuse/bans"),
+        &[],
+        "",
+    );
+    check.call(
+        rdock,
+        (
+            "DELETE",
+            "/api/v1/abuse/bans/{key}",
+            "/api/v1/abuse/bans/ip%3A192.0.2.7",
         ),
         &[],
         "",

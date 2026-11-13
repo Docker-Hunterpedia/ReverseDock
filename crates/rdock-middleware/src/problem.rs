@@ -16,6 +16,8 @@ pub enum ProblemKind {
     Unauthenticated,
     /// 403: the client is known but not allowed (a network rule, a group restriction).
     Forbidden,
+    /// 403: the client's key is banned for a while by an `abuse` middleware.
+    Banned,
     /// 400: the request does not match the route's schemas (`validate`); the answer lists the
     /// errors in `errors`.
     ValidationFailed,
@@ -61,12 +63,13 @@ pub enum ProblemKind {
 
 impl ProblemKind {
     /// Every kind, for the reference page and the tests.
-    pub const ALL: [Self; 22] = [
+    pub const ALL: [Self; 23] = [
         Self::BadRequest,
         Self::ValidationFailed,
         Self::Unauthenticated,
         Self::LoginFailed,
         Self::Forbidden,
+        Self::Banned,
         Self::NotFound,
         Self::MethodNotAllowed,
         Self::RequestTimeout,
@@ -116,7 +119,7 @@ impl ProblemKind {
         match self {
             Self::BadRequest | Self::ValidationFailed => 400,
             Self::Unauthenticated | Self::LoginFailed => 401,
-            Self::Forbidden => 403,
+            Self::Forbidden | Self::Banned => 403,
             Self::NotFound => 404,
             Self::MethodNotAllowed => 405,
             Self::RequestTimeout => 408,
@@ -144,6 +147,7 @@ impl ProblemKind {
             Self::PatchFailed => "patch-failed",
             Self::Unauthenticated => "unauthenticated",
             Self::Forbidden => "forbidden",
+            Self::Banned => "banned",
             Self::NotFound => "not-found",
             Self::MethodNotAllowed => "method-not-allowed",
             Self::RequestTimeout => "request-timeout",
@@ -179,6 +183,7 @@ impl ProblemKind {
             Self::PatchFailed => "Request transformation failed",
             Self::Unauthenticated => "Authentication required",
             Self::Forbidden => "Forbidden",
+            Self::Banned => "Banned",
             Self::NotFound => "Not found",
             Self::MethodNotAllowed => "Method not allowed",
             Self::RequestTimeout => "Request timeout",
@@ -213,6 +218,9 @@ impl ProblemKind {
             }
             Self::Unauthenticated => "The request carries no valid credential for this route.",
             Self::Forbidden => "The request is not allowed on this route.",
+            Self::Banned => {
+                "Too many failed or refused requests came from this client. It is refused for a while."
+            }
             Self::NotFound => "Nothing is served at this address.",
             Self::MethodNotAllowed => "This method is not allowed at this address.",
             Self::RequestTimeout => "The request body did not arrive in time.",
@@ -259,6 +267,7 @@ mod tests {
                     | ProblemKind::PatchFailed
                     | ProblemKind::LoginFailed
                     | ProblemKind::IdentityProviderUnavailable
+                    | ProblemKind::Banned
             ) {
                 assert_eq!(ProblemKind::for_status(kind.status()), Some(kind));
             }

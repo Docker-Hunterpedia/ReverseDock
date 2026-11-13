@@ -72,6 +72,13 @@ doc = false
 bench = false
 
 [[bin]]
+name = "tls_fingerprint"
+path = "fuzz_targets/tls_fingerprint.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "disk_cache_header"
 path = "fuzz_targets/disk_cache_header.rs"
 test = false

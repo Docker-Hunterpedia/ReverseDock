@@ -1,0 +1,124 @@
+---
+title: Abuse protection
+description: Count failed logins and error answers per client with the abuse middleware, ban clients past a threshold for a while, and list or lift bans through the admin API and CLI.
+sidebar:
+  order: 34
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `abuse` middleware <Status planned="v0.9" /> counts signs of abuse per client (failed
+logins, `401`, `403`, `404` or `429` answers) in a time window, and **bans** a client that
+reaches a threshold for a while. It is what fail2ban does from log files, inside the proxy.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+defaults: { listeners: [web], tls: off }
+routes:
+  login:
+    match: "Host(`example.com`) && PathPrefix(`/login`)"
+    service: app
+    middlewares: [guard, auth]
+middlewares:
+  guard:
+    type: abuse
+    events: [auth_failure, 401]     # what counts
+    threshold: 20                   # events per window that start a ban
+    window: 1m
+    ban: 10m
+    action: deny                    # deny, tarpit or tag
+  auth:
+    type: basic_auth
+    users_file: /etc/rdock/users.htpasswd
+services:
+  app:
+    backends: [{ address: "127.0.0.1:3000" }]
+```
+
+Put `abuse` **first** in the route's middlewares: it refuses banned clients before the others
+run, and it sees the answers of the middlewares after it (a `basic_auth` refusal, a backend's
+`401`).
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `key` | `client_ip` | What a counter and a ban belong to: `client_ip` (IPv6 by its /64), `consumer`, `ja4` or `header:<Name>`. Requests without a consumer or fingerprint count by client address. |
+| `events` | `[401, 403]` | Statuses (`401`), classes (`4xx`, `5xx`) and `auth_failure`. |
+| `threshold` | `20` | Events within one window that start a ban. |
+| `window` | `1m` | The counting window (fixed, starting at the key's first event). |
+| `ban` | `10m` | How long a ban lasts (at most 30 days). |
+| `action` | `deny` | `deny`: `403` with the problem type [`banned`](/docs/reference/problems/#banned). `tarpit`: hold the request for `tarpit.delay`, then `403`. `tag`: serve it, but mark it `abuse: tagged` in the access log. |
+| `tarpit.delay` | `5s` | How long a banned request is held (at most `60s`). |
+| `tarpit.max_held` | `100` | Requests held at once; past it, banned requests are denied at once. |
+| `exempt` | loopback | Client networks never counted or banned. `security.trusted_proxies` networks are always added. |
+| `max_keys` | `100000` | Counters kept at once; the oldest are dropped first. |
+| `max_bans` | `10000` | Bans kept at once (see below). |
+
+`auth_failure` counts requests whose credentials an authentication middleware refused: a wrong
+password or unknown user in `basic_auth`, an unknown, malformed, expired or wrong API key in
+`api_key`, a token that fails verification in `jwt` and `cloudflare_access`. Missing credentials
+are not a failure (a browser's first request without a password is normal). A request refused
+because it is banned is never counted again.
+
+## Bans
+
+A ban is per middleware: two `abuse` middlewares keep separate counters and bans. Counters and
+bans are **per instance**; with several instances, each bans on its own (shared counters come
+with the cluster store).
+
+Bans are written to `<data dir>/abuse/` (mode `0600`) every second and read back at start, so a
+restart or a [binary upgrade](/docs/guides/upgrades/) keeps them (bans an old process starts
+while it drains after the hand-over stay with it).
+
+Memory is bounded twice. The **counter table** holds `max_keys` keys and drops the oldest when
+full, so an attacker who sends from many addresses can make you forget counts, never more. The
+**ban list** is separate and nothing evicts a ban before it ends: when it holds `max_bans` bans,
+new bans are **refused** and counted in `rdock_abuse_bans_refused_total`, and the warning
+`the ban list is full` is logged. Refusing new bans keeps every existing ban in force; evicting
+old ones would let an attacker with many addresses lift a ban by churning the list.
+
+## List and lift bans
+
+```sh
+rdock bans list
+rdock bans remove ip:203.0.113.7 --middleware guard
+```
+
+Through the admin API: `GET /api/v1/abuse/bans` (viewer) lists `middleware`, `key`, `since`,
+`until` and `remaining_seconds`; `DELETE /api/v1/abuse/bans/{key}` (operator, `?middleware=` to
+limit it) lifts a ban and is recorded in the audit log as `abuse.unban`. Keys look like
+`ip:203.0.113.7`, `ip:2001:db8:1:2::/64`, `consumer:alice`, `ja4:t13d…` or `header:…`; encode
+`:` and `/` in the URL (`ip%3A203.0.113.7`).
+
+## Before you turn it on
+
+- **NAT and CGNAT.** Many users can share one IPv4 address (offices, mobile carriers, universities
+  behind carrier-grade NAT). A ban by `client_ip` bans all of them. Keep thresholds high on
+  routes everyone uses, ban for minutes rather than days, and prefer `key: consumer` behind
+  authentication.
+- **Proxies in front.** Without the right `security.trusted_proxies`, every request seems to
+  come from your load balancer or CDN, and one ban refuses everyone. The trusted networks are
+  always exempt, so a proxy that is trusted but whose clients are not resolved never bans
+  itself; a proxy that is not trusted at all looks like a client and can be banned. Check the
+  `client_ip` field of the access log first.
+- **IPv6** counts and bans whole /64 networks: one subscriber usually controls a /64
+  (RFC 6177), so a ban by single address would be trivially evaded.
+- **`key: header:<Name>`** lets the client choose the key: it evades a ban by changing the
+  header, and every new value takes a counter. `rdock validate` warns unless `action: tag`.
+- **`tarpit`** holds connections and costs the proxy too; HAProxy's manual warns it "can make
+  things worse" against well-written robots. `max_held` caps it.
+
+Challenges (a JavaScript or CAPTCHA page) are not offered: they need a challenge service; an
+[agent](/docs/guides/agents/) can provide one.
+
+## Metrics
+
+- `rdock_abuse_actions_total{middleware,action}`: `ban` (a ban started), `deny`, `tarpit`, `tag`.
+- `rdock_abuse_bans`: bans in force, all middlewares together.
+- `rdock_abuse_bans_refused_total{middleware}`: bans not started because the list was full.
+
+## Related
+
+- [Rate limiting](/docs/guides/rate-limiting/)
+- [TLS client fingerprints](/docs/guides/client-fingerprints/)
+- [Behind another proxy](/docs/guides/behind-a-proxy/)

@@ -1185,6 +1185,24 @@ fn referenced_files(config_path: &Path, config: &Config) -> BTreeSet<PathBuf> {
         {
             files.extend(tickets.key_file.clone());
         }
+        // Client CA bundles rotate with the SVIDs they sign (H-SEC-05).
+        if let Some(auth) = listener.tls.as_ref().and_then(|t| t.client_auth.as_ref()) {
+            files.extend(auth.ca_files.iter().cloned());
+        }
+    }
+    // Upstream trust and client certificates, e.g. SVIDs that spiffe-helper or
+    // csi-driver-spiffe rewrite about every hour (H-SEC-05).
+    for service in config.services.values() {
+        if let Some(tls) = &service.tls {
+            files.extend(tls.ca_file.clone());
+            files.extend(tls.cert_file.clone());
+            files.extend(tls.key_file.clone());
+        }
+    }
+    // GeoIP databases are read again when a new release is put in place (H-SEC-04).
+    if let Some(geoip) = &config.geoip {
+        files.extend(geoip.database.clone());
+        files.extend(geoip.asn_database.clone());
     }
     files
 }
@@ -1492,6 +1510,40 @@ impl rdock_admin::Control for Engine {
             .count();
         tracing::info!(consumer = %consumer, reset, "quota counts reset through the admin API");
         reset
+    }
+
+    async fn bans(&self) -> Value {
+        let now = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let at = |secs: i64| {
+            rdock_observability::rfc3339(
+                std::time::UNIX_EPOCH + Duration::from_secs(u64::try_from(secs).unwrap_or(0)),
+            )
+        };
+        let bans: Vec<Value> = self
+            .plane
+            .abuse()
+            .bans()
+            .into_iter()
+            .map(|(middleware, ban)| {
+                serde_json::json!({
+                    "middleware": middleware,
+                    "key": ban.key,
+                    "since": at(ban.since),
+                    "until": at(ban.until),
+                    "remaining_seconds": u64::try_from(ban.until).unwrap_or(0).saturating_sub(now),
+                })
+            })
+            .collect();
+        serde_json::json!({ "bans": bans })
+    }
+
+    async fn unban(&self, key: String, middleware: Option<String>) -> usize {
+        let removed = self.plane.abuse().unban(&key, middleware.as_deref());
+        tracing::info!(key = %key, removed, "abuse ban lifted through the admin API");
+        removed
     }
 
     async fn set_drained(&self, service: String, backend: String, drained: bool) -> bool {

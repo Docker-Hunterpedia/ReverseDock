@@ -117,6 +117,9 @@ enum Command {
     /// Manage consumers (API clients) and their quota counters.
     #[command(subcommand)]
     Consumers(admin_cli::ConsumersCommand),
+    /// List and lift the bans of `abuse` middlewares on this instance.
+    #[command(subcommand)]
+    Bans(admin_cli::BansCommand),
     /// Mint, revoke and hash consumers' API keys.
     #[command(subcommand)]
     Keys(admin_cli::KeysCommand),
@@ -338,6 +341,7 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Backends(command) => admin_cli::backends(&command),
         Command::Cache(command) => admin_cli::cache(&command),
         Command::Consumers(command) => admin_cli::consumers(&command),
+        Command::Bans(command) => admin_cli::bans(&command),
         Command::Keys(command) => admin_cli::keys(&command),
         Command::Routes(command) => admin_cli::routes(&command),
         Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),

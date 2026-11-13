@@ -374,6 +374,7 @@ impl Router {
                 plugins: &rdock_plugin_api::Registry::new(),
                 metrics: None,
                 quotas: None,
+                abuse: None,
             },
         );
         let errors: Vec<_> = compiled

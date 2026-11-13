@@ -44,6 +44,11 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
             Some(consumer) => [b"c:", consumer.key().as_bytes()].concat(),
             None => format!("ip:{}", cx.client_ip).into_bytes(),
         },
+        // Connections without a fingerprint are counted per client IP, apart from every JA4.
+        RateLimitKey::Ja4 => match cx.fingerprint.as_ref().and_then(|f| f.ja4.as_deref()) {
+            Some(ja4) => [b"j:", ja4.as_bytes()].concat(),
+            None => format!("ip:{}", cx.client_ip).into_bytes(),
+        },
     }
 }
 
@@ -178,6 +183,16 @@ mod tests {
         assert_eq!(
             key_of(&RateLimitKey::Cookie("none".into()), &req, &c),
             Vec::<u8>::new()
+        );
+        assert_eq!(key_of(&RateLimitKey::Ja4, &req, &c), b"ip:192.0.2.10");
+        let mut with = cx();
+        with.fingerprint = Some(Arc::new(crate::ClientFingerprint {
+            ja4: Some(Arc::from("t13d1516h2_8daaf6152771_e5627efa2ab1")),
+            ja3: None,
+        }));
+        assert_eq!(
+            key_of(&RateLimitKey::Ja4, &req, &with),
+            b"j:t13d1516h2_8daaf6152771_e5627efa2ab1"
         );
     }
 

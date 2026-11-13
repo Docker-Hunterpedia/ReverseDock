@@ -241,19 +241,23 @@ impl Middleware for ApiKey {
         // Shape and checksum first: a typo or a made-up key costs no lookup.
         let Some((id, secret)) = rdock_credentials::API_KEY.parse(&presented) else {
             tracing::debug!(middleware = %self.name, "API key refused: malformed");
+            cx.auth_failed = true;
             return self.unauthorized(true);
         };
         let hash = rdock_credentials::hash_secret(secret);
         let Some(stored) = self.index.key(id) else {
             tracing::debug!(middleware = %self.name, key_id = %id, "API key refused: unknown");
+            cx.auth_failed = true;
             return self.unauthorized(true);
         };
         if !rdock_credentials::hashes_match(&hash, &stored.hash) {
             tracing::debug!(middleware = %self.name, key_id = %id, "API key refused: wrong secret");
+            cx.auth_failed = true;
             return self.unauthorized(true);
         }
         if stored.expires.is_some_and(|at| now() >= at) {
             tracing::debug!(middleware = %self.name, key_id = %id, "API key refused: expired");
+            cx.auth_failed = true;
             return self.unauthorized(true);
         }
         let consumer = stored.consumer.clone();

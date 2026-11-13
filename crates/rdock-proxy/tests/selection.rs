@@ -38,6 +38,7 @@ fn runtime(yaml: &str, registry: &rdock_balancer::Registry) -> Runtime {
             plugins: &rdock_plugin_api::Registry::new(),
             metrics: None,
             quotas: None,
+            abuse: None,
         },
     )
     .runtime

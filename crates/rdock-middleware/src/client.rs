@@ -309,8 +309,19 @@ pub fn load_client_cert(
     }
     let key = PrivateKeyDer::from_pem_file(key_file)
         .map_err(|e| format!("cannot read the key `{}`: {e}", key_file.display()))?;
-    rustls::crypto::ring::sign::any_supported_type(&key)
+    let signer = rustls::crypto::ring::sign::any_supported_type(&key)
         .map_err(|e| format!("unusable key `{}`: {e}", key_file.display()))?;
+    // A certificate and key rotated as two files are briefly a mismatched pair; refusing it
+    // keeps the running pair until the second file lands and the next reload succeeds.
+    rustls::sign::CertifiedKey::new(chain.clone(), signer)
+        .keys_match()
+        .map_err(|e| {
+            format!(
+                "the key `{}` does not belong to the certificate `{}` ({e}); if both are being replaced, the reload is retried when the other file changes",
+                key_file.display(),
+                cert_file.display()
+            )
+        })?;
     let key = key.secret_der().to_vec();
     if PrivateKeyDer::try_from(key.clone()).is_err() {
         return Err(format!(

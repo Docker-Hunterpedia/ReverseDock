@@ -23,6 +23,7 @@ httpdate.workspace = true
 opentelemetry.workspace = true
 ring.workspace = true
 ipnet.workspace = true
+maxminddb.workspace = true
 pingora.workspace = true
 proxy-header.workspace = true
 rdock-balancer.workspace = true

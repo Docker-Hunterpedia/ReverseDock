@@ -205,6 +205,7 @@ fn data_plane(
     // Disk cache stores without a `path` live under `<data dir>/cache/<name>` (F-WEB-03).
     plane.set_cache_dir(data_dir.join("cache"));
     plane.set_quota_dir(data_dir.join("quota"));
+    plane.set_abuse_dir(data_dir.join("abuse"));
     plane
         .open_spool(&spool)
         .with_context(|| format!("opening the spool directory {}", spool.display()))?;
@@ -279,6 +280,8 @@ impl Writers {
         }
         let quotas = self.plane.quotas().clone();
         let _ = tokio::task::spawn_blocking(move || quotas.flush_all()).await;
+        let abuse = self.plane.abuse().clone();
+        let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
         self.plane.pause_quota_writes(true);
     }
 }
@@ -457,6 +460,8 @@ async fn serve(
             for (_, counter) in plane.quotas().counters() {
                 counter.reread();
             }
+            // Bans the old process wrote up to `go` (it stopped writing then).
+            plane.abuse().reread();
             writers.start().await;
             engine.certificates_loaded(Duration::from_secs(5)).await;
             plane.set_accepting(true);

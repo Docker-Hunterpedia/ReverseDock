@@ -16,6 +16,7 @@ pub mod cloudflare_access;
 pub mod dns_contract;
 pub mod fake_api;
 pub mod haproxy;
+pub mod mmdb;
 pub mod oidc;
 pub mod origin;
 pub mod pebble;

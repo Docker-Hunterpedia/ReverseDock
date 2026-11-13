@@ -110,6 +110,7 @@ impl Middleware for BasicAuth {
             return self.unauthorized();
         };
         let Some(hash) = self.users.get(&user).cloned() else {
+            cx.auth_failed = true;
             return self.unauthorized();
         };
         let key = self.cache.key(&user, &password, &hash);
@@ -125,6 +126,7 @@ impl Middleware for BasicAuth {
             checked
         };
         if !valid {
+            cx.auth_failed = true;
             return self.unauthorized();
         }
         if self.remove_header {

@@ -61,6 +61,7 @@ pub fn explain(runtime: &Runtime, listener: &str, request: &Request) -> Result<V
         headers: &request.headers,
         query: &query,
         client_ip,
+        fingerprint: None,
     };
     let mut winner = None;
     let routes: Vec<Value> = listener

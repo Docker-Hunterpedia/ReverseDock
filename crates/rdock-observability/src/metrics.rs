@@ -153,6 +153,22 @@ pub struct Metrics {
     /// Failed requests to OIDC providers by middleware and operation (`discovery`, `jwks`,
     /// `token`, `refresh`).
     pub oidc_provider_errors: IntCounterVec,
+    /// `rdock_geoip_build_timestamp_seconds{database}`: build time of each GeoIP database
+    /// (`country`, `asn`) from its metadata.
+    pub geoip_build: IntGaugeVec,
+    /// `rdock_geoip_database_age_seconds{database}`: age of each GeoIP database, computed when
+    /// the metrics are read.
+    pub geoip_age: IntGaugeVec,
+    geoip_epochs: std::sync::Arc<std::sync::Mutex<std::collections::BTreeMap<String, u64>>>,
+    /// `rdock_abuse_actions_total{middleware,action}`: requests an `abuse` middleware denied
+    /// (`deny`), held (`tarpit`) or tagged (`tag`) because their key is banned, and bans
+    /// started (`ban`).
+    pub abuse_actions: IntCounterVec,
+    /// `rdock_abuse_bans`: keys banned right now, all `abuse` middlewares together.
+    pub abuse_bans: IntGauge,
+    /// `rdock_abuse_bans_refused_total{middleware}`: bans not started because the ban list
+    /// was full.
+    pub abuse_bans_refused: IntCounterVec,
 }
 
 /// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
@@ -564,6 +580,37 @@ impl Metrics {
             "OIDC logins completed or refused, by middleware and result.",
             &["middleware", "result"],
         )?;
+        let geoip_build = gauges(
+            &registry,
+            "rdock_geoip_build_timestamp_seconds",
+            "Build time of each GeoIP database, from its metadata.",
+            &["database"],
+        )?;
+        let geoip_age = gauges(
+            &registry,
+            "rdock_geoip_database_age_seconds",
+            "Age of each GeoIP database (now minus its build time).",
+            &["database"],
+        )?;
+        let abuse_actions = counters(
+            &registry,
+            "rdock_abuse_actions_total",
+            "Requests of banned keys denied, held or tagged, and bans started, by abuse middleware.",
+            &["middleware", "action"],
+        )?;
+        let abuse_bans = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_abuse_bans",
+                "Keys banned by abuse middlewares right now.",
+            ),
+        )?;
+        let abuse_bans_refused = counters(
+            &registry,
+            "rdock_abuse_bans_refused_total",
+            "Bans not started because the ban list was full.",
+            &["middleware"],
+        )?;
         let oidc_refreshes = counters(
             &registry,
             "rdock_oidc_refreshes_total",
@@ -580,6 +627,12 @@ impl Metrics {
             quota_overflows,
             oidc_logins,
             oidc_refreshes,
+            geoip_build,
+            geoip_age,
+            geoip_epochs: std::sync::Arc::default(),
+            abuse_actions,
+            abuse_bans,
+            abuse_bans_refused,
             oidc_provider_errors,
             validation_requests,
             transform_skipped,
@@ -684,9 +737,30 @@ impl Metrics {
             .inc();
     }
 
+    /// Records the build time of the GeoIP database in `role` (`country`, `asn`).
+    pub fn set_geoip_build(&self, role: &str, epoch: u64) {
+        self.geoip_build
+            .with_label_values(&[role])
+            .set(i64::try_from(epoch).unwrap_or(i64::MAX));
+        if let Ok(mut epochs) = self.geoip_epochs.lock() {
+            epochs.insert(role.to_owned(), epoch);
+        }
+    }
+
     /// The Prometheus text exposition of every metric.
     #[must_use]
     pub fn render(&self) -> String {
+        if let Ok(epochs) = self.geoip_epochs.lock() {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs();
+            for (role, epoch) in epochs.iter() {
+                self.geoip_age
+                    .with_label_values(&[role])
+                    .set(i64::try_from(now.saturating_sub(*epoch)).unwrap_or(i64::MAX));
+            }
+        }
         let mut out = Vec::new();
         // Encoding gathered metric families into a Vec cannot fail.
         let _ = TextEncoder::new().encode(&self.registry.gather(), &mut out);

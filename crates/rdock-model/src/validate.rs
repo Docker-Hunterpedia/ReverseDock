@@ -80,6 +80,7 @@ impl Config {
         v.check_observability();
         v.check_providers();
         v.check_locality();
+        v.check_edge();
         v.out
     }
 }
@@ -457,6 +458,7 @@ impl Validator<'_> {
             self.check_route_consumer_keys(&path, route);
             self.check_route_oidc(&path, route, expr.as_ref());
             self.check_route_validation(&path, route);
+            self.check_route_edge(&path, route, expr.as_ref());
             if let Some(mirror) = &route.mirror {
                 let p = format!("{path}.mirror");
                 self.check_reference(
@@ -1069,7 +1071,9 @@ impl Validator<'_> {
                 Middleware::Validate(v) => self.check_validate(&path, v),
                 Middleware::Transform(t) => self.check_transform(&path, t),
                 Middleware::Oidc(o) => self.check_oidc(&path, o),
+                Middleware::Abuse(a) => self.check_abuse(&path, a),
                 Middleware::ClientCert(c) => {
+                    self.check_client_cert_identity(&path, c);
                     for (i, pattern) in c.allow.iter().enumerate() {
                         if pattern.trim().is_empty() {
                             self.error(
@@ -2539,6 +2543,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 
 mod balancing;
 mod cache;
+mod edge;
 mod extensions;
 mod gateway;
 mod http2;

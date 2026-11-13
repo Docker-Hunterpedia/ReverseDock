@@ -309,7 +309,8 @@ fn check_arity(spec: &Spec, found: usize, start: usize) -> Result<(), ParseError
     let expected = match (spec.min_args, spec.max_args) {
         (1, 1) => "1",
         (2, 2) => "2",
-        _ => "1 or 2",
+        (1, 2) => "1 or 2",
+        _ => "1 to 64",
     };
     Err(ParseError::new(
         start,

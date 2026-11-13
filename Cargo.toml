@@ -133,6 +133,11 @@ subtle = "2.6.1"
 # types (2.0.5, already built for rust-embed).
 cap-std = "4.0.3"
 http-range-header = "0.4.2"
+# GeoIP (H-SEC-04, ADR-0031): MaxMind DB reader, ISC. 0.32.0 (2026-09-12) rather than 0.33.0
+# (2026-11-12, one day old on 2026-11-13, whose only change is newtype deserialization). Both have
+# the decoding resource limits added in 0.31. No `mmap` (the file is read into memory, no
+# `unsafe` and no truncation hazard while a file is replaced) and no `unsafe-str-decode`.
+maxminddb = { version = "=0.32.0", default-features = false }
 mime_guess = "2.0.5"
 # Tracing (ADR-0022): OTLP over HTTP/protobuf through our own hyper-rustls client; no tonic, no reqwest.
 opentelemetry = { version = "0.33.1", default-features = false, features = ["trace"] }

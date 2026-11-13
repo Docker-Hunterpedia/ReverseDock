@@ -6,3 +6,45 @@ This product is licensed under the Apache License, Version 2.0 (see LICENSE).
 ReverseDock is built on Cloudflare Pingora (https://github.com/cloudflare/pingora),
 licensed under the Apache License, Version 2.0. Notices for all third-party
 dependencies are generated for each release and shipped with the release artifacts.
+
+The JA4 TLS client fingerprint (crates/rdock-tls/src/fingerprint.rs) is implemented
+from FoxIO's specification (https://github.com/FoxIO-LLC/ja4, technical_details/JA4.md
+at commit 8eda4ce45426b639774158f7ab8bc873af69237f). JA4 (TLS client fingerprinting)
+is licensed under the BSD 3-Clause License:
+
+  Copyright (c) 2026 FoxIO
+  All rights reserved.
+  Software: JA4 (TLS client fingerprinting)
+
+  Redistribution and use in source and binary forms, with or without modification,
+  are permitted provided that the following conditions are met:
+
+  * Redistributions of source code must retain the above copyright notice, this list
+    of conditions and the following disclaimer.
+
+  * Redistributions in binary form must reproduce the above copyright notice, this
+    list of conditions and the following disclaimer in the documentation and/or other
+    materials provided with the distribution.
+
+  * Neither the name of FoxIO nor the names of its contributors may be used to
+    endorse or promote products derived from this software without specific prior
+    written permission.
+
+  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY
+  EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES
+  OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT
+  SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT,
+  INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED
+  TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR
+  BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
+  CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN
+  ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH
+  DAMAGE.
+
+Only JA4 is implemented. The rest of the JA4+ family (JA4S, JA4H, JA4X, JA4T and
+others) is under the FoxIO License 1.1 and is not part of ReverseDock. "JA4" is a
+trademark of FoxIO.
+
+The optional JA3 fingerprint is implemented from the description of JA3 by
+Salesforce (https://github.com/salesforce/ja3), Copyright (c) 2017, Salesforce.com,
+Inc., licensed under the BSD 3-Clause License.

@@ -442,6 +442,12 @@ type Unauthenticated = ErrorBody
 // WrongStage A refusal or failure.
 type WrongStage = ErrorBody
 
+// RemoveBanParams defines parameters for RemoveBan.
+type RemoveBanParams struct {
+	// Middleware Only this `abuse` middleware's ban; every middleware's when omitted.
+	Middleware *string `form:"middleware,omitempty" json:"middleware,omitempty"`
+}
+
 // AuditParams defines parameters for Audit.
 type AuditParams struct {
 	// Limit How many records, 1 to 1000; 100 by default.
@@ -750,6 +756,20 @@ type ClientInterface interface {
 	//
 	// Corresponds with GET /api/openapi.json (the `OpenapiDocument` operationId).
 	OpenapiDocument(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListBans The keys banned on this instance now
+	//
+	// The keys banned on this instance now.
+	//
+	// Corresponds with GET /api/v1/abuse/bans (the `ListBans` operationId).
+	ListBans(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RemoveBan (operator): lifts the ban of `key` (as listed, e.g
+	//
+	// (operator): lifts the ban of `key` (as listed, e.g. `ip:192.0.2.7` or `ip:2001:db8:1:2::/64`) in every `abuse` middleware, or in `?middleware=` only. Audited. `404` when no such ban exists.
+	//
+	// Corresponds with DELETE /api/v1/abuse/bans/{key} (the `RemoveBan` operationId).
+	RemoveBan(ctx context.Context, key string, params *RemoveBanParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Audit Recent audit records, newest first
 	//
@@ -1458,6 +1478,40 @@ type ClientInterface interface {
 // Corresponds with GET /api/openapi.json (the `OpenapiDocument` operationId).
 func (c *Client) OpenapiDocument(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewOpenapiDocumentRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListBans The keys banned on this instance now
+//
+// The keys banned on this instance now.
+//
+// Corresponds with GET /api/v1/abuse/bans (the `ListBans` operationId).
+func (c *Client) ListBans(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListBansRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RemoveBan (operator): lifts the ban of `key` (as listed, e.g
+//
+// (operator): lifts the ban of `key` (as listed, e.g. `ip:192.0.2.7` or `ip:2001:db8:1:2::/64`) in every `abuse` middleware, or in `?middleware=` only. Audited. `404` when no such ban exists.
+//
+// Corresponds with DELETE /api/v1/abuse/bans/{key} (the `RemoveBan` operationId).
+func (c *Client) RemoveBan(ctx context.Context, key string, params *RemoveBanParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRemoveBanRequest(c.Server, key, params)
 	if err != nil {
 		return nil, err
 	}
@@ -3057,6 +3111,94 @@ func NewOpenapiDocumentRequest(server string) (*http.Request, error) {
 	}
 
 	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListBansRequest constructs an http.Request for the ListBans method
+func NewListBansRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/abuse/bans")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRemoveBanRequest constructs an http.Request for the RemoveBan method
+func NewRemoveBanRequest(server string, key string, params *RemoveBanParams) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "key", key, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/abuse/bans/%s", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		// queryValues collects non-styled parameters (passthrough, JSON)
+		// that are safe to round-trip through url.Values.Encode().
+		queryValues := queryURL.Query()
+		// rawQueryFragments collects pre-encoded query fragments from
+		// styled parameters, preserving literal commas as delimiters
+		// per the OpenAPI spec (e.g. "color=blue,black,brown").
+		var rawQueryFragments []string
+
+		if params.Middleware != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "middleware", *params.Middleware, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else {
+				for _, qp := range strings.Split(queryFrag, "&") {
+					rawQueryFragments = append(rawQueryFragments, qp)
+				}
+			}
+
+		}
+
+		if encoded := queryValues.Encode(); encoded != "" {
+			rawQueryFragments = append(rawQueryFragments, encoded)
+		}
+		queryURL.RawQuery = strings.Join(rawQueryFragments, "&")
+	}
+
+	req, err := http.NewRequest(http.MethodDelete, queryURL.String(), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -5716,6 +5858,24 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/openapi.json (the `OpenapiDocument` operationId).
 	OpenapiDocumentWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*OpenapiDocumentResponse, error)
 
+	// ListBansWithResponse The keys banned on this instance now
+	//
+	// The keys banned on this instance now.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/abuse/bans (the `ListBans` operationId).
+	ListBansWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBansResponse, error)
+
+	// RemoveBanWithResponse (operator): lifts the ban of `key` (as listed, e.g
+	//
+	// (operator): lifts the ban of `key` (as listed, e.g. `ip:192.0.2.7` or `ip:2001:db8:1:2::/64`) in every `abuse` middleware, or in `?middleware=` only. Audited. `404` when no such ban exists.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with DELETE /api/v1/abuse/bans/{key} (the `RemoveBan` operationId).
+	RemoveBanWithResponse(ctx context.Context, key string, params *RemoveBanParams, reqEditors ...RequestEditorFn) (*RemoveBanResponse, error)
+
 	// AuditWithResponse Recent audit records, newest first
 	//
 	// Recent audit records, newest first. Admins only.
@@ -6563,6 +6723,151 @@ func (r OpenapiDocumentResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r OpenapiDocumentResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListBansResponse429Headers the declared response headers of an HTTP 429 response for ListBans
+type ListBansResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListBansResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListBansResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListBansResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListBansResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListBansResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListBansResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListBansResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListBansResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListBansResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListBansResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RemoveBanResponse429Headers the declared response headers of an HTTP 429 response for RemoveBan
+type RemoveBanResponse429Headers struct {
+	RetryAfter *int
+}
+
+type RemoveBanResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *map[string]interface{}
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *RemoveBanResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RemoveBanResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RemoveBanResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RemoveBanResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RemoveBanResponse) GetJSON404() *map[string]interface{} {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r RemoveBanResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r RemoveBanResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RemoveBanResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RemoveBanResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RemoveBanResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -11322,6 +11627,36 @@ func (c *ClientWithResponses) OpenapiDocumentWithResponse(ctx context.Context, r
 	return ParseOpenapiDocumentResponse(rsp)
 }
 
+// ListBansWithResponse The keys banned on this instance now
+//
+// The keys banned on this instance now.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/abuse/bans (the `ListBans` operationId).
+func (c *ClientWithResponses) ListBansWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListBansResponse, error) {
+	rsp, err := c.ListBans(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListBansResponse(rsp)
+}
+
+// RemoveBanWithResponse (operator): lifts the ban of `key` (as listed, e.g
+//
+// (operator): lifts the ban of `key` (as listed, e.g. `ip:192.0.2.7` or `ip:2001:db8:1:2::/64`) in every `abuse` middleware, or in `?middleware=` only. Audited. `404` when no such ban exists.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with DELETE /api/v1/abuse/bans/{key} (the `RemoveBan` operationId).
+func (c *ClientWithResponses) RemoveBanWithResponse(ctx context.Context, key string, params *RemoveBanParams, reqEditors ...RequestEditorFn) (*RemoveBanResponse, error) {
+	rsp, err := c.RemoveBan(ctx, key, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRemoveBanResponse(rsp)
+}
+
 // AuditWithResponse Recent audit records, newest first
 //
 // Recent audit records, newest first. Admins only.
@@ -12674,6 +13009,133 @@ func ParseOpenapiDocumentResponse(rsp *http.Response) (*OpenapiDocumentResponse,
 	switch {
 	case rsp.StatusCode == 429:
 		var headers OpenapiDocumentResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListBansResponse parses an HTTP response from a ListBansWithResponse call
+func ParseListBansResponse(rsp *http.Response) (*ListBansResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListBansResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListBansResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRemoveBanResponse parses an HTTP response from a RemoveBanWithResponse call
+func ParseRemoveBanResponse(rsp *http.Response) (*RemoveBanResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RemoveBanResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers RemoveBanResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

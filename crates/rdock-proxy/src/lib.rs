@@ -9,6 +9,7 @@ mod errorpage;
 pub mod explain;
 pub mod forwarded;
 pub mod gate;
+pub mod geoip;
 mod health;
 pub mod listener;
 mod proxy;

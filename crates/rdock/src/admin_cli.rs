@@ -170,6 +170,24 @@ pub(crate) struct ConsumerQuotaReset {
 }
 
 #[derive(Subcommand)]
+pub(crate) enum BansCommand {
+    /// List the keys banned on this instance now.
+    List(CtlArgs),
+    /// Lift a ban (the key as `rdock bans list` prints it).
+    Remove(BanRemove),
+}
+
+#[derive(Args)]
+pub(crate) struct BanRemove {
+    key: String,
+    /// Only in this `abuse` middleware.
+    #[arg(long)]
+    middleware: Option<String>,
+    #[command(flatten)]
+    ctl: CtlArgs,
+}
+
+#[derive(Subcommand)]
 pub(crate) enum KeysCommand {
     /// Mint an API key for a consumer and print it once.
     Create(KeyCreate),
@@ -624,6 +642,48 @@ pub(crate) fn consumers(command: &ConsumersCommand) -> anyhow::Result<ExitCode> 
             lines([format!(
                 "reset {} counter(s)",
                 text(&answer.json()["reset"])
+            )])
+        }
+    }
+}
+
+pub(crate) fn bans(command: &BansCommand) -> anyhow::Result<ExitCode> {
+    match command {
+        BansCommand::List(ctl) => {
+            let answer = expect(call(ctl, &Call::new("GET", "/api/v1/abuse/bans"))?, &[200])?;
+            let out: Vec<String> = answer.json()["bans"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|b| {
+                    format!(
+                        "{:<20} {:<40} until {} ({}s left)",
+                        text(&b["middleware"]),
+                        text(&b["key"]),
+                        text(&b["until"]),
+                        text(&b["remaining_seconds"])
+                    )
+                })
+                .collect();
+            if out.is_empty() {
+                return lines(["no bans".to_owned()]);
+            }
+            lines(out)
+        }
+        BansCommand::Remove(args) => {
+            let mut path = format!("/api/v1/abuse/bans/{}", segment(&args.key));
+            if let Some(m) = &args.middleware {
+                path.push_str("?middleware=");
+                path.push_str(&segment(m));
+            }
+            let answer = expect(call(&args.ctl, &Call::new("DELETE", &path))?, &[200, 404])?;
+            if answer.status == 404 {
+                bail!("no ban for `{}`", args.key);
+            }
+            lines([format!(
+                "lifted {} ban(s) of {}",
+                text(&answer.json()["removed"]),
+                args.key
             )])
         }
     }

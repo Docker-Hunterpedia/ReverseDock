@@ -80,6 +80,7 @@ impl UdpRouteRuntime {
             rule.matches(&TcpFacts {
                 hello: None,
                 client_ip: client,
+                fingerprint: None,
             })
         })
     }

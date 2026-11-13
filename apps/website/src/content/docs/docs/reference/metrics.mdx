@@ -374,6 +374,36 @@ and `breaker_open` follow `on_error`.
 `reason`: `not_allowed` (not in `response_headers`), `invalid` (not a valid header) or
 `too_late` (the verdict came with the body, after the request head had gone to the backend).
 
+## Edge security <Status planned="v0.9" />
+
+### `rdock_abuse_actions_total`
+
+**Counter.** What `abuse` middlewares did. Labels: `middleware` and `action`: `ban` (a key was
+banned), `deny` (a banned request answered `403`, also when the tarpit was full), `tarpit` (held,
+then `403`) or `tag` (served and marked). See [Abuse protection](/docs/guides/abuse-protection/).
+
+### `rdock_abuse_bans`
+
+**Gauge.** Keys banned right now, all `abuse` middlewares together; updated every second.
+
+### `rdock_abuse_bans_refused_total`
+
+**Counter.** Bans not started because the ban list was full (`max_bans`). Label: `middleware`.
+Existing bans are never evicted to make room.
+
+### `rdock_geoip_build_timestamp_seconds`
+
+**Gauge.** Build time of each GeoIP database from its metadata (`build_epoch`), in Unix seconds.
+Label: `database` (`country` or `asn`). See [GeoIP](/docs/guides/geoip/).
+
+### `rdock_geoip_database_age_seconds`
+
+**Gauge.** Age of each GeoIP database (now minus its build time), computed when the metrics are
+read. Label: `database`. Alert before it reaches `geoip.max_age`.
+
+TLS fingerprints and countries are deliberately not labels: their values are unbounded or
+personal.
+
 ## Configuration
 
 ### `rdock_config_generation`

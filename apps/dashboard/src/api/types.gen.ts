@@ -273,6 +273,15 @@ export type UserView = {
 };
 
 /**
+ * What a banned key gets.
+ */
+export type RdockAbuseAction = 'deny' | 'tarpit' | 'tag';
+
+export type RdockAbuseEvent = number | string;
+
+export type RdockAbuseKey = string;
+
+/**
  * Access log settings.
  */
 export type RdockAccessLog = {
@@ -1112,6 +1121,11 @@ export type RdockConfig = {
      */
     defaults?: RdockDefaults;
     /**
+     * GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
+     * database is bundled or downloaded.
+     */
+    geoip?: RdockGeoIp | null;
+    /**
      * Start-up and shutdown behaviour.
      */
     lifecycle?: RdockLifecycle;
@@ -1203,7 +1217,7 @@ export type RdockConfig = {
         [key: string]: RdockCertificate;
     } | {
         [key: string]: RdockConsumer;
-    } | RdockDefaults | RdockLifecycle | {
+    } | RdockDefaults | RdockGeoIp | null | RdockLifecycle | {
         [key: string]: RdockListener;
     } | RdockLocality | null | {
         [key: string]: RdockMiddleware;
@@ -1514,6 +1528,55 @@ export type RdockFileProvider = {
  * A number, or `unlimited` to remove the limit.
  */
 export type RdockFloodLimit = number | 'unlimited';
+
+/**
+ * GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,
+ * DB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into
+ * memory and read again when they change.
+ */
+export type RdockGeoIp = {
+    /**
+     * An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.
+     */
+    asn_database?: string | null;
+    /**
+     * A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that
+     * also carries ASNs (IPinfo Lite) gives `ClientASN` as well.
+     */
+    database?: string | null;
+    /**
+     * Opt-in access-log fields; both off by default, since a location tied to an IP address
+     * is personal data in many jurisdictions.
+     */
+    log?: RdockGeoIpLog;
+    /**
+     * The oldest database build accepted, by the build time in its metadata. Default 30 days:
+     * the GeoLite End User License Agreement (updated 2026-02-12) requires deleting a
+     * version within thirty days of a newer release.
+     */
+    max_age?: RdockDuration;
+    /**
+     * What an older database does: `warn` (the default) logs a warning and keeps using it;
+     * `refuse` refuses to load it, so the configuration that needs it is refused.
+     */
+    on_stale?: RdockOnStale;
+    [key: string]: unknown | string | null | string | null | RdockGeoIpLog | RdockDuration | RdockOnStale | undefined;
+};
+
+/**
+ * GeoIP fields in the access log.
+ */
+export type RdockGeoIpLog = {
+    /**
+     * Log `asn`.
+     */
+    asn?: boolean;
+    /**
+     * Log `country` (ISO 3166-1 alpha-2).
+     */
+    country?: boolean;
+    [key: string]: unknown | boolean | undefined;
+};
 
 /**
  * Google Cloud DNS (`type: google_cloud_dns`).
@@ -2123,6 +2186,12 @@ export type RdockListenerTls = {
      */
     client_auth?: RdockClientAuth | null;
     /**
+     * TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each
+     * connection's ClientHello. Unset (the default), no ClientHello is read for it and
+     * `ClientFingerprint`, the `ja4` keys and the access-log fields stay empty.
+     */
+    fingerprint?: RdockTlsFingerprint | null;
+    /**
      * `https` listeners: TLS handshakes in progress at once. While the bound is reached, new
      * connections wait in the listen backlog instead of taking CPU from established ones.
      * Unset: no bound (ADR-0031).
@@ -2142,7 +2211,7 @@ export type RdockListenerTls = {
      * every listener of the same security class and kept across reloads and binary upgrades.
      */
     tickets?: RdockTlsTickets | null;
-    [key: string]: unknown | Array<string> | RdockClientAuth | null | number | null | RdockTlsPolicy | RdockTlsSessionCache | null | RdockTlsTickets | null | undefined;
+    [key: string]: unknown | Array<string> | RdockClientAuth | null | RdockTlsFingerprint | null | number | null | RdockTlsPolicy | RdockTlsSessionCache | null | RdockTlsTickets | null | undefined;
 };
 
 /**
@@ -2689,18 +2758,54 @@ export type RdockMiddleware = {
     /**
      * Names a certificate must have one of: its common name or a DNS, URI or email SAN.
      * `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+     * The typed lists below check one field each and are safer: a URI pattern there cannot
+     * be satisfied by a common name that carries the same text.
      */
     allow?: Array<string>;
+    /**
+     * DNS SANs, one must match (`*` globs).
+     */
+    dns?: Array<string>;
+    /**
+     * Email SANs, one must match (`*` globs).
+     */
+    emails?: Array<string>;
     /**
      * Headers that pass the identity to the backend.
      */
     forward?: RdockClientCertForward;
     /**
+     * Subject organizations (O), one must match (`*` globs).
+     */
+    organizations?: Array<string>;
+    /**
      * Answer `403` to requests without a verified client certificate.
      */
     required?: boolean;
+    /**
+     * Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
+     */
+    serials?: Array<string>;
+    /**
+     * SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
+     */
+    sha256?: Array<string>;
+    /**
+     * SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the
+     * trust domains, and its ID one of `ids` or under one of `id_prefixes`.
+     */
+    spiffe?: RdockSpiffeRules | null;
+    /**
+     * Subject common names, one must match (`*` globs). Every typed list that is set must
+     * match, together with `allow`.
+     */
+    subjects?: Array<string>;
     type: 'client_cert';
-    [key: string]: unknown | Array<string> | RdockClientCertForward | boolean | 'client_cert' | undefined;
+    /**
+     * URI SANs, one must match (`*` globs).
+     */
+    uris?: Array<string>;
+    [key: string]: unknown | Array<string> | Array<string> | Array<string> | RdockClientCertForward | Array<string> | boolean | Array<string> | Array<string> | RdockSpiffeRules | null | Array<string> | 'client_cert' | Array<string> | undefined;
 } | {
     type: 'grpc_web';
     [key: string]: unknown | 'grpc_web';
@@ -3409,6 +3514,57 @@ export type RdockMiddleware = {
      * `deny` always answers `401`.
      */
     unauthenticated?: RdockUnauthenticated;
+} | {
+    /**
+     * What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`
+     * (held for `tarpit.delay`, then denied) or `tag` (served; the access log and later
+     * middlewares see `abuse: tagged`).
+     */
+    action?: RdockAbuseAction;
+    /**
+     * How long a ban lasts. Default 10m.
+     */
+    ban?: RdockDuration;
+    /**
+     * What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an
+     * authentication middleware refused the credentials). Default `[401, 403]`.
+     */
+    events?: Array<RdockAbuseEvent>;
+    /**
+     * Client networks never counted or banned. Default the loopback networks; the
+     * `security.trusted_proxies` networks are always added, so a proxy whose clients are not
+     * resolved can never ban itself, and with it everyone behind it.
+     */
+    exempt?: Array<RdockIpNetwork>;
+    /**
+     * What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or
+     * `header:<Name>`. Requests without a consumer or fingerprint count by client address.
+     */
+    key?: RdockAbuseKey;
+    /**
+     * Bans at once. The ban list is separate from the counters and nothing evicts a ban
+     * before it ends: when it is full, new bans are refused and counted in
+     * `rdock_abuse_bans_refused_total`. Default 10000.
+     */
+    max_bans?: number;
+    /**
+     * Keys counted at once; past it, the oldest counters are dropped. Default 100000.
+     */
+    max_keys?: number;
+    /**
+     * `action: tarpit`.
+     */
+    tarpit?: RdockTarpit;
+    /**
+     * Events within one `window` that start a ban. Default 20.
+     */
+    threshold?: number;
+    type: 'abuse';
+    /**
+     * The counting window. Default 1m.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | RdockAbuseAction | RdockDuration | Array<RdockAbuseEvent> | Array<RdockIpNetwork> | RdockAbuseKey | number | RdockTarpit | 'abuse' | undefined;
 };
 
 /**
@@ -3544,6 +3700,11 @@ export type RdockOnNonJson = 'pass' | 'reject';
  * What `transform` does when a request patch cannot be applied.
  */
 export type RdockOnPatchError = 'reject' | 'pass';
+
+/**
+ * What a GeoIP database older than `max_age` does.
+ */
+export type RdockOnStale = 'warn' | 'refuse';
 
 /**
  * Outlier detectors (Envoy's outlier detection). Failures are those of passive health:
@@ -4217,6 +4378,37 @@ export type RdockSlowStartOn = 'recovery' | 'join';
 export type RdockSmtpTls = 'starttls' | 'implicit' | 'none';
 
 /**
+ * SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and
+ * `SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI
+ * SAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and
+ * may not sign certificates or CRLs. The chain itself is verified by the listener's
+ * `client_auth`, whose CA bundle must be the trust domain's.
+ */
+export type RdockSpiffeRules = {
+    /**
+     * Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,
+     * metering and the access log). Its issuer is `spiffe://<trust domain>`, so it never
+     * shares counters with an API-key or token consumer of the same name. Off by default.
+     */
+    consumer?: boolean;
+    /**
+     * SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`
+     * accepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor
+     * `id_prefixes`, any ID of the trust domains is accepted.
+     */
+    id_prefixes?: Array<string>;
+    /**
+     * SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
+     */
+    ids?: Array<string>;
+    /**
+     * Trust domains accepted, e.g. `prod.example.com`. Required.
+     */
+    trust_domains?: Array<string>;
+    [key: string]: unknown | boolean | Array<string> | Array<string> | Array<string> | undefined;
+};
+
+/**
  * One target of a weighted split.
  */
 export type RdockSplitTarget = {
@@ -4425,6 +4617,23 @@ export type RdockSymlinkPolicy = 'none' | 'within_root' | 'all';
 export type RdockSyslogTransport = 'udp' | 'tcp' | 'tls';
 
 /**
+ * How `action: tarpit` holds requests.
+ */
+export type RdockTarpit = {
+    /**
+     * How long a request is held before the `403`. Default 5s, at most 60s.
+     */
+    delay?: RdockDuration;
+    /**
+     * Requests held at once, all keys together; past it, banned requests are denied at once
+     * (holding connections costs the proxy too: HAProxy's manual warns that a tarpit "can
+     * make things worse"). Default 100.
+     */
+    max_held?: number;
+    [key: string]: unknown | RdockDuration | number | undefined;
+};
+
+/**
  * TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's
  * (Linux: 7200 s idle, 75 s between probes, 9 probes).
  */
@@ -4555,6 +4764,33 @@ export type RdockTimeouts = {
      */
     write?: RdockDuration;
     [key: string]: unknown | RdockDuration | undefined;
+};
+
+/**
+ * Which TLS client fingerprints an `https` listener computes, and whether backends see them.
+ * The values are computed from the outer ClientHello (with Encrypted Client Hello the inner
+ * one is never seen), only for connections this listener terminates.
+ */
+export type RdockTlsFingerprint = {
+    /**
+     * A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent
+     * by the client is always removed. Unset (the default): backends do not see it.
+     */
+    header?: string | null;
+    /**
+     * JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110
+     * randomises the extension order that JA3 hashes, one browser has many JA3 values.
+     */
+    ja3?: boolean;
+    /**
+     * A request header that carries the JA3 value (needs `ja3: true`).
+     */
+    ja3_header?: string | null;
+    /**
+     * JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.
+     */
+    ja4?: boolean;
+    [key: string]: unknown | string | null | boolean | string | null | undefined;
 };
 
 /**
@@ -5069,6 +5305,92 @@ export type OpenapiDocumentResponses = {
 };
 
 export type OpenapiDocumentResponse = OpenapiDocumentResponses[keyof OpenapiDocumentResponses];
+
+export type ListBansData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/abuse/bans';
+};
+
+export type ListBansErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListBansError = ListBansErrors[keyof ListBansErrors];
+
+export type ListBansResponses = {
+    /**
+     * `bans`: middleware, key, since and until (RFC 3339), remaining_seconds
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListBansResponse = ListBansResponses[keyof ListBansResponses];
+
+export type RemoveBanData = {
+    body?: never;
+    path: {
+        /**
+         * The banned key, URL-encoded
+         */
+        key: string;
+    };
+    query?: {
+        /**
+         * Only this `abuse` middleware's ban; every middleware's when omitted.
+         */
+        middleware?: string;
+    };
+    url: '/api/v1/abuse/bans/{key}';
+};
+
+export type RemoveBanErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such ban
+     */
+    404: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type RemoveBanError = RemoveBanErrors[keyof RemoveBanErrors];
+
+export type RemoveBanResponses = {
+    /**
+     * `removed`: how many bans were lifted
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type RemoveBanResponse = RemoveBanResponses[keyof RemoveBanResponses];
 
 export type AuditData = {
     body?: never;

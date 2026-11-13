@@ -65,7 +65,20 @@ pub enum Matcher {
     HostSniRegexp(String),
     /// `ALPN(protocol)` (TCP).
     Alpn(String),
+    /// `ClientFingerprint(value, ...)`: the connection's JA4 (or JA3) equals one of the values.
+    /// Never matches a connection without a fingerprint (H-SEC-03).
+    ClientFingerprint(Vec<String>),
+    /// `ClientCountry(code, ...)`: ISO 3166-1 alpha-2 codes. An address the GeoIP database
+    /// does not know never matches (H-SEC-04).
+    ClientCountry(Vec<String>),
+    /// `ClientContinent(code, ...)`: `AF`, `AN`, `AS`, `EU`, `NA`, `OC`, `SA`.
+    ClientContinent(Vec<String>),
+    /// `ClientASN(number, ...)`: autonomous system numbers.
+    ClientAsn(Vec<String>),
 }
+
+/// Most values a list matcher (`ClientCountry`, …) takes.
+pub(crate) const MAX_LIST_ARGS: usize = 64;
 
 /// Name, arity and constructor of a matcher; the parser's single source of truth.
 pub(crate) struct Spec {
@@ -91,6 +104,10 @@ impl Args {
 
     fn take_optional(&mut self) -> Option<String> {
         self.0.next()
+    }
+
+    fn rest(self) -> Vec<String> {
+        self.0.collect()
     }
 }
 
@@ -191,6 +208,30 @@ pub(crate) const SPECS: &[Spec] = &[
         max_args: 1,
         build: |mut a| Matcher::Alpn(a.take()),
     },
+    Spec {
+        name: "ClientFingerprint",
+        min_args: 1,
+        max_args: MAX_LIST_ARGS,
+        build: |a| Matcher::ClientFingerprint(a.rest()),
+    },
+    Spec {
+        name: "ClientCountry",
+        min_args: 1,
+        max_args: MAX_LIST_ARGS,
+        build: |a| Matcher::ClientCountry(a.rest()),
+    },
+    Spec {
+        name: "ClientContinent",
+        min_args: 1,
+        max_args: MAX_LIST_ARGS,
+        build: |a| Matcher::ClientContinent(a.rest()),
+    },
+    Spec {
+        name: "ClientASN",
+        min_args: 1,
+        max_args: MAX_LIST_ARGS,
+        build: |a| Matcher::ClientAsn(a.rest()),
+    },
 ];
 
 impl Matcher {
@@ -212,6 +253,10 @@ impl Matcher {
             Self::HostSni(_) => "HostSNI",
             Self::HostSniRegexp(_) => "HostSNIRegexp",
             Self::Alpn(_) => "ALPN",
+            Self::ClientFingerprint(_) => "ClientFingerprint",
+            Self::ClientCountry(_) => "ClientCountry",
+            Self::ClientContinent(_) => "ClientContinent",
+            Self::ClientAsn(_) => "ClientASN",
         }
     }
 
@@ -237,7 +282,20 @@ impl Matcher {
                 args
             }
             Self::QueryRegexp { key, regexp } => vec![key, regexp],
+            Self::ClientFingerprint(list)
+            | Self::ClientCountry(list)
+            | Self::ClientContinent(list)
+            | Self::ClientAsn(list) => list.iter().map(String::as_str).collect(),
         }
+    }
+
+    /// Whether the matcher needs the GeoIP database (`geoip`).
+    #[must_use]
+    pub fn needs_geoip(&self) -> bool {
+        matches!(
+            self,
+            Self::ClientCountry(_) | Self::ClientContinent(_) | Self::ClientAsn(_)
+        )
     }
 
     /// Whether the matcher can be used in an HTTP route.
@@ -254,7 +312,14 @@ impl Matcher {
     pub fn is_tcp(&self) -> bool {
         matches!(
             self,
-            Self::HostSni(_) | Self::HostSniRegexp(_) | Self::Alpn(_) | Self::ClientIp(_)
+            Self::HostSni(_)
+                | Self::HostSniRegexp(_)
+                | Self::Alpn(_)
+                | Self::ClientIp(_)
+                | Self::ClientFingerprint(_)
+                | Self::ClientCountry(_)
+                | Self::ClientContinent(_)
+                | Self::ClientAsn(_)
         )
     }
 }
@@ -295,6 +360,20 @@ impl Expr {
             Matcher::HostSniRegexp(_) | Matcher::Alpn(_) => true,
             _ => false,
         })
+    }
+
+    /// Whether a `ClientFingerprint` matcher appears anywhere in the rule.
+    #[must_use]
+    pub fn uses_fingerprint(&self) -> bool {
+        self.matchers()
+            .into_iter()
+            .any(|m| matches!(m, Matcher::ClientFingerprint(_)))
+    }
+
+    /// Whether the rule needs the GeoIP database.
+    #[must_use]
+    pub fn uses_geoip(&self) -> bool {
+        self.matchers().into_iter().any(Matcher::needs_geoip)
     }
 
     fn any_positive(&self, test: &dyn Fn(&Matcher) -> bool, negated: bool) -> bool {

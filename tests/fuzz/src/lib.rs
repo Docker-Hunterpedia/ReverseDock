@@ -204,6 +204,30 @@ pub fn clienthello(data: &[u8]) {
     }
 }
 
+/// Computes the TLS client fingerprints of arbitrary bytes. Never panics; facts exist only for
+/// a complete ClientHello that `parse` accepts; JA4 always has its fixed shape (36 characters,
+/// three `_`-separated sections) and JA3 is 32 hex digits.
+pub fn tls_fingerprint(data: &[u8]) {
+    use rdock_tls::clienthello::{MAX_EXTENSIONS, Parsed, facts, parse};
+    use rdock_tls::fingerprint::{Transport, ja3, ja4};
+    let Some(found) = facts(data) else {
+        return;
+    };
+    assert!(
+        matches!(parse(data), Ok(Parsed::Hello { .. })),
+        "facts without an accepted hello"
+    );
+    assert!(found.extensions.len() <= MAX_EXTENSIONS);
+    for transport in [Transport::Tcp, Transport::Quic, Transport::Dtls] {
+        let fp = ja4(&found, transport);
+        assert_eq!(fp.len(), 36, "{fp}");
+        assert_eq!(fp.matches('_').count(), 2, "{fp}");
+        assert!(fp.is_ascii(), "{fp}");
+    }
+    let j = ja3(&found);
+    assert!(j.len() == 32 && j.bytes().all(|b| b.is_ascii_hexdigit()));
+}
+
 /// Treats `data` as a pointer and as `patch \0 document` (both JSON). Pointers that parse
 /// round-trip through escaping; a patch that applies gives the same result twice; a check that
 /// passes without a document never makes `apply` panic.
@@ -289,7 +313,12 @@ mod tests {
             );
             for cut in 0..=seed.len() {
                 super::clienthello(&seed[..cut]);
+                super::tls_fingerprint(&seed[..cut]);
             }
+            assert!(
+                rdock_tls::clienthello::facts(&seed).is_some(),
+                "every seed has a fingerprint"
+            );
         }
     }
 

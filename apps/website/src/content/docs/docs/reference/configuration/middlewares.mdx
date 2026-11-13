@@ -2,7 +2,7 @@
 title: middlewares
 description: "Reusable request and response policies."
 sidebar:
-  order: 10
+  order: 11
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -643,7 +643,19 @@ Demand a verified client certificate, check its names and pass its identity on.
 
 **Type:** list of `string`
 
-Names a certificate must have one of: its common name or a DNS, URI or email SAN. `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+Names a certificate must have one of: its common name or a DNS, URI or email SAN. `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty. The typed lists below check one field each and are safer: a URI pattern there cannot be satisfied by a common name that carries the same text.
+
+### `middlewares.<name>.dns`
+
+**Type:** list of `string`
+
+DNS SANs, one must match (`*` globs).
+
+### `middlewares.<name>.emails`
+
+**Type:** list of `string`
+
+Email SANs, one must match (`*` globs).
 
 ### `middlewares.<name>.forward`
 
@@ -655,11 +667,71 @@ Headers that pass the identity to the backend.
 - `traefik`: Traefik's `X-Forwarded-Tls-Client-Cert` (the certificate) and `X-Forwarded-Tls-Client-Cert-Info` (its fields).
 - `xfcc`: Envoy's `X-Forwarded-Client-Cert`.
 
+### `middlewares.<name>.organizations`
+
+**Type:** list of `string`
+
+Subject organizations (O), one must match (`*` globs).
+
 ### `middlewares.<name>.required`
 
 **Type:** `boolean` · **Default:** `true`
 
 Answer `403` to requests without a verified client certificate.
+
+### `middlewares.<name>.serials`
+
+**Type:** list of `string`
+
+Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
+
+### `middlewares.<name>.sha256`
+
+**Type:** list of `string`
+
+SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
+
+### `middlewares.<name>.spiffe`
+
+**Type:** object
+
+SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the trust domains, and its ID one of `ids` or under one of `id_prefixes`.
+
+#### `middlewares.<name>.spiffe.consumer`
+
+**Type:** `boolean` · **Default:** `false`
+
+Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer, metering and the access log). Its issuer is `spiffe://<trust domain>`, so it never shares counters with an API-key or token consumer of the same name. Off by default.
+
+#### `middlewares.<name>.spiffe.id_prefixes`
+
+**Type:** list of `string`
+
+SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web` accepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor `id_prefixes`, any ID of the trust domains is accepted.
+
+#### `middlewares.<name>.spiffe.ids`
+
+**Type:** list of `string`
+
+SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
+
+#### `middlewares.<name>.spiffe.trust_domains`
+
+**Type:** list of `string`
+
+Trust domains accepted, e.g. `prod.example.com`. Required.
+
+### `middlewares.<name>.subjects`
+
+**Type:** list of `string`
+
+Subject common names, one must match (`*` globs). Every typed list that is set must match, together with `allow`.
+
+### `middlewares.<name>.uris`
+
+**Type:** list of `string`
+
+URI SANs, one must match (`*` globs).
 
 ## `type: grpc_web`
 
@@ -1753,3 +1825,83 @@ Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD
 - `auto`: Redirect page navigations to the login; `401` for everything else.
 - `redirect`: Redirect every `GET` and `HEAD` to the login; `401` for other methods.
 - `deny`: Always `401`.
+
+## `type: abuse`
+
+Count abuse signals (response statuses, failed authentications) per key in a window and ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive restarts and binary upgrades.
+
+### `middlewares.<name>.action`
+
+**Type:** `deny` · `tarpit` · `tag` · **Default:** `deny`
+
+What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit` (held for `tarpit.delay`, then denied) or `tag` (served; the access log and later middlewares see `abuse: tagged`).
+
+- `deny`: `403` with the problem type `banned`.
+- `tarpit`: Held for `tarpit.delay`, then `403`.
+- `tag`: Served; marked in the access log and for later middlewares.
+
+### `middlewares.<name>.ban`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `10m`
+
+How long a ban lasts. Default 10m.
+
+### `middlewares.<name>.events`
+
+**Type:** list of [`AbuseEvent`](/docs/reference/configuration/#abuseevent) · **Default:** `[401,403]`
+
+What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an authentication middleware refused the credentials). Default `[401, 403]`.
+
+### `middlewares.<name>.exempt`
+
+**Type:** list of [`IpNetwork`](/docs/reference/configuration/#ipnetwork) · **Default:** `["127.0.0.0/8","::1/128"]`
+
+Client networks never counted or banned. Default the loopback networks; the `security.trusted_proxies` networks are always added, so a proxy whose clients are not resolved can never ban itself, and with it everyone behind it.
+
+### `middlewares.<name>.key`
+
+**Type:** [`AbuseKey`](/docs/reference/configuration/#abusekey) · **Default:** `client_ip`
+
+What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or `header:<Name>`. Requests without a consumer or fingerprint count by client address.
+
+### `middlewares.<name>.max_bans`
+
+**Type:** `integer` · **Default:** `10000`
+
+Bans at once. The ban list is separate from the counters and nothing evicts a ban before it ends: when it is full, new bans are refused and counted in `rdock_abuse_bans_refused_total`. Default 10000.
+
+### `middlewares.<name>.max_keys`
+
+**Type:** `integer` · **Default:** `100000`
+
+Keys counted at once; past it, the oldest counters are dropped. Default 100000.
+
+### `middlewares.<name>.tarpit`
+
+**Type:** object · **Default:** `{"delay":"5s","max_held":100}`
+
+`action: tarpit`.
+
+#### `middlewares.<name>.tarpit.delay`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `5s`
+
+How long a request is held before the `403`. Default 5s, at most 60s.
+
+#### `middlewares.<name>.tarpit.max_held`
+
+**Type:** `integer` · **Default:** `100`
+
+Requests held at once, all keys together; past it, banned requests are denied at once (holding connections costs the proxy too: HAProxy's manual warns that a tarpit "can make things worse"). Default 100.
+
+### `middlewares.<name>.threshold`
+
+**Type:** `integer` · **Default:** `20`
+
+Events within one `window` that start a ban. Default 20.
+
+### `middlewares.<name>.window`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
+
+The counting window. Default 1m.

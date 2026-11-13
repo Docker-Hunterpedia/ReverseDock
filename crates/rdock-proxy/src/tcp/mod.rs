@@ -48,8 +48,11 @@ pub struct TcpRouteRuntime {
     pub rule: TcpRule,
     /// The rule has ``HostSNI(`*`)``, the only matcher for connections without TLS.
     pub any_sni: bool,
-    /// The rule looks at the ClientHello (`HostSNI` with a name, `HostSNIRegexp`, `ALPN`).
+    /// The rule looks at the ClientHello (`HostSNI` with a name, `HostSNIRegexp`, `ALPN`,
+    /// `ClientFingerprint`).
     pub reads_hello: bool,
+    /// The rule has `ClientFingerprint`: the ClientHello's JA4 is computed for it.
+    pub reads_fingerprint: bool,
     /// What happens to the bytes.
     pub mode: TcpMode,
     /// Target service.
@@ -161,13 +164,21 @@ pub(crate) async fn serve(
     let Ok(answered_ssl_request) = answer_starttls(&mut stream, &listener).await else {
         return;
     };
-    let hello = if reads_hello(listener.routes) || listener.tls.is_some() {
-        let Ok(hello) = read_hello(&conn, &mut stream, listener.deadline, metrics).await else {
+    let (hello, fingerprint) = if reads_hello(listener.routes) || listener.tls.is_some() {
+        let Ok(read) = read_hello(
+            &conn,
+            &mut stream,
+            listener.deadline,
+            metrics,
+            listener.routes,
+        )
+        .await
+        else {
             return;
         };
-        hello
+        read
     } else {
-        None
+        (None, None)
     };
     if let (Some(acceptor), Some(hello)) = (listener.tls, &hello)
         && offers_only_acme(hello)
@@ -178,6 +189,7 @@ pub(crate) async fn serve(
     let facts = TcpFacts {
         hello: hello.as_ref(),
         client_ip: conn.client_ip(),
+        fingerprint: fingerprint.as_ref(),
     };
     let Some(route) = select(listener.routes, &facts) else {
         tracing::debug!(listener = %conn.listener, client = %conn.client, "no TCP route matches");
@@ -226,22 +238,32 @@ pub(crate) async fn divert(
     mut stream: L4Stream,
     listener: ListenerContext<'_>,
     metrics: &Metrics,
-) -> Option<L4Stream> {
+    keep_facts: bool,
+) -> Option<(L4Stream, Option<clienthello::HelloFacts>)> {
     let peeked = clienthello::peek(&mut stream, listener.deadline).await;
     stream.rewind(&peeked.bytes);
+    // The listener computes fingerprints: the same peek serves them.
+    let facts = if keep_facts {
+        clienthello::facts(&peeked.bytes)
+    } else {
+        None
+    };
     let Ok(Detected::Hello(hello)) = peeked.result else {
         // Not TLS, or a broken ClientHello: the TLS handshake refuses and counts it.
-        return Some(stream);
+        return Some((stream, facts));
     };
     if offers_only_acme(&hello) {
-        return Some(stream);
+        return Some((stream, facts));
     }
+    let fingerprint = route_fingerprint(listener.routes, &peeked.bytes);
+    let hello_facts = facts;
     let facts = TcpFacts {
         hello: Some(&hello),
         client_ip: conn.client_ip(),
+        fingerprint: fingerprint.as_ref(),
     };
     let Some(route) = select(listener.routes, &facts).cloned() else {
-        return Some(stream);
+        return Some((stream, hello_facts));
     };
     forward(
         &conn,
@@ -256,19 +278,44 @@ pub(crate) async fn divert(
     None
 }
 
+/// The JA4 of the peeked ClientHello, when a route matches on `ClientFingerprint`.
+fn route_fingerprint(
+    routes: &[Arc<TcpRouteRuntime>],
+    bytes: &[u8],
+) -> Option<rdock_middleware::ClientFingerprint> {
+    if !routes.iter().any(|r| r.reads_fingerprint) {
+        return None;
+    }
+    let facts = clienthello::facts(bytes)?;
+    Some(rdock_middleware::ClientFingerprint {
+        ja4: Some(Arc::from(rdock_tls::fingerprint::ja4(
+            &facts,
+            rdock_tls::fingerprint::Transport::Tcp,
+        ))),
+        ja3: None,
+    })
+}
+
 /// Peeks the ClientHello and puts the bytes back; `None` when the connection does not start
-/// with TLS.
+/// with TLS. The JA4 comes with it when a route needs it.
 async fn read_hello(
     conn: &Accepted,
     stream: &mut L4Stream,
     deadline: Instant,
     metrics: &Metrics,
-) -> Result<Option<ClientHello>, Close> {
+    routes: &[Arc<TcpRouteRuntime>],
+) -> Result<
+    (
+        Option<ClientHello>,
+        Option<rdock_middleware::ClientFingerprint>,
+    ),
+    Close,
+> {
     let peeked = clienthello::peek(stream, deadline).await;
     stream.rewind(&peeked.bytes);
     match peeked.result {
-        Ok(Detected::Hello(hello)) => Ok(Some(hello)),
-        Ok(Detected::NotTls) => Ok(None),
+        Ok(Detected::Hello(hello)) => Ok((Some(hello), route_fingerprint(routes, &peeked.bytes))),
+        Ok(Detected::NotTls) => Ok((None, None)),
         Err(PeekError::Hello(err)) => {
             tracing::debug!(listener = %conn.listener, client = %conn.client, error = %err, "unusable ClientHello");
             reject(metrics, conn, "bad_client_hello");

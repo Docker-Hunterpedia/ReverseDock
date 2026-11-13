@@ -22,6 +22,7 @@ pub(crate) fn compile_udp(
     config: &Config,
     env: &CompileEnv<'_>,
     listeners: &mut BTreeMap<String, ListenerRuntime>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, Arc<ServiceRuntime>> {
     let services: HashMap<&str, Arc<UdpServiceRuntime>> = config
@@ -36,7 +37,7 @@ pub(crate) fn compile_udp(
         .collect();
     let mut attached: BTreeMap<&str, Vec<Arc<UdpRouteRuntime>>> = BTreeMap::new();
     for (name, route) in config.udp_routes.iter().filter(|(_, r)| r.enabled) {
-        let Some(compiled) = compile_route(name, route, config, &services, out) else {
+        let Some(compiled) = compile_route(name, route, config, &services, geoip, out) else {
             continue;
         };
         for listener_name in route.listeners.iter().flatten() {
@@ -153,6 +154,7 @@ fn compile_route(
     route: &UdpRoute,
     config: &Config,
     services: &HashMap<&str, Arc<UdpServiceRuntime>>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> Option<Arc<UdpRouteRuntime>> {
     let path = path_key("udp_routes", name);
@@ -166,7 +168,7 @@ fn compile_route(
                     if let Some(err) = errors.first() {
                         return Err(err.to_string());
                     }
-                    TcpRule::compile(&expr).map_err(|e| e.to_string())
+                    TcpRule::compile_with(&expr, geoip).map_err(|e| e.to_string())
                 });
             match compiled {
                 Ok(rule) => Some(rule),

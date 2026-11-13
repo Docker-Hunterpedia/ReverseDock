@@ -22,6 +22,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`certificates`](/docs/reference/configuration/certificates/): Certificates you provide yourself.
 - [`consumers`](/docs/reference/configuration/consumers/): API clients and users that requests are attributed to, with their API keys (stored
 - [`defaults`](/docs/reference/configuration/defaults/): Defaults applied to routes that do not set a value.
+- [`geoip`](/docs/reference/configuration/geoip/): GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
 - [`lifecycle`](/docs/reference/configuration/lifecycle/): Start-up and shutdown behaviour.
 - [`listeners`](/docs/reference/configuration/listeners/): Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)
 - [`locality`](/docs/reference/configuration/locality/): The proxy's own zone and whether services prefer backends in it (H-HA-05).
@@ -41,6 +42,18 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`version`](/docs/reference/configuration/version/): Configuration format version. Only `1` exists; omit it to use the latest.
 
 ## Value types
+
+### AbuseEvent
+
+
+
+Examples: `401`, `4xx`, `auth_failure`
+
+### AbuseKey
+
+
+
+Examples: `client_ip`, `ja4`
 
 ### AcmeSetting
 

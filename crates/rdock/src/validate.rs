@@ -70,6 +70,7 @@ pub(crate) fn diagnostics(file: &Path, plugins: &Registry) -> Vec<Diagnostic> {
                         plugins,
                         metrics: None,
                         quotas: None,
+                        abuse: None,
                     },
                 );
                 diagnostics.extend(compiled.diagnostics);

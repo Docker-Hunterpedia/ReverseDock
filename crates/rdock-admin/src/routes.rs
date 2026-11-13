@@ -94,6 +94,8 @@ pub(crate) fn documented(guard: impl FnOnce(Api) -> Api) -> Api {
             crate::consumers::quota,
             crate::consumers::reset_quota
         ))
+        .routes(routes!(crate::abuse::bans))
+        .routes(routes!(crate::abuse::remove_ban))
         .routes(routes!(stream::logs))
         .routes(routes!(stream::events))
         .routes(routes!(resources::list))

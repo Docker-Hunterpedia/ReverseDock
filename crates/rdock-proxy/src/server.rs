@@ -94,6 +94,7 @@ struct Wanted {
     socket: ListenerSocket,
     max_handshakes: Option<u32>,
     http2: rdock_model::config::ListenerHttp2,
+    fingerprint: Option<rdock_model::config::TlsFingerprint>,
 }
 
 /// The data plane.
@@ -109,6 +110,7 @@ pub struct DataPlane {
     live: Arc<rdock_observability::live::Live>,
     caches: rdock_cache::Registry,
     quotas: Arc<rdock_limits::quota::QuotaRegistry>,
+    abuse: Arc<rdock_limits::abuse::AbuseRegistry>,
     plugins: Arc<rdock_plugin_api::Registry>,
     state: Mutex<State>,
     generation: AtomicU64,
@@ -189,6 +191,7 @@ impl DataPlane {
             live: Arc::default(),
             caches,
             quotas: Arc::default(),
+            abuse: Arc::default(),
             plugins: Arc::default(),
             state: Mutex::new(State {
                 running: BTreeMap::new(),
@@ -336,6 +339,38 @@ impl DataPlane {
         });
     }
 
+    /// Writes abuse bans under `dir` (`<data dir>/abuse`) and starts writing changed ban lists
+    /// every second (paused with the quota writes). Call once, inside the runtime.
+    pub fn set_abuse_dir(&self, dir: std::path::PathBuf) {
+        self.abuse.set_dir(dir);
+        let abuse = Arc::downgrade(&self.abuse);
+        let paused = self.quota_writes_paused.clone();
+        let metrics = self.shared.metrics.clone();
+        tokio::spawn(async move {
+            let mut tick = tokio::time::interval(Duration::from_secs(1));
+            tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            loop {
+                tick.tick().await;
+                let Some(abuse) = abuse.upgrade() else {
+                    return;
+                };
+                metrics
+                    .abuse_bans
+                    .set(i64::try_from(abuse.count()).unwrap_or(i64::MAX));
+                if paused.load(std::sync::atomic::Ordering::SeqCst) {
+                    continue;
+                }
+                let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
+            }
+        });
+    }
+
+    /// The abuse counters and bans, for the admin API (list and unban).
+    #[must_use]
+    pub fn abuse(&self) -> &Arc<rdock_limits::abuse::AbuseRegistry> {
+        &self.abuse
+    }
+
     /// The quota counters, for the admin API (read and reset).
     #[must_use]
     pub fn quotas(&self) -> &Arc<rdock_limits::quota::QuotaRegistry> {
@@ -417,6 +452,7 @@ impl DataPlane {
                 plugins: &self.plugins,
                 metrics: Some(&self.shared.metrics),
                 quotas: Some(&self.quotas),
+                abuse: Some(&self.abuse),
             },
         )
     }
@@ -602,6 +638,7 @@ impl DataPlane {
                 socket: l.socket,
                 max_handshakes: l.max_handshakes,
                 http2: l.http2,
+                fingerprint: l.fingerprint.clone(),
             })
             .collect();
         let generation = runtime.generation;
@@ -664,6 +701,7 @@ impl DataPlane {
                 connection: listener::ConnectionOptions::of(&w.socket),
                 handshakes,
                 http2: w.http2,
+                fingerprint: w.fingerprint,
             };
             if let Some(socket) = prepared.sockets.remove(&w.name) {
                 let running = Running::start(
@@ -733,6 +771,8 @@ impl DataPlane {
         // Requests are over: what the quotas counted is final for this run.
         let quotas = self.quotas.clone();
         let _ = tokio::task::spawn_blocking(move || quotas.flush_all()).await;
+        let abuse = self.abuse.clone();
+        let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
     }
 
     /// Listeners whose running socket kept an option that is set before `bind` and that the

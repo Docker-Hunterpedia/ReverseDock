@@ -522,6 +522,7 @@ impl Middleware for Jwt {
                     remote.refresh_early();
                 }
                 tracing::debug!(middleware = %self.name, reason = %why, "JWT refused");
+                cx.auth_failed = true;
                 return unauthorized(Some("invalid_token"));
             }
         };
@@ -541,6 +542,7 @@ impl Middleware for Jwt {
             let issuer = self.token_issuer(&claims);
             let Some(consumer) = access_consumer(&claims, &issuer) else {
                 tracing::debug!(middleware = %self.name, "Access token without email or common_name");
+                cx.auth_failed = true;
                 return unauthorized(Some("invalid_token"));
             };
             cx.user = Some(consumer.name.to_string());
@@ -553,6 +555,7 @@ impl Middleware for Jwt {
                 self.unverified_emails,
             ) else {
                 tracing::debug!(middleware = %self.name, claim = %claim, "JWT without the consumer claim");
+                cx.auth_failed = true;
                 return unauthorized(Some("invalid_token"));
             };
             self.place(&mut consumer, &claims);

@@ -46,6 +46,9 @@ pub struct Handshake {
     pub sni: Option<String>,
     /// The verified client certificate (only listeners with `client_auth` ask for one).
     pub client_cert: Option<Arc<ClientIdentity>>,
+    /// The TLS client fingerprints (`tls.fingerprint`), set right after the handshake from
+    /// the ClientHello the listener read before it; the callback only sees the rustls side.
+    pub fingerprint: std::sync::OnceLock<Arc<rdock_middleware::ClientFingerprint>>,
 }
 
 struct CaptureHandshake;
@@ -59,6 +62,7 @@ impl TlsAccept for CaptureHandshake {
         let handshake = Handshake {
             sni: tls.server_name().map(str::to_owned),
             client_cert: tls.peer_certificate_der().and_then(identity).map(Arc::new),
+            fingerprint: std::sync::OnceLock::new(),
         };
         Some(Arc::new(handshake))
     }
@@ -91,6 +95,30 @@ fn identity(der: &[u8]) -> Option<ClientIdentity> {
                 hex
             }),
         der_base64: base64::engine::Engine::encode(&base64::engine::general_purpose::STANDARD, der),
+        organizations: cert
+            .subject()
+            .iter_organization()
+            .filter_map(|o| o.as_str().ok())
+            .map(str::to_owned)
+            .collect(),
+        // DER adds a zero byte to keep a serial positive; OpenSSL prints it without.
+        serial: cert.raw_serial().iter().skip_while(|b| **b == 0).fold(
+            String::new(),
+            |mut hex, b| {
+                let _ = write!(hex, "{b:02x}");
+                hex
+            },
+        ),
+        ca: cert
+            .basic_constraints()
+            .ok()
+            .flatten()
+            .is_some_and(|bc| bc.value.ca),
+        signs_certificates: cert
+            .key_usage()
+            .ok()
+            .flatten()
+            .is_some_and(|ku| ku.value.key_cert_sign() || ku.value.crl_sign()),
         ..ClientIdentity::default()
     };
     if let Ok(Some(san)) = cert.subject_alternative_name() {
@@ -623,6 +651,9 @@ pub struct Settings {
     pub handshakes: Option<Handshakes>,
     /// HTTP/2 settings; a change builds a new HTTP engine for new connections.
     pub http2: ListenerHttp2,
+    /// `https` listeners with `tls.fingerprint`: which fingerprints to compute. `None` reads
+    /// no ClientHello for it.
+    pub fingerprint: Option<rdock_model::config::TlsFingerprint>,
 }
 
 /// How a listener is asked to stop.
@@ -1106,6 +1137,10 @@ async fn serve(
         }
         l4.set_socket_digest(digest);
     }
+    // The ClientHello's fingerprint facts, read once: by the TCP step below when it peeks
+    // anyway, otherwise just before the handshake.
+    let mut hello_facts = None;
+    let peeked_for_tcp = tcp_side.is_some() && settings.protocol != ListenerProtocol::Tcp;
     if let Some((tcp_routes, local)) = tcp_side {
         let accepted = crate::tcp::Accepted {
             listener: name.clone(),
@@ -1127,8 +1162,19 @@ async fn serve(
         // A diverted connection is relayed for as long as it lasts, so it gives its permit
         // back first; one that stays here takes a permit again for its own handshake.
         let bounded = in_handshake.take().is_some_and(|h| h.permit.is_some());
-        match crate::tcp::divert(accepted, l4, context, &shared.metrics).await {
-            Some(stream) => l4 = stream,
+        match crate::tcp::divert(
+            accepted,
+            l4,
+            context,
+            &shared.metrics,
+            settings.fingerprint.is_some(),
+        )
+        .await
+        {
+            Some((stream, facts)) => {
+                l4 = stream;
+                hello_facts = facts;
+            }
             None => return,
         }
         let permit = match (bounded, settings.handshakes.as_ref()) {
@@ -1138,6 +1184,13 @@ async fn serve(
         in_handshake = Some(InHandshake::new(&shared.metrics, &name, permit));
     }
     let stream: ConnStream = if let Some(acceptor) = &settings.tls {
+        if settings.fingerprint.is_some() && !peeked_for_tcp {
+            // Every byte goes back in front of the stream; a hello that cannot be read only
+            // means no fingerprint, the handshake decides the rest.
+            let peeked = rdock_tls::clienthello::peek(&mut l4, deadline).await;
+            l4.rewind(&peeked.bytes);
+            hello_facts = rdock_tls::clienthello::facts(&peeked.bytes);
+        }
         let handshake = tokio::time::timeout_at(deadline, acceptor.tls_handshake(l4)).await;
         // The handshake is over, whatever its outcome: the permit and the gauge go.
         drop(in_handshake.take());
@@ -1155,6 +1208,9 @@ async fn serve(
                 return;
             }
         };
+        if let (Some(wanted), Some(facts)) = (&settings.fingerprint, &hello_facts) {
+            attach_fingerprint(&tls, wanted, facts);
+        }
         let alpn = pingora::protocols::Ssl::selected_alpn_proto(&tls);
         if let Some(pingora::protocols::ALPN::Custom(custom)) = &alpn
             && custom.protocol() == rdock_tls::challenge::ACME_TLS_ALPN
@@ -1173,6 +1229,26 @@ async fn serve(
         ConnStream::new(Box::new(l4) as Stream, Some(first), !h2, header_timeout)
     };
     engine.process_new(Box::new(stream), &closing).await;
+}
+
+/// Computes the fingerprints the listener asks for and stores them with the handshake.
+fn attach_fingerprint<S: pingora::protocols::Ssl>(
+    tls: &S,
+    wanted: &rdock_model::config::TlsFingerprint,
+    facts: &rdock_tls::clienthello::HelloFacts,
+) {
+    use rdock_tls::fingerprint::{Transport, ja3, ja4};
+    let Some(digest) = tls.get_ssl_digest() else {
+        return;
+    };
+    let Some(handshake) = digest.extension.get::<Handshake>() else {
+        return;
+    };
+    let value = rdock_middleware::ClientFingerprint {
+        ja4: wanted.ja4.then(|| Arc::from(ja4(facts, Transport::Tcp))),
+        ja3: wanted.ja3.then(|| Arc::from(ja3(facts))),
+    };
+    let _ = handshake.fingerprint.set(Arc::new(value));
 }
 
 /// Reads until the bytes are the full HTTP/2 preface or cannot be one. `None` means the client

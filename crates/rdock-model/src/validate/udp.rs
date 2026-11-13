@@ -304,7 +304,7 @@ mod tests {
         });
         let found = errors(value);
         assert!(
-            has(&found, "udp_routes.bad.match", "ClientIP only"),
+            has(&found, "udp_routes.bad.match", "UDP routes accept ClientIP"),
             "{found:?}"
         );
         assert!(has(&found, "udp_routes.bad.listeners[0]", "is `http`"));

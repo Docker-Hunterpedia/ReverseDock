@@ -42,6 +42,7 @@ services:
             plugins: &rdock_plugin_api::Registry::new(),
             metrics: None,
             quotas: None,
+            abuse: None,
         },
     );
     let runtime = compiled.runtime.expect("compiles");

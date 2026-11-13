@@ -26,6 +26,8 @@ pub struct Facts<'a> {
     pub query: &'a [(String, String)],
     /// Resolved client IP.
     pub client_ip: IpAddr,
+    /// The connection's TLS client fingerprints, if its listener computes them.
+    pub fingerprint: Option<&'a rdock_middleware::ClientFingerprint>,
 }
 
 /// A compiled rule.
@@ -70,6 +72,107 @@ pub enum Compiled {
     QueryRegexp(String, Regex),
     /// `ClientIP(..)`.
     ClientIp(IpNet),
+    /// `ClientFingerprint(..)`: JA4 or JA3 values.
+    Fingerprint(Vec<String>),
+    /// `ClientCountry`, `ClientContinent`, `ClientASN`.
+    Geo(GeoMatcher),
+}
+
+/// A compiled GeoIP matcher with the databases it looks up in.
+#[derive(Debug, Clone)]
+pub struct GeoMatcher {
+    geo: std::sync::Arc<crate::geoip::GeoIp>,
+    test: GeoTest,
+}
+
+#[derive(Debug, Clone)]
+enum GeoTest {
+    Country(Vec<[u8; 2]>),
+    Continent(Vec<[u8; 2]>),
+    Asn(Vec<u32>),
+}
+
+impl GeoMatcher {
+    /// Compiles a GeoIP matcher; `None` for any other matcher.
+    ///
+    /// # Errors
+    ///
+    /// No database is configured, or a value is malformed (validation reports both first).
+    pub fn compile(
+        m: &Matcher,
+        geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+    ) -> Result<Option<Self>, RuleCompileError> {
+        let codes = |list: &[String]| -> Result<Vec<[u8; 2]>, RuleCompileError> {
+            list.iter()
+                .map(|c| match c.as_bytes() {
+                    [a, b] => Ok([a.to_ascii_uppercase(), b.to_ascii_uppercase()]),
+                    _ => Err(RuleCompileError(format!("`{c}` is not a two-letter code"))),
+                })
+                .collect()
+        };
+        let test = match m {
+            Matcher::ClientCountry(list) => GeoTest::Country(codes(list)?),
+            Matcher::ClientContinent(list) => GeoTest::Continent(codes(list)?),
+            Matcher::ClientAsn(list) => GeoTest::Asn(
+                list.iter()
+                    .map(|n| {
+                        n.parse()
+                            .map_err(|_| RuleCompileError(format!("`{n}` is not an ASN")))
+                    })
+                    .collect::<Result<_, _>>()?,
+            ),
+            _ => return Ok(None),
+        };
+        let Some(geo) = geo else {
+            return Err(RuleCompileError(format!(
+                "`{}` needs a GeoIP database: set `geoip.database`{}",
+                m.name(),
+                if matches!(m, Matcher::ClientAsn(_)) {
+                    " or `geoip.asn_database`"
+                } else {
+                    ""
+                }
+            )));
+        };
+        Ok(Some(Self {
+            geo: geo.clone(),
+            test,
+        }))
+    }
+
+    /// Whether `ip` is in one of the countries, continents or networks. An address that is
+    /// not global or not in the database never matches.
+    #[must_use]
+    pub fn matches(&self, ip: IpAddr) -> bool {
+        let record = self.geo.lookup(ip);
+        match &self.test {
+            GeoTest::Country(codes) => record.country.is_some_and(|c| codes.contains(&c)),
+            GeoTest::Continent(codes) => record.continent.is_some_and(|c| codes.contains(&c)),
+            GeoTest::Asn(numbers) => record.asn.is_some_and(|n| numbers.contains(&n)),
+        }
+    }
+
+    fn describe(&self) -> String {
+        match &self.test {
+            GeoTest::Country(c) => format!("ClientCountry({})", list_codes(c)),
+            GeoTest::Continent(c) => format!("ClientContinent({})", list_codes(c)),
+            GeoTest::Asn(n) => format!(
+                "ClientASN({})",
+                n.iter()
+                    .map(|n| format!("`{n}`"))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        }
+    }
+}
+
+fn list_codes(codes: &[[u8; 2]]) -> String {
+    codes
+        .iter()
+        .map(|c| format!("`{}`", String::from_utf8_lossy(c)))
+        .collect::<Vec<_>>()
+        .join(", ")
 }
 
 /// A matcher that cannot be compiled; validation reports these before compilation.
@@ -78,17 +181,27 @@ pub enum Compiled {
 pub struct RuleCompileError(pub String);
 
 impl Rule {
-    /// Compiles a parsed HTTP rule.
+    /// Compiles a parsed HTTP rule without GeoIP databases.
     pub fn compile(expr: &Expr) -> Result<Self, RuleCompileError> {
+        Self::compile_with(expr, None)
+    }
+
+    /// Compiles a parsed HTTP rule; GeoIP matchers look up in `geo`.
+    pub fn compile_with(
+        expr: &Expr,
+        geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+    ) -> Result<Self, RuleCompileError> {
+        let each = |items: &[Expr]| {
+            items
+                .iter()
+                .map(|e| Self::compile_with(e, geo))
+                .collect::<Result<Vec<_>, _>>()
+        };
         Ok(match expr {
-            Expr::Matcher(m) => Self::Match(Box::new(compile_matcher(m)?)),
-            Expr::Not(inner) => Self::Not(Box::new(Self::compile(inner)?)),
-            Expr::And(items) => {
-                Self::All(items.iter().map(Self::compile).collect::<Result<_, _>>()?)
-            }
-            Expr::Or(items) => {
-                Self::Any(items.iter().map(Self::compile).collect::<Result<_, _>>()?)
-            }
+            Expr::Matcher(m) => Self::Match(Box::new(compile_matcher(m, geo)?)),
+            Expr::Not(inner) => Self::Not(Box::new(Self::compile_with(inner, geo)?)),
+            Expr::And(items) => Self::All(each(items)?),
+            Expr::Or(items) => Self::Any(each(items)?),
         })
     }
 
@@ -121,6 +234,14 @@ impl Rule {
     }
 }
 
+/// Whether the connection's JA4 or JA3 is one of `values`.
+pub(crate) fn fingerprint_in(fp: &rdock_middleware::ClientFingerprint, values: &[String]) -> bool {
+    [fp.ja4.as_deref(), fp.ja3.as_deref()]
+        .into_iter()
+        .flatten()
+        .any(|v| values.iter().any(|w| w == v))
+}
+
 pub(crate) fn regex(pattern: &str) -> Result<Regex, RuleCompileError> {
     RegexBuilder::new(pattern)
         .size_limit(REGEX_SIZE_LIMIT)
@@ -143,7 +264,13 @@ pub fn normalize_host(host: &str) -> String {
     host.to_ascii_lowercase()
 }
 
-fn compile_matcher(m: &Matcher) -> Result<Compiled, RuleCompileError> {
+fn compile_matcher(
+    m: &Matcher,
+    geo: Option<&std::sync::Arc<crate::geoip::GeoIp>>,
+) -> Result<Compiled, RuleCompileError> {
+    if let Some(geo) = GeoMatcher::compile(m, geo)? {
+        return Ok(Compiled::Geo(geo));
+    }
     Ok(match m {
         Matcher::Host(host) if host == "*" => Compiled::AnyHost,
         Matcher::Host(host) => match host.strip_prefix("*.") {
@@ -168,8 +295,12 @@ fn compile_matcher(m: &Matcher) -> Result<Compiled, RuleCompileError> {
                 .or_else(|_| ip.parse::<IpAddr>().map(IpNet::from))
                 .map_err(|e| RuleCompileError(e.to_string()))?,
         ),
+        Matcher::ClientFingerprint(values) => Compiled::Fingerprint(values.clone()),
         Matcher::HostSni(_) | Matcher::HostSniRegexp(_) | Matcher::Alpn(_) => {
             return Err(RuleCompileError(format!("`{}` is a TCP matcher", m.name())));
+        }
+        Matcher::ClientCountry(_) | Matcher::ClientContinent(_) | Matcher::ClientAsn(_) => {
+            return Err(RuleCompileError(format!("`{}` needs GeoIP", m.name())));
         }
     })
 }
@@ -210,6 +341,18 @@ impl Compiled {
                 format!("QueryRegexp(`{key}`, `{re}`): no matching value")
             }
             Self::ClientIp(net) => format!("ClientIP(`{net}`): the client is `{}`", f.client_ip),
+            Self::Fingerprint(values) => format!(
+                "ClientFingerprint(`{}`): the connection's JA4 is {}",
+                values.join("`, `"),
+                f.fingerprint
+                    .and_then(|fp| fp.ja4.as_deref())
+                    .map_or_else(|| "absent".to_owned(), |v| format!("`{v}`"))
+            ),
+            Self::Geo(geo) => format!(
+                "{}: the client `{}` is not in it",
+                geo.describe(),
+                f.client_ip
+            ),
         }
     }
 
@@ -238,6 +381,8 @@ impl Compiled {
                 .any(|v| v.to_str().is_ok_and(|v| re.is_match(v))),
             Self::Query(key, value) => f.query.iter().any(|(k, v)| k == key && v == value),
             Self::QueryRegexp(key, re) => f.query.iter().any(|(k, v)| k == key && re.is_match(v)),
+            Self::Fingerprint(values) => f.fingerprint.is_some_and(|fp| fingerprint_in(fp, values)),
+            Self::Geo(geo) => geo.matches(f.client_ip),
             Self::ClientIp(net) => net.contains(&f.client_ip),
         }
     }
@@ -499,6 +644,7 @@ mod tests {
                 headers: &self.headers,
                 query: &self.query,
                 client_ip: self.ip,
+                fingerprint: None,
             }
         }
     }

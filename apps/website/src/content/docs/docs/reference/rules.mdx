@@ -56,6 +56,10 @@ Limits: a rule is at most 16 KiB, and parentheses and `!` nest at most 32 levels
 | `Query` | key | The parameter is present with an empty value. |
 | `QueryRegexp` | key, regex | Any value of the parameter matches the regex. |
 | `ClientIP` | IP or CIDR | The resolved client IP is the address or inside the range. |
+| `ClientFingerprint` <Status planned="v0.9" /> | JA4 or JA3 values | The connection's fingerprint is one of them. |
+| `ClientCountry` <Status planned="v0.9" /> | country codes | The client's country (GeoIP) is one of them. |
+| `ClientContinent` <Status planned="v0.9" /> | continent codes | The client's continent (GeoIP) is one of them. |
+| `ClientASN` <Status planned="v0.9" /> | numbers | The client's autonomous system (GeoIP) is one of them. |
 
 ### Host and HostRegexp
 
@@ -112,6 +116,29 @@ The argument is an IPv4 or IPv6 address or a CIDR range. It is compared with the
 client IP**: the TCP peer, or the address from `X-Forwarded-For` / `X-Real-IP` when the peer is
 listed in `security.trusted_proxies`. See [Behind another proxy](/docs/guides/behind-a-proxy/).
 
+### ClientFingerprint
+
+<Status planned="v0.9" /> ``ClientFingerprint(`t13d1516h2_8daaf6152771_e5627efa2ab1`, …)`` matches
+when the connection's JA4 (or a 32-hex-digit JA3) is one of the values. It needs a listener of
+the route with `tls.fingerprint`; a connection without a fingerprint never matches (so
+``!ClientFingerprint(…)`` does). Also in TCP rules. See
+[TLS client fingerprints](/docs/guides/client-fingerprints/).
+
+### GeoIP matchers
+
+<Status planned="v0.9" /> With a [GeoIP database](/docs/guides/geoip/):
+
+| Matcher | Matches |
+|---|---|
+| ``ClientCountry(`DE`, `FR`)`` | the client's country, ISO 3166-1 alpha-2 in upper case |
+| ``ClientContinent(`EU`)`` | `AF`, `AN`, `AS`, `EU`, `NA`, `OC` or `SA` |
+| ``ClientASN(`64496`)`` | the client's autonomous system number |
+
+They look up the resolved client IP (as `ClientIP`) and work in HTTP, TCP and UDP rules. An
+address that is unknown to the database or not globally routable never matches, so
+``!ClientCountry(…)`` matches it: write allow-lists to keep unknown addresses out. A rule with a
+GeoIP matcher and no database is refused. Each matcher takes 1 to 64 values.
+
 ### Regular expressions
 
 `HostRegexp`, `PathRegexp`, `HeaderRegexp` and `QueryRegexp` use the syntax of the Rust `regex`
@@ -123,7 +150,7 @@ doubled (``"PathRegexp(`^/v[0-9]+\\.json$`)"``), or write the rule in single quo
 
 <Status since="v0.6" /> `HostSNI`, `HostSNIRegexp` and `ALPN` match the TLS ClientHello of a
 connection to a [TCP route](/docs/guides/tcp-routes/); they are refused in HTTP routes. A TCP rule
-may also use `ClientIP`.
+may also use `ClientIP`, and <Status planned="v0.9" /> `ClientFingerprint` and the GeoIP matchers.
 
 | Matcher | Matches |
 |---|---|
@@ -139,7 +166,8 @@ length, then name.
 ## UDP rules
 
 <Status since="v0.8" /> A datagram shows only its source, so a [UDP route](/docs/guides/udp-routes/)
-rule takes ``ClientIP(`…`)`` matchers only, combined with `&&`, `||`, `!` and parentheses. A UDP
+rule takes ``ClientIP(`…`)`` matchers only (and <Status planned="v0.9" /> the GeoIP matchers),
+combined with `&&`, `||`, `!` and parentheses. A UDP
 route without `match` takes every datagram of its listeners; a listener has at most one such
 route.
 

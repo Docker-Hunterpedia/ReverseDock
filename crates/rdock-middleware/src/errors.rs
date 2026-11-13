@@ -171,6 +171,8 @@ mod tests {
             consumers: Arc::default(),
             quotas: None,
             route_hosts: Arc::default(),
+            abuse: None,
+            trusted_proxies: Arc::from([]),
             service: &lookup,
             client,
         };
@@ -213,6 +215,8 @@ mod tests {
             consumers: Arc::default(),
             quotas: None,
             route_hosts: Arc::default(),
+            abuse: None,
+            trusted_proxies: Arc::from([]),
             service: &lookup,
             client: Arc::new(HttpClient::default()),
         };

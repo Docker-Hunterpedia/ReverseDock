@@ -618,6 +618,7 @@ impl RdockProxy {
             std::mem::take(&mut ctx.authority),
         );
         cx.client_cert = client_identity(session);
+        cx.fingerprint = connection_fingerprint(session, self.listener(&ctx.runtime));
         cx.has_body = !session.is_body_empty() && !is_upgrade(session.req_header());
         let chain = &route.middlewares;
         chain.start(&mut cx);
@@ -746,6 +747,7 @@ impl RdockProxy {
     }
 
     /// The access-log record of a finished request.
+    #[allow(clippy::too_many_lines)] // one field after the other
     fn access_record(
         &self,
         session: &Session,
@@ -771,6 +773,15 @@ impl RdockProxy {
                 })
         };
         let ssl = session.digest().and_then(|d| d.ssl_digest.clone());
+        let fingerprint = ssl
+            .as_ref()
+            .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+            .and_then(|h| h.fingerprint.get().cloned());
+        let wanted = ctx.runtime.geoip_log;
+        let geo = (wanted.country || wanted.asn)
+            .then(|| Some(ctx.runtime.geoip.as_ref()?.lookup(ctx.client_ip?)))
+            .flatten()
+            .unwrap_or_default();
         AccessRecord {
             ts: rfc3339(ctx.started_at),
             request_id: ctx.request_id().to_owned(),
@@ -826,6 +837,25 @@ impl RdockProxy {
             cf_ray: header("cf-ray"),
             error: ctx.error.take().or_else(|| e.map(ToString::to_string)),
             cache_status: ctx.cache.as_ref().and_then(|c| c.label).map(str::to_owned),
+            ja4: fingerprint
+                .as_ref()
+                .and_then(|f| f.ja4.as_deref())
+                .map(str::to_owned),
+            ja3: fingerprint
+                .as_ref()
+                .and_then(|f| f.ja3.as_deref())
+                .map(str::to_owned),
+            country: geo
+                .country_str()
+                .filter(|_| wanted.country)
+                .map(str::to_owned),
+            asn: geo.asn.filter(|_| wanted.asn),
+            abuse: ctx.mw.as_ref().and_then(|cx| cx.abuse).map(str::to_owned),
+            spiffe_id: ctx
+                .mw
+                .as_ref()
+                .and_then(|cx| cx.spiffe_id.as_deref())
+                .map(str::to_owned),
         }
     }
 }
@@ -971,6 +1001,13 @@ impl ProxyHttp for RdockProxy {
             })
             .unwrap_or_default();
         let client_ip = ctx.client_ip.unwrap_or(IpAddr::from([0, 0, 0, 0]));
+        let fingerprint = listener
+            .fingerprint
+            .as_ref()
+            .and_then(|_| session.digest())
+            .and_then(|d| d.ssl_digest.as_ref())
+            .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+            .and_then(|h| h.fingerprint.get().cloned());
         let route = {
             let req = session.req_header();
             let facts = Facts {
@@ -980,6 +1017,7 @@ impl ProxyHttp for RdockProxy {
                 headers: &req.headers,
                 query: &query,
                 client_ip,
+                fingerprint: fingerprint.as_deref(),
             };
             // Only the routes that can match this host, in evaluation order (the index
             // keeps the result of a scan over every route).
@@ -1767,6 +1805,35 @@ fn client_identity(session: &mut Session) -> Option<Arc<rdock_middleware::Client
         .and_then(|d| d.ssl_digest.as_ref())
         .and_then(|s| s.extension.get::<crate::listener::Handshake>())
         .and_then(|h| h.client_cert.clone())
+}
+
+/// The TLS client fingerprints of the connection. The listener's fingerprint headers are
+/// removed from what the client sent and, when configured, set to the computed values.
+fn connection_fingerprint(
+    session: &mut Session,
+    listener: Option<&ListenerRuntime>,
+) -> Option<Arc<rdock_middleware::ClientFingerprint>> {
+    let wanted = listener.and_then(|l| l.fingerprint.as_ref())?;
+    let found = session
+        .digest()
+        .and_then(|d| d.ssl_digest.as_ref())
+        .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+        .and_then(|h| h.fingerprint.get().cloned());
+    let req = session.req_header_mut();
+    for (header, value) in [
+        (&wanted.header, found.as_ref().and_then(|f| f.ja4.clone())),
+        (
+            &wanted.ja3_header,
+            found.as_ref().and_then(|f| f.ja3.clone()),
+        ),
+    ] {
+        let Some(name) = header else { continue };
+        req.remove_header(name.as_str());
+        if let Some(value) = value {
+            let _ = req.insert_header(name.clone(), value.as_ref());
+        }
+    }
+    found
 }
 
 /// Sends a reply body: one write for bytes in memory, chunk by chunk for a file.

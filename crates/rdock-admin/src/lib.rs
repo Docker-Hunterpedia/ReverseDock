@@ -1,5 +1,6 @@
 #![doc = include_str!("../README.md")]
 
+mod abuse;
 mod account;
 pub mod audit;
 mod auth;
@@ -91,6 +92,17 @@ pub trait Control: Send + Sync {
     /// counts were removed.
     async fn reset_quota(&self, consumer: String, middleware: Option<String>) -> usize {
         let _ = (consumer, middleware);
+        0
+    }
+    /// The keys banned by `abuse` middlewares on this instance now: `{ "bans": [ { middleware,
+    /// key, since, until, remaining_seconds } ] }`.
+    async fn bans(&self) -> serde_json::Value {
+        serde_json::json!({ "bans": [] })
+    }
+    /// Lifts the ban of `key` in every `abuse` middleware, or in `middleware` only; returns
+    /// how many bans were lifted.
+    async fn unban(&self, key: String, middleware: Option<String>) -> usize {
+        let _ = (key, middleware);
         0
     }
     /// Replaces the running binary by handing the listeners to a new process (ADR-0031);

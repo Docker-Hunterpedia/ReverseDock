@@ -828,7 +828,7 @@ schema!(Endpoint, "Endpoint", {
 // ---------------------------------------------------------------------------------------------
 // RateLimitKey
 
-/// What a limit counts by: `client_ip`, `route`, `consumer`, `header:<Name>`,
+/// What a limit counts by: `client_ip`, `route`, `consumer`, `ja4`, `header:<Name>`,
 /// `cookie:<name>` or `claim:<name>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum RateLimitKey {
@@ -847,6 +847,9 @@ pub enum RateLimitKey {
     /// `cloudflare_access`, `jwt` with `consumer_claim`); requests without one are counted
     /// per client IP.
     Consumer,
+    /// The JA4 TLS client fingerprint of the connection (needs `tls.fingerprint` on the
+    /// listener); requests without one are counted per client IP.
+    Ja4,
 }
 
 impl FromStr for RateLimitKey {
@@ -857,12 +860,13 @@ impl FromStr for RateLimitKey {
             "client_ip" => Ok(Self::ClientIp),
             "route" => Ok(Self::Route),
             "consumer" => Ok(Self::Consumer),
+            "ja4" => Ok(Self::Ja4),
             _ => match s.split_once(':') {
                 Some(("header", name)) if is_token(name) => Ok(Self::Header(name.to_owned())),
                 Some(("cookie", name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
                 Some(("claim", name)) if is_token(name) => Ok(Self::Claim(name.to_owned())),
                 _ => Err(ValueError::new(format!(
-                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
                 ))),
             },
         }
@@ -878,18 +882,162 @@ impl fmt::Display for RateLimitKey {
             Self::Cookie(name) => write!(f, "cookie:{name}"),
             Self::Claim(name) => write!(f, "claim:{name}"),
             Self::Consumer => f.write_str("consumer"),
+            Self::Ja4 => f.write_str("ja4"),
         }
     }
 }
 
 string_serde!(
     RateLimitKey,
-    "`client_ip`, `route`, `consumer`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+    "`client_ip`, `route`, `consumer`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
 );
 schema!(RateLimitKey, "RateLimitKey", {
     "type": "string",
-    "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "pattern": "^(client_ip|route|consumer|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
     "examples": ["client_ip", "header:X-Api-Key"]
+});
+
+// ---------------------------------------------------------------------------------------------
+// Abuse keys and events (H-SEC-01)
+
+/// What an `abuse` middleware counts by.
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub enum AbuseKey {
+    /// The client address after trusted-proxy resolution; IPv6 by its /64.
+    #[default]
+    ClientIp,
+    /// The request's consumer.
+    Consumer,
+    /// The JA4 TLS client fingerprint.
+    Ja4,
+    /// The value of a request header.
+    Header(String),
+}
+
+impl FromStr for AbuseKey {
+    type Err = ValueError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "client_ip" => Ok(Self::ClientIp),
+            "consumer" => Ok(Self::Consumer),
+            "ja4" => Ok(Self::Ja4),
+            _ => match s.strip_prefix("header:") {
+                Some(name) if is_token(name) => Ok(Self::Header(name.to_owned())),
+                _ => Err(ValueError::new(format!(
+                    "invalid key `{s}`: use `client_ip`, `consumer`, `ja4` or `header:<Name>`"
+                ))),
+            },
+        }
+    }
+}
+
+impl fmt::Display for AbuseKey {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::ClientIp => f.write_str("client_ip"),
+            Self::Consumer => f.write_str("consumer"),
+            Self::Ja4 => f.write_str("ja4"),
+            Self::Header(name) => write!(f, "header:{name}"),
+        }
+    }
+}
+
+string_serde!(
+    AbuseKey,
+    "`client_ip`, `consumer`, `ja4` or `header:<Name>`"
+);
+schema!(AbuseKey, "AbuseKey", {
+    "type": "string",
+    "pattern": "^(client_ip|consumer|ja4|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "examples": ["client_ip", "ja4"]
+});
+
+/// One kind of event an `abuse` middleware counts.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AbuseEvent {
+    /// A response status, e.g. `401`.
+    Status(u16),
+    /// A status class, `4xx` or `5xx`.
+    Class(u16),
+    /// An authentication middleware refused the request's credentials.
+    AuthFailure,
+}
+
+impl AbuseEvent {
+    /// Whether a response with `status` counts, given whether authentication failed.
+    #[must_use]
+    pub fn counts(self, status: u16, auth_failed: bool) -> bool {
+        match self {
+            Self::Status(s) => s == status,
+            Self::Class(c) => status / 100 == c,
+            Self::AuthFailure => auth_failed,
+        }
+    }
+}
+
+impl FromStr for AbuseEvent {
+    type Err = ValueError;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        if s == "auth_failure" {
+            return Ok(Self::AuthFailure);
+        }
+        if let Some(class) = s.strip_suffix("xx")
+            && let Ok(c @ 4..=5) = class.parse::<u16>()
+        {
+            return Ok(Self::Class(c));
+        }
+        match s.parse::<u16>() {
+            Ok(status @ 400..=599) => Ok(Self::Status(status)),
+            _ => Err(ValueError::new(format!(
+                "invalid event `{s}`: use a status from 400 to 599, `4xx`, `5xx` or `auth_failure`"
+            ))),
+        }
+    }
+}
+
+impl fmt::Display for AbuseEvent {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Self::Status(s) => write!(f, "{s}"),
+            Self::Class(c) => write!(f, "{c}xx"),
+            Self::AuthFailure => f.write_str("auth_failure"),
+        }
+    }
+}
+
+impl Serialize for AbuseEvent {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Status(s) => serializer.serialize_u16(*s),
+            other => serializer.collect_str(other),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for AbuseEvent {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Number(u64),
+            Text(String),
+        }
+        let text = match Raw::deserialize(deserializer)? {
+            Raw::Number(n) => n.to_string(),
+            Raw::Text(t) => t,
+        };
+        text.parse().map_err(serde::de::Error::custom)
+    }
+}
+
+schema!(AbuseEvent, "AbuseEvent", {
+    "oneOf": [
+        { "type": "integer", "minimum": 400, "maximum": 599 },
+        { "type": "string", "pattern": "^([45]xx|auth_failure|[45][0-9][0-9])$" }
+    ],
+    "examples": [401, "4xx", "auth_failure"]
 });
 
 #[cfg(test)]

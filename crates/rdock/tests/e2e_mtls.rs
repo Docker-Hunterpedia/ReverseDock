@@ -16,6 +16,20 @@ fn addr(port: u16) -> SocketAddr {
     SocketAddr::from(([127, 0, 0, 1], port))
 }
 
+/// One request over TLS; `Err` when the handshake or the exchange fails (a refused client
+/// certificate shows up at the first read in TLS 1.3).
+async fn try_tls(
+    addr: SocketAddr,
+    server_name: &str,
+    config: std::sync::Arc<rustls::ClientConfig>,
+    req: http::Request<http_body_util::Full<bytes::Bytes>>,
+) -> Result<rdock_testkit::client::Reply, ()> {
+    let name = server_name.to_owned();
+    tokio::spawn(async move { client::tls(addr, &name, config, req).await })
+        .await
+        .map_err(|_| ())
+}
+
 #[tokio::test]
 async fn a_required_client_certificate_is_verified() {
     let server_ca = TestCa::new();
@@ -218,4 +232,220 @@ fn validate_refuses_client_auth_without_roots() {
         text.contains("listeners.websecure.tls.client_auth"),
         "{text}"
     );
+}
+
+#[tokio::test]
+#[allow(clippy::too_many_lines)] // one scenario: accepted, refused, then rotated
+async fn spiffe_ids_are_checked_and_a_rotated_ca_bundle_is_picked_up() {
+    let server_ca = TestCa::new();
+    let old_ca = TestCa::new();
+    let new_ca = TestCa::new();
+    let dir = tempfile::tempdir().unwrap();
+    let site = server_ca.issue(dir.path(), "site", &["app.test"]);
+    let api = old_ca.issue_svid(
+        dir.path(),
+        "api",
+        &["spiffe://prod.example.com/ns/web/sa/api"],
+        false,
+    );
+    let other = old_ca.issue_svid(
+        dir.path(),
+        "other",
+        &["spiffe://prod.example.com/ns/web/sa/batch"],
+        false,
+    );
+    let foreign = old_ca.issue_svid(
+        dir.path(),
+        "foreign",
+        &["spiffe://staging.example.com/ns/web/sa/api"],
+        false,
+    );
+    let two = old_ca.issue_svid(
+        dir.path(),
+        "two",
+        &[
+            "spiffe://prod.example.com/ns/web/sa/api",
+            "spiffe://prod.example.com/ns/web/sa/batch",
+        ],
+        false,
+    );
+    let bundle = dir.path().join("bundle.pem");
+    std::fs::write(&bundle, old_ca.pem()).unwrap();
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  websecure:
+    address: "127.0.0.1:{port}"
+    tls: {{ client_auth: {{ mode: required, ca_files: ["{}"] }} }}
+certificates:
+  site: {{ cert_file: "{}", key_file: "{}" }}
+routes:
+  app: {{ match: "Host(`app.test`)", service: app, middlewares: [workloads] }}
+middlewares:
+  workloads:
+    type: client_cert
+    spiffe:
+      trust_domains: [prod.example.com]
+      ids: ["spiffe://prod.example.com/ns/web/sa/api"]
+      consumer: true
+    forward: xfcc
+services:
+  app: {{ backends: [{{ address: "{}" }}] }}
+"#,
+        bundle.display(),
+        site.cert.display(),
+        site.key.display(),
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let call = |client: &rdock_testkit::certs::Issued| {
+        let config = server_ca.client_config_with_cert(&[b"http/1.1"], client);
+        client::tls(addr(port), "app.test", config, get("app.test", "/"))
+    };
+    let allowed = call(&api).await;
+    assert_eq!(allowed.status, 200);
+    let xfcc = allowed.json()["headers"]["x-forwarded-client-cert"][0]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(
+        xfcc.contains("URI=\"spiffe://prod.example.com/ns/web/sa/api\""),
+        "{xfcc}"
+    );
+    assert_eq!(call(&other).await.status, 403, "another ID");
+    assert_eq!(call(&foreign).await.status, 403, "another trust domain");
+    assert_eq!(call(&two).await.status, 403, "two URI SANs");
+    let mut logged = false;
+    for _ in 0..100 {
+        if rdock.access_log().iter().any(|l| {
+            l["consumer"] == "spiffe://prod.example.com/ns/web/sa/api"
+                && l["spiffe_id"] == "spiffe://prod.example.com/ns/web/sa/api"
+        }) {
+            logged = true;
+            break;
+        }
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    assert!(logged, "{:?}", rdock.access_log());
+
+    // The trust bundle rotates (as spiffe-helper or csi-driver-spiffe write it): the new CA's
+    // SVID is accepted without a restart, the old CA's is not.
+    let rotated = new_ca.issue_svid(
+        dir.path(),
+        "rotated",
+        &["spiffe://prod.example.com/ns/web/sa/api"],
+        false,
+    );
+    let tmp = dir.path().join("bundle.tmp");
+    std::fs::write(&tmp, new_ca.pem()).unwrap();
+    std::fs::rename(&tmp, &bundle).unwrap();
+    let started = std::time::Instant::now();
+    loop {
+        let config = server_ca.client_config_with_cert(&[b"http/1.1"], &rotated);
+        if let Ok(reply) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            try_tls(addr(port), "app.test", config, get("app.test", "/")),
+        )
+        .await
+            && reply.is_ok_and(|r| r.status == 200)
+        {
+            break;
+        }
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "the rotated bundle was not loaded:\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    let old = server_ca.client_config_with_cert(&[b"http/1.1"], &api);
+    let refused = try_tls(addr(port), "app.test", old, get("app.test", "/")).await;
+    assert!(
+        refused.is_err() || refused.is_ok_and(|r| r.status != 200),
+        "the old CA's SVID after the rotation"
+    );
+}
+
+#[tokio::test]
+async fn an_upstream_client_certificate_rotates_and_a_half_written_pair_is_not_applied() {
+    let ca = TestCa::new();
+    let dir = tempfile::tempdir().unwrap();
+    let backend_cert = ca.issue(dir.path(), "backend", &["backend.test"]);
+    let first = ca.issue_svid(
+        dir.path(),
+        "svid",
+        &["spiffe://prod.example.com/rdock"],
+        false,
+    );
+    let ca_file = ca.write(dir.path());
+    let backend = Backend::start_mtls(
+        "secure",
+        &backend_cert.cert_pem,
+        &backend_cert.key_pem,
+        &ca.pem(),
+    )
+    .await;
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "PathPrefix(`/`)", service: secure }}
+services:
+  secure:
+    scheme: https
+    backends: [{{ address: "{}" }}]
+    tls: {{ server_name: backend.test, ca_file: "{}", cert_file: "{}", key_file: "{}" }}
+"#,
+        backend.addr,
+        ca_file.display(),
+        first.cert.display(),
+        first.key.display()
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
+
+    // A rotation that has written the new certificate but not yet its key.
+    let next = ca.issue_svid(
+        dir.path(),
+        "next",
+        &["spiffe://prod.example.com/rdock"],
+        false,
+    );
+    let tmp = dir.path().join("svid.tmp");
+    std::fs::write(&tmp, &next.cert_pem).unwrap();
+    std::fs::rename(&tmp, &first.cert).unwrap();
+    let started = std::time::Instant::now();
+    while !rdock.log().contains("does not belong to the certificate") {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "the mismatched pair was not noticed:\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert_eq!(
+        client::http1(addr(port), get("a", "/")).await.status,
+        200,
+        "the running pair stays in use"
+    );
+    // The key lands: the next reload applies the new pair.
+    let reloads = |log: &str| log.matches("configuration applied").count();
+    let before = reloads(&rdock.log());
+    std::fs::write(&tmp, &next.key_pem).unwrap();
+    std::fs::rename(&tmp, &first.key).unwrap();
+    let started = std::time::Instant::now();
+    while reloads(&rdock.log()) <= before {
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(30),
+            "the completed pair was not applied:\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+    }
+    assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
 }

@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
+pub use crate::values::{AbuseEvent, AbuseKey};
 use crate::values::{ByteSize, Duration, HttpUrl, IpNetwork, RateLimitKey};
 
 /// A reusable request/response policy, selected by `type`.
@@ -93,6 +94,102 @@ pub enum Middleware {
     /// OpenID Connect login for browsers: authorization code flow with PKCE, a stateless
     /// encrypted session cookie, claims to headers and to the consumer (F-GW-01).
     Oidc(Box<crate::oidc::OidcConfig>),
+    /// Count abuse signals (response statuses, failed authentications) per key in a window
+    /// and ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive
+    /// restarts and binary upgrades.
+    Abuse(AbuseConfig),
+}
+
+/// `type: abuse`: counts events per key in a fixed window and bans the key past `threshold`.
+///
+/// Put it first in the route's middlewares, so it sees the answers of the authentication
+/// middlewares after it and refuses banned keys before they run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[schemars(inline)]
+pub struct AbuseConfig {
+    /// What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or
+    /// `header:<Name>`. Requests without a consumer or fingerprint count by client address.
+    pub key: AbuseKey,
+    /// What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an
+    /// authentication middleware refused the credentials). Default `[401, 403]`.
+    pub events: Vec<AbuseEvent>,
+    /// Events within one `window` that start a ban. Default 20.
+    pub threshold: u32,
+    /// The counting window. Default 1m.
+    pub window: Duration,
+    /// How long a ban lasts. Default 10m.
+    pub ban: Duration,
+    /// What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`
+    /// (held for `tarpit.delay`, then denied) or `tag` (served; the access log and later
+    /// middlewares see `abuse: tagged`).
+    pub action: AbuseAction,
+    /// `action: tarpit`.
+    pub tarpit: Tarpit,
+    /// Client networks never counted or banned. Default the loopback networks; the
+    /// `security.trusted_proxies` networks are always added, so a proxy whose clients are not
+    /// resolved can never ban itself, and with it everyone behind it.
+    pub exempt: Vec<IpNetwork>,
+    /// Keys counted at once; past it, the oldest counters are dropped. Default 100000.
+    pub max_keys: u32,
+    /// Bans at once. The ban list is separate from the counters and nothing evicts a ban
+    /// before it ends: when it is full, new bans are refused and counted in
+    /// `rdock_abuse_bans_refused_total`. Default 10000.
+    pub max_bans: u32,
+}
+
+impl Default for AbuseConfig {
+    fn default() -> Self {
+        Self {
+            key: AbuseKey::ClientIp,
+            events: vec![AbuseEvent::Status(401), AbuseEvent::Status(403)],
+            threshold: 20,
+            window: Duration::from_secs(60),
+            ban: Duration::from_secs(600),
+            action: AbuseAction::Deny,
+            tarpit: Tarpit::default(),
+            exempt: ["127.0.0.0/8", "::1/128"]
+                .iter()
+                .filter_map(|n| n.parse().ok())
+                .collect(),
+            max_keys: 100_000,
+            max_bans: 10_000,
+        }
+    }
+}
+
+/// What a banned key gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AbuseAction {
+    /// `403` with the problem type `banned`.
+    #[default]
+    Deny,
+    /// Held for `tarpit.delay`, then `403`.
+    Tarpit,
+    /// Served; marked in the access log and for later middlewares.
+    Tag,
+}
+
+/// How `action: tarpit` holds requests.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Tarpit {
+    /// How long a request is held before the `403`. Default 5s, at most 60s.
+    pub delay: Duration,
+    /// Requests held at once, all keys together; past it, banned requests are denied at once
+    /// (holding connections costs the proxy too: HAProxy's manual warns that a tarpit "can
+    /// make things worse"). Default 100.
+    pub max_held: u32,
+}
+
+impl Default for Tarpit {
+    fn default() -> Self {
+        Self {
+            delay: Duration::from_secs(5),
+            max_held: 100,
+        }
+    }
 }
 
 /// Cloudflare Access application tokens (`type: cloudflare_access`, W-CF-06, ADR-0030).
@@ -437,7 +534,35 @@ pub struct ClientCertConfig {
     pub required: bool,
     /// Names a certificate must have one of: its common name or a DNS, URI or email SAN.
     /// `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.
+    /// The typed lists below check one field each and are safer: a URI pattern there cannot
+    /// be satisfied by a common name that carries the same text.
     pub allow: Vec<String>,
+    /// Subject common names, one must match (`*` globs). Every typed list that is set must
+    /// match, together with `allow`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub subjects: Vec<String>,
+    /// Subject organizations (O), one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub organizations: Vec<String>,
+    /// DNS SANs, one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub dns: Vec<String>,
+    /// URI SANs, one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub uris: Vec<String>,
+    /// Email SANs, one must match (`*` globs).
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub emails: Vec<String>,
+    /// Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub serials: Vec<String>,
+    /// SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub sha256: Vec<String>,
+    /// SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the
+    /// trust domains, and its ID one of `ids` or under one of `id_prefixes`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub spiffe: Option<SpiffeRules>,
     /// Headers that pass the identity to the backend.
     pub forward: ClientCertForward,
 }
@@ -447,9 +572,41 @@ impl Default for ClientCertConfig {
         Self {
             required: true,
             allow: Vec::new(),
+            subjects: Vec::new(),
+            organizations: Vec::new(),
+            dns: Vec::new(),
+            uris: Vec::new(),
+            emails: Vec::new(),
+            serials: Vec::new(),
+            sha256: Vec::new(),
+            spiffe: None,
             forward: ClientCertForward::None,
         }
     }
+}
+
+/// SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and
+/// `SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI
+/// SAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and
+/// may not sign certificates or CRLs. The chain itself is verified by the listener's
+/// `client_auth`, whose CA bundle must be the trust domain's.
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct SpiffeRules {
+    /// Trust domains accepted, e.g. `prod.example.com`. Required.
+    pub trust_domains: Vec<String>,
+    /// SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub ids: Vec<String>,
+    /// SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`
+    /// accepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor
+    /// `id_prefixes`, any ID of the trust domains is accepted.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub id_prefixes: Vec<String>,
+    /// Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,
+    /// metering and the access log). Its issuer is `spiffe://<trust domain>`, so it never
+    /// shares counters with an API-key or token consumer of the same name. Off by default.
+    pub consumer: bool,
 }
 
 /// How a client certificate is passed to the backend. Copies of these headers sent by clients

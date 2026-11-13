@@ -28,6 +28,10 @@ fn matcher() -> impl Strategy<Value = Matcher> {
         text().prop_map(Matcher::HostSni),
         text().prop_map(Matcher::HostSniRegexp),
         text().prop_map(Matcher::Alpn),
+        proptest::collection::vec(text(), 1..4).prop_map(Matcher::ClientFingerprint),
+        proptest::collection::vec(text(), 1..4).prop_map(Matcher::ClientCountry),
+        proptest::collection::vec(text(), 1..4).prop_map(Matcher::ClientContinent),
+        proptest::collection::vec(text(), 1..4).prop_map(Matcher::ClientAsn),
     ]
 }
 

@@ -62,6 +62,8 @@ pub struct CompileEnv<'a> {
     pub metrics: Option<&'a rdock_observability::Metrics>,
     /// Quota counters that outlive a configuration; `None` when validating.
     pub quotas: Option<&'a rdock_limits::quota::QuotaRegistry>,
+    /// Abuse counters and bans that outlive a configuration; `None` when validating.
+    pub abuse: Option<&'a rdock_limits::abuse::AbuseRegistry>,
 }
 
 /// The result of compilation.
@@ -84,6 +86,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
     let tracer = tracer(config, env, &mut out);
     let middlewares = build_middlewares(config, &services, env, &mut out);
     let caches = resolve_caches(config, env, &mut out);
+    let geoip = load_geoip(config, env, &mut out);
     let mut auto_tls = AutoTls {
         certs: &index,
         acme: config.effective_acme().is_some(),
@@ -102,10 +105,18 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
             stores: &caches,
             required: env.mode == Mode::Run && env.caches.is_some(),
         },
+        geoip.as_ref(),
         &mut out,
     );
-    crate::tcp::compile_tcp(config, env, &mut listeners, &mut auto_tls, &mut out);
-    let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, &mut out);
+    crate::tcp::compile_tcp(
+        config,
+        env,
+        &mut listeners,
+        &mut auto_tls,
+        geoip.as_ref(),
+        &mut out,
+    );
+    let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, geoip.as_ref(), &mut out);
     let cert_requests = auto_tls.requests.into_iter().collect();
     let local_cert_names = auto_tls.local.into_iter().collect();
     let metering = start_metering(config, env, &mut out);
@@ -131,10 +142,43 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         tracer,
         errors: config.defaults.errors.format,
         metering,
+        geoip,
+        geoip_log: config.geoip.as_ref().map(|g| g.log).unwrap_or_default(),
     });
     Compiled {
         runtime,
         diagnostics: out,
+    }
+}
+
+/// The GeoIP databases of `geoip`, reusing the running ones whose files did not change. A
+/// database that cannot be loaded is an error only when something needs it.
+fn load_geoip(
+    config: &Config,
+    env: &CompileEnv<'_>,
+    out: &mut Vec<Diagnostic>,
+) -> Option<Arc<crate::geoip::GeoIp>> {
+    let settings = config.geoip.as_ref()?;
+    if settings.database.is_none() && settings.asn_database.is_none() {
+        return None;
+    }
+    let previous = env.previous.and_then(|r| r.geoip.as_deref());
+    match crate::geoip::GeoIp::load(settings, previous, std::time::SystemTime::now()) {
+        Ok(loaded) => {
+            for warning in loaded.warnings {
+                out.push(Diagnostic::warning("geoip", warning));
+            }
+            if let Some(metrics) = env.metrics {
+                for (role, db) in loaded.geoip.databases() {
+                    metrics.set_geoip_build(role, db.build_epoch);
+                }
+            }
+            Some(loaded.geoip)
+        }
+        Err(message) => {
+            out.push(Diagnostic::error("geoip", message));
+            None
+        }
     }
 }
 
@@ -438,6 +482,16 @@ fn compile_service(
         tls.and_then(|t| t.cert_file.as_ref()),
     )
         .hash(&mut hasher);
+    // A rotated client certificate or CA bundle (same paths, new contents) gets new pooled
+    // connections instead of reusing ones made with the previous identity.
+    if let Some(cert) = &client_cert {
+        cert.leaf().borrow_raw_cert().hash(&mut hasher);
+    }
+    if let Some(ca) = &ca {
+        for root in ca.iter() {
+            root.borrow_raw_cert().hash(&mut hasher);
+        }
+    }
     Ok(ServiceRuntime {
         name: Arc::from(name),
         scheme: service.scheme,
@@ -722,6 +776,16 @@ fn build_middlewares(
         consumers,
         quotas: env.quotas,
         route_hosts: Arc::new(route_hosts(config)),
+        abuse: env.abuse,
+        trusted_proxies: config
+            .security
+            .trusted_proxies
+            .iter()
+            .filter_map(|p| match p {
+                rdock_model::values::TrustedProxy::Network(n) => Some(*n),
+                rdock_model::values::TrustedProxy::Cloudflare => None,
+            })
+            .collect(),
     };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
@@ -902,6 +966,7 @@ fn compile_listeners(
     scoped: &HashMap<String, Arc<CertIndex>>,
     rings: &rdock_observability::live::Rings,
     caches: &Caches<'_>,
+    geoip: Option<&Arc<crate::geoip::GeoIp>>,
     out: &mut Vec<Diagnostic>,
 ) -> BTreeMap<String, ListenerRuntime> {
     let effective = config.effective_listeners();
@@ -931,6 +996,7 @@ fn compile_listeners(
             live: rings.ring(name),
             caches,
             errors: config.defaults.errors.format,
+            geoip,
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
@@ -1030,6 +1096,11 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         socket: listener.socket(),
         max_handshakes: listener.tls.as_ref().and_then(|t| t.max_handshakes),
         http2: listener.http2.unwrap_or_default(),
+        fingerprint: listener
+            .tls
+            .as_ref()
+            .and_then(|t| t.fingerprint.clone())
+            .filter(|_| listener.effective_protocol() == ListenerProtocol::Https),
         proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),
@@ -1072,6 +1143,8 @@ struct RouteContext<'a> {
     caches: &'a Caches<'a>,
     /// `defaults.errors.format`.
     errors: rdock_model::config::ErrorFormat,
+    /// GeoIP databases for the rule's matchers.
+    geoip: Option<&'a Arc<crate::geoip::GeoIp>>,
 }
 
 /// The route's cache policy from its `cache` middleware, if it has one.
@@ -1119,7 +1192,7 @@ fn compile_route(
 ) -> Option<Arc<RouteRuntime>> {
     let (services, middlewares) = (context.services, context.middlewares);
     let path = path_key("routes", name);
-    let rule = match Rule::compile(expr) {
+    let rule = match Rule::compile_with(expr, context.geoip) {
         Ok(rule) => rule,
         Err(e) => {
             out.push(Diagnostic::error(format!("{path}.match"), e.to_string()));

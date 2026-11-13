@@ -31,6 +31,7 @@ Commands:
   backends     Show backends and drain them
   cache        Show HTTP cache stores and purge them (this instance only)
   consumers    Manage consumers (API clients) and their quota counters
+  bans         List and lift the bans of `abuse` middlewares on this instance
   keys         Mint, revoke and hash consumers' API keys
   routes       Explain routing decisions
   schema       Print the JSON Schema of rdock.yaml
@@ -332,6 +333,23 @@ Commands:
   quota        Show this instance's quota counters, of one consumer or all
   reset-quota  Forget a consumer's quota counters on this instance
   help         Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
+```
+
+## `rdock bans`
+
+```text
+List and lift the bans of `abuse` middlewares on this instance
+
+Usage: rdock bans <COMMAND>
+
+Commands:
+  list    List the keys banned on this instance now
+  remove  Lift a ban (the key as `rdock bans list` prints it)
+  help    Print this message or the help of the given subcommand(s)
 
 Options:
   -h, --help     Print help

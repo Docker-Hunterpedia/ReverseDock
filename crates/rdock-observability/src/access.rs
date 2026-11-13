@@ -91,6 +91,25 @@ pub struct AccessRecord {
     /// on caching routes only.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub cache_status: Option<String>,
+    /// JA4 TLS client fingerprint (listeners with `tls.fingerprint`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ja4: Option<String>,
+    /// JA3 TLS client fingerprint (listeners with `tls.fingerprint.ja3`).
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub ja3: Option<String>,
+    /// Client country (ISO 3166-1 alpha-2), only with `geoip.log.country`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub country: Option<String>,
+    /// Client autonomous system number, only with `geoip.log.asn`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub asn: Option<u32>,
+    /// What an `abuse` middleware did: `banned`, `tarpit` or `tagged`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub abuse: Option<String>,
+    /// The SPIFFE ID of the client certificate, when a `client_cert` middleware with
+    /// `spiffe` accepted it.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub spiffe_id: Option<String>,
 }
 
 /// The access-log writer.
@@ -203,10 +222,19 @@ fn text_line(r: &AccessRecord) -> String {
         r.upstream.as_deref().unwrap_or("-"),
         r.request_id
     );
-    match &r.cache_status {
+    let mut line = match &r.cache_status {
         Some(cache) => format!("{line} cache={cache}"),
         None => line,
+    };
+    if let Some(ja4) = &r.ja4 {
+        line.push_str(" ja4=");
+        line.push_str(ja4);
     }
+    if let Some(abuse) = &r.abuse {
+        line.push_str(" abuse=");
+        line.push_str(abuse);
+    }
+    line
 }
 
 /// `SystemTime` as RFC 3339 in UTC with milliseconds, e.g. `2026-10-26T16:13:05.123Z`.

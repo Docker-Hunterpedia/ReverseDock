@@ -689,6 +689,52 @@
         ],
         "type": "object"
       },
+      "rdock.AbuseAction": {
+        "description": "What a banned key gets.",
+        "oneOf": [
+          {
+            "const": "deny",
+            "description": "`403` with the problem type `banned`.",
+            "type": "string"
+          },
+          {
+            "const": "tarpit",
+            "description": "Held for `tarpit.delay`, then `403`.",
+            "type": "string"
+          },
+          {
+            "const": "tag",
+            "description": "Served; marked in the access log and for later middlewares.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AbuseEvent": {
+        "examples": [
+          401,
+          "4xx",
+          "auth_failure"
+        ],
+        "oneOf": [
+          {
+            "maximum": 599,
+            "minimum": 400,
+            "type": "integer"
+          },
+          {
+            "pattern": "^([45]xx|auth_failure|[45][0-9][0-9])$",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.AbuseKey": {
+        "examples": [
+          "client_ip",
+          "ja4"
+        ],
+        "pattern": "^(client_ip|consumer|ja4|header:[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+        "type": "string"
+      },
       "rdock.AccessLog": {
         "additionalProperties": false,
         "description": "Access log settings.",
@@ -2284,6 +2330,17 @@
             },
             "description": "Defaults applied to routes that do not set a value."
           },
+          "geoip": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.GeoIp"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No\ndatabase is bundled or downloaded."
+          },
           "lifecycle": {
             "$ref": "#/components/schemas/rdock.Lifecycle",
             "default": {
@@ -3106,6 +3163,68 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.GeoIp": {
+        "additionalProperties": false,
+        "description": "GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,\nDB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into\nmemory and read again when they change.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "asn_database": {
+            "description": "An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "database": {
+            "description": "A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that\nalso carries ASNs (IPinfo Lite) gives `ClientASN` as well.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "log": {
+            "$ref": "#/components/schemas/rdock.GeoIpLog",
+            "default": {
+              "asn": false,
+              "country": false
+            },
+            "description": "Opt-in access-log fields; both off by default, since a location tied to an IP address\nis personal data in many jurisdictions."
+          },
+          "max_age": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30d",
+            "description": "The oldest database build accepted, by the build time in its metadata. Default 30 days:\nthe GeoLite End User License Agreement (updated 2026-02-12) requires deleting a\nversion within thirty days of a newer release."
+          },
+          "on_stale": {
+            "$ref": "#/components/schemas/rdock.OnStale",
+            "default": "warn",
+            "description": "What an older database does: `warn` (the default) logs a warning and keeps using it;\n`refuse` refuses to load it, so the configuration that needs it is refused."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.GeoIpLog": {
+        "additionalProperties": false,
+        "description": "GeoIP fields in the access log.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "asn": {
+            "default": false,
+            "description": "Log `asn`.",
+            "type": "boolean"
+          },
+          "country": {
+            "default": false,
+            "description": "Log `country` (ISO 3166-1 alpha-2).",
+            "type": "boolean"
+          }
+        },
+        "type": "object"
       },
       "rdock.GoogleCloudDnsProvider": {
         "additionalProperties": false,
@@ -4287,6 +4406,17 @@
             ],
             "default": null,
             "description": "Client certificates (mTLS). A certificate is always verified against these roots."
+          },
+          "fingerprint": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TlsFingerprint"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each\nconnection's ClientHello. Unset (the default), no ClientHello is read for it and\n`ClientFingerprint`, the `ja4` keys and the access-log fields stay empty."
           },
           "max_handshakes": {
             "description": "`https` listeners: TLS handshakes in progress at once. While the bound is reached, new\nconnections wait in the listen backlog instead of taking CPU from established ones.\nUnset: no bound (ADR-0031).",
@@ -5481,7 +5611,21 @@
             "properties": {
               "allow": {
                 "default": [],
-                "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.",
+                "description": "Names a certificate must have one of: its common name or a DNS, URI or email SAN.\n`*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty.\nThe typed lists below check one field each and are safer: a URI pattern there cannot\nbe satisfied by a common name that carries the same text.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "dns": {
+                "description": "DNS SANs, one must match (`*` globs).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "emails": {
+                "description": "Email SANs, one must match (`*` globs).",
                 "items": {
                   "type": "string"
                 },
@@ -5492,14 +5636,60 @@
                 "default": "none",
                 "description": "Headers that pass the identity to the backend."
               },
+              "organizations": {
+                "description": "Subject organizations (O), one must match (`*` globs).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "required": {
                 "default": true,
                 "description": "Answer `403` to requests without a verified client certificate.",
                 "type": "boolean"
               },
+              "serials": {
+                "description": "Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "sha256": {
+                "description": "SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "spiffe": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.SpiffeRules"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the\ntrust domains, and its ID one of `ids` or under one of `id_prefixes`."
+              },
+              "subjects": {
+                "description": "Subject common names, one must match (`*` globs). Every typed list that is set must\nmatch, together with `allow`.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "type": {
                 "const": "client_cert",
                 "type": "string"
+              },
+              "uris": {
+                "description": "URI SANs, one must match (`*` globs).",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
               }
             },
             "required": [
@@ -6526,6 +6716,94 @@
               "session"
             ],
             "type": "object"
+          },
+          {
+            "additionalProperties": false,
+            "description": "Count abuse signals (response statuses, failed authentications) per key in a window\nand ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive\nrestarts and binary upgrades.",
+            "patternProperties": {
+              "^x-": {}
+            },
+            "properties": {
+              "action": {
+                "$ref": "#/components/schemas/rdock.AbuseAction",
+                "default": "deny",
+                "description": "What a banned key gets: `deny` (`403`, problem type `banned`, the default), `tarpit`\n(held for `tarpit.delay`, then denied) or `tag` (served; the access log and later\nmiddlewares see `abuse: tagged`)."
+              },
+              "ban": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "10m",
+                "description": "How long a ban lasts. Default 10m."
+              },
+              "events": {
+                "default": [
+                  401,
+                  403
+                ],
+                "description": "What counts: status codes (`401`), classes (`4xx`) and `auth_failure` (an\nauthentication middleware refused the credentials). Default `[401, 403]`.",
+                "items": {
+                  "$ref": "#/components/schemas/rdock.AbuseEvent"
+                },
+                "type": "array"
+              },
+              "exempt": {
+                "default": [
+                  "127.0.0.0/8",
+                  "::1/128"
+                ],
+                "description": "Client networks never counted or banned. Default the loopback networks; the\n`security.trusted_proxies` networks are always added, so a proxy whose clients are not\nresolved can never ban itself, and with it everyone behind it.",
+                "items": {
+                  "$ref": "#/components/schemas/rdock.IpNetwork"
+                },
+                "type": "array"
+              },
+              "key": {
+                "$ref": "#/components/schemas/rdock.AbuseKey",
+                "default": "client_ip",
+                "description": "What to count by: `client_ip` (the default; IPv6 by /64), `consumer`, `ja4` or\n`header:<Name>`. Requests without a consumer or fingerprint count by client address."
+              },
+              "max_bans": {
+                "default": 10000,
+                "description": "Bans at once. The ban list is separate from the counters and nothing evicts a ban\nbefore it ends: when it is full, new bans are refused and counted in\n`rdock_abuse_bans_refused_total`. Default 10000.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "max_keys": {
+                "default": 100000,
+                "description": "Keys counted at once; past it, the oldest counters are dropped. Default 100000.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "tarpit": {
+                "$ref": "#/components/schemas/rdock.Tarpit",
+                "default": {
+                  "delay": "5s",
+                  "max_held": 100
+                },
+                "description": "`action: tarpit`."
+              },
+              "threshold": {
+                "default": 20,
+                "description": "Events within one `window` that start a ban. Default 20.",
+                "format": "uint32",
+                "minimum": 0,
+                "type": "integer"
+              },
+              "type": {
+                "const": "abuse",
+                "type": "string"
+              },
+              "window": {
+                "$ref": "#/components/schemas/rdock.Duration",
+                "default": "1m",
+                "description": "The counting window. Default 1m."
+              }
+            },
+            "required": [
+              "type"
+            ],
+            "type": "object"
           }
         ]
       },
@@ -6768,6 +7046,21 @@
           {
             "const": "pass",
             "description": "Forward the body unchanged.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.OnStale": {
+        "description": "What a GeoIP database older than `max_age` does.",
+        "oneOf": [
+          {
+            "const": "warn",
+            "description": "Log a warning and keep using it.",
+            "type": "string"
+          },
+          {
+            "const": "refuse",
+            "description": "Refuse to load it.",
             "type": "string"
           }
         ]
@@ -7203,7 +7496,7 @@
           "client_ip",
           "header:X-Api-Key"
         ],
-        "pattern": "^(client_ip|route|consumer|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+        "pattern": "^(client_ip|route|consumer|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
         "type": "string"
       },
       "rdock.RateOverride": {
@@ -8150,6 +8443,43 @@
           }
         ]
       },
+      "rdock.SpiffeRules": {
+        "additionalProperties": false,
+        "description": "SPIFFE X.509-SVID checks on a client certificate (SPIFFE standards `X509-SVID.md` and\n`SPIFFE-ID.md`, commit 5d15e3ee of github.com/spiffe/spiffe, 2026-11-13): exactly one URI\nSAN, scheme `spiffe`, a valid trust domain and a non-root path, a leaf that is not a CA and\nmay not sign certificates or CRLs. The chain itself is verified by the listener's\n`client_auth`, whose CA bundle must be the trust domain's.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "consumer": {
+            "default": false,
+            "description": "Make the SPIFFE ID the request's consumer (for `rate_limit` and `quota` by consumer,\nmetering and the access log). Its issuer is `spiffe://<trust domain>`, so it never\nshares counters with an API-key or token consumer of the same name. Off by default.",
+            "type": "boolean"
+          },
+          "id_prefixes": {
+            "description": "SPIFFE ID prefixes, matched segment by segment: `spiffe://prod.example.com/ns/web`\naccepts that ID and every ID below it, never `/ns/webshop`. With neither `ids` nor\n`id_prefixes`, any ID of the trust domains is accepted.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ids": {
+            "description": "SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "trust_domains": {
+            "default": [],
+            "description": "Trust domains accepted, e.g. `prod.example.com`. Required.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
+      },
       "rdock.SplitTarget": {
         "additionalProperties": false,
         "description": "One target of a weighted split.",
@@ -8494,6 +8824,28 @@
           }
         ]
       },
+      "rdock.Tarpit": {
+        "additionalProperties": false,
+        "description": "How `action: tarpit` holds requests.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "delay": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "5s",
+            "description": "How long a request is held before the `403`. Default 5s, at most 60s."
+          },
+          "max_held": {
+            "default": 100,
+            "description": "Requests held at once, all keys together; past it, banned requests are denied at once\n(holding connections costs the proxy too: HAProxy's manual warns that a tarpit \"can\nmake things worse\"). Default 100.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "rdock.TcpKeepalive": {
         "additionalProperties": false,
         "description": "TCP keep-alive on accepted connections (`SO_KEEPALIVE`). Unset values keep the kernel's\n(Linux: 7200 s idle, 75 s between probes, 9 probes).",
@@ -8706,6 +9058,40 @@
             "$ref": "#/components/schemas/rdock.Duration",
             "default": "1m",
             "description": "Sending request data."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TlsFingerprint": {
+        "additionalProperties": false,
+        "description": "Which TLS client fingerprints an `https` listener computes, and whether backends see them.\nThe values are computed from the outer ClientHello (with Encrypted Client Hello the inner\none is never seen), only for connections this listener terminates.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "header": {
+            "description": "A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent\nby the client is always removed. Unset (the default): backends do not see it.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ja3": {
+            "default": false,
+            "description": "JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110\nrandomises the extension order that JA3 hashes, one browser has many JA3 values.",
+            "type": "boolean"
+          },
+          "ja3_header": {
+            "description": "A request header that carries the JA3 value (needs `ja3: true`).",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "ja4": {
+            "default": true,
+            "description": "JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.",
+            "type": "boolean"
           }
         },
         "type": "object"
@@ -9575,6 +9961,114 @@
         "summary": "The OpenAPI 3.1 document of this API",
         "tags": [
           "health"
+        ]
+      }
+    },
+    "/api/v1/abuse/bans": {
+      "get": {
+        "description": "The keys banned on this instance now.",
+        "operationId": "list_bans",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`bans`: middleware, key, since and until (RFC 3339), remaining_seconds"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "The keys banned on this instance now",
+        "tags": [
+          "security"
+        ]
+      }
+    },
+    "/api/v1/abuse/bans/{key}": {
+      "delete": {
+        "description": "(operator): lifts the ban of `key` (as listed, e.g. `ip:192.0.2.7` or `ip:2001:db8:1:2::/64`) in every `abuse` middleware, or in `?middleware=` only. Audited. `404` when no such ban exists.",
+        "operationId": "remove_ban",
+        "parameters": [
+          {
+            "description": "The banned key, URL-encoded",
+            "in": "path",
+            "name": "key",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only this `abuse` middleware's ban; every middleware's when omitted.",
+            "in": "query",
+            "name": "middleware",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "`removed`: how many bans were lifted"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "No such ban"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "(operator): lifts the ban of `key` (as listed, e.g",
+        "tags": [
+          "security"
         ]
       }
     },

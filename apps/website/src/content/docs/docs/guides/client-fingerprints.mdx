@@ -1,0 +1,117 @@
+---
+title: TLS client fingerprints
+description: Compute JA4 (and, on request, JA3) from each TLS ClientHello, log it, route and rate-limit by it with ClientFingerprint and key ja4, and pass it to backends.
+sidebar:
+  order: 32
+---
+
+import Status from '../../../../components/Status.astro';
+
+An `https` listener can compute a **TLS client fingerprint** <Status planned="v0.9" /> from the
+ClientHello of every connection it terminates: a short string that is the same for every
+connection of one TLS client build (a browser version, a library, a bot framework) and differs
+between builds. Use it to recognise clients that lie in their `User-Agent`, to rate-limit or ban
+a tool rather than an address, or just to log what talks to you.
+
+ReverseDock computes **JA4**, FoxIO's TLS client fingerprint, and on request the older **JA3**.
+Nothing is computed, and no ClientHello is read for it, unless a listener asks.
+
+```yaml title="rdock.yaml"
+listeners:
+  websecure:
+    address: ":443"
+    tls:
+      fingerprint:
+        ja4: true              # the default once `fingerprint` is set
+        ja3: false             # legacy, see below
+        header: X-JA4          # pass JA4 to backends (unset by default)
+certificates:
+  site: { cert_file: /etc/rdock/certs/site.pem, key_file: /etc/rdock/certs/site.key }
+routes:
+  app:
+    match: "Host(`example.com`)"
+    service: app
+services:
+  app:
+    backends: [{ address: "127.0.0.1:3000" }]
+```
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `ja4` | `true` | Compute JA4. |
+| `ja3` | `false` | Compute JA3 too. |
+| `header` | unset | A request header that carries JA4 to the backend. |
+| `ja3_header` | unset | A request header that carries JA3 (needs `ja3: true`). |
+
+A copy of `header` or `ja3_header` that the client sent is always removed first, so a backend
+can trust the value. The access log gets the fields `ja4` and `ja3` (the text format adds
+`ja4=`).
+
+## What JA4 looks like
+
+`t13d1516h2_8daaf6152771_e5627efa2ab1` reads as: TLS over TCP (`t`), TLS 1.3 (`13`), a server
+name was sent (`d`; `i` without one), 15 cipher suites, 16 extensions, first ALPN value `h2`;
+then a truncated SHA-256 of the sorted cipher suites and one of the sorted extensions with the
+signature algorithms. GREASE values are ignored everywhere. ReverseDock implements the
+specification `technical_details/JA4.md` of
+[FoxIO-LLC/ja4](https://github.com/FoxIO-LLC/ja4/blob/main/technical_details/JA4.md) at commit
+`8eda4ce4` (2026-11-13) and is tested against its worked example.
+
+**JA4 only.** JA4 (TLS client fingerprinting) is licensed under the BSD 3-Clause licence. The
+rest of the JA4+ family (JA4S, JA4H, JA4X, JA4T and the others) is under the FoxIO License 1.1,
+which does not allow every use an Apache-2.0 project must allow, and is not part of ReverseDock
+([FoxIO licensing](https://github.com/FoxIO-LLC/ja4#licensing), checked 2026-11-13).
+
+## JA3 is legacy
+
+JA3 ([salesforce/ja3](https://github.com/salesforce/ja3), BSD 3-Clause) is an MD5 of the
+ClientHello's version, cipher suites, extensions **in order**, groups and point formats. Since
+Chrome 110 ([chromestatus 5124606246518784](https://chromestatus.com/feature/5124606246518784),
+checked 2026-11-13) browsers shuffle their extensions, so one browser produces many JA3 values;
+rustls does the same. Salesforce no longer maintains JA3. Turn it on only to match existing
+block lists; prefer JA4.
+
+## Route by fingerprint
+
+``ClientFingerprint(`…`, …)`` matches when the connection's JA4 (or JA3) is one of the values.
+It needs a listener of the route with `tls.fingerprint`; `rdock validate` refuses it otherwise.
+
+```yaml title="rdock.yaml (excerpt)"
+routes:
+  scanner:
+    match: "Host(`example.com`) && ClientFingerprint(`t13d191000_9dc949149365_e7c285222651`)"
+    service: tarpit
+    priority: 100
+```
+
+A connection without a fingerprint (plain HTTP, a ClientHello that could not be read) never
+matches ``ClientFingerprint(…)``, so ``!ClientFingerprint(…)`` matches it. In TCP routes the
+matcher works too: the ClientHello is already read for `HostSNI`, and JA4 is computed only when a
+rule uses it. Connections rdock does not terminate or read (a `tcp` listener without TLS rules)
+have no fingerprint.
+
+## Rate-limit or ban by fingerprint
+
+`rate_limit`, `in_flight` and `bandwidth` take `key: ja4`, and so does
+[`abuse`](/docs/guides/abuse-protection/). Requests without a fingerprint count per client IP.
+A fingerprint is shared by every user of the same browser version, so limit by JA4 only for
+fingerprints you have seen misbehave, or with generous limits.
+
+## Limits
+
+- **Behind a CDN or a TLS-terminating load balancer** the fingerprint is the one of that proxy,
+  not of the client. rdock never takes a fingerprint from a header.
+- **Encrypted Client Hello (ECH)**: the outer ClientHello is what is fingerprinted; the inner
+  one is never seen.
+- The ClientHello is read with the same bounded parser as SNI routing: at most 16 KiB, at most
+  128 extensions, no duplicate extension types (RFC 8446 §4.2). A ClientHello it cannot read
+  only means no fingerprint; the TLS handshake decides the rest.
+- Fingerprints are not metric labels (unbounded values).
+- **Verified bots** (forward-confirmed reverse DNS for Googlebot or Bingbot) are planned, not
+  part of v0.9.
+
+## Related
+
+- [Abuse protection](/docs/guides/abuse-protection/)
+- [Rate limiting](/docs/guides/rate-limiting/)
+- [Rule grammar](/docs/reference/rules/#clientfingerprint)

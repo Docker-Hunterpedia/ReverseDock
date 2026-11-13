@@ -669,6 +669,64 @@ pub struct Locality {
     pub mode: crate::service::LocalityMode,
 }
 
+/// GeoIP databases in the MaxMind DB format (H-SEC-04, ADR-0031): MaxMind GeoLite2 or GeoIP2,
+/// DB-IP Lite or IPinfo Lite files that you download and keep current. The files are read into
+/// memory and read again when they change.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct GeoIp {
+    /// A country database (`.mmdb`): gives `ClientCountry` and `ClientContinent`. A file that
+    /// also carries ASNs (IPinfo Lite) gives `ClientASN` as well.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub database: Option<PathBuf>,
+    /// An ASN database (`.mmdb`, e.g. GeoLite2-ASN) for `ClientASN`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub asn_database: Option<PathBuf>,
+    /// The oldest database build accepted, by the build time in its metadata. Default 30 days:
+    /// the GeoLite End User License Agreement (updated 2026-02-12) requires deleting a
+    /// version within thirty days of a newer release.
+    pub max_age: Duration,
+    /// What an older database does: `warn` (the default) logs a warning and keeps using it;
+    /// `refuse` refuses to load it, so the configuration that needs it is refused.
+    pub on_stale: OnStale,
+    /// Opt-in access-log fields; both off by default, since a location tied to an IP address
+    /// is personal data in many jurisdictions.
+    pub log: GeoIpLog,
+}
+
+impl Default for GeoIp {
+    fn default() -> Self {
+        Self {
+            database: None,
+            asn_database: None,
+            max_age: Duration::from_secs(30 * 24 * 60 * 60),
+            on_stale: OnStale::Warn,
+            log: GeoIpLog::default(),
+        }
+    }
+}
+
+/// What a GeoIP database older than `max_age` does.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum OnStale {
+    /// Log a warning and keep using it.
+    #[default]
+    Warn,
+    /// Refuse to load it.
+    Refuse,
+}
+
+/// GeoIP fields in the access log.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct GeoIpLog {
+    /// Log `country` (ISO 3166-1 alpha-2).
+    pub country: bool,
+    /// Log `asn`.
+    pub asn: bool,
+}
+
 /// A drain bound: a duration, or `unlimited`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainLimit {

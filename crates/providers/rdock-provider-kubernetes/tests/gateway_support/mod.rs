@@ -756,6 +756,7 @@ impl Router {
                 plugins: &rdock_plugin_api::Registry::new(),
                 metrics: None,
                 quotas: None,
+                abuse: None,
             },
         );
         let errors: Vec<_> = compiled
@@ -1003,6 +1004,7 @@ impl Router {
         let facts = rdock_proxy::tcp::rule::TcpFacts {
             hello: sni.map(|_| &hello),
             client_ip: IpAddr::from([127, 0, 0, 1]),
+            fingerprint: None,
         };
         let route = listener
             .tcp_routes

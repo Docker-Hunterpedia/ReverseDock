@@ -53,6 +53,10 @@ pub struct Runtime {
     pub errors: rdock_model::config::ErrorFormat,
     /// Usage metering (`observability.metering`), when configured.
     pub metering: Option<Arc<rdock_observability::metering::Meter>>,
+    /// GeoIP databases (`geoip`), when configured.
+    pub geoip: Option<Arc<crate::geoip::GeoIp>>,
+    /// Which GeoIP fields the access log carries (`geoip.log`).
+    pub geoip_log: rdock_model::settings::GeoIpLog,
 }
 
 impl Runtime {
@@ -79,6 +83,8 @@ impl Runtime {
             tracer: None,
             errors: rdock_model::config::ErrorFormat::Html,
             metering: None,
+            geoip: None,
+            geoip_log: rdock_model::settings::GeoIpLog::default(),
         }
     }
 }
@@ -104,6 +110,8 @@ pub struct ListenerRuntime {
     pub max_handshakes: Option<u32>,
     /// HTTP/2 settings (`http` and `https` listeners).
     pub http2: rdock_model::config::ListenerHttp2,
+    /// `https` listeners: the TLS client fingerprints to compute (`tls.fingerprint`).
+    pub fingerprint: Option<rdock_model::config::TlsFingerprint>,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.

@@ -2360,3 +2360,179 @@ fn per_try_timeout_needs_timeout_retries() {
         "retries": { "per_try_timeout": "500ms", "on": ["connect", "timeout"] } }));
     assert_eq!(validate(ok), Vec::new());
 }
+
+#[test]
+fn fingerprint_rules_need_a_listener_that_computes_them() {
+    let base = json!({
+        "listeners": { "websecure": { "address": ":443", "tls": {} } },
+        "routes": { "app": {
+            "match": "Host(`a.test`) && ClientFingerprint(`t13d1516h2_8daaf6152771_e5627efa2ab1`)",
+            "service": "app"
+        } },
+        "services": { "app": { "backends": [{ "address": "app:3000" }] } }
+    });
+    assert!(has(
+        &errors(base.clone()),
+        "routes.app.match",
+        "computes fingerprints"
+    ));
+    let on = with(
+        base.clone(),
+        json!({ "listeners": { "websecure": { "tls": { "fingerprint": { "header": "X-JA4" } } } } }),
+    );
+    assert_eq!(errors(on), Vec::new());
+    let bad = with(
+        base,
+        json!({ "listeners": { "websecure": { "tls": { "fingerprint": {
+            "ja3_header": "X-JA3", "header": "bad header"
+        } } } } }),
+    );
+    let found = errors(bad);
+    assert!(has(
+        &found,
+        "listeners.websecure.tls.fingerprint.ja3_header",
+        "ja3: true"
+    ));
+    assert!(has(
+        &found,
+        "listeners.websecure.tls.fingerprint.header",
+        "not a valid header"
+    ));
+}
+
+#[test]
+fn geo_matchers_need_their_database() {
+    let rule = |m: &str| {
+        with(
+            app(),
+            json!({ "routes": { "app": { "match": format!("Host(`app.example.com`) && {m}") } } }),
+        )
+    };
+    for m in [
+        "ClientCountry(`DE`)",
+        "ClientContinent(`EU`)",
+        "ClientASN(`64496`)",
+    ] {
+        assert!(
+            has(
+                &errors(rule(m)),
+                "routes.app.match",
+                "needs a GeoIP database"
+            ),
+            "{m}"
+        );
+    }
+    let with_asn = with(
+        rule("ClientASN(`64496`)"),
+        json!({ "geoip": { "asn_database": "/x/asn.mmdb" } }),
+    );
+    assert_eq!(errors(with_asn), Vec::new());
+    let country_only_asn = with(
+        rule("ClientCountry(`DE`)"),
+        json!({ "geoip": { "asn_database": "/x/asn.mmdb" } }),
+    );
+    assert!(has(
+        &errors(country_only_asn),
+        "routes.app.match",
+        "needs a GeoIP database"
+    ));
+    let tcp = json!({
+        "tcp_routes": { "db": { "match": "HostSNI(`*`) && ClientCountry(`DE`)", "service": "db" } },
+        "tcp_services": { "db": { "backends": [{ "address": "db:5432" }] } }
+    });
+    assert!(has(
+        &errors(tcp),
+        "tcp_routes.db.match",
+        "needs a GeoIP database"
+    ));
+    assert!(has(
+        &errors(with(
+            app(),
+            json!({ "geoip": { "database": "/x/c.mmdb", "max_age": "0s" } })
+        )),
+        "geoip.max_age",
+        "more than zero"
+    ));
+}
+
+#[test]
+fn abuse_settings_are_checked() {
+    let mw = |settings: Value| {
+        let mut abuse = json!({ "type": "abuse" });
+        merge(&mut abuse, settings);
+        with(app(), json!({ "middlewares": { "guard": abuse } }))
+    };
+    assert_eq!(errors(mw(json!({}))), Vec::new());
+    assert_eq!(
+        errors(mw(
+            json!({ "events": [401, "4xx", "auth_failure"], "key": "ja4", "action": "tarpit" })
+        )),
+        Vec::new()
+    );
+    let found = errors(mw(
+        json!({ "events": [], "threshold": 0, "ban": "0s", "max_bans": 0 }),
+    ));
+    assert!(has(&found, "middlewares.guard.events", "at least one"));
+    assert!(has(&found, "middlewares.guard.threshold", "at least 1"));
+    assert!(has(&found, "middlewares.guard.ban", "at least 1s"));
+    assert!(has(&found, "middlewares.guard.max_bans", "between"));
+    let tarpit = errors(mw(
+        json!({ "action": "tarpit", "tarpit": { "delay": "2m" } }),
+    ));
+    assert!(has(&tarpit, "middlewares.guard.tarpit.delay", "60s"));
+    assert!(has(
+        &warnings(mw(json!({ "key": "header:X-Session" }))),
+        "middlewares.guard.key",
+        "the client chooses"
+    ));
+    let config: Result<Config, _> = serde_json::from_value(mw(json!({ "events": [200] })));
+    assert!(config.is_err(), "events are 4xx and 5xx statuses");
+}
+
+#[test]
+fn spiffe_rules_are_checked() {
+    let mw = |spiffe: Value| {
+        with(
+            app(),
+            json!({ "middlewares": { "workloads": { "type": "client_cert", "spiffe": spiffe } } }),
+        )
+    };
+    assert_eq!(
+        errors(mw(json!({
+            "trust_domains": ["prod.example.com"],
+            "ids": ["spiffe://prod.example.com/ns/web/sa/api"],
+            "id_prefixes": ["spiffe://prod.example.com/ns/jobs"]
+        }))),
+        Vec::new()
+    );
+    let found = errors(mw(json!({ "trust_domains": [] })));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.trust_domains",
+        "at least one"
+    ));
+    let found = errors(mw(json!({
+        "trust_domains": ["Prod.Example.com:443"],
+        "ids": ["spiffe://other.example.com/x", "https://prod.example.com/x"]
+    })));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.trust_domains",
+        "not a trust domain"
+    ));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.ids",
+        "not in one of"
+    ));
+    assert!(has(
+        &found,
+        "middlewares.workloads.spiffe.ids",
+        "not a SPIFFE ID"
+    ));
+    let pins = errors(with(
+        app(),
+        json!({ "middlewares": { "pinned": { "type": "client_cert", "sha256": ["abc"] } } }),
+    ));
+    assert!(has(&pins, "middlewares.pinned.sha256", "64 digits"));
+}

@@ -566,7 +566,7 @@ fn read_file(path: &Path) -> Option<File> {
 /// (or a crash) never sees half a file. The counts name consumers (e-mail addresses after an
 /// OIDC login) and client addresses, so on Unix the directory is `0700` and the file `0600`
 /// whatever the umask (L6 of the v0.8 review), as for the audit log and ACME files.
-fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     use std::io::Write as _;
     if let Some(dir) = path.parent() {
         std::fs::create_dir_all(dir)?;
@@ -682,7 +682,7 @@ fn warn_unwritten(name: &str, err: &io::Error) {
 
 /// A file name for a middleware name (`name@provider` included): safe characters only, plus
 /// a hash so two names never share a file.
-fn file_name(name: &str) -> String {
+pub(crate) fn file_name(name: &str) -> String {
     let safe: String = name
         .chars()
         .map(|c| {

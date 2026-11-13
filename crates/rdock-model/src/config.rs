@@ -80,6 +80,11 @@ pub struct Config {
     /// The proxy's own zone and whether services prefer backends in it (H-HA-05).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub locality: Option<crate::settings::Locality>,
+    /// GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
+    /// database is bundled or downloaded.
+    // Boxed: the configuration is held across awaits by reloads; this keeps it small.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub geoip: Option<Box<crate::settings::GeoIp>>,
 }
 
 impl Config {
@@ -618,6 +623,42 @@ pub struct ListenerTls {
     /// tickets are off), shared like the ticket keys. Default 256 sessions.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_cache: Option<TlsSessionCache>,
+    /// TLS client fingerprints (H-SEC-03): JA4, and JA3 on request, computed from each
+    /// connection's ClientHello. Unset (the default), no ClientHello is read for it and
+    /// `ClientFingerprint`, the `ja4` keys and the access-log fields stay empty.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub fingerprint: Option<TlsFingerprint>,
+}
+
+/// Which TLS client fingerprints an `https` listener computes, and whether backends see them.
+/// The values are computed from the outer ClientHello (with Encrypted Client Hello the inner
+/// one is never seen), only for connections this listener terminates.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TlsFingerprint {
+    /// JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.
+    pub ja4: bool,
+    /// JA3 (Salesforce, an MD5 of the ClientHello). Off by default: legacy, since Chrome 110
+    /// randomises the extension order that JA3 hashes, one browser has many JA3 values.
+    pub ja3: bool,
+    /// A request header that carries the JA4 value to the backend, e.g. `X-JA4`. A copy sent
+    /// by the client is always removed. Unset (the default): backends do not see it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub header: Option<String>,
+    /// A request header that carries the JA3 value (needs `ja3: true`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub ja3_header: Option<String>,
+}
+
+impl Default for TlsFingerprint {
+    fn default() -> Self {
+        Self {
+            ja4: true,
+            ja3: false,
+            header: None,
+            ja3_header: None,
+        }
+    }
 }
 
 impl ListenerTls {
