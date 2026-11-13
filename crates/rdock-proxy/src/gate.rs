@@ -101,6 +101,13 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
             );
         }
     }
+    // `control` belongs to `rdock control run`; a data plane never reads it.
+    if config.control.is_some() && mode == Mode::Run {
+        gate.out.push(
+            Diagnostic::error("control", "`rdock run` does not read `control`: the control plane runs with `rdock control run`")
+                .with_hint("remove `control` from a data plane's file"),
+        );
+    }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
         // The handshake bound covers `https` listeners; a `tcp` listener that terminates TLS
@@ -170,6 +177,21 @@ services:
         assert_eq!(run.len(), 1, "{run:?}");
         assert_eq!(run[0].path, "listeners.raw.tls.max_handshakes");
         assert!(run[0].is_error() && run[0].message.ends_with("(planned for a later version)"));
+    }
+
+    #[test]
+    fn a_data_plane_refuses_the_control_section_and_validate_accepts_it() {
+        let yaml = "control: { listener: \"127.0.0.1:7443\" }\n";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert!(run[0].is_error() && run[0].path == "control");
+        assert!(run[0].message.contains("rdock control run"));
+        assert_eq!(diagnostics(yaml, Mode::Validate).len(), 0);
+        let member = "cluster: { store: { type: directory, path: /shared } }\n";
+        assert!(
+            diagnostics(member, Mode::Run).is_empty(),
+            "the cluster is built"
+        );
     }
 
     #[test]

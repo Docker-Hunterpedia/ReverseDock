@@ -277,6 +277,20 @@ impl Rdock {
         self.dir.path().join(name)
     }
 
+    /// Ends the process with `SIGKILL` (nothing is cleaned up or released) and waits for it.
+    pub fn kill(&mut self) {
+        if let Some(mut child) = self.child.take() {
+            let _ = child.kill();
+            let _ = child.wait();
+        }
+    }
+
+    /// Starts the process again after [`Self::kill`] and waits until it is ready.
+    pub fn start_again(&mut self) -> Result<(), String> {
+        self.spawn();
+        self.wait_ready(Duration::from_secs(30))
+    }
+
     /// Restarts the process with the current configuration file.
     pub fn restart(&mut self) -> Result<(), String> {
         if self.child.is_some() {

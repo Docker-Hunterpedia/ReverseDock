@@ -20,6 +20,8 @@ members = [
   "crates/rdock-admin",
   "crates/rdock-cloudflare",
   "crates/rdock-credentials",
+  "crates/rdock-cluster",
+  "crates/rdock-control",
   "crates/rdock-dns-providers",
   "crates/rdock-migrate",
   "crates/rdock-testkit",
@@ -53,6 +55,8 @@ rdock-admin = { path = "crates/rdock-admin" }
 rdock-balancer = { path = "crates/rdock-balancer" }
 rdock-cache = { path = "crates/rdock-cache" }
 rdock-cloudflare = { path = "crates/rdock-cloudflare" }
+rdock-cluster = { path = "crates/rdock-cluster" }
+rdock-control = { path = "crates/rdock-control" }
 rdock-acme = { path = "crates/rdock-acme" }
 rdock-config = { path = "crates/rdock-config" }
 rdock-credentials = { path = "crates/rdock-credentials" }

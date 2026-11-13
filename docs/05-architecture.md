@@ -62,14 +62,15 @@ rdock-dns-providers  DNS-01 adapters on the `DnsSolver` trait (depends on rdock-
 rdock-cache          HTTP cache on pingora-cache (v0.8, §19): RFC 9111 policy, memory and disk stores, tags, purge, coalescing, stale-if-error
 rdock-plugin-api     (v0.8, ADR-0030) the only crate a native plugin depends on: `Plugin` trait, `http`-typed heads, `Factory`, `Registry`, `testing` harness; its own `0.x` version line
 rdock-wasm           (v0.8, experimental, ADR-0030) WASM plugins: `sha256` pin and minisign checks (always built), the wasmtime host and the WIT world `rdock:plugin/filter` behind the cargo feature `wasm` (off by default)
-rdock-control        (P3) optional control plane: config rollout ACK/NACK, shared cert storage, distributed limits
+rdock-cluster        (v0.9, ADR-0031) cluster protocol v1 · `ClusterStore` (compare-and-swap, leases with a fencing token) · memory and directory backends · data-plane agent (enrolment, mutual TLS, long poll, ACK/NACK, renewal, the control plane's store as a `ClusterStore`)
+rdock-control        (v0.9, ADR-0031) the control plane `rdock control run` runs: cluster CA · join tokens · instance registry · bundle history · store server · cluster listener (no dependency on `rdock-admin`; the binary wires the admin API to it)
 rdock-provider-file  · rdock-provider-docker · rdock-provider-swarm · rdock-provider-kubernetes · rdock-provider-api
 rdock-migrate        traefik (labels + dynamic yaml) → rdock.yaml · nginx subset (later)
 rdock-testkit        spawn upstream servers, Pebble ACME, toxiproxy, docker-in-CI helpers · fake provider APIs and the DNS-01 adapter contract
 rdock                the binary (clap): run / validate / reload / status / config / cert / migrate / trust / version
 ```
 
-Dependency direction: `rdock` → `rdock-admin`, `rdock-proxy`, providers → `rdock-config` → `rdock-model` → `rdock-rules` (the model validates `match` rules with the grammar crate). No crate depends on `rdock-admin` or on any provider. `rdock-proxy` depends on `rdock-tls`, `rdock-balancer`, `rdock-middleware`, `rdock-limits`, `rdock-observability`. `rdock-cloudflare` and `rdock-dns-providers` depend on `rdock-acme` (they implement its `DnsSolver` trait); the binary chains their provider registries.
+Dependency direction: `rdock` → `rdock-admin`, `rdock-proxy`, providers → `rdock-config` → `rdock-model` → `rdock-rules` (the model validates `match` rules with the grammar crate). No crate depends on `rdock-admin` or on any provider. `rdock-acme` and `rdock-control` depend on `rdock-cluster`; `rdock-cluster` depends on no other `rdock-*` crate. `rdock-proxy` depends on `rdock-tls`, `rdock-balancer`, `rdock-middleware`, `rdock-limits`, `rdock-observability`. `rdock-cloudflare` and `rdock-dns-providers` depend on `rdock-acme` (they implement its `DnsSolver` trait); the binary chains their provider registries.
 
 ## 3. Desired-state model (`rdock-model`)
 
@@ -471,6 +472,18 @@ labels:
 
 **Purge.** Only through the admin API (`POST /api/v1/cache/{store}/purge` by URL, prefix, tag or all; operator role, audited, rate-limited with configuration writes); no `PURGE` method on the data plane. A purge reaches one instance until the v0.9 control plane.
 
+## 19a. Cluster (H-HA-01…03, ADR-0031)
+
+**Roles.** Data planes (`rdock run` with `cluster`) serve traffic and run their providers. The control plane (`rdock control run`, the same binary, a file with `control` and `admin`) serves no traffic: it enrols data planes, publishes configuration bundles, and is their certificate store. Without a control plane, `cluster.store: { type: directory }` shares certificates through a directory every instance mounts.
+
+**Enrolment and channel.** The control plane creates a cluster CA (ECDSA P-256) on first start. `rdock control token create` gives a single-use join token (stored as SHA-256) and the CA pin. A data plane makes its key, sends a CSR with the token over TLS that trusts only the pinned CA, and receives a client certificate (`control.identity_lifetime`, 30 days; renewed with a third left) naming `urn:rdock:instance:<cluster>:<instance>`. Every later call is mutual TLS over HTTP/2 (or HTTP/1.1) to `/cluster/v1/…`. Revoked instances get `403`.
+
+**Bundles.** Publication (`POST /api/v1/cluster/revisions`, `rdock control publish`, operator role, audited) validates the document as `rdock validate` does, then stores it as the next revision with the SHA-256 of its canonical JSON and the cluster id (zstd, `control.history` kept). Data planes long-poll for the bundle after the revision they serve, refuse another cluster's, an older or an empty one, compose it with their own sections (`cluster`, `admin`, `providers`, `runtime`, `upgrade`, `locality`, `lifecycle`, `observability`, `secrets`), apply it as origin `control` (providers merge as usual), store it in `state/control/bundle.json` and ACK; or NACK with the diagnostics, keeping the running configuration. A start without the control plane serves the stored bundle. Rollback publishes an earlier document as a new revision.
+
+**Shared certificates.** `ClusterStore` on the control plane (fencing enforced) or a shared directory (best effort: lock files judged by each instance's clock). Per name: lease, re-check, journalled order (URL and new key, resumed by the next holder), fenced write with compare-and-swap; one ACME account and one renewal time per certificate, shared. HTTP-01 and TLS-ALPN-01 answers are copied by every member into its own maps (no store access on the request path) and confirmed; the orderer waits for every live member (heartbeat younger than 20 s) or `cluster.store.barrier_timeout` before validation. DNS-01 needs none of this and is the recommendation for clusters.
+
+**Not in the request path.** The agent and the replication are background tasks; a data plane never waits on the control plane to serve a request (ADR-0009, ADR-0012).
+
 ## 20. Failure modes (what happens when…)
 
 | Failure | Behaviour |
@@ -487,3 +500,7 @@ labels:
 | Process receives SIGTERM | Stop accepting, finish open requests (`Connection: close`, HTTP/2 GOAWAY), close idle connections, exit as soon as nothing is open or `lifecycle.drain_timeout` passes |
 | Binary upgrade: the new process fails, exits or does not report in time | The old process kills and reaps it, accepts again, restarts its writers; nothing was closed; `rdock_upgrades_total{result="failed"}` and an audit record (ADR-0031) |
 | Second `rdock run` on the same data directory | Refused with the holder's pid before anything is written (ADR-0031) |
+| Control plane down | Data planes serve their stored bundle; restarts boot from it; the agent retries with backoff (at most 30 s); certificates on the control plane's store keep serving but are not issued or renewed until it returns (ADR-0031) |
+| A data plane refuses a bundle | NACK with diagnostics; it keeps the previous revision; the control plane lists who refused which revision and why |
+| Lease holder dies mid-order | The lease expires (`cluster.store.lease_ttl`); the next holder resumes the journalled order |
+| A member cannot reach the store during a validation | The barrier times out and validation goes ahead; that member cannot answer HTTP-01 or TLS-ALPN-01 (use DNS-01 in clusters) |

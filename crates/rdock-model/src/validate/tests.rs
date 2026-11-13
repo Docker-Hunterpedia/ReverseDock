@@ -2536,3 +2536,121 @@ fn spiffe_rules_are_checked() {
     ));
     assert!(has(&pins, "middlewares.pinned.sha256", "64 digits"));
 }
+
+#[test]
+fn cluster_members_need_a_control_plane_or_a_directory() {
+    let found = errors(json!({ "cluster": {} }));
+    assert!(has(&found, "cluster", "needs `control`"));
+    let found = errors(json!({ "cluster": { "store": { "type": "directory" } } }));
+    assert!(has(&found, "cluster.store.path", "required"));
+    let found = errors(json!({ "cluster": { "store": { "type": "control" } } }));
+    assert!(has(&found, "cluster.store.type", "needs `cluster.control`"));
+    let ok = validate(with(
+        app(),
+        json!({ "cluster": { "store": { "type": "directory", "path": "/shared/rdock" } } }),
+    ));
+    assert!(!ok.iter().any(Diagnostic::is_error), "{ok:?}");
+    assert!(
+        ok.iter()
+            .any(|d| d.path == "cluster.store" && d.message.contains("best effort"))
+    );
+    assert!(
+        ok.iter()
+            .any(|d| d.path == "acme.challenges" && d.message.contains("cut off"))
+    );
+    let found = errors(
+        json!({ "cluster": { "store": { "type": "directory", "path": "/s", "lease_ttl": "1s", "barrier_timeout": "5m" } } }),
+    );
+    assert!(has(
+        &found,
+        "cluster.store.lease_ttl",
+        "between 10s and 10m"
+    ));
+    assert!(has(
+        &found,
+        "cluster.store.barrier_timeout",
+        "between 1s and 2m"
+    ));
+}
+
+#[test]
+fn cluster_control_is_https_and_authenticated() {
+    let found =
+        errors(json!({ "cluster": { "control": { "url": "http://cp.example.com:7443" } } }));
+    assert!(has(&found, "cluster.control.url", "`https://` only"));
+    assert!(has(&found, "cluster.control", "`ca_file` or `ca_pin`"));
+    let found = errors(json!({ "cluster": { "control": {
+        "url": "https://cp.example.com:7443/x", "ca_pin": "sha256:abc", "identity_dir": "rel",
+        "poll_timeout": "1s"
+    } } }));
+    assert!(has(&found, "cluster.control.url", "root"));
+    assert!(has(&found, "cluster.control.ca_pin", "64 lower-case"));
+    assert!(has(&found, "cluster.control.identity_dir", "absolute"));
+    assert!(has(
+        &found,
+        "cluster.control.poll_timeout",
+        "between 5s and 5m"
+    ));
+    let pin = format!("sha256:{}", "0f".repeat(32));
+    let ok = validate(json!({ "cluster": { "control": {
+        "url": "https://cp.example.com:7443", "ca_pin": pin, "join_token": "rdk_join_literal"
+    } } }));
+    assert!(!ok.iter().any(Diagnostic::is_error), "{ok:?}");
+    assert!(
+        ok.iter()
+            .any(|d| d.path == "cluster.control.join_token" && d.message.contains("secret"))
+    );
+}
+
+#[test]
+fn control_plane_settings_are_bounded() {
+    let found = errors(json!({ "control": {
+        "names": ["bad name"], "identity_lifetime": "1m", "join_token_ttl": "1s",
+        "history": 0, "offline_after": "2h"
+    } }));
+    assert!(has(&found, "control.names[0]", "DNS name"));
+    assert!(has(
+        &found,
+        "control.identity_lifetime",
+        "between 1h and 90d"
+    ));
+    assert!(has(&found, "control.join_token_ttl", "between 1m and 30d"));
+    assert!(has(&found, "control.history", "between 1 and 1000"));
+    assert!(has(&found, "control.offline_after", "between 10s and 1h"));
+    let both = errors(
+        json!({ "control": {}, "cluster": { "store": { "type": "directory", "path": "/s" } } }),
+    );
+    assert!(has(&both, "control", "not both"));
+    let open = warnings(json!({ "control": { "listener": "0.0.0.0:7443" } }));
+    assert!(has(&open, "control.names", "certificate"));
+}
+
+#[test]
+fn kubernetes_members_of_a_control_plane_cluster_may_use_acme() {
+    let pin = format!("sha256:{}", "0f".repeat(32));
+    let shared = validate(with(
+        app(),
+        json!({
+            "providers": { "kubernetes": { "gateway": { "pod_selector": { "app": "rdock" } } } },
+            "cluster": { "control": { "url": "https://cp.example.com:7443", "ca_pin": pin } }
+        }),
+    ));
+    assert!(
+        !shared.iter().any(|d| d.path == "acme" && d.is_error()),
+        "{shared:?}"
+    );
+    assert!(
+        !shared
+            .iter()
+            .any(|d| d.message.contains("share no certificate storage"))
+    );
+    // A shared directory is not enough: still refused without `allow_acme`.
+    let directory = errors(with(
+        app(),
+        json!({
+            "providers": { "kubernetes": { "gateway": { "pod_selector": { "app": "rdock" } } } },
+            "cluster": { "store": { "type": "directory", "path": "/shared" } }
+        }),
+    ));
+    assert!(has(&directory, "acme", "providers.kubernetes"));
+}

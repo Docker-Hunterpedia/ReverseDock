@@ -17,6 +17,7 @@ Usage: rdock <COMMAND>
 Commands:
   run          Run the proxy
   validate     Validate configuration files without starting the proxy
+  control      Run a cluster's control plane, and publish, list and roll back configurations, enrol and revoke data planes through it
   reload       Ask the running proxy to reload its configuration
   status       Show the state of the running proxy
   healthcheck  Exit 0 when the running proxy is ready (for container health checks)
@@ -104,6 +105,28 @@ Options:
       --format <FORMAT>  Output format [default: text] [possible values: text, json]
   -h, --help             Print help
   -V, --version          Print version
+```
+
+## `rdock control`
+
+```text
+Run a cluster's control plane, and publish, list and roll back configurations, enrol and revoke data planes through it
+
+Usage: rdock control <COMMAND>
+
+Commands:
+  run        Run the control plane: the cluster listener data planes connect to, and the admin API
+  publish    Validate a configuration file and publish it to the data planes as the next revision
+  revisions  List published revisions, newest first, with the instances that refused each
+  rollback   Publish an earlier revision's configuration again, as a new revision
+  instances  List enrolled data planes: state, revision served, last report
+  revoke     Revoke a data plane: it can no longer fetch bundles or use the store
+  token      Join tokens for enrolling data planes
+  help       Print this message or the help of the given subcommand(s)
+
+Options:
+  -h, --help     Print help
+  -V, --version  Print version
 ```
 
 ## `rdock reload`

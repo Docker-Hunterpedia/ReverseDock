@@ -21,7 +21,7 @@ percent-encoding.workspace = true
 proxy-header.workspace = true
 hyper.workspace = true
 hyper-util.workspace = true
-rcgen.workspace = true
+rcgen = { workspace = true, features = ["x509-parser"] }
 rdock-acme.workspace = true
 ring.workspace = true
 rustls.workspace = true
@@ -31,6 +31,8 @@ tempfile.workspace = true
 tokio.workspace = true
 tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true
+time.workspace = true
+x509-parser.workspace = true
 
 [lints]
 workspace = true

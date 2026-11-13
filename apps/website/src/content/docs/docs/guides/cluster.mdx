@@ -1,0 +1,160 @@
+---
+title: Run a cluster with a control plane
+description: Enrol several rdock data planes with one control plane, publish configuration to all of them, and keep serving while the control plane is away.
+sidebar:
+  order: 15
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock <Status planned="v0.9" /> can run as a cluster: several **data planes** (`rdock run`)
+serve traffic, and one **control plane** (`rdock control run`, the same binary) gives them their
+configuration and stores their certificates. The design is
+[ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md).
+
+## What the control plane is, and is not
+
+- It **publishes** configuration: you publish a document, it becomes the next **revision**, and
+  every data plane pulls it, checks it, stores it and applies it, or refuses it with the reason.
+- It is the **certificate store** of the cluster: certificates, their keys, the ACME account and
+  the leases that make sure only one data plane orders a certificate
+  ([shared certificates](/docs/guides/shared-certificates/)).
+- It is **not in the request path**. A data plane never waits for it to serve a request. While it
+  is away, data planes keep serving their last revision, even across restarts.
+- It does **not** run providers. Docker, Swarm and Kubernetes stay on each data plane and merge
+  into the published configuration as usual.
+- It serves no traffic, and there is one of it. A highly available control plane is planned.
+
+## Start the control plane
+
+```yaml title="control.yaml"
+control:
+  listener: "0.0.0.0:7443"
+  names: [control.example.com]
+admin:
+  listener: "127.0.0.1:8080"
+```
+
+```sh
+rdock control run -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+```
+
+The control plane's file holds `control` and `admin` (and `observability`); anything a data plane
+serves is published instead. `control.names` are the names data planes use in their URL: they go
+on the control plane's server certificate, which its own cluster CA signs. The cluster listener
+always uses TLS.
+
+## Enrol a data plane
+
+On the control plane's machine:
+
+```sh
+rdock control token create -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+```
+
+It prints a single-use join token (valid for `control.join_token_ttl`, one hour by default) and
+the cluster CA's pin. Put the token in a file on the data plane and write its configuration:
+
+```yaml title="rdock.yaml"
+cluster:
+  instance: edge-1
+  control:
+    url: https://control.example.com:7443
+    ca_pin: "sha256:3b4c6f0f6ea41d1f2a9c8f1e5d4b3a29180f7e6d5c4b3a2918f7e6d5c4b3a291"
+    join_token: "${file:/run/secrets/rdock-join}"
+```
+
+At its first start the data plane checks that the control plane's certificate chains to a CA with
+that pin, makes its own key, sends a signing request with the token, and receives a client
+certificate naming `edge-1`. The key never leaves the data plane; the token is spent. Later starts
+use the identity in `$RDOCK_DATA_DIR/cluster/` and need no token and no control plane. A token
+that was used, expired or never existed is refused, and so is a control plane whose certificate
+does not match the pin: the data plane stops with an error instead of retrying.
+
+Every later call is mutual TLS over HTTP/2. The client certificate lives
+`control.identity_lifetime` (30 days by default) and is renewed when a third of it is left.
+
+A data plane's own file keeps only what belongs to that machine: `cluster`, `admin`, `providers`,
+`runtime`, `upgrade`, `locality`, `lifecycle`, `observability` and `secrets`. Routes, services,
+listeners, certificates and `acme` come from the published configuration; writing them here is an
+error. Its admin API reads everything but does not change configuration (as with
+`admin.api_writes: false`).
+
+## Publish
+
+```sh
+rdock control publish site.yaml -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+# published revision 7 (sha256 9c1f…)
+```
+
+or `POST /api/v1/cluster/revisions` with `{"document": …}` (operator role, audited). The control
+plane refuses what `rdock validate` refuses, an empty document, and a document with `cluster` or
+`control`. References such as `${file:…}` and `${env:…}` are published as written and resolved
+on each data plane, so secrets stay on the data planes; `${env:PORT}` in a listener address gives
+each machine its own value.
+
+Each data plane pulls the revision (a long poll; `cluster.control.poll_timeout`), checks it and
+answers:
+
+- **ACK**: it validated and compiled the revision, **stored it on disk**
+  (`state/control/bundle.json`), then applied it.
+- **NACK**: it could not use it (a port in use, a missing local file, an option its version does
+  not know); it keeps serving the previous revision and sends the diagnostics.
+
+`rdock control revisions` lists revisions with the instances that refused each, and
+`rdock control instances` (or `GET /api/v1/cluster/instances`) shows every data plane as
+`synced`, `stale`, `error` (refused the newest revision), `away` or `revoked`, with the revision
+it serves and its version.
+
+A data plane refuses without trying a revision of **another cluster**, a revision **not newer**
+than the one it serves, an **empty** one and one that does not match its SHA-256.
+
+**Rollback** is a new publication of an earlier revision's configuration:
+
+```sh
+rdock control rollback 6 -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+```
+
+Every connected data plane takes a revision as soon as it is published. One canary, halt on a
+refusal and waves are planned.
+
+## When the control plane is away
+
+- Data planes keep serving the revision they have; `rdock status` shows
+  `"cluster": { "connected": false, "serving": 7 }` and `rdock_cluster_control_connected` is 0.
+- A data plane that restarts meanwhile serves the stored revision.
+- The agent asks again with backoff (at most every 30 seconds) and takes the next revision once
+  the control plane is back.
+- Certificates stored on the control plane keep serving; new ones are not ordered or renewed
+  until it returns (renewal starts weeks before expiry).
+- A data plane whose client certificate expires during a very long outage (at least 10 days with
+  the defaults) keeps serving but must enrol again with a new token.
+
+A data plane that has never received a revision waits for its first one before it starts its
+admin API and listeners.
+
+## Remove an instance
+
+```sh
+rdock control revoke edge-3 -c /etc/rdock/control.yaml --data-dir /var/lib/rdock-control
+```
+
+A revoked instance can no longer fetch revisions or use the store. It keeps serving its last
+revision until you stop it. Its name cannot enrol again.
+
+## What the control plane stores, and how to protect it
+
+The control plane's data directory holds the cluster CA's private key, the join tokens' hashes,
+the published revisions, and the certificate store: **certificate private keys and the ACME
+account key** of the whole cluster. Treat it like a data directory, only more so:
+
+- keep it on an encrypted disk readable only by rdock's user (files are written with mode 0600);
+- back it up, and protect the backups like the disk;
+- run the control plane where the data planes can reach the cluster listener but the internet
+  cannot.
+
+## Upgrading: control plane first
+
+Upgrade the control plane before the data planes. A data plane of an older version refuses
+(NACKs) a revision that uses settings it does not know, keeps the previous revision, and the
+control plane shows it as `error` with its version and the reason.

@@ -51,34 +51,42 @@ pub(crate) fn diagnostics(file: &Path, plugins: &Registry) -> Vec<Diagnostic> {
                 diagnostics.extend(read_vault(&config));
             }
             if !diagnostics.iter().any(Diagnostic::is_error) {
-                let dns = rdock_proxy::upstream::Dns::default();
-                let cloudflare = rdock_proxy::forwarded::CloudflareRanges::default();
-                let backends = rdock_balancer::Registry::default();
-                let compiled = compile(
-                    &config,
-                    &CompileEnv {
-                        mode: Mode::Validate,
-                        generation: 0,
-                        dns: &dns,
-                        client: Arc::new(rdock_middleware::HttpClient::default()),
-                        previous: None,
-                        cloudflare: &cloudflare,
-                        backends: &backends,
-                        sticky_key: b"validate",
-                        live: &rdock_observability::live::Live::default(),
-                        caches: None,
-                        plugins,
-                        metrics: None,
-                        quotas: None,
-                        abuse: None,
-                    },
-                );
-                diagnostics.extend(compiled.diagnostics);
+                diagnostics.extend(compile_diagnostics(&config, plugins));
             }
             diagnostics
         }
         Err(err) => vec![load_error(&err)],
     }
+}
+
+/// What compiling `config` (as `rdock validate` does, nothing bound or started) finds.
+pub(crate) fn compile_diagnostics(
+    config: &rdock_model::Config,
+    plugins: &Registry,
+) -> Vec<Diagnostic> {
+    let dns = rdock_proxy::upstream::Dns::default();
+    let cloudflare = rdock_proxy::forwarded::CloudflareRanges::default();
+    let backends = rdock_balancer::Registry::default();
+    compile(
+        config,
+        &CompileEnv {
+            mode: Mode::Validate,
+            generation: 0,
+            dns: &dns,
+            client: Arc::new(rdock_middleware::HttpClient::default()),
+            previous: None,
+            cloudflare: &cloudflare,
+            backends: &backends,
+            sticky_key: b"validate",
+            live: &rdock_observability::live::Live::default(),
+            caches: None,
+            plugins,
+            metrics: None,
+            quotas: None,
+            abuse: None,
+        },
+    )
+    .diagnostics
 }
 
 /// Reads the configuration's `${vault:…}` references, as a start would: secret fields that

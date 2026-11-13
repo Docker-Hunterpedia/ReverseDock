@@ -81,6 +81,7 @@ impl Config {
         v.check_providers();
         v.check_locality();
         v.check_edge();
+        v.check_cluster();
         v.out
     }
 }
@@ -2474,7 +2475,15 @@ impl Validator<'_> {
     /// ACME on replicas that share no certificate storage (ADR-0029).
     fn check_kubernetes_acme(&mut self, allow_acme: bool) {
         const PATH: &str = "providers.kubernetes";
-        if self.config.effective_acme().is_some() {
+        // Members of a cluster whose store is the control plane share certificates, the ACME
+        // account and challenge answers through it (ADR-0031).
+        let shared = self
+            .config
+            .cluster
+            .as_ref()
+            .and_then(|c| c.effective_store())
+            .is_some_and(|s| s.kind == crate::cluster::ClusterStoreType::Control);
+        if self.config.effective_acme().is_some() && !shared {
             if allow_acme {
                 self.push(
                     Diagnostic::warning(
@@ -2543,6 +2552,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 
 mod balancing;
 mod cache;
+mod cluster;
 mod edge;
 mod extensions;
 mod gateway;

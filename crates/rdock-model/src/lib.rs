@@ -2,6 +2,7 @@
 
 pub mod acme;
 pub mod cache;
+pub mod cluster;
 pub mod config;
 pub mod diagnostics;
 pub mod gateway;

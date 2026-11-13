@@ -81,6 +81,21 @@ pub struct Metrics {
     pub cert_renewal_failures: IntCounterVec,
     /// ACME orders by CA host and result (`issued`, `failed`).
     pub acme_orders: IntCounterVec,
+    /// The control-plane bundle revision this data plane serves (0 without a control plane).
+    pub cluster_bundle_revision: IntGauge,
+    /// Bundles received from the control plane, by result (`ack`, `nack`, `refused`).
+    pub cluster_bundles: IntCounterVec,
+    /// Whether the data plane's last request to its control plane succeeded (1) or not (0).
+    pub cluster_control_connected: IntGauge,
+    /// Certificate leases asked for, by result (`acquired`, `busy`, `lost`, `error`).
+    pub cluster_leases: IntCounterVec,
+    /// Challenge barriers, by result (`complete`: every live member confirmed; `timeout`).
+    pub cluster_barriers: IntCounterVec,
+    /// The control plane's latest published revision (control plane only).
+    pub control_revision: IntGauge,
+    /// Enrolled data planes by state (`synced`, `stale`, `error`, `away`, `revoked`; control
+    /// plane only).
+    pub control_instances: IntGaugeVec,
     /// Whether each backend takes traffic (1) or not (0), by service and address.
     pub backend_up: IntGaugeVec,
     /// Backend ejections by passive health, by service and address.
@@ -384,6 +399,51 @@ impl Metrics {
             "ACME certificate orders.",
             &["ca", "result"],
         )?;
+        let cluster_bundle_revision = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_bundle_revision",
+                "The control-plane bundle revision this data plane serves; 0 without a control plane.",
+            ),
+        )?;
+        let cluster_bundles = counters(
+            &registry,
+            "rdock_cluster_bundles_total",
+            "Bundles received from the control plane, by result (ack, nack, refused).",
+            &["result"],
+        )?;
+        let cluster_control_connected = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_cluster_control_connected",
+                "Whether the data plane's last request to its control plane succeeded (1) or not (0).",
+            ),
+        )?;
+        let cluster_leases = counters(
+            &registry,
+            "rdock_cluster_leases_total",
+            "Certificate leases asked for, by result (acquired, busy, lost, error).",
+            &["result"],
+        )?;
+        let cluster_barriers = counters(
+            &registry,
+            "rdock_cluster_challenge_barriers_total",
+            "Challenge barriers, by result (complete, timeout).",
+            &["result"],
+        )?;
+        let control_revision = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_control_revision",
+                "The control plane's latest published revision.",
+            ),
+        )?;
+        let control_instances = gauges(
+            &registry,
+            "rdock_control_instances",
+            "Enrolled data planes by state (synced, stale, error, away, revoked).",
+            &["state"],
+        )?;
         let backend_up = gauges(
             &registry,
             "rdock_backend_up",
@@ -677,6 +737,13 @@ impl Metrics {
             cert_expiry,
             cert_renewal_failures,
             acme_orders,
+            cluster_bundle_revision,
+            cluster_bundles,
+            cluster_control_connected,
+            cluster_leases,
+            cluster_barriers,
+            control_revision,
+            control_instances,
             backend_up,
             backend_ejections,
             outlier_ejections,

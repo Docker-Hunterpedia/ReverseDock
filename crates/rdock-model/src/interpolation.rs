@@ -44,6 +44,7 @@ const SECRETS: &[&[&str]] = &[
     &["middlewares", "*", "client_secret"],
     &["middlewares", "*", "session", "key"],
     &["middlewares", "*", "session", "keys", "*"],
+    &["cluster", "control", "join_token"],
 ];
 
 /// Locations taken literally.

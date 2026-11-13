@@ -14,6 +14,7 @@ pub mod certs;
 pub mod client;
 pub mod cloudflare_access;
 pub mod dns_contract;
+pub mod fake_acme;
 pub mod fake_api;
 pub mod haproxy;
 pub mod mmdb;

@@ -37,7 +37,9 @@ reversedock/
 │   ├── rdock-plugin-api/           # (v0.8) the only crate a native plugin depends on: Plugin trait, http-typed heads, Factory, Registry, testing harness; own 0.x version line (ADR-0030)
 │   ├── rdock-wasm/                 # (v0.8, experimental) WASM plugins: digest pin and minisign checks (always built), the wasmtime host and the WIT world `rdock:plugin/filter` behind the `wasm` feature (ADR-0030)
 │   ├── rdock-limits/               # rate/concurrency/size limits; per-consumer quotas with persisted counters (v0.8)
-│   ├── rdock-credentials/          # (v0.8) credential formats shared by admin and data plane: rdk_pat_ tokens, rdk_ API keys, SHA-256, constant-time compare (ADR-0030)
+│   ├── rdock-credentials/          # (v0.8) credential formats shared by admin and data plane: rdk_pat_ tokens, rdk_ API keys, rdk_join_ join tokens (v0.9), SHA-256, constant-time compare (ADR-0030)
+│   ├── rdock-cluster/              # (v0.9) cluster protocol, ClusterStore (CAS, leases with fencing; memory and directory backends), data-plane agent (ADR-0031)
+│   ├── rdock-control/              # (v0.9) control plane run by `rdock control run`: cluster CA, join tokens, registry, bundle history, store server, cluster listener (ADR-0031)
 │   ├── rdock-observability/        # logs, metrics, traces, ring buffer
 │   ├── rdock-admin/                # axum API + OpenAPI + embedded dashboard
 │   ├── rdock-cloudflare/           # IP sync, DNS-01, Access JWT, Origin CA
@@ -106,6 +108,7 @@ reversedock/
 | Naming | config keys `snake_case`; labels `rdock.dot.case`; CLI flags `--kebab-case`; env `RDOCK_UPPER_SNAKE`; metrics `rdock_snake_case` |
 | Dependencies | Every new dependency reviewed against `deny.toml` (allowed licenses: Apache-2.0, MIT, BSD-*, ISC, Zlib, Unicode, MPL-2.0 case-by-case) |
 | Docs | Each crate has a `README.md` and a module-level doc comment describing its place in the pipeline |
+| Cluster crates | `rdock-cluster` depends on no other `rdock-*` crate (the data plane, ACME and the control plane share it); `rdock-control` never depends on `rdock-admin` (`deny.toml`): the binary runs the admin API for the control plane through `rdock_admin::Control` |
 
 ### Cargo features (source of truth)
 

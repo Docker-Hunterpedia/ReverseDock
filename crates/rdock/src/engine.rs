@@ -25,6 +25,7 @@ use crate::validate::load_error;
 use crate::zero_config::{self, Source};
 
 mod api;
+pub(crate) mod control;
 mod vault;
 
 pub(crate) use vault::{read_once as read_vault_once, references as vault_references};
@@ -37,6 +38,8 @@ pub(crate) enum Origin {
     File,
     /// The last-known-good copy, because the file could not be used at start.
     LastKnownGood,
+    /// The control plane's bundle with this instance's own sections (ADR-0031).
+    Control,
 }
 
 impl Origin {
@@ -45,6 +48,7 @@ impl Origin {
         match self {
             Self::File => "file",
             Self::LastKnownGood => "last-known-good",
+            Self::Control => "control",
         }
     }
 }
@@ -180,6 +184,10 @@ pub(crate) struct Engine {
     upgrades: std::sync::OnceLock<tokio::sync::mpsc::Sender<crate::upgrade::Trigger>>,
     /// Binary upgrades behind this process.
     pub(crate) upgrade_generation: std::sync::atomic::AtomicU64,
+    /// `cluster` as read at start; a change needs a restart.
+    cluster_at_start: Option<rdock_model::cluster::Cluster>,
+    /// The control plane's bundle and the agent's state, with `cluster.control`.
+    pub(crate) control: Option<control::ControlState>,
 }
 
 /// The background tasks' state: paused or not, and what they last were given.
@@ -220,7 +228,12 @@ fn unix_ms() -> u64 {
 }
 
 impl Engine {
-    pub(crate) fn new(source: Source, data_dir: &Path, plane: Arc<DataPlane>) -> Self {
+    pub(crate) fn new(
+        source: Source,
+        data_dir: &Path,
+        plane: Arc<DataPlane>,
+        cluster: Option<&crate::cluster::ClusterContext>,
+    ) -> Self {
         let (alerts, receiver) =
             tokio::sync::watch::channel(rdock_model::settings::Alerts::default());
         plane
@@ -240,6 +253,7 @@ impl Engine {
                 dns: Arc::new(rdock_dns_providers::Providers::new(Arc::new(
                     rdock_cloudflare::dns::Providers,
                 ))),
+                cluster: cluster.and_then(|c| c.acme.clone()),
             }),
             cloudflare: rdock_cloudflare::IpSync::spawn(
                 rdock_cloudflare::Options::new(data_dir.join("cloudflare")),
@@ -272,6 +286,22 @@ impl Engine {
             background: Mutex::new(Background::default()),
             upgrades: std::sync::OnceLock::new(),
             upgrade_generation: std::sync::atomic::AtomicU64::new(0),
+            cluster_at_start: cluster.map(|c| c.settings.clone()),
+            control: cluster.and_then(|c| {
+                c.channel.as_ref().map(|channel| {
+                    let identity = channel.identity();
+                    control::ControlState::load(
+                        data_dir,
+                        identity.instance,
+                        identity.cluster_id,
+                        c.settings
+                            .control
+                            .as_ref()
+                            .map(|ctl| ctl.url.as_url().to_string())
+                            .unwrap_or_default(),
+                    )
+                })
+            }),
         }
     }
 
@@ -365,6 +395,15 @@ impl Engine {
                         "the runtime's threads are made at start; this change takes effect after a restart (running with {} worker threads and at most {} blocking threads)",
                         threads.workers, threads.max_blocking
                     ),
+                )
+                .with_hint("restart rdock to apply it"),
+            );
+        }
+        if config.cluster.as_deref() != self.cluster_at_start.as_ref() {
+            out.push(
+                Diagnostic::warning(
+                    "cluster",
+                    "`cluster` is read at start; this change takes effect after a restart",
                 )
                 .with_hint("restart rdock to apply it"),
             );
@@ -500,6 +539,9 @@ impl Engine {
 
     /// First load. Falls back to the last-known-good copy when the file cannot be used.
     pub(crate) async fn boot(&self) -> Result<Report, Box<Report>> {
+        if self.control.is_some() {
+            return Box::pin(self.boot_from_control()).await;
+        }
         let report = Box::new(self.reload("start").await);
         if report.applied() {
             return Ok(*report);
@@ -573,6 +615,9 @@ impl Engine {
                     loaded.diagnostics,
                 )
                 .await;
+        }
+        if self.control.is_some() {
+            return Box::pin(self.reload_with_bundle(loaded, trigger)).await;
         }
         self.apply(loaded, trigger, Origin::File).await
     }
@@ -1277,6 +1322,7 @@ impl rdock_admin::Control for Engine {
             "providers": self.provider_status(),
             "certificates": self.acme.status(),
             "secrets": { "vault": self.vault.status() },
+            "cluster": self.control.as_ref().map(control::ControlState::status),
             "runtime": self.threads.get().map(|t| serde_json::json!({
                 "worker_threads": t.workers,
                 "max_blocking_threads": t.max_blocking,
@@ -1699,7 +1745,12 @@ mod tests {
         .unwrap();
         let metrics = rdock_observability::Metrics::new("test", "test").unwrap();
         let plane = Arc::new(DataPlane::new(metrics, Runtime::empty()));
-        let engine = Arc::new(Engine::new(Source::File(config), dir.path(), plane.clone()));
+        let engine = Arc::new(Engine::new(
+            Source::File(config),
+            dir.path(),
+            plane.clone(),
+            None,
+        ));
         // Something else holds these ports: a TCP one and a UDP one.
         let busy = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
         let busy_port = busy.local_addr().unwrap().port();

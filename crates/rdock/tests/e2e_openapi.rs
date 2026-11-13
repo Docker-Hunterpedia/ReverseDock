@@ -404,6 +404,7 @@ fn resource_operations(rdock: &Rdock, check: &mut Checker) {
     let json_type = [("Content-Type", "application/json")];
     consumer_operations(rdock, check);
     abuse_operations(rdock, check);
+    cluster_operations(rdock, check);
     for path in [
         "/api/v1/certificates",
         "/api/v1/backends",
@@ -546,6 +547,51 @@ fn consumer_operations(rdock: &Rdock, check: &mut Checker) {
 }
 
 /// Abuse bans (H-SEC-01): none here, so the unban is the documented 404.
+/// The control plane's cluster API answers `404` on a data plane (it is exercised against
+/// `rdock control run` in `e2e_cluster.rs`).
+fn cluster_operations(rdock: &Rdock, check: &mut Checker) {
+    let json = [("Content-Type", "application/json")];
+    for (method, template, path, body) in [
+        (
+            "GET",
+            "/api/v1/cluster/instances",
+            "/api/v1/cluster/instances",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/instances/{name}/revoke",
+            "/api/v1/cluster/instances/edge-1/revoke",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/tokens",
+            "/api/v1/cluster/tokens",
+            "{}",
+        ),
+        (
+            "GET",
+            "/api/v1/cluster/revisions",
+            "/api/v1/cluster/revisions",
+            "",
+        ),
+        (
+            "POST",
+            "/api/v1/cluster/revisions",
+            "/api/v1/cluster/revisions",
+            r#"{"document":{"routes":{}}}"#,
+        ),
+    ] {
+        let answer = check.call(rdock, (method, template, path), &json, body);
+        assert_eq!(
+            answer.status, 404,
+            "{method} {path} on a data plane: {}",
+            answer.body
+        );
+    }
+}
+
 fn abuse_operations(rdock: &Rdock, check: &mut Checker) {
     check.call(
         rdock,

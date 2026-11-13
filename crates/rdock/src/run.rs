@@ -366,7 +366,27 @@ async fn serve(
     }
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
     let plane = data_plane(&args.data_dir, metrics, plugins)?;
-    let engine = Arc::new(Engine::new(source.clone(), &args.data_dir, plane.clone()));
+    let cluster = match &source {
+        Source::File(path) => match crate::cluster::read(Some(path)) {
+            Some(settings) => {
+                match crate::cluster::context(settings, &args.data_dir, plane.metrics()).await {
+                    Ok(context) => Some(context),
+                    Err(err) => {
+                        eprintln!("error: {err:#}");
+                        return Ok(ExitCode::from(1));
+                    }
+                }
+            }
+            None => None,
+        },
+        Source::ZeroConfig => None,
+    };
+    let engine = Arc::new(Engine::new(
+        source.clone(),
+        &args.data_dir,
+        plane.clone(),
+        cluster.as_ref(),
+    ));
     engine.set_threads(threads);
     let (upgrade_tx, mut upgrades) = mpsc::channel::<crate::upgrade::Trigger>(1);
     engine.set_upgrades(upgrade_tx.clone());
@@ -396,6 +416,12 @@ async fn serve(
     }
 
     log_start(&source, plugins);
+    // The control plane's agent runs beside the engine from the start: a member that has no
+    // stored bundle yet boots from the first one it delivers (ADR-0031).
+    let (_agent_stop, agent_stop_rx) = watch::channel(false);
+    if let Some(context) = &cluster {
+        crate::cluster::start_agent(context, &engine, plane.metrics(), agent_stop_rx);
+    }
     engine.restore_snapshots();
     let report = match engine.boot().await {
         Ok(report) => report,
@@ -657,28 +683,13 @@ async fn start_admin(
         .socket
         .clone()
         .unwrap_or_else(|| socket_path(&args.data_dir));
-    let settings = rdock_admin::Settings {
-        address,
-        tls: admin.tls.map(|tls| rdock_admin::TlsFiles {
-            cert_file: tls.cert_file,
-            key_file: tls.key_file,
-        }),
-        socket: Some(socket.clone()),
-        allowed_hosts: admin.allowed_hosts,
-        threads: usize::from(admin.threads),
-        state_dir: args.data_dir.join("admin"),
-        passwords: admin.passwords,
-        sessions: admin.sessions,
-        mfa: admin.mfa,
-        dashboard: admin.dashboard,
-        tokens: admin.tokens,
-        metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
-        trust_forwarded_on_loopback: admin.trust_forwarded_on_loopback,
-        audit_dir: args.data_dir.join("audit"),
-        audit: admin.audit,
-        api_writes: admin.api_writes,
-        feeds: Some(engine.feeds()),
-    };
+    let mut admin = admin;
+    // With a control plane, the configuration comes from bundles: local API writes are off,
+    // as in GitOps mode (ADR-0031).
+    if config.cluster.as_ref().is_some_and(|c| c.control.is_some()) {
+        admin.api_writes = false;
+    }
+    let settings = admin_settings(admin, &args.data_dir, socket.clone(), Some(engine.feeds()));
     let running = rdock_admin::start_with(settings, engine.clone(), stop, sockets)?;
     #[cfg(feature = "fault-injection")]
     if let Some(fault) = rdock_admin::fault::from_env()
@@ -689,6 +700,37 @@ async fn start_admin(
     }
     tracing::info!(%address, socket = %socket.display(), "admin API listening");
     Ok(Some(running))
+}
+
+/// The admin API's settings from `admin` (the data plane's and the control plane's).
+pub(crate) fn admin_settings(
+    admin: rdock_model::settings::Admin,
+    data_dir: &Path,
+    socket: PathBuf,
+    feeds: Option<rdock_observability::feed::Feeds>,
+) -> rdock_admin::Settings {
+    rdock_admin::Settings {
+        address: admin_address(&admin.listener),
+        tls: admin.tls.map(|tls| rdock_admin::TlsFiles {
+            cert_file: tls.cert_file,
+            key_file: tls.key_file,
+        }),
+        socket: Some(socket),
+        allowed_hosts: admin.allowed_hosts,
+        threads: usize::from(admin.threads),
+        state_dir: data_dir.join("admin"),
+        passwords: admin.passwords,
+        sessions: admin.sessions,
+        mfa: admin.mfa,
+        dashboard: admin.dashboard,
+        tokens: admin.tokens,
+        metrics_unauthenticated_on_loopback: admin.metrics_unauthenticated_on_loopback,
+        trust_forwarded_on_loopback: admin.trust_forwarded_on_loopback,
+        audit_dir: data_dir.join("audit"),
+        audit: admin.audit,
+        api_writes: admin.api_writes,
+        feeds,
+    }
 }
 
 fn start_watcher(engine: &Engine, changed: mpsc::Sender<()>) -> Option<FileWatcher> {

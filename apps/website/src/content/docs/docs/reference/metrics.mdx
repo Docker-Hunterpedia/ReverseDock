@@ -436,6 +436,44 @@ in place.
 serve connections) or `max_blocking` (most threads for blocking work). See
 [`runtime`](/docs/guides/sockets-and-threads/#runtime-threads); a change needs a restart.
 
+## Cluster
+
+### `rdock_cluster_bundle_revision` <Status planned="v0.9" />
+
+**Gauge.** The [control plane](/docs/guides/cluster/)'s bundle revision this data plane serves;
+0 without a control plane or before the first bundle.
+
+### `rdock_cluster_bundles_total` <Status planned="v0.9" />
+
+**Counter.** Bundles a data plane received, by `result`: `ack` (stored and applied), `nack`
+(refused with diagnostics; the previous revision stays) or `refused` (another cluster's, not newer
+than the one served, empty, or not matching its SHA-256).
+
+### `rdock_cluster_control_connected` <Status planned="v0.9" />
+
+**Gauge.** 1 while the data plane's last request to its control plane succeeded, 0 while the
+control plane is unreachable or refuses the instance.
+
+### `rdock_cluster_leases_total` <Status planned="v0.9" />
+
+**Counter.** Certificate [leases](/docs/guides/shared-certificates/) asked for, by `result`:
+`acquired`, `busy` (another instance holds it), `lost` (expired or taken over before the
+certificate was stored) or `error` (the store failed).
+
+### `rdock_cluster_challenge_barriers_total` <Status planned="v0.9" />
+
+**Counter.** Challenge barriers before validation, by `result`: `complete` (every live member
+holds the HTTP-01 or TLS-ALPN-01 answers) or `timeout` (validation went ahead without some).
+
+### `rdock_control_revision` <Status planned="v0.9" />
+
+**Gauge.** On the control plane: the newest published revision.
+
+### `rdock_control_instances` <Status planned="v0.9" />
+
+**Gauge.** On the control plane: enrolled data planes by `state`: `synced`, `stale`, `error`
+(refused the newest revision), `away` (silent longer than `control.offline_after`) or `revoked`.
+
 ## Binary upgrades
 
 ### `rdock_upgrades_total` <Status planned="v0.9" />

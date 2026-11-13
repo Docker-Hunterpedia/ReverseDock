@@ -40,6 +40,13 @@ pub const API_KEY: Format = Format {
     secret_len: 32,
 };
 
+/// Join tokens of a cluster's control plane (ADR-0031): single use, short-lived.
+pub const JOIN_TOKEN: Format = Format {
+    prefix: "rdk_join_",
+    id_len: 10,
+    secret_len: 32,
+};
+
 /// A clear-text credential, shown once. `Debug` and `Display` print it redacted so it cannot
 /// reach a log or a panic message by accident; [`Secret::expose`] gives the value.
 #[derive(Clone, PartialEq, Eq)]

@@ -10,7 +10,7 @@ pub mod policy;
 pub mod request;
 pub mod tickets;
 
-pub use cert::{CertError, LoadedCert, load_certificate};
+pub use cert::{CertError, LoadedCert, certificate_from_pem, load_certificate};
 pub use challenge::Challenges;
 pub use client_auth::{CLOUDFLARE_ORIGIN_PULL_CA, ClientAuth, ClientAuthError};
 pub use index::{CertIndex, ListenerResolver, SniResolver};

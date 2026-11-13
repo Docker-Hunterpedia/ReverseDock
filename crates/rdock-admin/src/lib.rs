@@ -7,6 +7,7 @@ mod auth;
 mod bootstrap;
 mod cache;
 mod caller;
+mod cluster;
 mod config_api;
 mod consumers;
 mod dashboard;
@@ -34,6 +35,7 @@ use std::sync::Arc;
 use async_trait::async_trait;
 
 pub use cache::{CachePurge, PurgeOutcome};
+pub use cluster::ClusterPublish;
 pub use openapi::json as openapi_json;
 pub use server::{Running, Sockets, StartError, start, start_with};
 
@@ -104,6 +106,41 @@ pub trait Control: Send + Sync {
     async fn unban(&self, key: String, middleware: Option<String>) -> usize {
         let _ = (key, middleware);
         0
+    }
+    /// The control plane's enrolled instances with their state; `None` on a data plane.
+    async fn cluster_instances(&self) -> Option<serde_json::Value> {
+        None
+    }
+    /// Revokes an enrolled instance: `Some(Ok(false))` when there is no such instance; `None`
+    /// on a data plane.
+    async fn cluster_revoke(&self, instance: String) -> Option<Result<bool, String>> {
+        let _ = instance;
+        None
+    }
+    /// Creates a join token valid for `ttl_seconds` (the configured default when `None`) on
+    /// behalf of `actor`: `token` (shown once), `id`, `expires_at`, `ca_pin`; `None` on a data
+    /// plane.
+    async fn cluster_create_token(
+        &self,
+        ttl_seconds: Option<u64>,
+        actor: String,
+    ) -> Option<Result<serde_json::Value, String>> {
+        let _ = (ttl_seconds, actor);
+        None
+    }
+    /// Published revisions, newest first; `None` on a data plane.
+    async fn cluster_revisions(&self) -> Option<serde_json::Value> {
+        None
+    }
+    /// Publishes `{ "document": … }` or `{ "rollback_to": N }` on behalf of `actor`; `None`
+    /// on a data plane.
+    async fn cluster_publish(
+        &self,
+        request: serde_json::Value,
+        actor: String,
+    ) -> Option<ClusterPublish> {
+        let _ = (request, actor);
+        None
     }
     /// Replaces the running binary by handing the listeners to a new process (ADR-0031);
     /// returns once the new process serves or the attempt failed. Only offered on the Unix

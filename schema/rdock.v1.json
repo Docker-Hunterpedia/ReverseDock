@@ -80,12 +80,34 @@
       },
       "default": {}
     },
+    "cluster": {
+      "description": "Membership of a cluster (H-HA-01…03): the control plane this data plane takes its\nconfiguration from, and where certificates are shared.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Cluster"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "consumers": {
       "description": "API clients and users that requests are attributed to, with their API keys (stored\nhashed). The `api` provider may add consumers and keys (`rdock consumers`).",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/Consumer"
       }
+    },
+    "control": {
+      "description": "The control plane's own settings, read only by `rdock control run`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/ControlPlane"
+        },
+        {
+          "type": "null"
+        }
+      ]
     },
     "defaults": {
       "description": "Defaults applied to routes that do not set a value.",
@@ -1810,6 +1832,136 @@
         }
       ]
     },
+    "Cluster": {
+      "description": "The data-plane side of a cluster.",
+      "type": "object",
+      "properties": {
+        "control": {
+          "description": "The control plane this data plane takes its configuration from.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClusterControl"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "instance": {
+          "description": "This instance's name in leases and the control plane's instance list: letters, digits,\n`.`, `-` and `_`, at most 63 characters. Default: the identity the control plane gave\nat enrolment, or (without a control plane) an id generated once and kept in\n`$RDOCK_DATA_DIR/cluster/instance`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "store": {
+          "description": "Where certificates, the ACME account, leases and challenge answers are shared. Default:\nthe control plane when `control` is set.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ClusterStore"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "ClusterControl": {
+      "description": "How a data plane reaches its control plane.",
+      "type": "object",
+      "properties": {
+        "ca_file": {
+          "description": "The cluster CA certificate (PEM), as `rdock control ca` prints it. One of `ca_file` and\n`ca_pin` is required.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "ca_pin": {
+          "description": "The SHA-256 of the cluster CA certificate (DER), as `sha256:<64 hex digits>`; `rdock\ncontrol token create` prints it. The first connection accepts the control plane only\nwhen its chain contains a CA with this digest; the CA is then kept in `identity_dir`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "identity_dir": {
+          "description": "Where the instance's key, certificate and the cluster CA are kept (mode 0700). Default\n`$RDOCK_DATA_DIR/cluster`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "join_token": {
+          "description": "The single-use join token from `rdock control token create`, used only while the\ninstance has no identity yet. A secret: reference a file, e.g.\n`\"${file:/run/secrets/rdock-join}\"`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "poll_timeout": {
+          "description": "How long one request for the next bundle waits on the control plane before it is asked\nagain. Default 30s (5s–5m).",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "url": {
+          "description": "The control plane's cluster address, e.g. `https://control.example.com:7443`. Always\n`https`.",
+          "$ref": "#/$defs/HttpUrl"
+        }
+      },
+      "additionalProperties": false,
+      "required": [
+        "url"
+      ]
+    },
+    "ClusterStore": {
+      "description": "Where a cluster shares certificates, the ACME account, leases and challenge answers.",
+      "type": "object",
+      "properties": {
+        "barrier_timeout": {
+          "description": "How long the instance that orders a certificate waits for every live member to hold an\nHTTP-01 or TLS-ALPN-01 answer before the CA is told to validate. Members that have not\nconfirmed by then cannot answer; validation goes ahead. Default 10s (1s–2m).",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "lease_ttl": {
+          "description": "How long a lease on a certificate name lasts unless its holder renews it (every third of\nit). Default 60s (10s–10m).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m"
+        },
+        "path": {
+          "description": "The shared directory, for `type: directory`.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "type": {
+          "description": "`control` (default) or `directory`.",
+          "$ref": "#/$defs/ClusterStoreType",
+          "default": "control"
+        }
+      },
+      "additionalProperties": false
+    },
+    "ClusterStoreType": {
+      "description": "The kinds of cluster store.",
+      "oneOf": [
+        {
+          "description": "The control plane serves the store to enrolled members over mutual TLS. Leases carry a\nfencing token the control plane checks on every write.",
+          "type": "string",
+          "const": "control"
+        },
+        {
+          "description": "A directory every instance mounts (NFS, EFS, a shared volume). Best effort: lock files\nwith an expiry that depends on the instances' clocks, and no enforced fencing.",
+          "type": "string",
+          "const": "directory"
+        }
+      ]
+    },
     "CompressAlgorithm": {
       "description": "Compression algorithms.",
       "oneOf": [
@@ -1854,6 +2006,54 @@
             "string",
             "null"
           ]
+        }
+      },
+      "additionalProperties": false
+    },
+    "ControlPlane": {
+      "description": "The control-plane side of a cluster, read by `rdock control run` (never by `rdock run`).",
+      "type": "object",
+      "properties": {
+        "history": {
+          "description": "Published revisions kept for listing and rollback. Default 50 (1–1000).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "identity_lifetime": {
+          "description": "Lifetime of the client certificate each data plane receives; it is renewed when a third\nis left. A data plane whose certificate expires while the control plane is away keeps\nserving but must enrol again with a new token. Default 30d (1h–90d).",
+          "$ref": "#/$defs/Duration",
+          "default": "30d"
+        },
+        "join_token_ttl": {
+          "description": "How long a join token from `rdock control token create` stays usable. Default 1h\n(1m–30d).",
+          "$ref": "#/$defs/Duration",
+          "default": "1h"
+        },
+        "listener": {
+          "description": "The cluster listener data planes connect to (mutual TLS, HTTP/2). Default\n`127.0.0.1:7443`: set an address other machines reach.",
+          "$ref": "#/$defs/ListenAddress",
+          "default": "127.0.0.1:7443"
+        },
+        "name": {
+          "description": "A display name for the cluster.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "names": {
+          "description": "DNS names and IP addresses on the control plane's server certificate, as data planes\nwrite them in `cluster.control.url`. `localhost`, `127.0.0.1`, `::1` and the listener's\nIP are always included.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "offline_after": {
+          "description": "A data plane that has not asked for a bundle for this long is shown as away and is not\nwaited for by challenge barriers. Default 90s (10s–1h).",
+          "$ref": "#/$defs/Duration",
+          "default": "1m30s"
         }
       },
       "additionalProperties": false

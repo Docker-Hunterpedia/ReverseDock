@@ -4261,7 +4261,9 @@ dependencies = [
  "rdock-balancer",
  "rdock-cache",
  "rdock-cloudflare",
+ "rdock-cluster",
  "rdock-config",
+ "rdock-control",
  "rdock-credentials",
  "rdock-dns-providers",
  "rdock-limits",
@@ -4311,10 +4313,13 @@ dependencies = [
  "hyper-util",
  "instant-acme",
  "rcgen",
+ "rdock-cluster",
  "rdock-config",
  "rdock-model",
  "rdock-observability",
+ "rdock-testkit",
  "rdock-tls",
+ "ring",
  "rustls",
  "rustls-pki-types",
  "serde",
@@ -4427,6 +4432,32 @@ dependencies = [
 ]
 
 [[package]]
+name = "rdock-cluster"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "async-trait",
+ "base64 0.23.1",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-rustls",
+ "hyper-util",
+ "rcgen",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "tokio",
+ "tracing",
+ "x509-parser 0.18.1",
+ "zstd",
+]
+
+[[package]]
 name = "rdock-config"
 version = "0.8.0-alpha.1"
 dependencies = [
@@ -4438,6 +4469,36 @@ dependencies = [
  "serde_path_to_error",
  "tempfile",
  "thiserror 2.0.21",
+]
+
+[[package]]
+name = "rdock-control"
+version = "0.8.0-alpha.1"
+dependencies = [
+ "base64 0.23.1",
+ "bytes",
+ "http",
+ "http-body-util",
+ "hyper",
+ "hyper-util",
+ "rcgen",
+ "rdock-cluster",
+ "rdock-credentials",
+ "rdock-model",
+ "rdock-observability",
+ "ring",
+ "rustls",
+ "rustls-pki-types",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 2.0.21",
+ "time",
+ "tokio",
+ "tokio-rustls",
+ "tracing",
+ "x509-parser 0.18.1",
+ "zstd",
 ]
 
 [[package]]
@@ -4795,9 +4856,11 @@ dependencies = [
  "rustls-pki-types",
  "serde_json",
  "tempfile",
+ "time",
  "tokio",
  "tokio-rustls",
  "tokio-tungstenite",
+ "x509-parser 0.18.1",
 ]
 
 [[package]]

@@ -220,6 +220,16 @@ type BackendRef struct {
 	Service string `json:"service"`
 }
 
+// ClusterPublishRequest `POST /api/v1/cluster/revisions`: a document to publish, or a revision to roll back to.
+type ClusterPublishRequest struct {
+	// Document The configuration to publish (an `rdock.yaml` as JSON, without `cluster` and
+	// `control`).
+	Document interface{} `json:"document,omitempty"`
+
+	// RollbackTo Publish this earlier revision's document again, as a new revision.
+	RollbackTo *int64 `json:"rollback_to,omitempty"`
+}
+
 // Code defines model for Code.
 type Code struct {
 	Code string `json:"code"`
@@ -269,6 +279,13 @@ type Import struct {
 
 	// Version Always `1`.
 	Version int32 `json:"version"`
+}
+
+// JoinTokenRequest `POST /api/v1/cluster/tokens`.
+type JoinTokenRequest struct {
+	// TtlSeconds How long the token stays usable, in seconds (60 to 2,592,000); `control.join_token_ttl`
+	// when omitted.
+	TtlSeconds *int64 `json:"ttl_seconds,omitempty"`
 }
 
 // Listed What `GET /api/v1/auth/sessions` shows of a session.
@@ -630,6 +647,12 @@ type UndrainJSONRequestBody = BackendRef
 
 // PurgeCacheJSONRequestBody defines body for PurgeCache for application/json ContentType.
 type PurgeCacheJSONRequestBody = PurgeRequest
+
+// PublishClusterRevisionJSONRequestBody defines body for PublishClusterRevision for application/json ContentType.
+type PublishClusterRevisionJSONRequestBody = ClusterPublishRequest
+
+// CreateJoinTokenJSONRequestBody defines body for CreateJoinToken for application/json ContentType.
+type CreateJoinTokenJSONRequestBody = JoinTokenRequest
 
 // PatchApiApplicationJSONPatchPlusJSONRequestBody defines body for PatchApi for application/json-patch+json ContentType.
 type PatchApiApplicationJSONPatchPlusJSONRequestBody = PatchApiApplicationJSONPatchPlusJSONBody
@@ -1005,6 +1028,63 @@ type ClientInterface interface {
 	//
 	// Corresponds with POST /api/v1/certificates/{name}/renew (the `Renew` operationId).
 	Renew(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListClusterInstances Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+	//
+	// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+	//
+	// Corresponds with GET /api/v1/cluster/instances (the `ListClusterInstances` operationId).
+	ListClusterInstances(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RevokeClusterInstance (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle
+	//
+	// (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle. Audited.
+	//
+	// Corresponds with POST /api/v1/cluster/instances/{name}/revoke (the `RevokeClusterInstance` operationId).
+	RevokeClusterInstance(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ListClusterRevisions Published revisions, newest first, with the instances that refused each and why
+	//
+	// Published revisions, newest first, with the instances that refused each and why.
+	//
+	// Corresponds with GET /api/v1/cluster/revisions (the `ListClusterRevisions` operationId).
+	ListClusterRevisions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PublishClusterRevisionWithBody (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+	//
+	// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+	PublishClusterRevisionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PublishClusterRevision (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+	//
+	// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+	PublishClusterRevision(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateJoinTokenWithBody (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+	//
+	// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+	CreateJoinTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// CreateJoinToken (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+	//
+	// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+	CreateJoinToken(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Effective The effective configuration, the owner of every object, secrets masked
 	//
@@ -2037,6 +2117,133 @@ func (c *Client) Certificates(ctx context.Context, reqEditors ...RequestEditorFn
 // Corresponds with POST /api/v1/certificates/{name}/renew (the `Renew` operationId).
 func (c *Client) Renew(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRenewRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListClusterInstances Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+//
+// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+//
+// Corresponds with GET /api/v1/cluster/instances (the `ListClusterInstances` operationId).
+func (c *Client) ListClusterInstances(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListClusterInstancesRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// RevokeClusterInstance (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle
+//
+// (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle. Audited.
+//
+// Corresponds with POST /api/v1/cluster/instances/{name}/revoke (the `RevokeClusterInstance` operationId).
+func (c *Client) RevokeClusterInstance(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRevokeClusterInstanceRequest(c.Server, name)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// ListClusterRevisions Published revisions, newest first, with the instances that refused each and why
+//
+// Published revisions, newest first, with the instances that refused each and why.
+//
+// Corresponds with GET /api/v1/cluster/revisions (the `ListClusterRevisions` operationId).
+func (c *Client) ListClusterRevisions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewListClusterRevisionsRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PublishClusterRevisionWithBody (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+//
+// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+func (c *Client) PublishClusterRevisionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublishClusterRevisionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// PublishClusterRevision (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+//
+// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+func (c *Client) PublishClusterRevision(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPublishClusterRevisionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateJoinTokenWithBody (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+//
+// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+func (c *Client) CreateJoinTokenWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateJoinTokenRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// CreateJoinToken (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+//
+// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+func (c *Client) CreateJoinToken(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewCreateJoinTokenRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3933,6 +4140,174 @@ func NewRenewRequest(server string, name string) (*http.Request, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewListClusterInstancesRequest constructs an http.Request for the ListClusterInstances method
+func NewListClusterInstancesRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/instances")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewRevokeClusterInstanceRequest constructs an http.Request for the RevokeClusterInstance method
+func NewRevokeClusterInstanceRequest(server string, name string) (*http.Request, error) {
+	var err error
+
+	var pathParam0 string
+
+	pathParam0, err = runtime.StyleParamWithOptions("simple", false, "name", name, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationPath, Type: "string", Format: ""})
+	if err != nil {
+		return nil, err
+	}
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/instances/%s/revoke", pathParam0)
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewListClusterRevisionsRequest constructs an http.Request for the ListClusterRevisions method
+func NewListClusterRevisionsRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/revisions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodGet, queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewPublishClusterRevisionRequest calls the generic PublishClusterRevision builder with application/json body
+func NewPublishClusterRevisionRequest(server string, body PublishClusterRevisionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPublishClusterRevisionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPublishClusterRevisionRequestWithBody constructs an http.Request for the PublishClusterRevision method, with any body, and a specified content type
+func NewPublishClusterRevisionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/revisions")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewCreateJoinTokenRequest calls the generic CreateJoinToken builder with application/json body
+func NewCreateJoinTokenRequest(server string, body CreateJoinTokenJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewCreateJoinTokenRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewCreateJoinTokenRequestWithBody constructs an http.Request for the CreateJoinToken method, with any body, and a specified content type
+func NewCreateJoinTokenRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/cluster/tokens")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -6136,6 +6511,69 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with POST /api/v1/certificates/{name}/renew (the `Renew` operationId).
 	RenewWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*RenewResponse, error)
+
+	// ListClusterInstancesWithResponse Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+	//
+	// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/cluster/instances (the `ListClusterInstances` operationId).
+	ListClusterInstancesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListClusterInstancesResponse, error)
+
+	// RevokeClusterInstanceWithResponse (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle
+	//
+	// (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle. Audited.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/instances/{name}/revoke (the `RevokeClusterInstance` operationId).
+	RevokeClusterInstanceWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*RevokeClusterInstanceResponse, error)
+
+	// ListClusterRevisionsWithResponse Published revisions, newest first, with the instances that refused each and why
+	//
+	// Published revisions, newest first, with the instances that refused each and why.
+	//
+	// Returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with GET /api/v1/cluster/revisions (the `ListClusterRevisions` operationId).
+	ListClusterRevisionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListClusterRevisionsResponse, error)
+
+	// PublishClusterRevisionWithBodyWithResponse (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+	//
+	// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+	PublishClusterRevisionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PublishClusterRevisionResponse, error)
+
+	// PublishClusterRevisionWithResponse (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+	//
+	// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+	PublishClusterRevisionWithResponse(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*PublishClusterRevisionResponse, error)
+
+	// CreateJoinTokenWithBodyWithResponse (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+	//
+	// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+	CreateJoinTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error)
+
+	// CreateJoinTokenWithResponse (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+	//
+	// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+	CreateJoinTokenWithResponse(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error)
 
 	// EffectiveWithResponse The effective configuration, the owner of every object, secrets masked
 	//
@@ -8408,6 +8846,407 @@ func (r RenewResponse) StatusCode() int {
 
 // ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
 func (r RenewResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListClusterInstancesResponse429Headers the declared response headers of an HTTP 429 response for ListClusterInstances
+type ListClusterInstancesResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListClusterInstancesResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListClusterInstancesResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListClusterInstancesResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListClusterInstancesResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListClusterInstancesResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListClusterInstancesResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListClusterInstancesResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListClusterInstancesResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListClusterInstancesResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListClusterInstancesResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListClusterInstancesResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// RevokeClusterInstanceResponse429Headers the declared response headers of an HTTP 429 response for RevokeClusterInstance
+type RevokeClusterInstanceResponse429Headers struct {
+	RetryAfter *int
+}
+
+type RevokeClusterInstanceResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *RevokeClusterInstanceResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r RevokeClusterInstanceResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r RevokeClusterInstanceResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r RevokeClusterInstanceResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r RevokeClusterInstanceResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r RevokeClusterInstanceResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r RevokeClusterInstanceResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r RevokeClusterInstanceResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RevokeClusterInstanceResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r RevokeClusterInstanceResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// ListClusterRevisionsResponse429Headers the declared response headers of an HTTP 429 response for ListClusterRevisions
+type ListClusterRevisionsResponse429Headers struct {
+	RetryAfter *int
+}
+
+type ListClusterRevisionsResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *ListClusterRevisionsResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r ListClusterRevisionsResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r ListClusterRevisionsResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r ListClusterRevisionsResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r ListClusterRevisionsResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r ListClusterRevisionsResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r ListClusterRevisionsResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r ListClusterRevisionsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ListClusterRevisionsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r ListClusterRevisionsResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// PublishClusterRevisionResponse429Headers the declared response headers of an HTTP 429 response for PublishClusterRevision
+type PublishClusterRevisionResponse429Headers struct {
+	RetryAfter *int
+}
+
+type PublishClusterRevisionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *map[string]interface{}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorBody
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON422 the response for an HTTP 422 `application/json` response
+	JSON422 *map[string]interface{}
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *PublishClusterRevisionResponse429Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON201() *map[string]interface{} {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON400() *ErrorBody {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON422 returns the response for an HTTP 422 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON422() *map[string]interface{} {
+	return r.JSON422
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r PublishClusterRevisionResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r PublishClusterRevisionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PublishClusterRevisionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r PublishClusterRevisionResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
+// CreateJoinTokenResponse429Headers the declared response headers of an HTTP 429 response for CreateJoinToken
+type CreateJoinTokenResponse429Headers struct {
+	RetryAfter *int
+}
+
+type CreateJoinTokenResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON201 the response for an HTTP 201 `application/json` response
+	JSON201 *map[string]interface{}
+	// JSON400 the response for an HTTP 400 `application/json` response
+	JSON400 *ErrorBody
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *Forbidden
+	// JSON404 the response for an HTTP 404 `application/json` response
+	JSON404 *ErrorBody
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *CreateJoinTokenResponse429Headers
+}
+
+// GetJSON201 returns the response for an HTTP 201 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON201() *map[string]interface{} {
+	return r.JSON201
+}
+
+// GetJSON400 returns the response for an HTTP 400 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON400() *ErrorBody {
+	return r.JSON400
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON403() *Forbidden {
+	return r.JSON403
+}
+
+// GetJSON404 returns the response for an HTTP 404 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON404() *ErrorBody {
+	return r.JSON404
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetBody returns the raw response body bytes
+func (r CreateJoinTokenResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r CreateJoinTokenResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r CreateJoinTokenResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r CreateJoinTokenResponse) ContentType() string {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.Header.Get("Content-Type")
 	}
@@ -12092,6 +12931,111 @@ func (c *ClientWithResponses) RenewWithResponse(ctx context.Context, name string
 	return ParseRenewResponse(rsp)
 }
 
+// ListClusterInstancesWithResponse Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report
+//
+// Every enrolled data plane with its state (`synced`, `stale`, `error`, `away`, `revoked`), the revision it serves and its last report.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/cluster/instances (the `ListClusterInstances` operationId).
+func (c *ClientWithResponses) ListClusterInstancesWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListClusterInstancesResponse, error) {
+	rsp, err := c.ListClusterInstances(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListClusterInstancesResponse(rsp)
+}
+
+// RevokeClusterInstanceWithResponse (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle
+//
+// (operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle. Audited.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/instances/{name}/revoke (the `RevokeClusterInstance` operationId).
+func (c *ClientWithResponses) RevokeClusterInstanceWithResponse(ctx context.Context, name string, reqEditors ...RequestEditorFn) (*RevokeClusterInstanceResponse, error) {
+	rsp, err := c.RevokeClusterInstance(ctx, name, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRevokeClusterInstanceResponse(rsp)
+}
+
+// ListClusterRevisionsWithResponse Published revisions, newest first, with the instances that refused each and why
+//
+// Published revisions, newest first, with the instances that refused each and why.
+//
+// Returns a wrapper object for the known response body format(s).
+//
+// Corresponds with GET /api/v1/cluster/revisions (the `ListClusterRevisions` operationId).
+func (c *ClientWithResponses) ListClusterRevisionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListClusterRevisionsResponse, error) {
+	rsp, err := c.ListClusterRevisions(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseListClusterRevisionsResponse(rsp)
+}
+
+// PublishClusterRevisionWithBodyWithResponse (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+//
+// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+func (c *ClientWithResponses) PublishClusterRevisionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PublishClusterRevisionResponse, error) {
+	rsp, err := c.PublishClusterRevisionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublishClusterRevisionResponse(rsp)
+}
+
+// PublishClusterRevisionWithResponse (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision
+//
+// (operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/revisions (the `PublishClusterRevision` operationId).
+func (c *ClientWithResponses) PublishClusterRevisionWithResponse(ctx context.Context, body PublishClusterRevisionJSONRequestBody, reqEditors ...RequestEditorFn) (*PublishClusterRevisionResponse, error) {
+	rsp, err := c.PublishClusterRevision(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePublishClusterRevisionResponse(rsp)
+}
+
+// CreateJoinTokenWithBodyWithResponse (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+//
+// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+func (c *ClientWithResponses) CreateJoinTokenWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error) {
+	rsp, err := c.CreateJoinTokenWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateJoinTokenResponse(rsp)
+}
+
+// CreateJoinTokenWithResponse (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`
+//
+// (operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`. Audited (the token's id, never its value).
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/cluster/tokens (the `CreateJoinToken` operationId).
+func (c *ClientWithResponses) CreateJoinTokenWithResponse(ctx context.Context, body CreateJoinTokenJSONRequestBody, reqEditors ...RequestEditorFn) (*CreateJoinTokenResponse, error) {
+	rsp, err := c.CreateJoinToken(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseCreateJoinTokenResponse(rsp)
+}
+
 // EffectiveWithResponse The effective configuration, the owner of every object, secrets masked
 //
 // The effective configuration, the owner of every object, secrets masked.
@@ -14481,6 +15425,362 @@ func ParseRenewResponse(rsp *http.Response) (*RenewResponse, error) {
 	switch {
 	case rsp.StatusCode == 429:
 		var headers RenewResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListClusterInstancesResponse parses an HTTP response from a ListClusterInstancesWithResponse call
+func ParseListClusterInstancesResponse(rsp *http.Response) (*ListClusterInstancesResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListClusterInstancesResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListClusterInstancesResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseRevokeClusterInstanceResponse parses an HTTP response from a RevokeClusterInstanceWithResponse call
+func ParseRevokeClusterInstanceResponse(rsp *http.Response) (*RevokeClusterInstanceResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RevokeClusterInstanceResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers RevokeClusterInstanceResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseListClusterRevisionsResponse parses an HTTP response from a ListClusterRevisionsWithResponse call
+func ParseListClusterRevisionsResponse(rsp *http.Response) (*ListClusterRevisionsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ListClusterRevisionsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers ListClusterRevisionsResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParsePublishClusterRevisionResponse parses an HTTP response from a PublishClusterRevisionWithResponse call
+func ParsePublishClusterRevisionResponse(rsp *http.Response) (*PublishClusterRevisionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PublishClusterRevisionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 422:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON422 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers PublishClusterRevisionResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseCreateJoinTokenResponse parses an HTTP response from a CreateJoinTokenWithResponse call
+func ParseCreateJoinTokenResponse(rsp *http.Response) (*CreateJoinTokenResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &CreateJoinTokenResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 201:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON201 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest Forbidden
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 404:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON404 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers CreateJoinTokenResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

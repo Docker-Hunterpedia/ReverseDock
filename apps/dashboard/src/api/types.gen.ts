@@ -41,6 +41,21 @@ export type BackendRef = {
     service: string;
 };
 
+/**
+ * `POST /api/v1/cluster/revisions`: a document to publish, or a revision to roll back to.
+ */
+export type ClusterPublishRequest = {
+    /**
+     * The configuration to publish (an `rdock.yaml` as JSON, without `cluster` and
+     * `control`).
+     */
+    document?: unknown;
+    /**
+     * Publish this earlier revision's document again, as a new revision.
+     */
+    rollback_to?: number | null;
+};
+
 export type Code = {
     code: string;
 };
@@ -94,6 +109,17 @@ export type Import = {
      * Always `1`.
      */
     version: number;
+};
+
+/**
+ * `POST /api/v1/cluster/tokens`.
+ */
+export type JoinTokenRequest = {
+    /**
+     * How long the token stays usable, in seconds (60 to 2,592,000); `control.join_token_ttl`
+     * when omitted.
+     */
+    ttl_seconds?: number | null;
 };
 
 /**
@@ -1071,6 +1097,97 @@ export type RdockClientCertForward = 'none' | 'traefik' | 'xfcc';
 export type RdockClientIpHeader = 'auto' | 'x-forwarded-for' | 'x-real-ip' | 'cf-connecting-ip';
 
 /**
+ * The data-plane side of a cluster.
+ */
+export type RdockCluster = {
+    /**
+     * The control plane this data plane takes its configuration from.
+     */
+    control?: RdockClusterControl | null;
+    /**
+     * This instance's name in leases and the control plane's instance list: letters, digits,
+     * `.`, `-` and `_`, at most 63 characters. Default: the identity the control plane gave
+     * at enrolment, or (without a control plane) an id generated once and kept in
+     * `$RDOCK_DATA_DIR/cluster/instance`.
+     */
+    instance?: string | null;
+    /**
+     * Where certificates, the ACME account, leases and challenge answers are shared. Default:
+     * the control plane when `control` is set.
+     */
+    store?: RdockClusterStore | null;
+    [key: string]: unknown | RdockClusterControl | null | string | null | RdockClusterStore | null | undefined;
+};
+
+/**
+ * How a data plane reaches its control plane.
+ */
+export type RdockClusterControl = {
+    /**
+     * The cluster CA certificate (PEM), as `rdock control ca` prints it. One of `ca_file` and
+     * `ca_pin` is required.
+     */
+    ca_file?: string | null;
+    /**
+     * The SHA-256 of the cluster CA certificate (DER), as `sha256:<64 hex digits>`; `rdock
+     * control token create` prints it. The first connection accepts the control plane only
+     * when its chain contains a CA with this digest; the CA is then kept in `identity_dir`.
+     */
+    ca_pin?: string | null;
+    /**
+     * Where the instance's key, certificate and the cluster CA are kept (mode 0700). Default
+     * `$RDOCK_DATA_DIR/cluster`.
+     */
+    identity_dir?: string | null;
+    /**
+     * The single-use join token from `rdock control token create`, used only while the
+     * instance has no identity yet. A secret: reference a file, e.g.
+     * `"${file:/run/secrets/rdock-join}"`.
+     */
+    join_token?: string | null;
+    /**
+     * How long one request for the next bundle waits on the control plane before it is asked
+     * again. Default 30s (5s–5m).
+     */
+    poll_timeout?: RdockDuration;
+    /**
+     * The control plane's cluster address, e.g. `https://control.example.com:7443`. Always
+     * `https`.
+     */
+    url: RdockHttpUrl;
+};
+
+/**
+ * Where a cluster shares certificates, the ACME account, leases and challenge answers.
+ */
+export type RdockClusterStore = {
+    /**
+     * How long the instance that orders a certificate waits for every live member to hold an
+     * HTTP-01 or TLS-ALPN-01 answer before the CA is told to validate. Members that have not
+     * confirmed by then cannot answer; validation goes ahead. Default 10s (1s–2m).
+     */
+    barrier_timeout?: RdockDuration;
+    /**
+     * How long a lease on a certificate name lasts unless its holder renews it (every third of
+     * it). Default 60s (10s–10m).
+     */
+    lease_ttl?: RdockDuration;
+    /**
+     * The shared directory, for `type: directory`.
+     */
+    path?: string | null;
+    /**
+     * `control` (default) or `directory`.
+     */
+    type?: RdockClusterStoreType;
+};
+
+/**
+ * The kinds of cluster store.
+ */
+export type RdockClusterStoreType = 'control' | 'directory';
+
+/**
  * Compression algorithms.
  */
 export type RdockCompressAlgorithm = 'gzip' | 'br' | 'zstd';
@@ -1110,12 +1227,21 @@ export type RdockConfig = {
         [key: string]: RdockCertificate;
     };
     /**
+     * Membership of a cluster (H-HA-01…03): the control plane this data plane takes its
+     * configuration from, and where certificates are shared.
+     */
+    cluster?: RdockCluster | null;
+    /**
      * API clients and users that requests are attributed to, with their API keys (stored
      * hashed). The `api` provider may add consumers and keys (`rdock consumers`).
      */
     consumers?: {
         [key: string]: RdockConsumer;
     };
+    /**
+     * The control plane's own settings, read only by `rdock control run`.
+     */
+    control?: RdockControlPlane | null;
     /**
      * Defaults applied to routes that do not set a value.
      */
@@ -1215,9 +1341,9 @@ export type RdockConfig = {
         [key: string]: RdockCacheStore;
     } | {
         [key: string]: RdockCertificate;
-    } | {
+    } | RdockCluster | null | {
         [key: string]: RdockConsumer;
-    } | RdockDefaults | RdockGeoIp | null | RdockLifecycle | {
+    } | RdockControlPlane | null | RdockDefaults | RdockGeoIp | null | RdockLifecycle | {
         [key: string]: RdockListener;
     } | RdockLocality | null | {
         [key: string]: RdockMiddleware;
@@ -1260,6 +1386,47 @@ export type RdockConsumer = {
      * every reload and watched like the configuration file.
      */
     keys_file?: string | null;
+};
+
+/**
+ * The control-plane side of a cluster, read by `rdock control run` (never by `rdock run`).
+ */
+export type RdockControlPlane = {
+    /**
+     * Published revisions kept for listing and rollback. Default 50 (1–1000).
+     */
+    history?: number;
+    /**
+     * Lifetime of the client certificate each data plane receives; it is renewed when a third
+     * is left. A data plane whose certificate expires while the control plane is away keeps
+     * serving but must enrol again with a new token. Default 30d (1h–90d).
+     */
+    identity_lifetime?: RdockDuration;
+    /**
+     * How long a join token from `rdock control token create` stays usable. Default 1h
+     * (1m–30d).
+     */
+    join_token_ttl?: RdockDuration;
+    /**
+     * The cluster listener data planes connect to (mutual TLS, HTTP/2). Default
+     * `127.0.0.1:7443`: set an address other machines reach.
+     */
+    listener?: RdockListenAddress;
+    /**
+     * A display name for the cluster.
+     */
+    name?: string | null;
+    /**
+     * DNS names and IP addresses on the control plane's server certificate, as data planes
+     * write them in `cluster.control.url`. `localhost`, `127.0.0.1`, `::1` and the listener's
+     * IP are always included.
+     */
+    names?: Array<string>;
+    /**
+     * A data plane that has not asked for a bundle for this long is shown as away and is not
+     * waited for by challenge barriers. Default 90s (10s–1h).
+     */
+    offline_after?: RdockDuration;
 };
 
 /**
@@ -6208,6 +6375,220 @@ export type RenewResponses = {
 };
 
 export type RenewResponse = RenewResponses[keyof RenewResponses];
+
+export type ListClusterInstancesData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/instances';
+};
+
+export type ListClusterInstancesErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListClusterInstancesError = ListClusterInstancesErrors[keyof ListClusterInstancesErrors];
+
+export type ListClusterInstancesResponses = {
+    /**
+     * `cluster_id`, `latest` and `instances`
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListClusterInstancesResponse = ListClusterInstancesResponses[keyof ListClusterInstancesResponses];
+
+export type RevokeClusterInstanceData = {
+    body?: never;
+    path: {
+        /**
+         * The instance's name
+         */
+        name: string;
+    };
+    query?: never;
+    url: '/api/v1/cluster/instances/{name}/revoke';
+};
+
+export type RevokeClusterInstanceErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * No such instance, or not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type RevokeClusterInstanceError = RevokeClusterInstanceErrors[keyof RevokeClusterInstanceErrors];
+
+export type RevokeClusterInstanceResponses = {
+    /**
+     * `revoked`: the name
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type RevokeClusterInstanceResponse = RevokeClusterInstanceResponses[keyof RevokeClusterInstanceResponses];
+
+export type ListClusterRevisionsData = {
+    body?: never;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/revisions';
+};
+
+export type ListClusterRevisionsErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type ListClusterRevisionsError = ListClusterRevisionsErrors[keyof ListClusterRevisionsErrors];
+
+export type ListClusterRevisionsResponses = {
+    /**
+     * `cluster_id`, `latest` and `revisions`
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type ListClusterRevisionsResponse = ListClusterRevisionsResponses[keyof ListClusterRevisionsResponses];
+
+export type PublishClusterRevisionData = {
+    body: ClusterPublishRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/revisions';
+};
+
+export type PublishClusterRevisionErrors = {
+    /**
+     * Neither or both of `document` and `rollback_to`, or an unknown revision
+     */
+    400: ErrorBody;
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * The document does not validate or is empty: `diagnostics`
+     */
+    422: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type PublishClusterRevisionError = PublishClusterRevisionErrors[keyof PublishClusterRevisionErrors];
+
+export type PublishClusterRevisionResponses = {
+    /**
+     * `revision`, `sha256`, `published_at`, `rollback_of`, `warnings`
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type PublishClusterRevisionResponse = PublishClusterRevisionResponses[keyof PublishClusterRevisionResponses];
+
+export type CreateJoinTokenData = {
+    body: JoinTokenRequest;
+    path?: never;
+    query?: never;
+    url: '/api/v1/cluster/tokens';
+};
+
+export type CreateJoinTokenErrors = {
+    /**
+     * A lifetime out of range
+     */
+    400: ErrorBody;
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * The caller's role does not allow this, or a password check is due.
+     */
+    403: ErrorBody;
+    /**
+     * Not a control plane
+     */
+    404: ErrorBody;
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+};
+
+export type CreateJoinTokenError = CreateJoinTokenErrors[keyof CreateJoinTokenErrors];
+
+export type CreateJoinTokenResponses = {
+    /**
+     * `token` (shown once), `id`, `expires_at`, `ca_pin`, `cluster_id`
+     */
+    201: {
+        [key: string]: unknown;
+    };
+};
+
+export type CreateJoinTokenResponse = CreateJoinTokenResponses[keyof CreateJoinTokenResponses];
 
 export type EffectiveData = {
     body?: never;

@@ -85,6 +85,13 @@ pub struct Config {
     // Boxed: the configuration is held across awaits by reloads; this keeps it small.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub geoip: Option<Box<crate::settings::GeoIp>>,
+    /// Membership of a cluster (H-HA-01…03): the control plane this data plane takes its
+    /// configuration from, and where certificates are shared.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cluster: Option<Box<crate::cluster::Cluster>>,
+    /// The control plane's own settings, read only by `rdock control run`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub control: Option<Box<crate::cluster::ControlPlane>>,
 }
 
 impl Config {

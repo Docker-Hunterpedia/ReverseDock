@@ -42,6 +42,8 @@ pub use rdock_plugin_api as plugin_api;
 pub use rdock_plugin_api::Registry;
 
 mod admin_cli;
+mod cluster;
+mod control;
 mod ctl;
 mod datadir;
 mod engine;
@@ -79,6 +81,10 @@ enum Command {
     Run(RunArgs),
     /// Validate configuration files without starting the proxy.
     Validate(ValidateArgs),
+    /// Run a cluster's control plane, and publish, list and roll back configurations, enrol and
+    /// revoke data planes through it.
+    #[command(subcommand)]
+    Control(control::ControlCommand),
     /// Ask the running proxy to reload its configuration.
     Reload(CtlArgs),
     /// Show the state of the running proxy.
@@ -326,6 +332,7 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
     let result = match cli.command {
         Command::Run(args) => run::run(&args, &plugins),
         Command::Validate(args) => validate::validate(&args, &plugins),
+        Command::Control(command) => control::control(&command, &plugins),
         Command::Reload(args) => ctl::reload(&args),
         Command::Status(args) => ctl::status(&args),
         Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
