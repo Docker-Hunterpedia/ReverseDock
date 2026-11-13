@@ -81,7 +81,7 @@ reversedock/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
 │   ├── conformance/http-cache/     # (v0.8) harness for http-tests/cache-tests: rdock.yaml (the cache at safe defaults), summarize.mjs (the gate), allowlist.json (test id → reason), README
-│   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs
+│   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs or a follow-up PR from a run on the release tag
 │   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello, disk_cache_header, json_patch and oidc_cookie (v0.8); label parser later
 ├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
 ├── scripts/                        # xlsx2md.py, schema-export, render-kubernetes-manifests.sh, release helpers

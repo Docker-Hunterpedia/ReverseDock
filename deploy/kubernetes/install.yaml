@@ -9,10 +9,10 @@ metadata:
   name: reversedock
   namespace: reversedock-system
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 spec:
@@ -30,10 +30,10 @@ metadata:
   name: reversedock
   namespace: reversedock-system
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 automountServiceAccountToken: true
@@ -46,10 +46,10 @@ metadata:
   name: reversedock
   namespace: reversedock-system
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 data:
@@ -96,10 +96,10 @@ kind: ClusterRole
 metadata:
   name: reversedock
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 rules:
@@ -136,10 +136,10 @@ kind: ClusterRoleBinding
 metadata:
   name: reversedock
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 roleRef:
@@ -160,10 +160,10 @@ metadata:
   name: reversedock-control
   namespace: reversedock-system
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 rules:
@@ -189,10 +189,10 @@ metadata:
   name: reversedock-control
   namespace: reversedock-system
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 roleRef:
@@ -212,10 +212,10 @@ metadata:
   name: reversedock
   namespace: reversedock-system
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 spec:
@@ -232,10 +232,10 @@ spec:
   template:
     metadata:
       labels:
-        helm.sh/chart: reversedock-0.6.0-alpha.1
+        helm.sh/chart: reversedock-0.8.0-alpha.1
         app.kubernetes.io/name: reversedock
         app.kubernetes.io/instance: reversedock
-        app.kubernetes.io/version: "0.6.0-alpha.1"
+        app.kubernetes.io/version: "0.8.0-alpha.1"
         app.kubernetes.io/managed-by: Helm
         app.kubernetes.io/component: controller
       annotations:
@@ -253,7 +253,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: rdock
-          image: "ghcr.io/docker-hunterpedia/rdock:0.6.0-alpha.1"
+          image: "ghcr.io/docker-hunterpedia/rdock:0.8.0-alpha.1"
           imagePullPolicy: IfNotPresent
           args: ["run"]
           env:
@@ -342,10 +342,10 @@ kind: GatewayClass
 metadata:
   name: reversedock
   labels:
-    helm.sh/chart: reversedock-0.6.0-alpha.1
+    helm.sh/chart: reversedock-0.8.0-alpha.1
     app.kubernetes.io/name: reversedock
     app.kubernetes.io/instance: reversedock
-    app.kubernetes.io/version: "0.6.0-alpha.1"
+    app.kubernetes.io/version: "0.8.0-alpha.1"
     app.kubernetes.io/managed-by: Helm
     app.kubernetes.io/component: controller
 spec:

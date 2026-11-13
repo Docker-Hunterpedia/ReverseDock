@@ -92,11 +92,11 @@ A JSON line, wrapped here for reading:
 | `listener`, `route`, `service`, `upstream` | Where the request went. `route` and `service` are missing when no route matched; `upstream` is the backend address. |
 | `tls_version`, `tls_cipher`, `sni` | TLS details, on TLS listeners. |
 | `user` | The user authenticated by a middleware such as `basic_auth`. |
-| `consumer` | The consumer an authenticating middleware attributed the request to <Status planned="v0.8" />. Set by `api_key`, `oidc`, `cloudflare_access` and `jwt` with `consumer_claim`. |
+| `consumer` | The consumer an authenticating middleware attributed the request to <Status since="v0.8" />. Set by `api_key`, `oidc`, `cloudflare_access` and `jwt` with `consumer_claim`. |
 | `user_agent`, `referer` | Request headers. `referer` is logged without its query string. |
 | `cf_ray` | The `CF-Ray` request header, which Cloudflare adds. |
 | `error` | The error that ended the request, if any. |
-| `cache_status` | What the [HTTP cache](/docs/guides/caching/) did, on caching routes <Status planned="v0.8" />: `hit`, `stale`, `revalidated`, `expired`, `miss` or `bypass`. The text format appends it as `cache=`. |
+| `cache_status` | What the [HTTP cache](/docs/guides/caching/) did, on caching routes <Status since="v0.8" />: `hit`, `stale`, `revalidated`, `expired`, `miss` or `bypass`. The text format appends it as `cache=`. |
 
 Fields without a value are left out.
 
@@ -130,11 +130,11 @@ rdock_config_reloads_total{result="applied"} 1
 | `rdock_tcp_connections` <Status since="v0.6" /> | gauge | `listener`, `route` |
 | `rdock_tcp_bytes_total` <Status since="v0.6" /> | counter | `route`, `direction` |
 | `rdock_tcp_rejected_total` <Status since="v0.6" /> | counter | `listener`, `reason` |
-| `rdock_udp_sessions` <Status planned="v0.8" /> | gauge | `listener`, `route` |
-| `rdock_udp_datagrams_total` <Status planned="v0.8" /> | counter | `route`, `direction` |
-| `rdock_udp_bytes_total` <Status planned="v0.8" /> | counter | `route`, `direction` |
-| `rdock_udp_dropped_total` <Status planned="v0.8" /> | counter | `listener`, `reason` |
-| `rdock_udp_session_ends_total` <Status planned="v0.8" /> | counter | `route`, `reason` |
+| `rdock_udp_sessions` <Status since="v0.8" /> | gauge | `listener`, `route` |
+| `rdock_udp_datagrams_total` <Status since="v0.8" /> | counter | `route`, `direction` |
+| `rdock_udp_bytes_total` <Status since="v0.8" /> | counter | `route`, `direction` |
+| `rdock_udp_dropped_total` <Status since="v0.8" /> | counter | `listener`, `reason` |
+| `rdock_udp_session_ends_total` <Status since="v0.8" /> | counter | `route`, `reason` |
 | `rdock_config_generation` | gauge | |
 | `rdock_config_reloads_total` | counter | `result` |
 | `rdock_cert_expiry_timestamp_seconds` | gauge | `name` |

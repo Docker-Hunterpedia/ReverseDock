@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The `validate` middleware <Status planned="v0.8" /> checks a request against a schema before it
+The `validate` middleware <Status since="v0.8" /> checks a request against a schema before it
 reaches the backend: query parameters, headers, cookies, path parameters and a JSON body. A
 request that does not match is answered `400` with the problem type
 [`validation-failed`](/docs/reference/problems/#validation-failed) and a list of what failed. The

@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ingress-nginx was retired by the Kubernetes project: it announced on 2025-11-11 that maintenance would end in March 2026, with no releases, bug fixes or security updates after that, and that existing deployments keep working ([kubernetes.io, 2025-11-11](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/), checked 2026-11-11). This page is a short route off it with ReverseDock <Status planned="v0.7" />. The controller is implemented and **not in a release yet**; the upstream conformance run in CI is pending.
+ingress-nginx was retired by the Kubernetes project: it announced on 2025-11-11 that maintenance would end in March 2026, with no releases, bug fixes or security updates after that, and that existing deployments keep working ([kubernetes.io, 2025-11-11](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/), checked 2026-11-11). This page is a short route off it with ReverseDock <Status since="v0.7" />. The controller is part of 0.8.0-alpha.1, a pre-release, and passes the upstream Gateway API conformance suite in CI on kind; the Ingress translation is tested on fixtures, not in a cluster.
 
 There are two routes, and you can use both:
 

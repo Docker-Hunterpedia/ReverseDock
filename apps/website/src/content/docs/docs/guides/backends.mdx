@@ -247,7 +247,7 @@ services:
 
 ## Fixed answers
 
-<Status planned="v0.7" /> A service with `respond` answers every request with a status instead of sending it anywhere. It takes no `backends` and no `split`, and the status is from 200 to 599. The reply is ReverseDock's error page for that status, produced like a middleware's reply, so access logs, metrics and the route's response middlewares apply.
+<Status since="v0.7" /> A service with `respond` answers every request with a status instead of sending it anywhere. It takes no `backends` and no `split`, and the status is from 200 to 599. The reply is ReverseDock's error page for that status, produced like a middleware's reply, so access logs, metrics and the route's response middlewares apply.
 
 It is meant as a target in a split, for a share of traffic that must fail on purpose. Here one request in ten is answered with 500 while the rest reach the backend:
 

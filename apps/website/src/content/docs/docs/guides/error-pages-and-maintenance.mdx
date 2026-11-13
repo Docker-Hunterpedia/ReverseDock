@@ -36,7 +36,7 @@ A 503 that ReverseDock sends because a service has no available backend also has
 
 ## Problem details for APIs
 
-<Status planned="v0.8" /> API clients often send `Accept: */*` or no `Accept` at all, and get the
+<Status since="v0.8" /> API clients often send `Accept: */*` or no `Accept` at all, and get the
 HTML page. `errors.format` makes every error ReverseDock produces itself an
 `application/problem+json` document ([RFC 9457](https://www.rfc-editor.org/rfc/rfc9457)):
 404 without a route, 401/403/429 from middlewares, 408, 413, 414, 431, 502, 503 and 504 from the

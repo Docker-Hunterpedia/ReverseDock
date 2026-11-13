@@ -127,7 +127,7 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 
 ## UDP routes
 
-<Status planned="v0.8" /> `traefik.udp.*` labels make [UDP routes](/docs/guides/udp-routes/) and UDP services. Traefik's UDP routers have no rule, priority or middlewares; a router without `entrypoints` is ignored with a warning, and a UDP service needs its port label because Docker lists exposed UDP ports apart from TCP ones.
+<Status since="v0.8" /> `traefik.udp.*` labels make [UDP routes](/docs/guides/udp-routes/) and UDP services. Traefik's UDP routers have no rule, priority or middlewares; a router without `entrypoints` is ignored with a warning, and a UDP service needs its port label because Docker lists exposed UDP ports apart from TCP ones.
 
 | Label | Becomes |
 |---|---|

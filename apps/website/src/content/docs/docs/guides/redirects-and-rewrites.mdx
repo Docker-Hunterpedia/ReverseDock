@@ -23,8 +23,8 @@ Both kinds are available <Status since="v0.1" />.
 
 The `redirect` middleware has two forms: a URL built from the request, or `regex` with `replacement`.
 
-- **Built from the request** <Status planned="v0.7" />: set any of `scheme`, `hostname`, `port`, `path` or `prefix`. Whatever you set replaces that part of the request URL, and the rest is kept, including the query string. See [Redirect to a built URL](#redirect-to-a-built-url).
-- **`scheme` alone** (`https` or `http`) keeps the host, path and query and changes the scheme. Set `port` when the target port is not the scheme's default. If the request already uses the target scheme, the middleware does nothing, unless `always: true` <Status planned="v0.7" /> is set (the Gateway API's `RequestRedirect` filter is translated with it).
+- **Built from the request** <Status since="v0.7" />: set any of `scheme`, `hostname`, `port`, `path` or `prefix`. Whatever you set replaces that part of the request URL, and the rest is kept, including the query string. See [Redirect to a built URL](#redirect-to-a-built-url).
+- **`scheme` alone** (`https` or `http`) keeps the host, path and query and changes the scheme. Set `port` when the target port is not the scheme's default. If the request already uses the target scheme, the middleware does nothing, unless `always: true` <Status since="v0.7" /> is set (the Gateway API's `RequestRedirect` filter is translated with it).
 - `regex` is matched against the full request URL, `scheme://host[:port]/path?query`, where the
   scheme is `https` on a TLS connection and `http` otherwise, and the host is the `Host` header
   as the client sent it. `replacement` can use groups as `$1` or `${name}`. If the regex does
@@ -43,7 +43,7 @@ The second code tells the client to repeat the request with the same method and 
 redirected `POST` stays a `POST`. Browsers cache 301 and 308 answers, so start with the default
 and set `permanent: true` once the target is final.
 
-`status` <Status planned="v0.7" /> sets the code for every method: `301`, `302`, `303`, `307` or `308`. It overrides `permanent`; `rdock validate` warns when both are set.
+`status` <Status since="v0.7" /> sets the code for every method: `301`, `302`, `303`, `307` or `308`. It overrides `permanent`; `rdock validate` warns when both are set.
 
 :::note
 For plain HTTP to HTTPS you usually do not need this middleware. ReverseDock redirects HTTP
@@ -104,7 +104,7 @@ The regex sees the `Host` header exactly as the client sent it. A client that se
 
 ### Redirect to a built URL
 
-<Status planned="v0.7" /> These fields can be combined; each one you leave out keeps the request's value.
+<Status since="v0.7" /> These fields can be combined; each one you leave out keeps the request's value.
 
 | Field | Replaces |
 |---|---|

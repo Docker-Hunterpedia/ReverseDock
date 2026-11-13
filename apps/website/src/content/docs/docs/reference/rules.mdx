@@ -138,7 +138,7 @@ length, then name.
 
 ## UDP rules
 
-<Status planned="v0.8" /> A datagram shows only its source, so a [UDP route](/docs/guides/udp-routes/)
+<Status since="v0.8" /> A datagram shows only its source, so a [UDP route](/docs/guides/udp-routes/)
 rule takes ``ClientIP(`…`)`` matchers only, combined with `&&`, `||`, `!` and parentheses. A UDP
 route without `match` takes every datagram of its listeners; a listener has at most one such
 route.

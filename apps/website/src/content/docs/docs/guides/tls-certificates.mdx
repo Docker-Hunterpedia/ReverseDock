@@ -62,7 +62,7 @@ The common name (CN) is not used, only subject alternative names. A certificate 
 
 ## Certificates for one listener only
 
-<Status planned="v0.7" /> By default every TLS listener serves every certificate. When two listeners must present different certificates, for the same host name or otherwise, name them under the listener's `tls.certificates`:
+<Status since="v0.7" /> By default every TLS listener serves every certificate. When two listeners must present different certificates, for the same host name or otherwise, name them under the listener's `tls.certificates`:
 
 ```yaml title="rdock.yaml"
 acme: false

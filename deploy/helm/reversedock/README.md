@@ -11,9 +11,10 @@ the version follows the workspace version.
 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`:
 all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`; the
 `gateway-conformance` job of `.github/workflows/kubernetes.yml`). The `helm-k3s` job installs the
-chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it. Nothing
-is released yet (the chart's default image tag has no Kubernetes provider) and no report has been
-submitted upstream. `GatewayClass.status.supportedFeatures` lists only what has a passing test.
+chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it.
+`GATEWAY-UDP` passes in the same job since 2026-11-12 (commit `43d81de`). The controller is
+released in 0.8.0-alpha.1; no report has been submitted upstream yet.
+`GatewayClass.status.supportedFeatures` lists only what has a passing test.
 
 ## How it runs
 
@@ -30,9 +31,9 @@ submitted upstream. `GatewayClass.status.supportedFeatures` lists only what has 
 
 ## Install
 
-> **Build the image first.** The chart's default image tag is its `appVersion`, `0.6.0-alpha.1`:
-> a released image that **does not contain the Kubernetes provider**. Until a release contains
-> it, build the image from this checkout, make it available to the cluster, and pass it with
+> **Image.** The chart's default image tag is its `appVersion`, `0.8.0-alpha.1`: the signed
+> release image, which contains the Kubernetes provider. To run a commit that is not released,
+> build the image from a checkout, make it available to the cluster, and pass it with
 > `image.repository` and `image.tag`:
 >
 > ```sh
@@ -54,16 +55,15 @@ submitted upstream. `GatewayClass.status.supportedFeatures` lists only what has 
    an older or missing bundle in the `SupportedVersion` condition of the GatewayClass and skips
    kinds whose CRD is absent.
 
-2. Install the chart:
+2. Install the chart from a checkout of the release tag (the chart is not published to a chart
+   registry; the release workflow publishes binaries and images only):
 
    ```sh
-   helm install reversedock oci://ghcr.io/docker-hunterpedia/charts/reversedock \
+   git clone --branch v0.8.0-alpha.1 https://github.com/Docker-Hunterpedia/ReverseDock.git
+   cd ReverseDock
+   helm install reversedock deploy/helm/reversedock \
      --namespace reversedock-system --create-namespace
    ```
-
-   The chart is pushed to that registry by the release workflow; until a release has published
-   it, install from a checkout with the image you built (see the note above):
-   `helm install reversedock deploy/helm/reversedock -n reversedock-system --create-namespace --set image.repository=rdock --set image.tag=dev`.
 
 3. Check it:
 

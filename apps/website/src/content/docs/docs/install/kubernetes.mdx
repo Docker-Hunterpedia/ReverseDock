@@ -7,10 +7,10 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock runs in a cluster as one Deployment that is the controller and the proxy at once <Status planned="v0.7" />. Every replica watches the API server and serves traffic; one replica at a time, chosen with a Lease, writes status and Services. The design is in [ADR-0029](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0029-kubernetes-gateway-api.md).
+ReverseDock runs in a cluster as one Deployment that is the controller and the proxy at once <Status since="v0.7" />. Every replica watches the API server and serves traffic; one replica at a time, chosen with a Lease, writes status and Services. The design is in [ADR-0029](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0029-kubernetes-gateway-api.md).
 
 :::caution[Status]
-The controller is implemented in the development tree for v0.7 and is **not in a release yet**. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`: all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`), and the CI installs the chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it; no report has been submitted upstream yet. The CI does not cover Ingress, cert-manager, RKE2 or the namespaced mode. The chart's published image tag, `0.6.0-alpha.1`, predates the controller: until a release contains it, [build the image](#build-the-image) from a checkout.
+The controller is part of 0.8.0-alpha.1, a pre-release. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind for all five profiles (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP` on 2026-11-11, commit `19e88cc`; `GATEWAY-UDP` on 2026-11-12, commit `43d81de`: all core tests and every claimed extended feature), and the CI installs the chart on k3s, serves the example Gateway over HTTP and HTTPS, upgrades and uninstalls it; no report has been submitted upstream yet. The CI does not cover Ingress, cert-manager, RKE2 or the namespaced mode. The chart is not published to a chart registry: install it from a checkout of the release tag.
 :::
 
 This page covers installing it. To use it, see [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/) and, for Ingress, [Kubernetes Ingress](/docs/guides/kubernetes-ingress/).
@@ -21,7 +21,7 @@ This page covers installing it. To use it, see [Kubernetes Gateway API](/docs/gu
 - `kubectl`, and Helm 3 or 4 if you use the chart.
 - The **Gateway API CRDs**, version 1.7.0, Standard channel. Neither the chart nor the manifests contain them.
 - Something that gives a `LoadBalancer` Service an address (a cloud, MetalLB, k3s's built-in service load balancer). Without one, set the Gateway Service type to `cluster_ip` or `node_port` ([below](#without-a-load-balancer)).
-- A checkout of the repository, until the chart is published. The chart README mentions an OCI registry address as the intended home of released charts; no chart has been published there.
+- A checkout of the repository at the release tag: the chart and the manifests are not published to a registry.
 
 ## Install the Gateway API CRDs
 
@@ -33,24 +33,32 @@ Gateway API v1.7.0 was released on 2026-10-29; all the kinds ReverseDock handles
 
 Some distributions install older CRDs already (k3s with its bundled Traefik, for one). ReverseDock still starts: it reports an older or missing bundle in the `SupportedVersion` condition of the GatewayClass, and it skips a kind whose CRD does not exist and looks for it again every 60 seconds, so the CRDs may be installed after ReverseDock.
 
-## Build the image
+## Get the chart
 
-From a checkout of the repository:
+```sh
+git clone --branch v0.8.0-alpha.1 https://github.com/Docker-Hunterpedia/ReverseDock.git
+cd ReverseDock
+```
+
+The chart's default image is `ghcr.io/docker-hunterpedia/rdock:0.8.0-alpha.1`, the signed release image, which contains the controller.
+
+## Build the image (optional)
+
+To run a commit that is not released, build the image from a checkout instead:
 
 ```sh
 docker build --tag rdock:dev .
 ```
 
-Make the image available to the cluster: push it to a registry the nodes can pull from, or load it into a local cluster (`kind load docker-image rdock:dev`). Then give the chart its name and tag, as the examples below do.
+Make the image available to the cluster: push it to a registry the nodes can pull from, or load it into a local cluster (`kind load docker-image rdock:dev`). Then add `--set image.repository=rdock --set image.tag=dev` to the Helm commands below.
 
 ## Install with Helm
 
-From a checkout, with the image you built:
+From the checkout, with the release image:
 
 ```sh
 helm install reversedock deploy/helm/reversedock \
-  --namespace reversedock-system --create-namespace \
-  --set image.repository=rdock --set image.tag=dev
+  --namespace reversedock-system --create-namespace
 ```
 
 The chart creates the ServiceAccount and its roles, a ConfigMap with `rdock.yaml`, the Deployment (two replicas, a PodDisruptionBudget, spread over nodes) and the GatewayClass `reversedock`. Pods run as user 65532 with a read-only root file system, no capabilities and the `RuntimeDefault` seccomp profile; there is no CPU limit. Every value is documented in the [chart README](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/deploy/helm/reversedock/README.md) and in `values.yaml`; `values.schema.json` rejects unknown keys and wrong types.
@@ -75,7 +83,7 @@ For clusters without Helm, `deploy/kubernetes/install.yaml` is the committed out
 kubectl apply -k deploy/kubernetes
 ```
 
-The manifests name the released image tag. To use your own image, or to change anything else, do not edit `install.yaml`; make an overlay in your own repository:
+The manifests name the release image, `ghcr.io/docker-hunterpedia/rdock:0.8.0-alpha.1`. To use your own image, or to change anything else, do not edit `install.yaml`; make an overlay in your own repository:
 
 ```yaml title="kustomization.yaml"
 apiVersion: kustomize.config.k8s.io/v1beta1
