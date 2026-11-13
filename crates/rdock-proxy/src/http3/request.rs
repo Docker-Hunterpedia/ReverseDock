@@ -231,6 +231,11 @@ impl Input<'_> {
                 return Ok((value, first));
             }
             shift += 7;
+            // Five continuation bytes hold any value up to 2^32; more is an over-long
+            // encoding, and a shift past 63 would overflow.
+            if shift > 28 {
+                return Err(Malformed::Qpack("integer too large"));
+            }
         }
     }
 
@@ -899,6 +904,8 @@ mod tests {
             vec![0, 0, 0x25, b'a'],                                    // name longer than the block
             vec![0, 0, 0xc0 | 63, 0xff, 0xff, 0xff, 0xff, 0xff, 0x7f], // integer overflow
             vec![0, 0, 0xc0 | 0x3e, 0x10],                             // static index 110
+            // An over-long integer: continuation bytes that add nothing (found by the fuzzer).
+            [vec![0, 0xff], vec![0x80; 88], vec![0xff]].concat(),
         ] {
             let err = map(&block, LIMIT).unwrap_err();
             assert!(err.is_connection_error(), "{block:?}: {err:?}");
