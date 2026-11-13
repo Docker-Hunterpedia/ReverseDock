@@ -9,7 +9,10 @@
 //! - the DATA received must add up to `content-length` when one was sent (RFC 9114 §4.1.2),
 //!   otherwise the stream is reset with `H3_MESSAGE_ERROR` and the request fails;
 //! - a client that resets the stream mid-body makes the read fail, which ends the upstream
-//!   request (Pingora drops the upstream connection of a request that failed mid-body).
+//!   request (Pingora drops the upstream connection of a request that failed mid-body);
+//! - while Pingora waits for the upstream it polls [`H3Session::read_body_or_idle`], which
+//!   resolves with an error as soon as the client stops the stream (`STOP_SENDING`, counted as
+//!   a reset) or the connection is lost, so the upstream request is cancelled at once.
 //!
 //! Request trailers are read and dropped: Pingora 0.9 forwards none to an HTTP/1 upstream.
 //! Response trailers are sent (an h2c or HTTPS backend's gRPC status, for example).
@@ -74,6 +77,8 @@ pub struct H3Session {
     closed: watch::Receiver<bool>,
     /// The connection's count of client resets (Rapid Reset style floods).
     resets: Option<Arc<super::endpoint::Resets>>,
+    /// Resolves when the client stops the stream or the connection is lost.
+    stopped: Option<super::quic::Stopped>,
     /// When the first piece of the request body was asked for (the minimum-rate clock).
     body_started: Option<std::time::Instant>,
 }
@@ -108,7 +113,48 @@ impl H3Session {
             server: SocketAddr::Inet(server),
             closed,
             resets: None,
+            stopped: None,
             body_started: None,
+        }
+    }
+
+    /// Watches `stopped` (the client's `STOP_SENDING`, or the connection's loss) while the
+    /// request waits for its upstream.
+    #[must_use]
+    pub fn with_stopped(mut self, stopped: Option<super::quic::Stopped>) -> Self {
+        self.stopped = stopped;
+        self
+    }
+
+    /// Waits up to `wait` for the request stream's next event (its end, a piece of body, or an
+    /// error) and keeps it for the reads that follow, so that whether the body is empty is
+    /// known before the request is forwarded. Returns at once when the event is there already.
+    pub async fn settle_body(&mut self, wait: Duration) {
+        if self.body_ended || self.peeked.is_some() || self.peek_error.is_some() {
+            return;
+        }
+        let io = self.io();
+        let next = tokio::time::timeout(wait, async {
+            loop {
+                match std::future::poll_fn(|cx| io.poll_data(cx)).await {
+                    // An empty DATA frame says nothing either way.
+                    Ok(Some(data)) if data.is_empty() => {}
+                    other => return other,
+                }
+            }
+        })
+        .await;
+        match next {
+            Ok(Ok(None)) => {
+                self.body_ended = true;
+                if self.content_length.is_some_and(|cl| cl > 0) {
+                    self.peek_error =
+                        Some("HTTP/3 request body shorter than its content-length".into());
+                }
+            }
+            Ok(Ok(Some(data))) => self.peeked = Some(data),
+            Ok(Err(err)) => self.peek_error = Some(err.to_string()),
+            Err(_) => {}
         }
     }
 
@@ -248,9 +294,39 @@ impl H3Session {
         Ok(())
     }
 
-    /// Waits until the QUIC connection is gone.
+    /// Waits until the client stops the stream or the QUIC connection is gone.
     async fn idle(&mut self) -> pingora::Result<Option<Bytes>> {
-        let _ = self.closed.wait_for(|closed| *closed).await;
+        let stop = if let Some(stopped) = self.stopped.as_mut() {
+            tokio::select! {
+                _ = self.closed.wait_for(|closed| *closed) => None,
+                stop = stopped => Some(stop),
+            }
+        } else {
+            let _ = self.closed.wait_for(|closed| *closed).await;
+            None
+        };
+        if let Some(stop) = stop {
+            self.stopped = None;
+            match stop {
+                Ok(Some(_)) => {
+                    // The client gave up on the response (RFC 9114 §4.1.1): cancel.
+                    if let Some(resets) = &self.resets {
+                        resets.add();
+                    }
+                    self.reset(code::REQUEST_CANCELLED);
+                    return Error::e_explain(
+                        ErrorType::ConnectionClosed,
+                        "the HTTP/3 client stopped the stream",
+                    );
+                }
+                // The response was finished and acknowledged: only the connection is left.
+                Ok(None) => {
+                    let _ = self.closed.wait_for(|closed| *closed).await;
+                }
+                // The connection is lost.
+                Err(_) => {}
+            }
+        }
         Error::e_explain(ErrorType::ConnectionClosed, "the HTTP/3 connection closed")
     }
 }

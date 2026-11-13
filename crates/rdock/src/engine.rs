@@ -1340,6 +1340,7 @@ impl rdock_admin::Control for Engine {
         let (reply, outcome) = tokio::sync::oneshot::channel();
         let trigger = crate::upgrade::Trigger {
             binary: request.binary,
+            allow_downgrade: request.allow_downgrade,
             actor: request.actor,
             reply: Some(reply),
         };

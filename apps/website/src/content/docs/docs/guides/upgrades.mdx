@@ -24,10 +24,13 @@ Listener changes never needed this: adding, removing or moving listeners applies
   an in-place upgrade is refused there with a message that says so. Replace the container with
   one from the new image instead (a rolling update in Kubernetes or Swarm, `docker compose up -d`
   elsewhere).
-- The new binary at `upgrade.binary` (default `/usr/local/bin/rdock`), as a regular file owned
-  by root or by rdock's user, not writable by its group or others, in a directory with the same
-  owners that its group and others cannot write to either (a sticky directory such as `/tmp` is
-  accepted): otherwise someone else could swap the file between the checks and the start.
+- The new binary at `upgrade.binary` (default `/usr/local/bin/rdock`): an ELF executable and a
+  regular file owned by root or by rdock's user, not writable by its group or others, named by its
+  real path (no symbolic link in it), and every directory above it owned by root or rdock's user
+  and not writable by its group or others (a sticky directory such as `/tmp` is accepted). A
+  deployment that switches a `current` link points `upgrade.binary` (or `--binary`) at the
+  release's real path.
+- A version that is not older than the running one, unless you pass `--allow-downgrade`.
 
 ## How
 
@@ -39,8 +42,9 @@ sudo rdock upgrade                                           # hand over to it
 `rdock upgrade` talks to the running process over its admin **Unix socket** only (the file
 `admin.sock` in the data directory, readable by its owner), with the operator role. The admin
 API's TCP listener and the dashboard never accept it: an upgrade runs a file. `--binary <path>`
-runs another file than `upgrade.binary`; `SIGUSR2` does the same as `rdock upgrade` without
-arguments (`systemctl kill -s USR2 rdock`).
+runs another file than `upgrade.binary`; `--allow-downgrade` lets it be an older release;
+`SIGUSR2` does the same as `rdock upgrade` without arguments (`systemctl kill -s USR2 rdock`),
+never a downgrade.
 
 The command waits and prints the outcome:
 
@@ -50,8 +54,12 @@ upgraded: pid 31236 serves now; pid 31218 drains for up to 600 s
 
 ## What happens
 
-1. The running process checks the binary (regular file, owner, mode, and the signature when
-   `upgrade.trusted_keys` is set) and runs `<binary> validate` on the configuration file.
+1. The running process opens the binary once and checks that open file (regular file, owner,
+   mode, every directory above it, an ELF header, and the signature when `upgrade.trusted_keys`
+   is set). It then runs `<binary> --version` (an older version is refused unless allowed) and
+   `<binary> validate` on the configuration file, and later starts the new process, each time
+   from that same open file (`/proc/self/fd/<n>`): what runs is the bytes that were checked and
+   verified, even if someone replaces or renames the file at the path in the meantime.
 2. From here until the handover ends, the old process serves without the HTTP caches (the new
    process owns the cache directories) and its admin API refuses changes with 503 (the new
    process has already read the users, tokens and configuration). It starts the binary as
@@ -61,7 +69,8 @@ upgraded: pid 31236 serves now; pid 31218 drains for up to 600 s
 3. The new process loads the configuration, takes over the sockets, binds any it was not given,
    and builds everything without accepting. Then it says `ready`.
 4. The old process stops accepting (new connections wait in the shared listen queues; its admin
-   connections close once they have answered the request in progress) and stops
+   connections close once they have answered the request in progress, or the request they were
+   accepted for) and stops
    everything that writes shared state: certificate issuance and renewal, the local CA, the
    Cloudflare range sync, alerts, the providers (the Kubernetes provider releases its lease), the
    Vault refresh and the quota counters' files. It tells the new process `go`.
@@ -116,6 +125,11 @@ services:
   over.
 - **Established connections** stay with the old process until they end or the drain is over;
   they are not moved to the new process.
+- **HTTP/3 connections** get a GOAWAY that covers every request in flight; those requests finish
+  in the old process for at most 10 seconds, then it closes its QUIC endpoint and the new process
+  binds the UDP port and serves HTTP/3 (HTTPS serves meanwhile). A packet of an old connection
+  that reaches the new process is answered with a stateless reset, so the client starts a new
+  connection at once ([HTTP/3](/docs/guides/http3/)).
 - **Counters** of `/metrics` start from zero in the new process (Prometheus handles resets).
   The TLS session cache starts empty; session **tickets** keep working, because their keys are
   handed over.
@@ -128,7 +142,10 @@ while draining when it exits), and the configuration history.
 ## Verify the binary
 
 `upgrade.trusted_keys` takes minisign public keys (`RWQ…`). When it is set, `<binary>.minisig`
-must be a valid minisign signature of the binary by one of them, or the upgrade is refused.
+must be a valid minisign signature of the binary by one of them, or the upgrade is refused. A
+signature proves who built a file, not that it is the newest release: an older release signed by
+the same key would pass, so a version older than the running one is refused unless `rdock upgrade
+--allow-downgrade` asks for it.
 Releases are signed with keyless cosign today, not minisign: check a downloaded release with
 `cosign verify-blob` as on [Verify a download](/docs/install/verify/) before you install it, or
 sign the binaries you build with your own minisign key and list its public key here.

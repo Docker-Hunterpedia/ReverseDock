@@ -645,6 +645,10 @@ type TokenView struct {
 
 // UpgradeBody What `POST /upgrade` takes.
 type UpgradeBody struct {
+	// AllowDowngrade Install a binary whose version is older than the running one. Default `false`: an older
+	// version (perhaps one with a known vulnerability, signed by the same key) is refused.
+	AllowDowngrade *bool `json:"allow_downgrade,omitempty"`
+
 	// Binary The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
 	Binary *string `json:"binary,omitempty"`
 }

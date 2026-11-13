@@ -20,7 +20,6 @@ hickory-resolver.workspace = true
 http.workspace = true
 futures-util.workspace = true
 h3 = { workspace = true, optional = true }
-h3-quinn = { workspace = true, optional = true }
 httpdate.workspace = true
 opentelemetry.workspace = true
 ring.workspace = true
@@ -57,7 +56,7 @@ x509-parser.workspace = true
 wasm = ["rdock-middleware/wasm"]
 # HTTP/3 ingress on quinn and h3 (experimental, ADR-0032). Off by default: without it a listener
 # with `http3.enabled: true` is refused with a diagnostic.
-http3 = ["dep:quinn", "dep:h3", "dep:h3-quinn"]
+http3 = ["dep:quinn", "dep:h3"]
 
 [dev-dependencies]
 http-body-util.workspace = true

@@ -495,6 +495,11 @@ export type TokenView = {
  */
 export type UpgradeBody = {
     /**
+     * Install a binary whose version is older than the running one. Default `false`: an older
+     * version (perhaps one with a known vulnerability, signed by the same key) is refused.
+     */
+    allow_downgrade?: boolean;
+    /**
      * The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
      */
     binary?: string | null;
@@ -2609,6 +2614,11 @@ export type RdockListenerHttp3 = {
      */
     advertise_port?: number | null;
     /**
+     * The IPv6 prefix length that counts as one client for `max_connections_per_client`.
+     * Default 64 (one subscriber's network, RFC 6177); 32 to 128.
+     */
+    client_ipv6_prefix?: number;
+    /**
      * Congestion controller. Default `cubic`.
      */
     congestion?: RdockHttp3Congestion;
@@ -2639,16 +2649,21 @@ export type RdockListenerHttp3 = {
      */
     max_concurrent_streams?: number;
     /**
-     * QUIC connections the listener holds at once. Default 10000; 1 to 1000000.
+     * QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case
+     * memory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the
+     * defaults; validation warns above 4 GiB.
      */
     max_connections?: number;
     /**
-     * QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.
+     * QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6
+     * prefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.
+     * Default 100; 1 to `max_connections`.
      */
     max_connections_per_client?: number;
     /**
      * Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114
-     * §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB.
+     * §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at
+     * most `receive_window`.
      */
     max_header_size?: RdockByteSize;
     /**
@@ -2658,7 +2673,8 @@ export type RdockListenerHttp3 = {
     max_idle?: RdockDuration;
     /**
      * Let clients move a connection to another address (active migration). Not supported
-     * (planned); NAT rebinding is handled either way.
+     * (planned). With migration off, quinn 0.11 drops packets from a new address, so a client
+     * whose NAT rebinds loses the connection and reconnects.
      */
     migration?: boolean;
     /**
@@ -2666,16 +2682,38 @@ export type RdockListenerHttp3 = {
      */
     qlog?: string | null;
     /**
+     * Data a client may send on the whole connection before rdock reads it (QUIC
+     * `initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other
+     * non-DATA frames per connection. Default 1MiB; 64KiB to 64MiB.
+     */
+    receive_window?: RdockByteSize;
+    /**
      * When to make clients prove their address with a QUIC Retry before any handshake work
      * (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are
-     * half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`.
+     * half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that
+     * threshold only. Whatever the setting, a client whose address is not yet validated is
+     * sent Retry instead of being refused when the listener is full, when its address already
+     * holds `max_connections_per_client` connections or handshakes, and once half-open
+     * connections reach half of `max_connections`: spoofed packets can neither lock a client
+     * out nor fill the listener.
      */
     retry?: RdockHttp3Retry;
+    /**
+     * Response data rdock buffers per connection for a client that has not acknowledged it
+     * yet. Default 1MiB; 64KiB to 64MiB.
+     */
+    send_window?: RdockByteSize;
+    /**
+     * Request body a client may send on one stream before rdock reads it (QUIC
+     * `initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most
+     * `receive_window`.
+     */
+    stream_receive_window?: RdockByteSize;
     /**
      * WebTransport over HTTP/3. Not supported (planned).
      */
     webtransport?: boolean;
-    [key: string]: unknown | boolean | RdockDuration | number | null | RdockHttp3Congestion | number | RdockByteSize | string | null | RdockHttp3Retry | undefined;
+    [key: string]: unknown | boolean | RdockDuration | number | null | number | RdockHttp3Congestion | number | RdockByteSize | string | null | RdockHttp3Retry | undefined;
 };
 
 /**

@@ -280,6 +280,9 @@ struct UpgradeArgs {
     /// The new binary [default: `upgrade.binary`, /usr/local/bin/rdock].
     #[arg(long)]
     binary: Option<PathBuf>,
+    /// Install a binary whose version is older than the running one (refused otherwise).
+    #[arg(long)]
+    allow_downgrade: bool,
     /// Data directory, to find the admin socket.
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,

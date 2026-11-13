@@ -912,6 +912,21 @@ mod tests {
         }
     }
 
+    /// h3 builds a `HeaderMap` with one slot per field, which panics from 24,577 fields: at
+    /// the ceiling of `max_header_size` that many fields (the smallest, `a:` with no value) are
+    /// over the limit already (review fix L1).
+    #[test]
+    fn the_header_size_ceiling_admits_too_few_fields_to_panic_h3() {
+        let ceiling = rdock_model::config::ListenerHttp3::MAX_HEADER_SIZE_CEILING.as_u64();
+        let fields: Vec<(&[u8], &[u8])> =
+            std::iter::repeat_n((&b"a"[..], &b""[..]), 24_577).collect();
+        let block = encode::section(&fields);
+        assert!(
+            matches!(decode(&block, ceiling), Err(Malformed::TooLarge { .. })),
+            "24,577 fields fit within {ceiling} bytes"
+        );
+    }
+
     #[test]
     fn the_size_limit_counts_32_bytes_per_field_and_stops_early() {
         let big = vec![b'a'; 1000];

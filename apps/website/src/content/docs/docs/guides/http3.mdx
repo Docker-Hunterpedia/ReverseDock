@@ -66,12 +66,16 @@ every 250 ms until the port is free.
 | `advertise` | `true` | | Add `Alt-Svc` to this listener's HTTP/1 and HTTP/2 answers |
 | `advertise_max_age` | `1h` | 1s to 30d, whole seconds | `ma` of `Alt-Svc` (RFC 7838's default is 24 hours; shorter while experimental) |
 | `advertise_port` | the listener's port | 1–65535 | The port to advertise when it differs, e.g. public 443 mapped to container 8443 |
-| `retry` | `auto` | `auto`, `always`, `never` | When clients must prove their address with a QUIC Retry first; `auto` from 100 handshakes in progress (HAProxy's `tune.quic.retry-threshold`) |
+| `retry` | `auto` | `auto`, `always`, `never` | When clients must prove their address with a QUIC Retry first; `auto` from 100 handshakes in progress (HAProxy's `tune.quic.retry-threshold`); see [address validation](#address-validation) for what `never` still does |
 | `max_idle` | `30s` | 1s to 10m | Close a connection idle this long |
 | `max_concurrent_streams` | `100` | 1–10,000 | Requests a connection may have open at once |
-| `max_header_size` | `64KiB` | 1KiB to 1MiB | Largest request header section (name + value + 32 bytes per field); larger is answered `431` |
-| `max_connections` | `10000` | 1–1,000,000 | QUIC connections the listener holds |
-| `max_connections_per_client` | `100` | 1 to `max_connections` | QUIC connections one client address holds |
+| `max_header_size` | `64KiB` | 1KiB to 768KiB, at most `receive_window` | Largest request header section (name + value + 32 bytes per field); larger is answered `431`, and a HEADERS frame longer than this on the wire is reset |
+| `max_connections` | `1000` | 1–1,000,000 | QUIC connections the listener holds |
+| `max_connections_per_client` | `100` | 1 to `max_connections` | QUIC connections one client holds, once its address is validated |
+| `client_ipv6_prefix` | `64` | 32–128 | The IPv6 prefix that counts as one client (one subscriber's network, RFC 6177); IPv4 clients count per address |
+| `stream_receive_window` | `512KiB` | 16KiB to 16MiB, at most `receive_window` | Request body a client may send on one stream before ReverseDock reads it |
+| `receive_window` | `1MiB` | 64KiB to 64MiB | Data a client may send on the whole connection before ReverseDock reads it; also the most a connection may hold of incomplete header and control frames |
+| `send_window` | `1MiB` | 64KiB to 64MiB | Response data buffered per connection for a client that has not acknowledged it yet |
 | `congestion` | `cubic` | `cubic`, `newreno`, `bbr` | Congestion controller (`bbr` warns: quinn marks it experimental) |
 | `gso` | `true` | | UDP segmentation offload where the kernel supports it |
 
@@ -90,10 +94,20 @@ listeners:
 A reload that changes these settings applies them to new connections. Turning HTTP/3 off,
 removing the listener or moving it stops the QUIC side: every connection gets a GOAWAY, requests
 in flight may finish for the reload's drain time but at most 10 seconds, then the endpoint closes.
+A connection closes only once the client has acknowledged every response in flight (or stopped
+it), so a finished response is never cut off by the close. The GOAWAY identifier is one past the last request ReverseDock accepted, so every request it is
+still processing counts as accepted (RFC 9114 §5.2) and a client never retries one of them
+elsewhere; a request the client opens with the identifier or a higher one is refused with
+`H3_REQUEST_REJECTED` and never forwarded, so the client may safely retry it.
+
 QUIC connections do not survive a [binary upgrade](/docs/guides/upgrades/): the old process stops
-its QUIC side the same way and the new one starts serving HTTP/3 once the port is free. The keys
-that sign stateless resets and Retry tokens are kept in `quic.key` in the data directory, so the
-next process ends the old process's connections at once instead of letting them time out.
+its QUIC side the same way (shutdown does too) and the new one starts serving HTTP/3 once the port
+is free. The keys that sign stateless resets and Retry tokens are kept in `quic.key` in the data
+directory, and connection IDs are random, so the next process answers a packet of the old
+process's connections with a stateless reset (RFC 9000 §10.3) and the client ends that connection
+at once instead of waiting for it to time out. `quic.key` must belong to ReverseDock's user and be
+readable by it alone (mode `0600`, as it is created): whoever reads it can forge Retry tokens and
+stateless resets, so ReverseDock refuses to start with a key file its group or others can read.
 
 ## What ReverseDock checks before a request reaches a route
 
@@ -114,17 +128,58 @@ counted in `rdock_http3_malformed_requests_total{reason}`.
 
 ## Limits that always hold
 
-- Connections: `max_connections` and `max_connections_per_client`, checked before any handshake
-  work; the handshake must finish within the listener's `timeouts.request_header`; before a
-  client's address is validated, QUIC sends at most three times what it received (RFC 9000 §8.1).
+- Connections: `max_connections` per listener and `max_connections_per_client` per client (an
+  IPv4 address or an IPv6 `/64`); the handshake must finish within the listener's
+  `timeouts.request_header`; before a client's address is validated, QUIC sends at most three
+  times what it received (RFC 9000 §8.1).
 - Streams: `max_concurrent_streams` requests at once; the request head must arrive within
-  `timeouts.request_header`; a client that resets (or sends malformed) more than
-  `max(100, max_concurrent_streams)` streams within 10 seconds loses the connection with
+  `timeouts.request_header`; a client that resets, stops (`STOP_SENDING`) or sends malformed more
+  than `max(100, max_concurrent_streams)` streams within 10 seconds loses the connection with
   `H3_EXCESSIVE_LOAD`.
+- Clients that give up: when a client stops a stream or closes the connection while the backend
+  is still working, the upstream request is cancelled at once.
 - Bodies: the listener's `timeouts.read` between pieces of a request body and, after the first
   `timeouts.read`, at least 1 KiB/s on average, so a trickling upload cannot hold a backend
-  connection.
+  connection. A `GET`, `HEAD`, `OPTIONS`, `DELETE` or `TRACE` request without `content-length`
+  waits (at most `timeouts.request_header`) for the end of its stream, so it reaches the backend
+  without a body instead of with an empty chunked one.
 - Headers: decoded with the static QPACK table only (no dynamic table), within `max_header_size`.
+- Frames: the `h3` crate holds every frame other than DATA whole before it decodes it, so
+  ReverseDock reads each frame header first. A HEADERS frame may declare at most
+  `max_header_size` plus 16 bytes; every other frame on a request stream, and every frame on the
+  client's control stream, at most 16 KiB. A request stream that breaks this is reset with
+  `H3_EXCESSIVE_LOAD`; the control stream closes the connection with it. The incomplete frames of
+  one connection may hold at most `receive_window` together, and a frame that has started must
+  be complete within `timeouts.request_header`.
+
+### Address validation
+
+A connection counts against its client only once its address is validated: the client came back
+with a Retry token, or finished the handshake. Handshakes from an address that is not validated
+yet (spoofed packets look like this) therefore cannot use up a client's allowance. Whatever
+`retry` says, a client that has not proved its address is sent a Retry instead of being refused
+when the listener is full, when its client already holds `max_connections_per_client`
+connections or handshakes, and once half of `max_connections` are half-open. A client that has
+proved its address and is over a limit is refused. So `retry: never` only drops the proactive
+threshold of `auto` (100 handshakes in progress); spoofed packets still cannot fill the listener.
+
+### Memory
+
+Each connection may make ReverseDock hold at most `receive_window` of request data QUIC has
+received but not passed on, `receive_window` of incomplete header and control frames, and
+`send_window` of response data the client has not acknowledged. The worst case for a listener is
+
+```text
+max_connections × (2 × receive_window + send_window)
+= 1000 × (2 × 1 MiB + 1 MiB) = 3000 MiB with the defaults
+```
+
+plus a few tens of KiB of connection state each. The figure covers what QUIC and HTTP/3 hold;
+each request in flight also holds the proxy's own buffers, as on HTTP/1 and HTTP/2, and one
+response chunk (as read from the backend) while it waits for room in `send_window`. `rdock
+validate` warns when the product of a listener's settings is over 4 GiB. Raise the windows for fast long-distance clients (a connection
+cannot send faster than about `window / round-trip time`: 1 MiB per 100 ms is 10 MiB/s) and lower
+`max_connections` to keep the product within the memory you have.
 
 ## Not supported yet
 
@@ -133,8 +188,9 @@ validate`):
 
 - HTTP/3 to backends (`scheme: h3` on a service): Pingora has no QUIC connector;
 - 0-RTT early data (`early_data`): it can be replayed; it is also off in the TLS configuration;
-- active connection migration (`migration`); a client behind a NAT that changes its port keeps
-  working;
+- connection migration (`migration`): with it off, quinn 0.11 drops packets that arrive from a
+  new address, so a client whose NAT changes its address or port loses the connection and opens a
+  new one (quinn-proto 0.11.19, `connection/mod.rs`, checked 2026-11-13);
 - HTTP/3 datagrams (`datagrams`), WebTransport (`webtransport`), and extended CONNECT
   (`extended_connect`), which WebSocket over HTTP/3 and CONNECT-UDP need;
 - qlog traces (`qlog`);
@@ -152,7 +208,7 @@ The access log says `"proto": "HTTP/3"` for these requests, with the SNI and `"t
 "TLSv1.3"` (`tls_cipher` reads `unknown`: quinn does not expose it). The
 [metrics](/docs/reference/metrics/#rdock_http3_connections_total) `rdock_http3_connections_total`,
 `rdock_http3_connections`, `rdock_http3_retries_total`,
-`rdock_http3_connections_closed_total{reason}`, `rdock_http3_malformed_requests_total{reason}` and
+`rdock_http3_connections_closed_total{reason}` (`frame_limit` for a frame over its limit), `rdock_http3_malformed_requests_total{reason}` and
 `rdock_http3_requests_total{status_class}` count connections, Retry packets, why connections ended,
 refused requests and answers. Each listener that starts serving HTTP/3 logs one warning that it is
 experimental.

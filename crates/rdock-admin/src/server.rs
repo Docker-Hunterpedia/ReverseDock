@@ -560,15 +560,25 @@ where
         read_only,
         accepting,
     } = conn;
+    // Requests this connection started, and those it is answering: when the accept gate closes,
+    // the connection may only close between requests, and not before the request it was
+    // accepted for has been read.
+    let (started_tx, mut started) = watch::channel(0u64);
+    let started_tx = Arc::new(started_tx);
+    let active = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let busy = active.clone();
     let service = hyper::service::service_fn(move |mut request: http::Request<Incoming>| {
         if let Some(peer) = peer {
             request.extensions_mut().insert(peer);
         }
+        started_tx.send_modify(|n| *n += 1);
+        let answering = InFlight::new(&busy);
         let guard = InFlight::new(&in_flight);
         let refuse =
             read_only.load(std::sync::atomic::Ordering::SeqCst) && !reads_only(request.method());
         let call = router.clone().call(request);
         async move {
+            let _answering = answering;
             if refuse {
                 drop(guard);
                 let mut response =
@@ -608,11 +618,122 @@ where
     let result = tokio::select! {
         result = &mut served => result,
         () = closed => {
+            // hyper's graceful shutdown closes a connection at once when it has read nothing
+            // yet, or sits between two requests, which would drop a request already in the
+            // socket buffer (an accepted connection whose request is not read yet). Close only
+            // once a request is being answered: the one in progress, or the next one within
+            // the header timeout (no request in that time: none was sent).
+            let seen = *started.borrow_and_update();
+            if active.load(std::sync::atomic::Ordering::SeqCst) == 0 {
+                let next = tokio::time::timeout(
+                    HEADER_TIMEOUT,
+                    started.wait_for(|n| *n > seen),
+                );
+                tokio::select! {
+                    result = &mut served => {
+                        if let Err(err) = result {
+                            tracing::debug!(error = %err, "admin connection ended with an error");
+                        }
+                        return;
+                    }
+                    _ = next => {}
+                }
+            }
             served.as_mut().graceful_shutdown();
             served.await
         }
     };
     if let Err(err) = result {
         tracing::debug!(error = %err, "admin connection ended with an error");
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, AtomicUsize};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    fn conn(gate: watch::Receiver<bool>) -> Conn {
+        Conn {
+            in_flight: Arc::new(AtomicUsize::new(0)),
+            read_only: Arc::new(AtomicBool::new(false)),
+            accepting: Some(gate),
+        }
+    }
+
+    fn router() -> Router {
+        Router::new().route("/", axum::routing::get(|| async { "ok" }))
+    }
+
+    async fn read_answer(stream: &mut tokio::io::DuplexStream) -> String {
+        let mut out = Vec::new();
+        let mut buf = [0u8; 1024];
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+        loop {
+            let read = tokio::time::timeout_at(deadline, stream.read(&mut buf))
+                .await
+                .expect("an answer within 30 s")
+                .expect("a read");
+            if read == 0 {
+                break;
+            }
+            out.extend_from_slice(&buf[..read]);
+            let text = String::from_utf8_lossy(&out);
+            if text.contains("\r\n\r\n") && text.ends_with("ok") {
+                break;
+            }
+        }
+        String::from_utf8_lossy(&out).into_owned()
+    }
+
+    /// The handover closes the accept gate while a connection was accepted but its request not
+    /// read yet: the request is answered, not dropped (hyper's graceful shutdown alone closes
+    /// such a connection at once).
+    #[tokio::test]
+    async fn a_request_accepted_before_the_gate_closed_is_answered() {
+        for _ in 0..32 {
+            let (gate_tx, gate) = watch::channel(false);
+            let (mut client, server) = tokio::io::duplex(4096);
+            client
+                .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+                .await
+                .unwrap();
+            let task = tokio::spawn(connection(server, router(), None, conn(gate)));
+            let answer = read_answer(&mut client).await;
+            assert!(answer.starts_with("HTTP/1.1 200"), "{answer:?}");
+            task.await.unwrap();
+            drop(gate_tx);
+        }
+    }
+
+    /// A kept-alive connection between two requests when the gate closes: its next request
+    /// is answered too, and the connection closes after it.
+    #[tokio::test]
+    async fn the_next_request_on_a_kept_alive_connection_is_answered() {
+        let (gate_tx, gate) = watch::channel(true);
+        let (mut client, server) = tokio::io::duplex(4096);
+        let task = tokio::spawn(connection(server, router(), None, conn(gate)));
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let first = read_answer(&mut client).await;
+        assert!(first.starts_with("HTTP/1.1 200"), "{first:?}");
+        gate_tx.send_replace(false);
+        tokio::task::yield_now().await;
+        client
+            .write_all(b"GET / HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .await
+            .unwrap();
+        let second = read_answer(&mut client).await;
+        assert!(second.starts_with("HTTP/1.1 200"), "{second:?}");
+        // No keep-alive after the gate closed: the connection ends.
+        let mut rest = Vec::new();
+        tokio::time::timeout(Duration::from_secs(30), client.read_to_end(&mut rest))
+            .await
+            .unwrap()
+            .unwrap();
+        task.await.unwrap();
     }
 }

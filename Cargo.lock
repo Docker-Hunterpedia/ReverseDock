@@ -4899,7 +4899,6 @@ dependencies = [
  "fastrand",
  "futures-util",
  "h3",
- "h3-quinn",
  "hickory-resolver",
  "http",
  "http-body-util",

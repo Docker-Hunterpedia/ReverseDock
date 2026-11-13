@@ -5,11 +5,15 @@
 //! h3 alone, and then enters the same Pingora pipeline as HTTP/1 and HTTP/2 as a custom session,
 //! so routing, middlewares, the cache and the access log are shared.
 //!
-//! The request mapping ([`request`]) is built in every configuration so its tests and fuzz
-//! target run without the `http3` feature; the QUIC endpoint is built only with it.
+//! The request mapping ([`request`]) and the frame limits ([`frames`]) are built in every
+//! configuration so their tests and fuzz target run without the `http3` feature; the QUIC
+//! endpoint is built only with it.
 
 #[cfg(feature = "http3")]
 pub mod endpoint;
+pub mod frames;
+#[cfg(feature = "http3")]
+pub mod quic;
 pub mod request;
 #[cfg(feature = "http3")]
 pub mod session;

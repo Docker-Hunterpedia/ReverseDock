@@ -291,7 +291,12 @@ pub struct ListenerHttp3 {
     pub advertise_port: Option<u16>,
     /// When to make clients prove their address with a QUIC Retry before any handshake work
     /// (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are
-    /// half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`.
+    /// half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that
+    /// threshold only. Whatever the setting, a client whose address is not yet validated is
+    /// sent Retry instead of being refused when the listener is full, when its address already
+    /// holds `max_connections_per_client` connections or handshakes, and once half-open
+    /// connections reach half of `max_connections`: spoofed packets can neither lock a client
+    /// out nor fill the listener.
     pub retry: Http3Retry,
     /// Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default
     /// 30s (HAProxy's); 1s to 10m.
@@ -300,12 +305,31 @@ pub struct ListenerHttp3 {
     /// (`initial_max_streams_bidi`). Default 100; 1 to 10000.
     pub max_concurrent_streams: u32,
     /// Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114
-    /// §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB.
+    /// §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at
+    /// most `receive_window`.
     pub max_header_size: ByteSize,
-    /// QUIC connections the listener holds at once. Default 10000; 1 to 1000000.
+    /// QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case
+    /// memory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the
+    /// defaults; validation warns above 4 GiB.
     pub max_connections: u32,
-    /// QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.
+    /// QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6
+    /// prefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.
+    /// Default 100; 1 to `max_connections`.
     pub max_connections_per_client: u32,
+    /// The IPv6 prefix length that counts as one client for `max_connections_per_client`.
+    /// Default 64 (one subscriber's network, RFC 6177); 32 to 128.
+    pub client_ipv6_prefix: u8,
+    /// Request body a client may send on one stream before rdock reads it (QUIC
+    /// `initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most
+    /// `receive_window`.
+    pub stream_receive_window: ByteSize,
+    /// Data a client may send on the whole connection before rdock reads it (QUIC
+    /// `initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other
+    /// non-DATA frames per connection. Default 1MiB; 64KiB to 64MiB.
+    pub receive_window: ByteSize,
+    /// Response data rdock buffers per connection for a client that has not acknowledged it
+    /// yet. Default 1MiB; 64KiB to 64MiB.
+    pub send_window: ByteSize,
     /// Congestion controller. Default `cubic`.
     pub congestion: Http3Congestion,
     /// UDP generic segmentation offload where the kernel supports it. Default `true`.
@@ -316,7 +340,8 @@ pub struct ListenerHttp3 {
     /// Accept 0-RTT early data. Not supported (planned): early data can be replayed.
     pub early_data: bool,
     /// Let clients move a connection to another address (active migration). Not supported
-    /// (planned); NAT rebinding is handled either way.
+    /// (planned). With migration off, quinn 0.11 drops packets from a new address, so a client
+    /// whose NAT rebinds loses the connection and reconnects.
     pub migration: bool,
     /// HTTP/3 datagrams (RFC 9297). Not supported (planned).
     pub datagrams: bool,
@@ -330,11 +355,36 @@ pub struct ListenerHttp3 {
 impl ListenerHttp3 {
     /// Default `max_header_size`.
     pub const DEFAULT_MAX_HEADER_SIZE: ByteSize = ByteSize::kib(64);
-    /// Ceiling of `max_header_size`: h3 0.0.8 counts 32 bytes per field, so 1 MiB also stays
-    /// below the 32,768 fields that panic `http::HeaderMap` (h3 issue #379).
-    pub const MAX_HEADER_SIZE_CEILING: ByteSize = ByteSize::mib(1);
+    /// Ceiling of `max_header_size`. h3 0.0.8 builds an `http::HeaderMap` with one slot per
+    /// field (`HeaderMap::with_capacity`), which panics from 24,577 fields in http 1.5 (the
+    /// capacity plus a third must stay within 2^15). h3 counts at least 32 bytes per field, so
+    /// 768 KiB admits at most 24,576 fields.
+    pub const MAX_HEADER_SIZE_CEILING: ByteSize = ByteSize::kib(768);
     /// Half-open connections from which `retry: auto` sends Retry.
     pub const RETRY_THRESHOLD: usize = 100;
+    /// Default `max_connections`.
+    pub const DEFAULT_MAX_CONNECTIONS: u32 = 1000;
+    /// Default `stream_receive_window`.
+    pub const DEFAULT_STREAM_RECEIVE_WINDOW: ByteSize = ByteSize::kib(512);
+    /// Default `receive_window`.
+    pub const DEFAULT_RECEIVE_WINDOW: ByteSize = ByteSize::mib(1);
+    /// Default `send_window`.
+    pub const DEFAULT_SEND_WINDOW: ByteSize = ByteSize::mib(1);
+    /// Worst-case memory above which validation warns.
+    pub const MEMORY_WARNING: u64 = 4 << 30;
+
+    /// The worst-case memory the listener's QUIC connections may hold, in bytes:
+    /// `max_connections × (2 × receive_window + send_window)` (unread data quinn holds, incomplete
+    /// frames h3 holds, unacknowledged response data).
+    #[must_use]
+    pub fn worst_case_memory(&self) -> u64 {
+        u64::from(self.max_connections).saturating_mul(
+            self.receive_window
+                .as_u64()
+                .saturating_mul(2)
+                .saturating_add(self.send_window.as_u64()),
+        )
+    }
 }
 
 impl Default for ListenerHttp3 {
@@ -348,8 +398,12 @@ impl Default for ListenerHttp3 {
             max_idle: Duration::from_secs(30),
             max_concurrent_streams: 100,
             max_header_size: Self::DEFAULT_MAX_HEADER_SIZE,
-            max_connections: 10_000,
+            max_connections: Self::DEFAULT_MAX_CONNECTIONS,
             max_connections_per_client: 100,
+            client_ipv6_prefix: 64,
+            stream_receive_window: Self::DEFAULT_STREAM_RECEIVE_WINDOW,
+            receive_window: Self::DEFAULT_RECEIVE_WINDOW,
+            send_window: Self::DEFAULT_SEND_WINDOW,
             congestion: Http3Congestion::Cubic,
             gso: true,
             qlog: None,
@@ -371,7 +425,8 @@ pub enum Http3Retry {
     Auto,
     /// For every new connection without a valid token.
     Always,
-    /// Never.
+    /// Not proactively; Retry is still sent when the listener is full, when the client is at
+    /// its limit, or once half-open connections reach half of `max_connections`.
     Never,
 }
 

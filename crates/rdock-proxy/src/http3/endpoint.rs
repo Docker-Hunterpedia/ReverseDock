@@ -3,18 +3,28 @@
 //! stream that passes our own validation to the listener's Pingora engine as a custom session.
 //!
 //! **Bounds** (each one holds without configuration):
-//! - connections: `max_connections` per listener and `max_connections_per_client` per client
-//!   address; beyond them a new connection is refused (`CONNECTION_REFUSED`) before any
-//!   handshake work;
+//! - connections: `max_connections` per listener and `max_connections_per_client` per client (an
+//!   IPv4 address, or an IPv6 prefix of `client_ipv6_prefix` bits). A connection counts against
+//!   its client only once its address is validated (a Retry token, or the completed handshake),
+//!   so spoofed Initial packets cannot fill a client's allowance; a validated client over a
+//!   limit is refused (`CONNECTION_REFUSED`, or `H3_EXCESSIVE_LOAD` once the handshake is done);
 //! - address validation: `retry` (`auto` sends Retry while 100 or more handshakes are in
-//!   progress). Before an address is validated quinn sends at most three times the bytes it
-//!   received (RFC 9000 §8.1; quinn passes the interop runner's amplification test, run of
-//!   2026-11-12);
+//!   progress). Whatever the setting, an unvalidated client is sent Retry, not refused, when
+//!   the listener is full, when its client already holds `max_connections_per_client`
+//!   connections or handshakes, and once half-open connections reach half of `max_connections`.
+//!   Before an address is validated quinn sends at most three times the bytes it received (RFC
+//!   9000 §8.1; quinn passes the interop runner's amplification test, run of 2026-11-12);
 //! - handshake: the listener's `timeouts.request_header`;
 //! - streams: `max_concurrent_streams` request streams and 16 unidirectional streams at once;
 //!   the HEADERS frame must arrive within `timeouts.request_header`; its decoded size is
-//!   bounded by `max_header_size` in our decoder and in h3; flow control holds a stream to
-//!   1 MiB and a connection to 4 MiB of unread data;
+//!   bounded by `max_header_size` in our decoder and in h3;
+//! - frames ([`super::frames`], [`super::quic`]): no frame other than DATA may declare more than
+//!   `max_header_size` (HEADERS) or 16 KiB (everything else, and every frame on the control
+//!   stream); the incomplete ones of a connection share a budget of `receive_window`, and one
+//!   that has started must be complete within `timeouts.request_header`;
+//! - memory: flow control holds a stream to `stream_receive_window` and a connection to
+//!   `receive_window` of unread data, and quinn buffers at most `send_window` of response data
+//!   per connection; the worst case is `max_connections × (2 × receive_window + send_window)`;
 //! - resets: more than `max(100, max_concurrent_streams)` streams reset by the client, or
 //!   refused as malformed, within 10 s close the connection with `H3_EXCESSIVE_LOAD`
 //!   (the HTTP/2 Rapid Reset and `MadeYouReset` pattern);
@@ -48,6 +58,7 @@ use rdock_model::values::ListenAddress;
 use tokio::sync::watch;
 use tokio::task::JoinSet;
 
+use super::quic::{self, Guarding};
 use super::request::{self, Malformed};
 use super::session::H3Session;
 use super::stream::{RequestIo, code};
@@ -58,9 +69,6 @@ use crate::proxy::Shared;
 pub const DRAIN_CAP: Duration = Duration::from_secs(10);
 /// How often a side that cannot bind its UDP socket tries again.
 const BIND_RETRY: Duration = Duration::from_millis(250);
-/// Unread request data quinn lets a client send on one stream, and on one connection.
-const STREAM_WINDOW: u32 = 1 << 20;
-const CONNECTION_WINDOW: u32 = 4 << 20;
 /// Unidirectional streams a client may have open: control, QPACK encoder and decoder, and room
 /// for reserved (grease) stream types.
 const UNI_STREAMS: u32 = 16;
@@ -116,14 +124,20 @@ impl QuicKeys {
     /// Not two lines of 64 hex digits.
     pub fn from_text(text: &str) -> Result<Self, String> {
         let parse = |line: Option<&str>| -> Result<[u8; 32], String> {
-            let line = line.ok_or("missing line")?.trim();
+            let line = line.ok_or("missing line")?.trim().as_bytes();
             if line.len() != 64 {
                 return Err("a key is not 64 hex digits".into());
             }
+            let digit = |c: u8| -> Result<u8, String> {
+                char::from(c)
+                    .to_digit(16)
+                    .and_then(|d| u8::try_from(d).ok())
+                    .ok_or_else(|| "a key is not hex".to_owned())
+            };
             let mut key = [0u8; 32];
-            for (i, byte) in key.iter_mut().enumerate() {
-                *byte = u8::from_str_radix(&line[2 * i..2 * i + 2], 16)
-                    .map_err(|_| "a key is not hex".to_owned())?;
+            let (pairs, _) = line.as_chunks::<2>();
+            for (byte, [high, low]) in key.iter_mut().zip(pairs) {
+                *byte = (digit(*high)? << 4) | digit(*low)?;
             }
             Ok(key)
         };
@@ -213,12 +227,39 @@ struct Context {
     reconfigure: watch::Receiver<u64>,
 }
 
-/// Connection counts of one side, for the limits and `retry: auto`.
+/// Connections of one client: those whose address is validated, and handshakes from an
+/// address not validated yet (which may be spoofed).
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ClientCount {
+    validated: u32,
+    pending: u32,
+}
+
+/// Connection counts of one side, for the limits and the Retry policy.
 #[derive(Default)]
 struct Counts {
     open: AtomicUsize,
     half_open: AtomicUsize,
-    per_client: Mutex<HashMap<IpAddr, u32>>,
+    per_client: Mutex<HashMap<IpAddr, ClientCount>>,
+}
+
+impl Counts {
+    fn clients(&self) -> std::sync::MutexGuard<'_, HashMap<IpAddr, ClientCount>> {
+        self.per_client
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+}
+
+/// How a connection counts against its client.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Counted {
+    /// A handshake from an address not validated yet.
+    Pending,
+    /// A validated address.
+    Validated,
+    /// Not (any more).
+    No,
 }
 
 /// Keeps the counts right however a connection task ends.
@@ -226,31 +267,98 @@ struct Slot {
     counts: Arc<Counts>,
     client: IpAddr,
     half_open: bool,
+    counted: Counted,
 }
 
 impl Slot {
-    fn handshake_done(&mut self) {
+    /// The handshake completed, which validates the address (RFC 9000 §8.1): the connection now
+    /// counts against its client, unless the client is at `limit` (then `false`).
+    fn handshake_done(&mut self, limit: u32) -> bool {
         if std::mem::take(&mut self.half_open) {
             self.counts.half_open.fetch_sub(1, Ordering::Relaxed);
         }
+        if self.counted != Counted::Pending {
+            return true;
+        }
+        let mut clients = self.counts.clients();
+        let count = clients.entry(self.client).or_default();
+        count.pending = count.pending.saturating_sub(1);
+        if count.validated >= limit {
+            self.counted = Counted::No;
+            if *count == ClientCount::default() {
+                clients.remove(&self.client);
+            }
+            return false;
+        }
+        count.validated += 1;
+        self.counted = Counted::Validated;
+        true
     }
 }
 
 impl Drop for Slot {
     fn drop(&mut self) {
-        self.handshake_done();
+        if std::mem::take(&mut self.half_open) {
+            self.counts.half_open.fetch_sub(1, Ordering::Relaxed);
+        }
         self.counts.open.fetch_sub(1, Ordering::Relaxed);
-        let mut per_client = self
-            .counts
-            .per_client
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if let Some(n) = per_client.get_mut(&self.client) {
-            *n -= 1;
-            if *n == 0 {
-                per_client.remove(&self.client);
+        let mut clients = self.counts.clients();
+        if let Some(count) = clients.get_mut(&self.client) {
+            match self.counted {
+                Counted::Pending => count.pending = count.pending.saturating_sub(1),
+                Counted::Validated => count.validated = count.validated.saturating_sub(1),
+                Counted::No => {}
+            }
+            if *count == ClientCount::default() {
+                clients.remove(&self.client);
             }
         }
+    }
+}
+
+/// What a new connection gets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Admission {
+    Accept,
+    Retry,
+    Refuse(&'static str),
+}
+
+/// What [`admission`] decides on: the side's counts and the client's.
+#[derive(Debug, Default, Clone, Copy)]
+struct Seen {
+    open: usize,
+    half_open: usize,
+    client: ClientCount,
+}
+
+/// The limits and the Retry policy for a connection from a client with `seen` counts, whose
+/// address is `validated` (it presented a Retry or `NEW_TOKEN` token) and which `may_retry` (it
+/// was not sent Retry already).
+fn admission(s: &ListenerHttp3, seen: Seen, validated: bool, may_retry: bool) -> Admission {
+    let full = seen.open >= usize::try_from(s.max_connections).unwrap_or(usize::MAX);
+    let client_full = seen.client.validated >= s.max_connections_per_client;
+    // Handshakes from a client's address that is not validated: spoofed packets can pile them
+    // up, so they lead to Retry, never to a refusal.
+    let piled_up = !validated && seen.client.pending >= s.max_connections_per_client;
+    let threshold = match s.retry {
+        Http3Retry::Always => 0,
+        Http3Retry::Auto => ListenerHttp3::RETRY_THRESHOLD,
+        // `never` drops the proactive threshold only: unvalidated handshakes may still not
+        // take more than half of the listener.
+        Http3Retry::Never => (usize::try_from(s.max_connections).unwrap_or(usize::MAX) / 2)
+            .max(ListenerHttp3::RETRY_THRESHOLD),
+    };
+    let wants_retry = seen.half_open >= threshold;
+    if !validated && may_retry && (full || client_full || piled_up || wants_retry) {
+        return Admission::Retry;
+    }
+    if full {
+        Admission::Refuse("limit")
+    } else if client_full || piled_up {
+        Admission::Refuse("client_limit")
+    } else {
+        Admission::Accept
     }
 }
 
@@ -258,10 +366,20 @@ fn varint(code: u64) -> quinn::VarInt {
     quinn::VarInt::from_u64(code).unwrap_or(quinn::VarInt::from_u32(0))
 }
 
-/// The client address as one IP (an IPv4-mapped IPv6 address counts as the IPv4 one).
-fn client_ip(addr: SocketAddr) -> IpAddr {
+/// The client a connection counts against: its IPv4 address (an IPv4-mapped IPv6 address
+/// counts as the IPv4 one), or its IPv6 address cut to `prefix` bits (one subscriber's /64 by
+/// default, RFC 6177).
+fn client_key(addr: SocketAddr, prefix: u8) -> IpAddr {
     match addr.ip() {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(IpAddr::V6(v6), IpAddr::V4),
+        IpAddr::V6(v6) => {
+            if let Some(v4) = v6.to_ipv4_mapped() {
+                IpAddr::V4(v4)
+            } else {
+                let bits = u32::from(prefix.min(128));
+                let mask = u128::MAX.checked_shl(128 - bits).unwrap_or(0);
+                IpAddr::V6(std::net::Ipv6Addr::from(u128::from(v6) & mask))
+            }
+        }
         v4 @ IpAddr::V4(_) => v4,
     }
 }
@@ -280,8 +398,15 @@ fn server_config(config: &SideConfig, keys: &QuicKeys) -> Result<quinn::ServerCo
         .max_idle_timeout(Some(
             quinn::IdleTimeout::try_from(s.max_idle.as_std()).map_err(|e| e.to_string())?,
         ))
-        .stream_receive_window(quinn::VarInt::from_u32(STREAM_WINDOW))
-        .receive_window(quinn::VarInt::from_u32(CONNECTION_WINDOW))
+        .stream_receive_window(
+            quinn::VarInt::from_u64(s.stream_receive_window.as_u64()).map_err(|e| e.to_string())?,
+        )
+        .receive_window(
+            quinn::VarInt::from_u64(s.receive_window.as_u64()).map_err(|e| e.to_string())?,
+        )
+        // quinn's default is 10 MB, chosen by the client's `max_data` otherwise: rdock bounds
+        // what a client that stops acknowledging can make it buffer (review fix M3).
+        .send_window(s.send_window.as_u64())
         .datagram_receive_buffer_size(None)
         .enable_segmentation_offload(s.gso);
     match s.congestion {
@@ -310,9 +435,41 @@ fn server_config(config: &SideConfig, keys: &QuicKeys) -> Result<quinn::ServerCo
     Ok(server)
 }
 
+/// Length of the connection IDs rdock issues (quinn's default length).
+const CID_LEN: usize = 8;
+
+/// Random connection IDs that any process of this data directory treats alike. quinn 0.11's
+/// default generator signs its IDs with a key drawn per endpoint, so a new process (a restart or
+/// a binary upgrade) would drop the previous one's packets as "invalid CID" instead of answering
+/// them with the stateless reset its shared reset key allows (RFC 9000 §10.3). With random IDs,
+/// a packet for an unknown connection is answered with a reset (quinn sends at most one per
+/// 20 ms, each smaller than the packet that caused it).
+struct RandomCids;
+
+impl quinn::ConnectionIdGenerator for RandomCids {
+    fn generate_cid(&mut self) -> quinn::ConnectionId {
+        use ring::rand::SecureRandom as _;
+        let mut bytes = [0u8; CID_LEN];
+        if ring::rand::SystemRandom::new().fill(&mut bytes).is_err() {
+            bytes.fill_with(|| fastrand::u8(..));
+        }
+        quinn::ConnectionId::new(&bytes)
+    }
+
+    fn cid_len(&self) -> usize {
+        CID_LEN
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        None
+    }
+}
+
 fn endpoint_config(keys: &QuicKeys) -> quinn::EndpointConfig {
     let reset = ring::hmac::Key::new(ring::hmac::HMAC_SHA256, &keys.reset);
-    quinn::EndpointConfig::new(Arc::new(reset))
+    let mut config = quinn::EndpointConfig::new(Arc::new(reset));
+    config.cid_generator(|| Box::new(RandomCids));
+    config
 }
 
 fn bind(address: &ListenAddress) -> std::io::Result<std::net::UdpSocket> {
@@ -468,36 +625,26 @@ fn admit(
             .inc();
     };
     let remote = incoming.remote_address();
-    let ip = client_ip(remote);
-    if counts.open.load(Ordering::Relaxed) >= settings.max_connections as usize {
-        closed("limit");
-        incoming.refuse();
-        return;
-    }
-    {
-        let per_client = counts
-            .per_client
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        if per_client.get(&ip).copied().unwrap_or(0) >= settings.max_connections_per_client {
-            drop(per_client);
-            closed("client_limit");
+    let ip = client_key(remote, settings.client_ipv6_prefix);
+    let validated = incoming.remote_address_validated();
+    let seen = Seen {
+        open: counts.open.load(Ordering::Relaxed),
+        half_open: counts.half_open.load(Ordering::Relaxed),
+        client: counts.clients().get(&ip).copied().unwrap_or_default(),
+    };
+    match admission(settings, seen, validated, incoming.may_retry()) {
+        Admission::Accept => {}
+        Admission::Retry => {
+            if incoming.retry().is_ok() {
+                metrics.http3_retries.with_label_values(&[&cx.name]).inc();
+            }
+            return;
+        }
+        Admission::Refuse(reason) => {
+            closed(reason);
             incoming.refuse();
             return;
         }
-    }
-    let wants_retry = match settings.retry {
-        Http3Retry::Always => true,
-        Http3Retry::Never => false,
-        Http3Retry::Auto => {
-            counts.half_open.load(Ordering::Relaxed) >= ListenerHttp3::RETRY_THRESHOLD
-        }
-    };
-    if wants_retry && !incoming.remote_address_validated() && incoming.may_retry() {
-        if incoming.retry().is_ok() {
-            metrics.http3_retries.with_label_values(&[&cx.name]).inc();
-        }
-        return;
     }
     let connecting = match incoming.accept() {
         Ok(connecting) => connecting,
@@ -509,16 +656,22 @@ fn admit(
     };
     counts.open.fetch_add(1, Ordering::Relaxed);
     counts.half_open.fetch_add(1, Ordering::Relaxed);
-    *counts
-        .per_client
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .entry(ip)
-        .or_insert(0) += 1;
+    let counted = {
+        let mut clients = counts.clients();
+        let count = clients.entry(ip).or_default();
+        if validated {
+            count.validated += 1;
+            Counted::Validated
+        } else {
+            count.pending += 1;
+            Counted::Pending
+        }
+    };
     let slot = Slot {
         counts: counts.clone(),
         client: ip,
         half_open: true,
+        counted,
     };
     connections.spawn(connection(Connection {
         name: cx.name.clone(),
@@ -589,6 +742,19 @@ fn close_reason(err: &h3::error::ConnectionError) -> &'static str {
     }
 }
 
+/// The GOAWAY identifier that accepts every request up to `last` (the last request stream
+/// accepted, if any): RFC 9114 §5.2 rejects the requests whose stream id is the identifier or
+/// greater, so it must be past `last`. h3 0.0.8's `shutdown(n)` sends `last + 4n` (stream ids
+/// of client requests step by 4), or 0 before any request; `shutdown(1)` sends this value.
+fn goaway_id(last: Option<u64>) -> u64 {
+    last.map_or(0, |id| id.saturating_add(4))
+}
+
+/// The u64 form of an h3 stream id.
+fn stream_number(id: h3::quic::StreamId) -> u64 {
+    h3::proto::varint::VarInt::from(id).into_inner()
+}
+
 #[allow(clippy::too_many_lines)] // the steps of a connection, in order
 async fn connection(c: Connection) {
     let Connection {
@@ -621,7 +787,12 @@ async fn connection(c: Connection) {
             return;
         }
     };
-    slot.handshake_done();
+    if !slot.handshake_done(config.settings.max_connections_per_client) {
+        // The address is validated now, and its client is at its limit.
+        conn.close(varint(code::EXCESSIVE_LOAD), b"too many connections");
+        closed("client_limit");
+        return;
+    }
     metrics
         .http3_connections_total
         .with_label_values(&[&name])
@@ -637,44 +808,68 @@ async fn connection(c: Connection) {
         .local_ip()
         .map_or(local, |ip| SocketAddr::new(ip, local.port()));
     let max_header = config.settings.max_header_size.as_u64();
+    let guarding = Arc::new(Guarding::new(
+        max_header,
+        config.settings.receive_window.as_u64(),
+        deadline,
+        config.settings.max_concurrent_streams,
+    ));
     let mut h3conn = match h3::server::builder()
         .max_field_section_size(max_header)
         .send_grease(true)
-        .build::<_, Bytes>(h3_quinn::Connection::new(conn.clone()))
+        .build::<_, Bytes>(quic::Conn::new(conn.clone(), guarding.clone()))
         .await
     {
         Ok(h3conn) => h3conn,
         Err(err) => {
             tracing::debug!(listener = %name, error = %err, "HTTP/3 connection setup failed");
-            closed("protocol");
+            closed(if guarding.closed_for.load(Ordering::Relaxed) == 0 {
+                "protocol"
+            } else {
+                "frame_limit"
+            });
             return;
         }
     };
     let (closed_tx, closed_rx) = watch::channel(false);
     let resets = Arc::new(Resets::new(config.settings.max_concurrent_streams));
     let mut streams = JoinSet::new();
-    let mut shutting_down = *closing.borrow();
-    if shutting_down {
-        let _ = h3conn.shutdown(0).await;
+    // The last request stream accepted, and the GOAWAY identifier once sent.
+    let mut last: Option<u64> = None;
+    let mut announced: Option<u64> = None;
+    if *closing.borrow() {
+        let _ = h3conn.shutdown(1).await;
+        announced = Some(goaway_id(last));
     }
     let reason = loop {
         // After GOAWAY, the connection ends with its last request (h3 0.0.8's `accept` returns
         // `None` only after the client's GOAWAY, not ours).
-        if shutting_down && streams.is_empty() {
+        if announced.is_some() && streams.is_empty() {
             break "drained";
         }
         tokio::select! {
             biased;
-            changed = closing.changed(), if !shutting_down => {
+            changed = closing.changed(), if announced.is_none() => {
                 if changed.is_err() || *closing.borrow() {
-                    shutting_down = true;
-                    // GOAWAY: no new requests; those in flight finish.
-                    let _ = h3conn.shutdown(0).await;
+                    // GOAWAY: no new requests; every request accepted so far finishes.
+                    let _ = h3conn.shutdown(1).await;
+                    announced = Some(goaway_id(last));
                 }
             }
             accepted = h3conn.accept() => match accepted {
-                Ok(Some(resolver)) => {
-                    streams.spawn(request(Request {
+                Ok(Some(mut resolver)) => {
+                    let id = stream_number(resolver.frame_stream.stream.recv_id());
+                    if announced.is_some_and(|goaway| id >= goaway) {
+                        // At or past the GOAWAY identifier: the client was told this request
+                        // is not processed, so it is not (RFC 9114 §5.2).
+                        resolver.frame_stream.stream.stop_sending(code::REQUEST_REJECTED);
+                        resolver.frame_stream.reset(code::REQUEST_REJECTED);
+                        drop(guarding.take_stopped(id));
+                        continue;
+                    }
+                    last = Some(last.map_or(id, |l| l.max(id)));
+                    let (stopped, delivered) = guarding.take_stopped(id).unzip();
+                    let handled = request(Request {
                         name: name.clone(),
                         resolver,
                         conn: conn.clone(),
@@ -684,15 +879,31 @@ async fn connection(c: Connection) {
                         digest: digest.clone(),
                         peers: (remote, server),
                         closed: closed_rx.clone(),
+                        stopped,
                         max_header,
                         header_timeout: deadline,
                         resets: resets.clone(),
-                    }));
+                    });
+                    // A request counts as in flight until its response is delivered: the
+                    // session ends when the last bytes and the FIN are queued, but closing the
+                    // connection then would discard what the client has not acknowledged yet
+                    // (quinn's `Connection::close` abandons unsent and unacknowledged stream
+                    // data), and a drain closes the connection when no request is in flight.
+                    streams.spawn(async move {
+                        handled.await;
+                        if let Some(delivered) = delivered {
+                            let _ = delivered.await;
+                        }
+                    });
                 }
-                Ok(None) => break if shutting_down { "drained" } else { "client" },
+                Ok(None) => break if announced.is_some() { "drained" } else { "client" },
                 Err(err) => {
                     tracing::debug!(listener = %name, error = %err, "HTTP/3 connection ended");
-                    break close_reason(&err);
+                    break if guarding.closed_for.load(Ordering::Relaxed) == 0 {
+                        close_reason(&err)
+                    } else {
+                        "frame_limit"
+                    };
                 }
             },
             Some(_) = streams.join_next(), if !streams.is_empty() => {
@@ -704,6 +915,10 @@ async fn connection(c: Connection) {
         }
     };
     closed(reason);
+    if reason != "drained" {
+        // The connection is gone (or going): sessions waiting on their upstream end now.
+        let _ = closed_tx.send(true);
+    }
     // Requests still running (the client went away, or GOAWAY with requests in flight) end
     // with the connection; the side bounds how long it waits for this task.
     while streams.join_next().await.is_some() {}
@@ -765,7 +980,7 @@ fn digest(client: Option<&rdock_middleware::ClientIdentity>) -> Digest {
     }
 }
 
-type Resolver = h3::server::RequestResolver<h3_quinn::Connection, Bytes>;
+type Resolver = h3::server::RequestResolver<quic::Conn, Bytes>;
 
 struct Request {
     name: Arc<str>,
@@ -777,6 +992,7 @@ struct Request {
     digest: Digest,
     peers: (SocketAddr, SocketAddr),
     closed: watch::Receiver<bool>,
+    stopped: Option<quic::Stopped>,
     max_header: u64,
     header_timeout: Duration,
     resets: Arc<Resets>,
@@ -794,6 +1010,7 @@ async fn request(r: Request) {
         digest,
         peers,
         closed,
+        stopped,
         max_header,
         header_timeout,
         resets,
@@ -859,14 +1076,33 @@ async fn request(r: Request) {
     };
     let mut header = mapped.header;
     header.extensions_mut().insert(facts);
+    let bodiless = BODILESS.contains(&header.method) && mapped.content_length.is_none();
     let io: Box<dyn RequestIo> = Box::new(stream);
-    let session = H3Session::new(io, header, mapped.content_length, digest, peers, closed)
-        .with_resets(resets);
+    let mut session = H3Session::new(io, header, mapped.content_length, digest, peers, closed)
+        .with_resets(resets)
+        .with_stopped(stopped);
+    if bodiless {
+        // A request of a method without a body usually ends with its HEADERS frame, but the
+        // FIN may come in the next packet: wait for the stream's next event (bounded by the
+        // header timeout, the time the request head may take) so the upstream request is not
+        // sent with an empty chunked body (review fix L4).
+        session.settle_body(header_timeout).await;
+    }
     let (_shutdown_tx, shutdown) = watch::channel(false);
     let _ = engine
         .process_new_http(ServerSession::new_custom(Box::new(session)), &shutdown)
         .await;
 }
+
+/// Methods whose requests have no body by convention (RFC 9110 §9.3): a request of one of them
+/// without `content-length` waits for its end before it is forwarded.
+const BODILESS: [http::Method; 5] = [
+    http::Method::GET,
+    http::Method::HEAD,
+    http::Method::OPTIONS,
+    http::Method::DELETE,
+    http::Method::TRACE,
+];
 
 /// Answers a malformed request: 431 for a header section over the limit (RFC 9114 §4.2.2), a
 /// connection error for a QPACK error (RFC 9204 §2.2), a stream reset with `H3_MESSAGE_ERROR`
@@ -930,10 +1166,182 @@ mod tests {
     }
 
     #[test]
-    fn mapped_ipv4_counts_as_ipv4() {
+    fn mapped_ipv4_counts_as_ipv4_and_ipv6_counts_by_prefix() {
         let mapped: SocketAddr = "[::ffff:10.0.0.1]:443".parse().unwrap();
-        assert_eq!(client_ip(mapped), "10.0.0.1".parse::<IpAddr>().unwrap());
-        let v6: SocketAddr = "[2001:db8::1]:443".parse().unwrap();
-        assert_eq!(client_ip(v6), "2001:db8::1".parse::<IpAddr>().unwrap());
+        assert_eq!(
+            client_key(mapped, 64),
+            "10.0.0.1".parse::<IpAddr>().unwrap()
+        );
+        let v4: SocketAddr = "10.0.0.2:443".parse().unwrap();
+        assert_eq!(client_key(v4, 64), "10.0.0.2".parse::<IpAddr>().unwrap());
+        // One /64: the same client, whatever the interface identifier.
+        let a: SocketAddr = "[2001:db8::1]:443".parse().unwrap();
+        let b: SocketAddr = "[2001:db8::ffff:2]:443".parse().unwrap();
+        let other: SocketAddr = "[2001:db8:0:1::1]:443".parse().unwrap();
+        assert_eq!(client_key(a, 64), client_key(b, 64));
+        assert_eq!(client_key(a, 64), "2001:db8::".parse::<IpAddr>().unwrap());
+        assert_ne!(client_key(a, 64), client_key(other, 64));
+        // A /48 groups both; /128 counts each address.
+        assert_eq!(client_key(a, 48), client_key(other, 48));
+        assert_ne!(client_key(a, 128), client_key(b, 128));
+        assert_eq!(client_key(a, 128), "2001:db8::1".parse::<IpAddr>().unwrap());
+    }
+
+    fn settings(retry: Http3Retry, max: u32, per_client: u32) -> ListenerHttp3 {
+        ListenerHttp3 {
+            retry,
+            max_connections: max,
+            max_connections_per_client: per_client,
+            ..ListenerHttp3::default()
+        }
+    }
+
+    fn seen(open: usize, half_open: usize, validated: u32, pending: u32) -> Seen {
+        Seen {
+            open,
+            half_open,
+            client: ClientCount { validated, pending },
+        }
+    }
+
+    #[test]
+    fn unvalidated_handshakes_never_lock_a_client_out() {
+        let s = settings(Http3Retry::Auto, 1000, 1);
+        // The first connection of a client is accepted.
+        assert_eq!(
+            admission(&s, seen(0, 0, 0, 0), false, true),
+            Admission::Accept
+        );
+        // A handshake from its address is in progress (perhaps spoofed): the next attempt is
+        // asked to prove its address, not refused.
+        assert_eq!(
+            admission(&s, seen(1, 1, 0, 1), false, true),
+            Admission::Retry
+        );
+        // Back with a Retry token: validated, and nothing validated counts yet: accepted.
+        assert_eq!(
+            admission(&s, seen(1, 1, 0, 1), true, false),
+            Admission::Accept
+        );
+        // A validated connection holds the client's allowance: a validated attempt is refused,
+        // an unvalidated one is sent Retry first.
+        assert_eq!(
+            admission(&s, seen(1, 0, 1, 0), true, false),
+            Admission::Refuse("client_limit")
+        );
+        assert_eq!(
+            admission(&s, seen(1, 0, 1, 0), false, true),
+            Admission::Retry
+        );
+    }
+
+    #[test]
+    fn a_full_listener_retries_unvalidated_clients_and_refuses_validated_ones() {
+        for retry in [Http3Retry::Auto, Http3Retry::Never, Http3Retry::Always] {
+            let s = settings(retry, 10, 5);
+            assert_eq!(
+                admission(&s, seen(10, 0, 0, 0), false, true),
+                Admission::Retry,
+                "{retry:?}"
+            );
+            assert_eq!(
+                admission(&s, seen(10, 0, 0, 0), true, false),
+                Admission::Refuse("limit"),
+                "{retry:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn retry_never_still_bounds_unvalidated_handshakes() {
+        let s = settings(Http3Retry::Never, 1000, 100);
+        assert_eq!(
+            admission(&s, seen(400, 499, 0, 0), false, true),
+            Admission::Accept
+        );
+        assert_eq!(
+            admission(&s, seen(500, 500, 0, 0), false, true),
+            Admission::Retry,
+            "half of max_connections half-open"
+        );
+        let auto = settings(Http3Retry::Auto, 1000, 100);
+        assert_eq!(
+            admission(&auto, seen(100, 100, 0, 0), false, true),
+            Admission::Retry
+        );
+        assert_eq!(
+            admission(&auto, seen(99, 99, 0, 0), false, true),
+            Admission::Accept
+        );
+        let always = settings(Http3Retry::Always, 1000, 100);
+        assert_eq!(
+            admission(&always, seen(0, 0, 0, 0), false, true),
+            Admission::Retry
+        );
+        assert_eq!(
+            admission(&always, seen(0, 0, 0, 0), true, false),
+            Admission::Accept
+        );
+    }
+
+    #[test]
+    fn a_connection_counts_against_its_client_once_validated() {
+        let counts = Arc::new(Counts::default());
+        let ip: IpAddr = "192.0.2.1".parse().unwrap();
+        counts.open.fetch_add(2, Ordering::Relaxed);
+        counts.half_open.fetch_add(2, Ordering::Relaxed);
+        counts.clients().insert(
+            ip,
+            ClientCount {
+                validated: 0,
+                pending: 2,
+            },
+        );
+        let slot = |counted| Slot {
+            counts: counts.clone(),
+            client: ip,
+            half_open: true,
+            counted,
+        };
+        let (mut a, mut b) = (slot(Counted::Pending), slot(Counted::Pending));
+        assert!(a.handshake_done(1));
+        assert_eq!(
+            counts.clients()[&ip],
+            ClientCount {
+                validated: 1,
+                pending: 1
+            }
+        );
+        // The second handshake completes while the client is at its limit of 1.
+        assert!(!b.handshake_done(1));
+        assert_eq!(
+            counts.clients()[&ip],
+            ClientCount {
+                validated: 1,
+                pending: 0
+            }
+        );
+        assert_eq!(counts.half_open.load(Ordering::Relaxed), 0);
+        drop(b);
+        drop(a);
+        assert!(counts.clients().is_empty());
+        assert_eq!(counts.open.load(Ordering::Relaxed), 0);
+    }
+
+    #[test]
+    fn goaway_accepts_every_request_up_to_the_last() {
+        assert_eq!(goaway_id(None), 0);
+        assert_eq!(goaway_id(Some(0)), 4);
+        assert_eq!(goaway_id(Some(8)), 12);
+    }
+
+    #[test]
+    fn a_key_file_with_other_text_is_refused_without_a_panic() {
+        // 64 bytes that are not 64 ASCII characters: "é" is two bytes.
+        let line = format!("{}é{}", "a".repeat(31), "b".repeat(31));
+        assert_eq!(line.len(), 64);
+        let text = format!("{line}\n{}\n", "c".repeat(64));
+        assert!(QuicKeys::from_text(&text).is_err());
+        assert!(QuicKeys::from_text(&format!("{}\n{}\n", "0".repeat(64), "G".repeat(64))).is_err());
     }
 }

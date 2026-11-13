@@ -1082,6 +1082,10 @@
         "additionalProperties": false,
         "description": "What `POST /upgrade` takes.",
         "properties": {
+          "allow_downgrade": {
+            "description": "Install a binary whose version is older than the running one. Default `false`: an older\nversion (perhaps one with a known vulnerability, signed by the same key) is refused.",
+            "type": "boolean"
+          },
           "binary": {
             "description": "The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.",
             "type": [
@@ -4318,7 +4322,7 @@
           },
           {
             "const": "never",
-            "description": "Never.",
+            "description": "Not proactively; Retry is still sent when the listener is full, when the client is at\nits limit, or once half-open connections reach half of `max_connections`.",
             "type": "string"
           }
         ]
@@ -5138,6 +5142,14 @@
               "null"
             ]
           },
+          "client_ipv6_prefix": {
+            "default": 64,
+            "description": "The IPv6 prefix length that counts as one client for `max_connections_per_client`.\nDefault 64 (one subscriber's network, RFC 6177); 32 to 128.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          },
           "congestion": {
             "$ref": "#/components/schemas/rdock.Http3Congestion",
             "default": "cubic",
@@ -5176,15 +5188,15 @@
             "type": "integer"
           },
           "max_connections": {
-            "default": 10000,
-            "description": "QUIC connections the listener holds at once. Default 10000; 1 to 1000000.",
+            "default": 1000,
+            "description": "QUIC connections the listener holds at once. Default 1000; 1 to 1000000. Worst-case\nmemory is `max_connections × (2 × receive_window + send_window)`: about 3 GiB with the\ndefaults; validation warns above 4 GiB.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
           },
           "max_connections_per_client": {
             "default": 100,
-            "description": "QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.",
+            "description": "QUIC connections one client holds at once. A client is one IPv4 address, or one IPv6\nprefix of `client_ipv6_prefix` bits. Only connections whose address is validated count.\nDefault 100; 1 to `max_connections`.",
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
@@ -5192,7 +5204,7 @@
           "max_header_size": {
             "$ref": "#/components/schemas/rdock.ByteSize",
             "default": "64KiB",
-            "description": "Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114\n§4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB."
+            "description": "Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114\n§4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 768KiB, and at\nmost `receive_window`."
           },
           "max_idle": {
             "$ref": "#/components/schemas/rdock.Duration",
@@ -5201,7 +5213,7 @@
           },
           "migration": {
             "default": false,
-            "description": "Let clients move a connection to another address (active migration). Not supported\n(planned); NAT rebinding is handled either way.",
+            "description": "Let clients move a connection to another address (active migration). Not supported\n(planned). With migration off, quinn 0.11 drops packets from a new address, so a client\nwhose NAT rebinds loses the connection and reconnects.",
             "type": "boolean"
           },
           "qlog": {
@@ -5211,10 +5223,25 @@
               "null"
             ]
           },
+          "receive_window": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "1MiB",
+            "description": "Data a client may send on the whole connection before rdock reads it (QUIC\n`initial_max_data`). rdock also holds at most this much of incomplete HEADERS and other\nnon-DATA frames per connection. Default 1MiB; 64KiB to 64MiB."
+          },
           "retry": {
             "$ref": "#/components/schemas/rdock.Http3Retry",
             "default": "auto",
-            "description": "When to make clients prove their address with a QUIC Retry before any handshake work\n(RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are\nhalf-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`."
+            "description": "When to make clients prove their address with a QUIC Retry before any handshake work\n(RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are\nhalf-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never` drops that\nthreshold only. Whatever the setting, a client whose address is not yet validated is\nsent Retry instead of being refused when the listener is full, when its address already\nholds `max_connections_per_client` connections or handshakes, and once half-open\nconnections reach half of `max_connections`: spoofed packets can neither lock a client\nout nor fill the listener."
+          },
+          "send_window": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "1MiB",
+            "description": "Response data rdock buffers per connection for a client that has not acknowledged it\nyet. Default 1MiB; 64KiB to 64MiB."
+          },
+          "stream_receive_window": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "512KiB",
+            "description": "Request body a client may send on one stream before rdock reads it (QUIC\n`initial_max_stream_data_bidi_remote`). Default 512KiB; 16KiB to 16MiB, and at most\n`receive_window`."
           },
           "webtransport": {
             "default": false,

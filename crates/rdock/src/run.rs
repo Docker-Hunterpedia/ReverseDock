@@ -166,24 +166,55 @@ fn sticky_key(data_dir: &Path) -> anyhow::Result<Vec<u8>> {
 /// The keys of HTTP/3 stateless resets and Retry tokens (ADR-0032): `$RDOCK_DATA_DIR/quic.key`
 /// (hex, created atomically on first start with mode 0600), so the next process (a restart or a
 /// binary upgrade) answers the previous one's QUIC connections with a stateless reset and
-/// accepts its Retry tokens.
+/// accepts its Retry tokens. Whoever reads the file can forge Retry tokens (skipping address
+/// validation) and stateless resets: an existing file must belong to rdock's user and be
+/// readable by it alone.
 #[cfg(feature = "http3")]
 fn quic_keys(data_dir: &Path) -> anyhow::Result<rdock_proxy::http3::endpoint::QuicKeys> {
     use rdock_proxy::http3::endpoint::QuicKeys;
     let path = data_dir.join("quic.key");
-    match std::fs::read_to_string(&path) {
-        Ok(text) => QuicKeys::from_text(&text)
+    match read_private(&path) {
+        Ok(Some(text)) => QuicKeys::from_text(&text)
             .map_err(|e| anyhow::anyhow!("the QUIC key file {}: {e}", path.display())),
-        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+        Ok(None) => {
             let keys = QuicKeys::random();
             rdock_config::state::write_atomic(&path, keys.to_text().as_bytes())
                 .with_context(|| format!("writing the QUIC key file {}", path.display()))?;
             Ok(keys)
         }
-        Err(err) => {
-            Err(err).with_context(|| format!("reading the QUIC key file {}", path.display()))
-        }
+        Err(err) => Err(err).with_context(|| format!("the QUIC key file {}", path.display())),
     }
+}
+
+/// Reads a key file that must be private: owned by the user rdock runs as, with no permission
+/// for its group or others. `None` when it does not exist.
+#[cfg_attr(not(feature = "http3"), allow(dead_code))]
+fn read_private(path: &Path) -> anyhow::Result<Option<String>> {
+    use std::io::Read as _;
+    use std::os::unix::fs::MetadataExt;
+    let mut file = match std::fs::File::open(path) {
+        Ok(file) => file,
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err).context("cannot open it"),
+    };
+    let meta = file.metadata().context("cannot read its metadata")?;
+    let mode = meta.mode() & 0o777;
+    if mode & 0o077 != 0 {
+        anyhow::bail!(
+            "it is readable or writable by its group or others (mode {mode:o}); run `chmod 600` on it"
+        );
+    }
+    let uid = rustix::process::geteuid().as_raw();
+    if meta.uid() != uid {
+        anyhow::bail!(
+            "it is owned by uid {}, not by the user rdock runs as (uid {uid})",
+            meta.uid()
+        );
+    }
+    let mut text = String::new();
+    file.read_to_string(&mut text)
+        .context("cannot read it as text")?;
+    Ok(Some(text))
 }
 
 /// The CLI's Unix socket when `admin.socket` is not set.
@@ -591,7 +622,7 @@ async fn serve(
                 engine.reload("provider").await;
             }
             _ = signals.upgrade.recv() => {
-                let trigger = crate::upgrade::Trigger { binary: None, actor: "signal".into(), reply: None };
+                let trigger = crate::upgrade::Trigger { binary: None, allow_downgrade: false, actor: "signal".into(), reply: None };
                 let _ = upgrade_tx.try_send(trigger);
             }
             Some(mut trigger) = upgrades.recv() => {
@@ -821,5 +852,24 @@ mod tests {
             hard
         };
         assert_eq!(soft, wanted);
+    }
+
+    #[test]
+    fn a_key_file_others_can_read_is_refused() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("quic.key");
+        assert!(super::read_private(&path).unwrap().is_none());
+        std::fs::write(&path, "key\n").unwrap();
+        for mode in [0o644, 0o640, 0o604, 0o660] {
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            let err = super::read_private(&path).unwrap_err().to_string();
+            assert!(err.contains("group or others"), "{mode:o}: {err}");
+        }
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+        assert_eq!(
+            super::read_private(&path).unwrap().as_deref(),
+            Some("key\n")
+        );
     }
 }

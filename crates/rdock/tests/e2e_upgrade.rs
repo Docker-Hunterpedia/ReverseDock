@@ -143,16 +143,12 @@ fn copy_binary(dir: &Path, name: &str) -> PathBuf {
     path
 }
 
-/// A script that runs the binary under test with an upgrade fault.
+/// A copy of the binary under test that runs with an upgrade fault: debug builds read the fault
+/// from `<binary>.fault` and pass it to the new process (an upgrade runs the checked file
+/// itself, so a wrapper script cannot inject it).
 fn faulty_binary(dir: &Path, name: &str, fault: &str) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
-    let path = dir.join(name);
-    std::fs::write(
-        &path,
-        format!("#!/bin/sh\nRDOCK_UPGRADE_FAULT={fault} exec \"{RDOCK}\" \"$@\"\n"),
-    )
-    .unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let path = copy_binary(dir, name);
+    std::fs::write(dir.join(format!("{name}.fault")), fault).unwrap();
     path
 }
 

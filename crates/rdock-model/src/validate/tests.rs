@@ -3287,7 +3287,7 @@ fn http3_values_are_bounded_and_need_an_https_listener() {
         ),
         (
             "listeners.a.http3.max_header_size",
-            "between 1024 and 1048576",
+            "between 1024 and 786432",
         ),
         (
             "listeners.a.http3.max_connections_per_client",
@@ -3296,7 +3296,7 @@ fn http3_values_are_bounded_and_need_an_https_listener() {
         ("listeners.b.http3", "`https` listeners only"),
         (
             "listeners.c.http3.max_header_size",
-            "between 1024 and 1048576",
+            "between 1024 and 786432",
         ),
         ("listeners.c.http3.max_connections", "between 1 and 1000000"),
     ] {
@@ -3307,6 +3307,76 @@ fn http3_values_are_bounded_and_need_an_https_listener() {
         "listeners.a.http3.congestion",
         "experimental"
     ));
+}
+
+#[test]
+fn http3_windows_are_bounded_and_their_memory_is_warned_about() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": {}, "http3": {
+                "client_ipv6_prefix": 16,
+                "stream_receive_window": "2MiB",
+                "receive_window": "1MiB",
+                "send_window": "128MiB",
+                "max_header_size": "768KiB"
+            } },
+            "b": { "address": ":8443", "tls": {}, "http3": {
+                "stream_receive_window": "4KiB",
+                "receive_window": "16KiB",
+                "max_header_size": "32KiB"
+            } },
+            "c": { "address": ":9443", "tls": {}, "http3": {
+                "max_connections": 100_000,
+                "receive_window": "8MiB",
+                "max_connections_per_client": 100
+            } }
+        }}),
+    );
+    let found = errors(config.clone());
+    for (path, fragment) in [
+        ("listeners.a.http3.client_ipv6_prefix", "between 32 and 128"),
+        (
+            "listeners.a.http3.stream_receive_window",
+            "at most `receive_window`",
+        ),
+        ("listeners.a.http3.send_window", "between 64KiB and 64MiB"),
+        ("listeners.b.http3.stream_receive_window", "16KiB and 16MiB"),
+        ("listeners.b.http3.receive_window", "64KiB and 64MiB"),
+        (
+            "listeners.b.http3.max_header_size",
+            "at most `receive_window`",
+        ),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    assert!(
+        !found.iter().any(|(p, _)| p.starts_with("listeners.c")),
+        "{found:?}"
+    );
+    // 100,000 × (2 × 8 MiB + 1 MiB) is 1.7 TB: a warning, not an error.
+    assert!(has(
+        &warnings(config),
+        "listeners.c.http3.max_connections",
+        "1700000 MiB"
+    ));
+    // The defaults stay below the warning: 1000 × (2 × 1 MiB + 1 MiB) = 3000 MiB.
+    let defaults = crate::config::ListenerHttp3::default();
+    assert_eq!(defaults.worst_case_memory(), 3000 << 20);
+    assert!(defaults.worst_case_memory() <= crate::config::ListenerHttp3::MEMORY_WARNING);
+}
+
+#[test]
+fn the_header_size_ceiling_stays_below_the_header_map_panic() {
+    // h3 0.0.8 calls `HeaderMap::with_capacity(fields)` and counts at least 32 bytes per field;
+    // http 1.5 panics when the capacity plus a third rounds up past 2^15.
+    let ceiling = crate::config::ListenerHttp3::MAX_HEADER_SIZE_CEILING.as_u64();
+    let fields = usize::try_from(ceiling / 32).unwrap();
+    assert_eq!(fields, 24_576);
+    let raw = fields + fields / 3;
+    assert!(raw.next_power_of_two() <= 1 << 15);
+    let one_more = fields + 1;
+    assert!((one_more + one_more / 3).next_power_of_two() > 1 << 15);
 }
 
 #[test]

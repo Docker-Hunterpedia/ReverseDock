@@ -274,6 +274,31 @@ pub fn json_patch(data: &[u8]) {
     }
 }
 
+/// The HTTP/3 frame limits (ADR-0032, review fix H1) on the same bytes read as a stream: the
+/// verdict does not depend on how the stream is cut into chunks, the connection's budget never
+/// holds more than its limit, and everything a guard reserved is released when it goes.
+fn http3_frames(data: &[u8], max_header_size: u64) {
+    use rdock_proxy::http3::frames::{Budget, FrameGuard, StreamKind};
+    use std::sync::Arc;
+    let cut = data.first().map_or(0, |b| usize::from(*b) % (data.len() + 1));
+    for kind in [StreamKind::Request, StreamKind::Unidirectional] {
+        let budget = Arc::new(Budget::new(max_header_size * 2));
+        let mut whole = FrameGuard::new(kind, max_header_size, Some(budget.clone()));
+        let one = whole.inspect(data);
+        assert!(budget.held() <= max_header_size * 2, "the budget holds");
+        let mut split = FrameGuard::new(kind, max_header_size, None);
+        let two = split
+            .inspect(&data[..cut])
+            .and_then(|()| split.inspect(&data[cut..]));
+        // A budget can only refuse more; without its refusal the verdicts agree.
+        if !matches!(one, Err(rdock_proxy::http3::frames::Violation::OverBudget { .. })) {
+            assert_eq!(one, two, "the verdict depends on the chunks");
+        }
+        drop(whole);
+        assert_eq!(budget.held(), 0, "a dropped guard releases its reservation");
+    }
+}
+
 /// The HTTP/3 request mapping (ADR-0032) on arbitrary HEADERS payloads: decoding and validation
 /// never panic; a section that decodes re-encodes to the same fields; and a request that passes
 /// is forwarded as exactly one HTTP/1.1 request head that an independent parser reads back with
@@ -281,6 +306,7 @@ pub fn json_patch(data: &[u8]) {
 pub fn http3_request(data: &[u8]) {
     use rdock_proxy::http3::request::{FIELD_OVERHEAD, decode, encode, map};
     const LIMIT: u64 = 64 * 1024;
+    http3_frames(data, LIMIT);
     if let Ok(fields) = decode(data, LIMIT) {
         let pairs: Vec<(&[u8], &[u8])> = fields
             .iter()

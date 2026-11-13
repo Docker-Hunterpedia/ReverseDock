@@ -22,6 +22,8 @@ pub mod code {
     pub const REQUEST_INCOMPLETE: u64 = 0x10d;
     /// A malformed message.
     pub const MESSAGE_ERROR: u64 = 0x10e;
+    /// A frame that is not permitted on its stream.
+    pub const FRAME_UNEXPECTED: u64 = 0x105;
     /// The peer generates excessive load.
     pub const EXCESSIVE_LOAD: u64 = 0x107;
     /// QPACK decoding failed (RFC 9204 §6).
@@ -52,8 +54,8 @@ pub trait RequestIo: Send {
     fn reset(&mut self, code: u64);
 }
 
-/// The `h3` request stream over quinn.
-pub type H3Stream = h3::server::RequestStream<h3_quinn::BidiStream<Bytes>, Bytes>;
+/// The `h3` request stream over quinn (through rdock's guarded adapter, [`super::quic`]).
+pub type H3Stream = h3::server::RequestStream<super::quic::BidiStream<Bytes>, Bytes>;
 
 fn failure(err: impl std::fmt::Display) -> StreamFailure {
     StreamFailure(err.to_string())

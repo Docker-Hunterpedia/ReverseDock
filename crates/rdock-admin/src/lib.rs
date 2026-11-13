@@ -177,6 +177,8 @@ pub trait Control: Send + Sync {
 pub struct UpgradeRequest {
     /// The binary to run; `upgrade.binary` when not given.
     pub binary: Option<std::path::PathBuf>,
+    /// Install it even when its version is older than the running one.
+    pub allow_downgrade: bool,
     /// Who asked, as the audit log names them.
     pub actor: String,
 }

@@ -264,6 +264,10 @@ struct UpgradeBody {
     /// The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
     #[serde(default)]
     binary: Option<String>,
+    /// Install a binary whose version is older than the running one. Default `false`: an older
+    /// version (perhaps one with a known vulnerability, signed by the same key) is refused.
+    #[serde(default)]
+    allow_downgrade: bool,
 }
 
 /// Replaces the running binary without dropping connections: the listeners are handed to a
@@ -301,6 +305,7 @@ async fn upgrade(
     let body = body.map(|b| b.0).unwrap_or_default();
     let request = crate::UpgradeRequest {
         binary: body.binary.map(std::path::PathBuf::from),
+        allow_downgrade: body.allow_downgrade,
         actor: caller.event("upgrade").actor,
     };
     let control = state.control.clone();

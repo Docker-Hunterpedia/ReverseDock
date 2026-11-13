@@ -15,6 +15,12 @@ const MAX_STREAMS: u32 = 10_000;
 const MIN_HEADER_SIZE: u64 = 1 << 10;
 /// `max_connections` ceiling.
 const MAX_CONNECTIONS: u32 = 1_000_000;
+/// `client_ipv6_prefix` bounds.
+const IPV6_PREFIX: (u8, u8) = (32, 128);
+/// `stream_receive_window` bounds: 16 KiB to 16 MiB.
+const STREAM_WINDOW: (u64, u64) = (16 << 10, 16 << 20);
+/// `receive_window` and `send_window` bounds: 64 KiB to 64 MiB.
+const CONNECTION_WINDOW: (u64, u64) = (64 << 10, 64 << 20);
 
 impl Validator<'_> {
     pub(super) fn check_http3(&mut self) {
@@ -105,10 +111,71 @@ impl Validator<'_> {
                 "must be between 1 and `max_connections`",
             );
         }
+        self.check_http3_memory(base, h3);
         if h3.congestion == Http3Congestion::Bbr {
             self.warning(
                 format!("{base}.congestion"),
                 "quinn 0.11 marks its BBR implementation experimental",
+            );
+        }
+    }
+
+    /// The client prefix, the flow-control windows and the worst-case memory they allow.
+    fn check_http3_memory(&mut self, base: &str, h3: &ListenerHttp3) {
+        if !(IPV6_PREFIX.0..=IPV6_PREFIX.1).contains(&h3.client_ipv6_prefix) {
+            self.error(
+                format!("{base}.client_ipv6_prefix"),
+                format!(
+                    "must be between {} and {} bits",
+                    IPV6_PREFIX.0, IPV6_PREFIX.1
+                ),
+            );
+        }
+        let window =
+            |v: &crate::values::ByteSize, (min, max): (u64, u64)| (min..=max).contains(&v.as_u64());
+        if !window(&h3.stream_receive_window, STREAM_WINDOW) {
+            self.error(
+                format!("{base}.stream_receive_window"),
+                "must be between 16KiB and 16MiB",
+            );
+        }
+        for (key, value) in [
+            ("receive_window", &h3.receive_window),
+            ("send_window", &h3.send_window),
+        ] {
+            if !window(value, CONNECTION_WINDOW) {
+                self.error(format!("{base}.{key}"), "must be between 64KiB and 64MiB");
+            }
+        }
+        if h3.stream_receive_window > h3.receive_window {
+            self.error(
+                format!("{base}.stream_receive_window"),
+                "must be at most `receive_window`",
+            );
+        }
+        if h3.max_header_size > h3.receive_window {
+            self.push(
+                Diagnostic::error(
+                    format!("{base}.max_header_size"),
+                    "must be at most `receive_window`",
+                )
+                .with_hint(
+                    "the incomplete header sections of a connection are held within `receive_window`",
+                ),
+            );
+        }
+        let memory = h3.worst_case_memory();
+        if memory > ListenerHttp3::MEMORY_WARNING {
+            self.push(
+                Diagnostic::warning(
+                    format!("{base}.max_connections"),
+                    format!(
+                        "the QUIC connections of this listener may hold up to {} MiB (max_connections × (2 × receive_window + send_window)), more than {} MiB",
+                        memory >> 20,
+                        ListenerHttp3::MEMORY_WARNING >> 20
+                    ),
+                )
+                .with_hint("lower `max_connections` or the windows unless the host has this memory to spare"),
             );
         }
     }

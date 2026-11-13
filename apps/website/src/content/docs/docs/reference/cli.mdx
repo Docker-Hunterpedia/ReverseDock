@@ -185,6 +185,7 @@ Usage: rdock upgrade [OPTIONS]
 
 Options:
       --binary <BINARY>      The new binary [default: `upgrade.binary`, /usr/local/bin/rdock]
+      --allow-downgrade      Install a binary whose version is older than the running one (refused otherwise)
       --data-dir <DATA_DIR>  Data directory, to find the admin socket [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
   -c, --config <CONFIG>      Configuration file, to find `admin.socket` when it is set [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
   -h, --help                 Print help

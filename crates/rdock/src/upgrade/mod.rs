@@ -13,7 +13,7 @@ pub(crate) mod inherit;
 pub(crate) mod wire;
 
 use std::io::Read;
-use std::os::fd::{AsFd, BorrowedFd, OwnedFd};
+use std::os::fd::{AsFd, AsRawFd, BorrowedFd, OwnedFd};
 use std::os::unix::net::UnixStream;
 use std::path::{Path, PathBuf};
 use std::process::{Child, Command, Stdio};
@@ -39,6 +39,8 @@ pub(crate) const PID1_REFUSAL: &str = "rdock is PID 1 (a container's entry point
 pub(crate) struct Trigger {
     /// The binary; `upgrade.binary` when `None`.
     pub(crate) binary: Option<PathBuf>,
+    /// Install a binary older than the running one (`rdock upgrade --allow-downgrade`).
+    pub(crate) allow_downgrade: bool,
     /// Who asked (`cli`, `token:…`, a user, or `signal`).
     pub(crate) actor: String,
     /// Where the outcome goes (none for a signal).
@@ -119,25 +121,111 @@ fn is_pid1() -> bool {
     std::process::id() == 1 || fault().as_deref() == Some("pid1")
 }
 
-/// A checked binary: its path, SHA-256 and, when keys are trusted, the key that signed it.
+/// A checked binary: its path, SHA-256 and, when keys are trusted, the key that signed it, and
+/// the open file every check read, which is what runs ([`Checked::command`]).
 #[derive(Debug)]
 pub(crate) struct Checked {
     pub(crate) path: PathBuf,
     pub(crate) sha256: String,
     pub(crate) signed_by: Option<String>,
+    /// Whether the file is an ELF executable (only those can run from the open file).
+    pub(crate) elf: bool,
+    file: std::fs::File,
 }
 
-/// The checks of ADR-0031 on the binary at `path`: a regular file, owned by root or the user
-/// rdock runs as, not writable by the group or others; when `trusted_keys` is not empty,
-/// `<path>.minisig` must be a minisign signature of it by one of them. The file is opened once
-/// and every check (and the hash) uses that open file.
-pub(crate) fn check_binary(path: &Path, trusted_keys: &[String]) -> Result<Checked, String> {
+impl Checked {
+    /// A command that runs the bytes the checks read: `/proc/self/fd/<n>` names the checked
+    /// open file in the process that executes it (the child inherits the descriptor until the
+    /// exec, and the kernel resolves the name before the descriptor is closed), so replacing
+    /// or renaming the file at `path` afterwards changes nothing (review fix M5). The process
+    /// still sees `path` as its name (`argv[0]`), and `/proc/<pid>/exe` names the file.
+    pub(crate) fn command(&self) -> Command {
+        use std::os::unix::process::CommandExt as _;
+        let mut command = Command::new(format!("/proc/self/fd/{}", self.file.as_raw_fd()));
+        command.arg0(&self.path);
+        if let Some(fault) = child_fault(&self.path) {
+            command.env("RDOCK_UPGRADE_FAULT", fault);
+        }
+        command
+    }
+}
+
+/// The fault the new process runs with in the upgrade tests: the text of `<binary>.fault`, only
+/// in the builds [`fault`] allows.
+fn child_fault(binary: &Path) -> Option<String> {
+    if !cfg!(any(debug_assertions, feature = "fault-injection")) {
+        return None;
+    }
+    let mut marker = binary.as_os_str().to_owned();
+    marker.push(".fault");
+    std::fs::read_to_string(PathBuf::from(marker))
+        .ok()
+        .map(|text| text.trim().to_owned())
+}
+
+/// Whether the owner of `meta` is root or `uid`, and nobody else may rename entries in it (not
+/// writable by its group or others, unless sticky: then only an entry's owner may).
+fn private_directory(dir: &Path, meta: &std::fs::Metadata, uid: u32) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt;
+    let mode = meta.mode() & 0o7777;
+    if meta.uid() != 0 && meta.uid() != uid {
+        return Err(format!(
+            "its directory {} is owned by uid {}, not by root or the user rdock runs as (uid {uid})",
+            dir.display(),
+            meta.uid()
+        ));
+    }
+    if mode & 0o022 != 0 && mode & 0o1000 == 0 {
+        return Err(format!(
+            "its directory {} is writable by its group or others (mode {mode:o}), who could replace the file",
+            dir.display()
+        ));
+    }
+    Ok(())
+}
+
+/// The checks of ADR-0031 on the binary at `path`: an absolute path without symbolic links,
+/// whose every directory is owned by root or the user rdock runs as and not writable by others
+/// (unless sticky); a regular file with the same owner, not writable by the group or others;
+/// when `trusted_keys` is not empty, `<path>.minisig` must be a minisign signature of it by one
+/// of them. The file is opened once (without following a link) and every check, the hash and
+/// the signature use that open file, which [`Checked::command`] then runs.
+pub(crate) fn check_binary(path: &Path, trusted_keys: &[String]) -> Result<Checked, String> {
+    use std::os::unix::fs::{MetadataExt, OpenOptionsExt};
     if !path.is_absolute() {
         return Err(format!("{} is not an absolute path", path.display()));
     }
-    let mut file =
-        std::fs::File::open(path).map_err(|e| format!("cannot open {}: {e}", path.display()))?;
+    let uid = rustix::process::geteuid().as_raw();
+    // Every directory from the root down: one that others may write to lets them swap what
+    // comes below it, and a symbolic link (here or in the file name) would make the checked
+    // path differ from the one that was configured.
+    let mut dirs: Vec<&Path> = path.ancestors().skip(1).collect();
+    dirs.reverse();
+    for dir in dirs {
+        let meta = std::fs::symlink_metadata(dir)
+            .map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+        if meta.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a symbolic link; configure the binary by its real path",
+                dir.display()
+            ));
+        }
+        private_directory(dir, &meta, uid)?;
+    }
+    let mut file = std::fs::File::options()
+        .read(true)
+        .custom_flags(rustix::fs::OFlags::NOFOLLOW.bits().cast_signed())
+        .open(path)
+        .map_err(|e| {
+            if e.raw_os_error() == Some(rustix::io::Errno::LOOP.raw_os_error()) {
+                format!(
+                    "{} is a symbolic link; configure the binary by its real path",
+                    path.display()
+                )
+            } else {
+                format!("cannot open {}: {e}", path.display())
+            }
+        })?;
     let meta = file
         .metadata()
         .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
@@ -151,7 +239,6 @@ pub(crate) fn check_binary(path: &Path, trusted_keys: &[String]) -> Result<Check
             path.display()
         ));
     }
-    let uid = rustix::process::geteuid().as_raw();
     if meta.uid() != 0 && meta.uid() != uid {
         return Err(format!(
             "{} is owned by uid {}, not by root or the user rdock runs as (uid {uid})",
@@ -162,47 +249,15 @@ pub(crate) fn check_binary(path: &Path, trusted_keys: &[String]) -> Result<Check
     if mode & 0o111 == 0 {
         return Err(format!("{} is not executable", path.display()));
     }
-    // Whoever may rename files in its directory could swap the binary after these checks and
-    // before it runs: the directory must be as private as the file (a sticky directory such as
-    // /tmp only lets a file's owner rename it).
-    let dir = path.parent().unwrap_or(Path::new("/"));
-    let dir_meta =
-        std::fs::metadata(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
-    let dir_mode = dir_meta.mode() & 0o7777;
-    if dir_meta.uid() != 0 && dir_meta.uid() != uid {
-        return Err(format!(
-            "its directory {} is owned by uid {}, not by root or the user rdock runs as (uid {uid})",
-            dir.display(),
-            dir_meta.uid()
-        ));
-    }
-    if dir_mode & 0o022 != 0 && dir_mode & 0o1000 == 0 {
-        return Err(format!(
-            "its directory {} is writable by its group or others (mode {dir_mode:o}), who could replace the file",
-            dir.display()
-        ));
-    }
     let keys = trusted_keys
         .iter()
         .map(|k| rdock_credentials::minisign::PublicKey::parse(k))
         .collect::<Result<Vec<_>, _>>()
         .map_err(|e| format!("upgrade.trusted_keys: {e}"))?;
-    let mut context = ring::digest::Context::new(&ring::digest::SHA256);
     let mut whole = Vec::new();
-    let mut buf = vec![0u8; 1 << 16];
-    loop {
-        let n = file
-            .read(&mut buf)
-            .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
-        if n == 0 {
-            break;
-        }
-        context.update(&buf[..n]);
-        if !keys.is_empty() {
-            whole.extend_from_slice(&buf[..n]);
-        }
-    }
-    let sha256 = hex(context.finish().as_ref());
+    file.read_to_end(&mut whole)
+        .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
+    let sha256 = hex(ring::digest::digest(&ring::digest::SHA256, &whole).as_ref());
     let signed_by = if keys.is_empty() {
         None
     } else {
@@ -225,16 +280,144 @@ pub(crate) fn check_binary(path: &Path, trusted_keys: &[String]) -> Result<Check
         path: path.to_owned(),
         sha256,
         signed_by,
+        elf: whole.starts_with(b"\x7fELF"),
+        file,
     })
 }
 
-/// Runs `<binary> validate <config>`; the configuration must have no errors.
-async fn validate_with(binary: &Path, source: &Source, timeout: Duration) -> Result<(), String> {
+/// A version as `rdock --version` prints it (`MAJOR.MINOR.PATCH`, an optional pre-release after
+/// `-`, build metadata after `+` ignored), ordered by Semantic Versioning 2.0.0 precedence.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct Version {
+    core: [u64; 3],
+    pre: Vec<String>,
+}
+
+impl Version {
+    pub(crate) fn parse(text: &str) -> Option<Self> {
+        let text = text.split('+').next()?;
+        let (core, pre) = match text.split_once('-') {
+            Some((core, pre)) => (core, Some(pre)),
+            None => (text, None),
+        };
+        let mut parts = core.split('.').map(|p| p.parse::<u64>().ok());
+        let core = [parts.next()??, parts.next()??, parts.next()??];
+        if parts.next().is_some() {
+            return None;
+        }
+        let pre = pre.map_or_else(Vec::new, |p| p.split('.').map(str::to_owned).collect());
+        if pre.iter().any(String::is_empty) {
+            return None;
+        }
+        Some(Self { core, pre })
+    }
+}
+
+impl PartialOrd for Version {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for Version {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        use std::cmp::Ordering;
+        self.core.cmp(&other.core).then_with(|| {
+            match (self.pre.is_empty(), other.pre.is_empty()) {
+                (true, true) => Ordering::Equal,
+                // A pre-release precedes its release.
+                (true, false) => Ordering::Greater,
+                (false, true) => Ordering::Less,
+                (false, false) => {
+                    for (a, b) in self.pre.iter().zip(&other.pre) {
+                        let order = match (a.parse::<u64>(), b.parse::<u64>()) {
+                            (Ok(x), Ok(y)) => x.cmp(&y),
+                            (Ok(_), Err(_)) => Ordering::Less,
+                            (Err(_), Ok(_)) => Ordering::Greater,
+                            (Err(_), Err(_)) => a.cmp(b),
+                        };
+                        if order != Ordering::Equal {
+                            return order;
+                        }
+                    }
+                    self.pre.len().cmp(&other.pre.len())
+                }
+            }
+        })
+    }
+}
+
+/// The version of the checked binary (`<binary> --version`, run from the checked file).
+async fn binary_version(checked: &Checked, timeout: Duration) -> Result<Version, String> {
+    let mut command = tokio::process::Command::from(checked.command());
+    command
+        .arg("--version")
+        .stdin(Stdio::null())
+        .kill_on_drop(true);
+    let output = tokio::time::timeout(timeout, command.output())
+        .await
+        .map_err(|_| {
+            format!(
+                "`{} --version` did not finish in time",
+                checked.path.display()
+            )
+        })?
+        .map_err(|e| format!("cannot run {}: {e}", checked.path.display()))?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut words = text.split_whitespace();
+    match (output.status.success(), words.next(), words.next()) {
+        (true, Some("rdock"), Some(version)) => Version::parse(version).ok_or_else(|| {
+            format!(
+                "{} reports an unreadable version `{version}`",
+                checked.path.display()
+            )
+        }),
+        _ => Err(format!(
+            "{} is not an rdock binary (`--version` printed `{}`)",
+            checked.path.display(),
+            text.trim()
+        )),
+    }
+}
+
+/// Refuses a binary older than the running one unless `allow_downgrade` (review fix L6): a
+/// signature proves who built a file, not that it is the newest release, and an older release
+/// signed by the same key may carry a fixed vulnerability.
+fn check_version(new: &Version, allow_downgrade: bool) -> Result<(), String> {
+    let running = Version::parse(env!("CARGO_PKG_VERSION"))
+        .ok_or_else(|| "the running version is unreadable".to_owned())?;
+    if *new < running && !allow_downgrade {
+        return Err(format!(
+            "the new binary is an older version ({}) than the running one ({}); pass `--allow-downgrade` to `rdock upgrade` to install it anyway",
+            display_version(new),
+            env!("CARGO_PKG_VERSION")
+        ));
+    }
+    Ok(())
+}
+
+fn display_version(v: &Version) -> String {
+    let core = format!("{}.{}.{}", v.core[0], v.core[1], v.core[2]);
+    if v.pre.is_empty() {
+        core
+    } else {
+        format!("{core}-{}", v.pre.join("."))
+    }
+}
+
+/// Runs `<binary> validate <config>` from the checked file; the configuration must have no
+/// errors.
+async fn validate_with(
+    checked: &Checked,
+    source: &Source,
+    timeout: Duration,
+) -> Result<(), String> {
+    let binary = &checked.path;
     let Source::File(config) = source else {
         // Zero-config mode has no file; the new process builds the same document.
         return Ok(());
     };
-    let mut command = tokio::process::Command::new(binary);
+    let mut command = tokio::process::Command::from(checked.command());
     command
         .arg("validate")
         .arg(config)
@@ -342,8 +525,24 @@ async fn attempt(cx: Context<'_>, trigger: &Trigger) -> Outcome {
         Err(_) => return refused("the binary check did not finish".into(), None),
     };
     let sha = checked.sha256.clone();
+    if !checked.elf {
+        return refused(
+            format!(
+                "{} is not an ELF executable; only a binary can run from the file that was checked",
+                checked.path.display()
+            ),
+            Some(&sha),
+        );
+    }
     let start_timeout = settings.start_timeout.as_std();
-    if let Err(error) = validate_with(&checked.path, cx.source, start_timeout).await {
+    let version = match binary_version(&checked, start_timeout).await {
+        Ok(version) => version,
+        Err(error) => return refused(error, Some(&sha)),
+    };
+    if let Err(error) = check_version(&version, trigger.allow_downgrade) {
+        return refused(error, Some(&sha));
+    }
+    if let Err(error) = validate_with(&checked, cx.source, start_timeout).await {
         return refused(error, Some(&sha));
     }
     let drain = settings.drain.get();
@@ -414,7 +613,8 @@ async fn spawn_and_hand_over(
 ) -> Result<Box<Draining>, String> {
     let (ours, theirs) =
         UnixStream::pair().map_err(|e| format!("cannot make a socket pair: {e}"))?;
-    let mut command = Command::new(&checked.path);
+    // The checked bytes run, not whatever `checked.path` names by now.
+    let mut command = checked.command();
     command
         .args(child_args(cx.args, cx.source))
         .stdin(Stdio::from(OwnedFd::from(theirs)));
@@ -681,6 +881,112 @@ mod tests {
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o1777)).unwrap();
         assert!(check_binary(&path, &[]).is_ok());
         std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    #[test]
+    fn a_symbolic_link_or_a_shared_ancestor_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let real = dir.path().join("real");
+        std::fs::create_dir(&real).unwrap();
+        let path = real.join("rdock");
+        std::fs::write(&path, b"\x7fELF").unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(check_binary(&path, &[]).is_ok());
+        // A link to the file, and a link to its directory.
+        let link = dir.path().join("link");
+        std::os::unix::fs::symlink(&path, &link).unwrap();
+        assert!(
+            check_binary(&link, &[])
+                .unwrap_err()
+                .contains("symbolic link")
+        );
+        let dir_link = dir.path().join("current");
+        std::os::unix::fs::symlink(&real, &dir_link).unwrap();
+        assert!(
+            check_binary(&dir_link.join("rdock"), &[])
+                .unwrap_err()
+                .contains("symbolic link")
+        );
+        // A directory above the file's own that others may write to.
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o777)).unwrap();
+        let err = check_binary(&path, &[]).unwrap_err();
+        assert!(err.contains("who could replace the file"), "{err}");
+        assert!(err.contains(&dir.path().display().to_string()), "{err}");
+        std::fs::set_permissions(dir.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    }
+
+    /// The first of `names` that exists: a small ELF program from the system.
+    fn system_program(names: &[&str]) -> PathBuf {
+        names
+            .iter()
+            .map(PathBuf::from)
+            .find(|p| p.exists())
+            .unwrap_or_else(|| panic!("none of {names:?}"))
+    }
+
+    #[test]
+    fn the_checked_bytes_run_even_when_the_file_is_swapped() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("true");
+        std::fs::copy(system_program(&["/usr/bin/true", "/bin/true"]), &path).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let checked = check_binary(&path, &[]).unwrap();
+        assert!(checked.elf);
+        // After the checks, another program takes the path's name (a rename, as whoever may
+        // write to a directory could do).
+        let other = dir.path().join("swap");
+        std::fs::copy(system_program(&["/usr/bin/false", "/bin/false"]), &other).unwrap();
+        std::fs::set_permissions(&other, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::rename(&other, &path).unwrap();
+        let swapped = check_binary(&path, &[]).unwrap();
+        assert_ne!(
+            swapped.sha256, checked.sha256,
+            "the file at the path changed"
+        );
+        // What runs is what was checked: `true`, not the `false` now at the path.
+        let status = checked.command().status().unwrap();
+        assert!(status.success(), "the swapped file ran: {status}");
+        let status = swapped.command().status().unwrap();
+        assert!(!status.success());
+    }
+
+    #[test]
+    fn a_fault_marker_reaches_only_the_child() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("rdock");
+        assert_eq!(child_fault(&path), None);
+        std::fs::write(dir.path().join("rdock.fault"), "exit-before-ready\n").unwrap();
+        assert_eq!(child_fault(&path).as_deref(), Some("exit-before-ready"));
+    }
+
+    #[test]
+    fn versions_follow_semver_precedence_and_downgrades_need_a_flag() {
+        let v = |s: &str| Version::parse(s).unwrap();
+        let ordered = [
+            "0.8.0-alpha.1",
+            "0.8.0-alpha.2",
+            "0.8.0-alpha.10",
+            "0.8.0-beta",
+            "0.8.0-rc.1",
+            "0.8.0",
+            "0.8.1",
+            "0.9.0-alpha.1",
+            "1.0.0",
+        ];
+        for pair in ordered.windows(2) {
+            assert!(v(pair[0]) < v(pair[1]), "{} < {}", pair[0], pair[1]);
+        }
+        assert_eq!(v("1.2.3+build.5"), v("1.2.3"));
+        assert!(Version::parse("1.2").is_none());
+        assert!(Version::parse("1.2.x").is_none());
+        assert!(Version::parse("1.2.3-").is_none());
+        let running = v(env!("CARGO_PKG_VERSION"));
+        assert!(check_version(&running, false).is_ok());
+        let older = v("0.0.1");
+        let err = check_version(&older, false).unwrap_err();
+        assert!(err.contains("--allow-downgrade"), "{err}");
+        assert!(check_version(&older, true).is_ok());
+        assert!(check_version(&v("999.0.0"), false).is_ok());
     }
 
     #[test]

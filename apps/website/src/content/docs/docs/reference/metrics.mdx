@@ -155,9 +155,11 @@ in progress). Label: `listener`.
 
 **Counter.** QUIC connections that ended or were refused. Labels: `listener` and `reason`: `idle`
 (`max_idle` passed), `client` (the client closed it), `drained` (GOAWAY sent, last request done),
-`limit` (`max_connections`), `client_limit` (`max_connections_per_client`), `handshake` (failed or
-not done within `timeouts.request_header`), `protocol` (a QUIC or HTTP/3 error) and `reset_flood`
-(too many streams reset by the client).
+`limit` (`max_connections`), `client_limit` (`max_connections_per_client`, for a client whose
+address is validated), `handshake` (failed or not done within `timeouts.request_header`),
+`protocol` (a QUIC or HTTP/3 error), `frame_limit` (a control frame over its size limit, the
+connection's incomplete frames over `receive_window`, or a frame that did not arrive within
+`timeouts.request_header`) and `reset_flood` (too many streams reset or stopped by the client).
 
 ### `rdock_http3_malformed_requests_total`
 

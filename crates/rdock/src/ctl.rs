@@ -231,7 +231,7 @@ pub(crate) fn upgrade(args: &crate::UpgradeArgs) -> anyhow::Result<ExitCode> {
     let timeout = Duration::from_secs(30 * 60);
     stream.set_read_timeout(Some(timeout))?;
     stream.set_write_timeout(Some(TIMEOUT))?;
-    let body = match &args.binary {
+    let mut body = match &args.binary {
         Some(binary) => {
             let absolute = std::path::absolute(binary)
                 .with_context(|| format!("resolving {}", binary.display()))?;
@@ -239,6 +239,9 @@ pub(crate) fn upgrade(args: &crate::UpgradeArgs) -> anyhow::Result<ExitCode> {
         }
         None => serde_json::json!({}),
     };
+    if args.allow_downgrade {
+        body["allow_downgrade"] = serde_json::Value::Bool(true);
+    }
     let answer = exchange(
         stream,
         &Call::new("POST", "/api/v1/upgrade").json(&body),
