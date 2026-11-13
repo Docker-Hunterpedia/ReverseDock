@@ -618,14 +618,41 @@ async fn validate(
     }
 }
 
+/// Connects to a validation target. A refused connection is retried for a while: it means the
+/// instance is not listening yet, which says nothing about whether the answer was replicated.
+/// An instance that was down gets two more seconds after it starts listening, as a load
+/// balancer's health check would give it, before it is asked. An instance that listens and
+/// lacks the answer still fails the validation.
+async fn connect(target: SocketAddr) -> Result<tokio::net::TcpStream, String> {
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(30);
+    let mut was_down = false;
+    loop {
+        let attempt = tokio::time::timeout(
+            Duration::from_secs(5),
+            tokio::net::TcpStream::connect(target),
+        )
+        .await
+        .map_err(|_| "connect timed out".to_owned())?;
+        match attempt {
+            Ok(tcp) if !was_down => return Ok(tcp),
+            Ok(_) => {
+                was_down = false;
+                tokio::time::sleep(Duration::from_secs(2)).await;
+            }
+            Err(e)
+                if e.kind() == std::io::ErrorKind::ConnectionRefused
+                    && tokio::time::Instant::now() < deadline =>
+            {
+                was_down = true;
+                tokio::time::sleep(Duration::from_millis(100)).await;
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+}
+
 async fn fetch_http01(target: SocketAddr, host: &str, token: &str) -> Result<String, String> {
-    let tcp = tokio::time::timeout(
-        Duration::from_secs(5),
-        tokio::net::TcpStream::connect(target),
-    )
-    .await
-    .map_err(|_| "connect timed out".to_owned())?
-    .map_err(|e| e.to_string())?;
+    let tcp = connect(target).await?;
     let (mut sender, connection) = hyper::client::conn::http1::handshake(TokioIo::new(tcp))
         .await
         .map_err(|e| e.to_string())?;
@@ -702,9 +729,7 @@ async fn check_tls_alpn01(target: SocketAddr, name: &str, digest: &[u8]) -> Resu
         .with_no_client_auth();
     config.alpn_protocols = vec![b"acme-tls/1".to_vec()];
     let connector = tokio_rustls::TlsConnector::from(Arc::new(config));
-    let tcp = tokio::net::TcpStream::connect(target)
-        .await
-        .map_err(|e| e.to_string())?;
+    let tcp = connect(target).await?;
     let server_name =
         rustls_pki_types::ServerName::try_from(name.to_owned()).map_err(|e| e.to_string())?;
     let tls = tokio::time::timeout(Duration::from_secs(5), connector.connect(server_name, tcp))
