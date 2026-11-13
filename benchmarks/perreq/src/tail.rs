@@ -114,6 +114,7 @@ pub(crate) async fn run(args: TailArgs) -> anyhow::Result<()> {
     let start = Instant::now() + lead;
     let end = start + Duration::from_secs(args.duration);
     // The burst process, told when to start relative to its own start.
+    // nosemgrep: rust.lang.security.current-exe.current-exe -- a benchmark tool starting a second copy of itself as the load source; no security decision depends on the path
     let exe = std::env::current_exe()?;
     let mut burst = match &args.burst_cpus {
         Some(cpus) => {
