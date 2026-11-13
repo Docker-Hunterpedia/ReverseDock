@@ -1414,9 +1414,10 @@ export type RdockClusterControl = {
  *
  * Each instance claims a part of each key's budget from the store ahead of use and admits
  * requests against what it claimed, so the request path never waits on the store. The
- * cluster admits at most `L + N × c` per key and window, where `L` is the limit, `N` the
- * number of instances and `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the headroom an
- * instance may use beyond its claims.
+ * cluster admits at most `L + N × max(c, ⌈L / N⌉)` per key and window, where `L` is the
+ * limit, `N` the number of instances, `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the
+ * headroom an instance may use beyond its claims, and `⌈L / N⌉` what an instance admits for a
+ * key new to it until its first claim returns.
  */
 export type RdockClusterLimits = {
     /**
@@ -4616,7 +4617,8 @@ export type RdockRedirectScheme = 'http' | 'https';
 
 /**
  * A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses
- * `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `AUTH`, `SELECT` and
+ * `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `TIME` (membership is
+ * judged by the server's clock; without it, by each instance's), `AUTH`, `SELECT` and
  * `PING`.
  */
 export type RdockRedisStore = {

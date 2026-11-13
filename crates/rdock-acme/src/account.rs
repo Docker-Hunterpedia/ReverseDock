@@ -81,7 +81,9 @@ impl Accounts {
                     eab.as_ref(),
                 )
                 .await?;
-            let saved = storage.save_account(&directory, &credentials).await;
+            let saved = storage
+                .save_account(&directory, &credentials, Some(&lease))
+                .await;
             if let Err(e) = saved {
                 let _ = storage.store().release(&lease).await;
                 return Err(e.into());

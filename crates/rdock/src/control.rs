@@ -474,7 +474,9 @@ async fn serve(
         listener,
         stop_rx.clone(),
     ));
-    let events = plane.events();
+    let events = plane
+        .take_events()
+        .context("the rollout events are taken once")?;
     tokio::spawn(plane.clone().drive(stop_rx.clone()));
     let metrics = Metrics::new(VERSION, COMMIT).context("registering metrics")?;
     let admin = ControlAdmin {
@@ -533,7 +535,7 @@ async fn serve(
 /// Writes the rollout's automatic steps that need an operator's attention (a halt) and its
 /// completion to the audit log, as the control plane (actor `rdock-control`).
 async fn audit_rollouts(
-    mut events: tokio::sync::broadcast::Receiver<rdock_control::rollout::Event>,
+    mut events: tokio::sync::mpsc::UnboundedReceiver<rdock_control::rollout::Event>,
     admin: Arc<rdock_admin::Running>,
     mut stop: watch::Receiver<bool>,
 ) {
@@ -544,10 +546,8 @@ async fn audit_rollouts(
             _ = stop.changed() => return,
             received = events.recv() => received,
         };
-        let event = match received {
-            Ok(event) => event,
-            Err(tokio::sync::broadcast::error::RecvError::Lagged(_)) => continue,
-            Err(tokio::sync::broadcast::error::RecvError::Closed) => return,
+        let Some(event) = received else {
+            return;
         };
         let record = match event {
             Step::Halted { revision, halt } => Event {

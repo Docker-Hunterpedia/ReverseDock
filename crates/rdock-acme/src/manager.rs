@@ -129,7 +129,9 @@ impl Manager {
 
     /// Replaces the plan; the manager starts working on it at once. An unchanged plan is
     /// ignored.
-    pub fn update(&self, plan: Plan) {
+    pub fn update(&self, mut plan: Plan) {
+        // Two requests with one first name would share a store entry and a lease.
+        plan.requests = CertRequest::merge_shared_first_names(std::mem::take(&mut plan.requests));
         self.plans.send_if_modified(|current| {
             if current.as_deref() == Some(&plan) {
                 return false;
@@ -179,7 +181,7 @@ impl Worker {
     ) {
         self.holder = self.services.cluster.as_ref().map_or_else(
             || format!("local-{}", std::process::id()),
-            |c| c.instance.clone(),
+            ClusterAcme::lease_holder,
         );
         if let Some(cluster) = &self.services.cluster {
             cluster.start_replication(self.services.challenges.clone());
@@ -349,7 +351,7 @@ impl Worker {
                     let (start, end) = (window.start.unix_timestamp(), window.end.unix_timestamp());
                     state.apply_window(start, end, retry_after, spread());
                     if let Some(first) = names.first() {
-                        share_window(storage, first, state, start, end).await;
+                        share_window(storage, first, state, start, end, &self.holder).await;
                     }
                 }
                 Err(instant_acme::Error::Unsupported(_)) => state.ari_failed(true),
@@ -411,7 +413,7 @@ impl Worker {
                     .filter(|_| state.is_some_and(|s| s.failures > 0)),
                 profile: profile.clone(),
                 account: account.clone(),
-                answers: self.answer_sink(),
+                answers: self.answer_sinks(),
                 limit: limit.clone(),
                 storage: storage.clone(),
                 holder: self.holder.clone(),
@@ -461,12 +463,10 @@ impl Worker {
     }
 
     /// Where this instance's orders publish challenge answers.
-    fn answer_sink(&self) -> Arc<dyn AnswerSink> {
-        match &self.services.cluster {
-            Some(cluster) => cluster.answers(self.services.challenges.clone()),
-            None => Arc::new(crate::issue::LocalAnswers::new(
-                self.services.challenges.clone(),
-            )),
+    fn answer_sinks(&self) -> Sinks {
+        Sinks {
+            cluster: self.services.cluster.clone(),
+            challenges: self.services.challenges.clone(),
         }
     }
 
@@ -599,8 +599,47 @@ impl Worker {
 }
 
 /// Stores the renewal moment chosen inside a window with the certificate, unless another
-/// instance chose one for the same window first: then that one is used.
-async fn share_window(storage: &Storage, first: &str, state: &mut CertState, start: i64, end: i64) {
+/// instance chose one for the same window first: then that one is used. The write is made
+/// under the certificate's lease, like every write of a certificate's files (a control plane's
+/// store refuses it otherwise); while another instance holds the lease the moment is not
+/// shared this time.
+async fn share_window(
+    storage: &Storage,
+    first: &str,
+    state: &mut CertState,
+    start: i64,
+    end: i64,
+    holder: &str,
+) {
+    if state.ari_renew_at.is_none() {
+        return;
+    }
+    let store = storage.store().clone();
+    let lease = match store
+        .acquire(&cert_lease(first), holder, Duration::from_secs(30))
+        .await
+    {
+        Ok(Some(lease)) => lease,
+        Ok(None) => return,
+        Err(e) => {
+            warn!(certificate = %first, error = %e, "cannot share the renewal time");
+            return;
+        }
+    };
+    share_window_under(storage, first, state, start, end, &lease).await;
+    if let Err(e) = store.release(&lease).await {
+        warn!(certificate = %first, error = %e, "cannot release the certificate lease");
+    }
+}
+
+async fn share_window_under(
+    storage: &Storage,
+    first: &str,
+    state: &mut CertState,
+    start: i64,
+    end: i64,
+    lease: &Lease,
+) {
     let Some(mine) = state.ari_renew_at else {
         return;
     };
@@ -629,7 +668,10 @@ async fn share_window(storage: &Storage, first: &str, state: &mut CertState, sta
             end,
             renew_at: mine,
         });
-        match storage.save_meta(first, &meta, stored.version).await {
+        match storage
+            .save_meta(first, &meta, stored.version, Some(lease))
+            .await
+        {
             Ok(version) => {
                 state.meta_version = version;
                 return;
@@ -683,6 +725,21 @@ impl Drop for LeaseKeeper {
     }
 }
 
+/// Makes the answer sink of an order once its lease is held.
+struct Sinks {
+    cluster: Option<ClusterAcme>,
+    challenges: Arc<Challenges>,
+}
+
+impl Sinks {
+    fn sink(&self, lease: &Lease) -> Arc<dyn AnswerSink> {
+        match &self.cluster {
+            Some(cluster) => cluster.answers(self.challenges.clone(), lease.clone()),
+            None => Arc::new(crate::issue::LocalAnswers::new(self.challenges.clone())),
+        }
+    }
+}
+
 /// One order, run on its own task.
 struct Job {
     types: Vec<ChallengeType>,
@@ -691,7 +748,7 @@ struct Job {
     staging: Option<Account>,
     profile: Option<String>,
     account: Account,
-    answers: Arc<dyn AnswerSink>,
+    answers: Sinks,
     limit: Arc<Semaphore>,
     storage: Storage,
     holder: String,
@@ -744,7 +801,14 @@ impl Job {
             }
         };
         let keeper = LeaseKeeper::start(store.clone(), lease.clone(), self.lease_ttl);
-        let outcome = self.under_lease(names, first, &lease, &keeper).await;
+        if let Some(cluster) = &self.answers.cluster {
+            // What an earlier holder of this name left is withdrawn first (review finding M2).
+            cluster.withdraw_leftovers(&lease).await;
+        }
+        let answers = self.answers.sink(&lease);
+        let outcome = self
+            .under_lease(names, first, &lease, &keeper, &answers)
+            .await;
         if keeper.lost() {
             count("lost");
         }
@@ -761,13 +825,16 @@ impl Job {
         first: &str,
         lease: &Lease,
         keeper: &LeaseKeeper,
+        answers: &Arc<dyn AnswerSink>,
     ) -> Outcome {
-        // Someone may have stored a certificate while this instance waited for the lease.
-        let stored = match self.storage.load_cert(first).await {
-            Ok(stored) => stored.filter(|s| s.meta.names == names),
+        // Someone may have stored a certificate while this instance waited for the lease. The
+        // compare-and-swap below is against the version of `meta.json` read here, whatever it
+        // describes (other names, a chain stored nowhere): such a file is replaced, never a
+        // reason to fail (review finding H1).
+        let (meta_version, stored) = match self.storage.read_cert(first).await {
+            Ok((version, stored)) => (version, stored.filter(|s| s.meta.names == names)),
             Err(e) => return Outcome::Failed(format!("cannot read the certificate store: {e}")),
         };
-        let meta_version = stored.as_ref().map_or(0, |s| s.version);
         if let Some(stored) = stored {
             // Another instance stored a certificate this one has not loaded, or the stored one
             // is not due by the shared renewal time: use it. Only an operator's renewal of the
@@ -786,7 +853,7 @@ impl Job {
                 replaces: None,
                 dns: self.dns.as_ref(),
             };
-            let challenges = self.answers.clone();
+            let challenges = answers.clone();
             let key = match KeyPair::generate() {
                 Ok(key) => key,
                 Err(e) => return Outcome::Failed(e.to_string()),
@@ -808,7 +875,7 @@ impl Job {
             replaces: self.replaces.as_ref(),
             dns: self.dns.as_ref(),
         };
-        let (chain_pem, key_pem) = match self.order(names, first, spec, lease).await {
+        let (chain_pem, key_pem) = match self.order(names, first, spec, lease, answers).await {
             Ok(issued) => issued,
             Err(e) => return Outcome::Failed(e),
         };
@@ -837,7 +904,9 @@ impl Job {
             Ok(_) => {}
             Err(StorageError::Store(StoreError::Conflict { .. })) => {
                 // Only possible when the store's fencing is best effort: another writer won.
-                if let Ok(Some(stored)) = self.storage.load_cert(first).await {
+                if let Ok(Some(stored)) = self.storage.load_cert(first).await
+                    && stored.meta.names == names
+                {
                     return Outcome::Adopted(stored);
                 }
                 return Outcome::Failed(
@@ -866,10 +935,11 @@ impl Job {
         first: &str,
         spec: OrderSpec<'_>,
         lease: &Lease,
+        answers: &Arc<dyn AnswerSink>,
     ) -> Result<(String, String), String> {
         match self.storage.load_order(first).await {
             Ok(Some(journal)) if journal.directory == self.directory && journal.names == names => {
-                match self.resume(&journal, spec).await {
+                match self.resume(&journal, spec, answers.as_ref()).await {
                     Resumed::Done(chain) => return Ok((chain, journal.key_pem)),
                     Resumed::Retry(e) => return Err(e),
                     Resumed::Abandon(reason) => {
@@ -906,7 +976,7 @@ impl Job {
             .save_order(first, &journal, Some(lease))
             .await
             .map_err(|e| format!("cannot journal the order: {e}"))?;
-        match complete(&mut order, spec, self.answers.as_ref(), &key).await {
+        match complete(&mut order, spec, answers.as_ref(), &key).await {
             Ok(chain) => Ok((chain, journal.key_pem)),
             Err(e @ IssueError::Invalid(_)) => {
                 let _ = self.storage.delete_order(first, Some(lease)).await;
@@ -916,7 +986,12 @@ impl Job {
         }
     }
 
-    async fn resume(&self, journal: &OrderJournal, spec: OrderSpec<'_>) -> Resumed {
+    async fn resume(
+        &self,
+        journal: &OrderJournal,
+        spec: OrderSpec<'_>,
+        answers: &dyn AnswerSink,
+    ) -> Resumed {
         let key = match KeyPair::from_pem(&journal.key_pem) {
             Ok(key) => key,
             Err(e) => return Resumed::Abandon(format!("the journalled key is unusable: {e}")),
@@ -929,7 +1004,7 @@ impl Job {
             Err(e) => return Resumed::Retry(format!("cannot fetch the journalled order: {e}")),
         };
         info!(names = ?journal.names, url = %journal.url, by = %journal.created_by, "resuming the journalled order");
-        match complete(&mut order, spec, self.answers.as_ref(), &key).await {
+        match complete(&mut order, spec, answers, &key).await {
             Ok(chain) => Resumed::Done(chain),
             Err(IssueError::Invalid(reason)) => Resumed::Abandon(reason),
             Err(e) => Resumed::Retry(e.to_string()),

@@ -120,7 +120,7 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         &mut out,
     );
     let udp_pools = crate::udp::compile_udp(config, env, &mut listeners, geoip.as_ref(), &mut out);
-    let cert_requests = auto_tls.requests.into_iter().collect();
+    let cert_requests = CertRequest::merge_shared_first_names(auto_tls.requests);
     let local_cert_names = auto_tls.local.into_iter().collect();
     let metering = start_metering(config, env, &mut out);
     let runtime = (!out.iter().any(Diagnostic::is_error)).then(|| Runtime {

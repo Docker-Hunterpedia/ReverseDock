@@ -6,6 +6,7 @@
 //! bundle and the agent retries with backoff.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 use std::time::Duration;
 
@@ -63,13 +64,27 @@ pub struct AgentSettings {
     pub version: String,
 }
 
-/// `identity.json` beside the key and certificate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+/// `identity.json`: who this instance is, with its key, certificate and the cluster CA in one
+/// file, so a crash while it is written leaves the previous identity or the new one, never a
+/// key that does not match its certificate (review finding L4). Identities written before held
+/// the PEM files beside it (`key.pem`, `cert.pem`, `ca.pem`); those still load.
+#[derive(Clone, Serialize, Deserialize)]
 struct IdentityFile {
     cluster_id: String,
     instance: String,
     not_after: i64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    ca_pem: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    cert_pem: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    key_pem: Option<String>,
 }
+
+/// The key an enrolment is made with, kept until the identity is saved, so a retry after a
+/// lost answer or a crash asks with the same key and gets the same instance (review finding
+/// L2).
+const ENROLMENT_KEY: &str = "enroll-key.pem";
 
 /// The enrolled identity: who this instance is in which cluster, with its key and certificate.
 #[derive(Clone)]
@@ -120,9 +135,16 @@ impl Identity {
         };
         let meta: IdentityFile = serde_json::from_str(&file)
             .map_err(|e| AgentError::Identity(format!("{}/identity.json: {e}", dir.display())))?;
-        let (ca_pem, cert_pem, key_pem) = (read("ca.pem"), read("cert.pem"), read("key.pem"));
-        match (ca_pem, cert_pem, key_pem) {
-            (Ok(ca_pem), Ok(cert_pem), Ok(key_pem)) => Ok(Some(Self {
+        let pems = match (meta.ca_pem, meta.cert_pem, meta.key_pem) {
+            (Some(ca), Some(cert), Some(key)) => Ok((ca, cert, key)),
+            // An identity written by an earlier version: the PEM files beside it.
+            _ => match (read("ca.pem"), read("cert.pem"), read("key.pem")) {
+                (Ok(ca), Ok(cert), Ok(key)) => Ok((ca, cert, key)),
+                _ => Err(()),
+            },
+        };
+        match pems {
+            Ok((ca_pem, cert_pem, key_pem)) => Ok(Some(Self {
                 cluster_id: meta.cluster_id,
                 instance: meta.instance,
                 not_after: meta.not_after,
@@ -130,26 +152,38 @@ impl Identity {
                 cert_pem,
                 key_pem,
             })),
-            _ => Err(AgentError::Identity(format!(
+            Err(()) => Err(AgentError::Identity(format!(
                 "the identity in {} is incomplete; remove the directory and enrol again",
                 dir.display()
             ))),
         }
     }
 
+    /// Writes the identity as one file, mode 0600, replaced atomically.
     fn save(&self, dir: &Path) -> Result<(), AgentError> {
         let fail = |e: std::io::Error| AgentError::Identity(format!("{}: {e}", dir.display()));
-        crate::dir::write_private(&dir.join("key.pem"), self.key_pem.as_bytes()).map_err(fail)?;
-        crate::dir::write_private(&dir.join("cert.pem"), self.cert_pem.as_bytes()).map_err(fail)?;
-        crate::dir::write_private(&dir.join("ca.pem"), self.ca_pem.as_bytes()).map_err(fail)?;
-        let meta = IdentityFile {
+        let file = IdentityFile {
             cluster_id: self.cluster_id.clone(),
             instance: self.instance.clone(),
             not_after: self.not_after,
+            ca_pem: Some(self.ca_pem.clone()),
+            cert_pem: Some(self.cert_pem.clone()),
+            key_pem: Some(self.key_pem.clone()),
         };
         let json =
-            serde_json::to_vec_pretty(&meta).map_err(|e| AgentError::Identity(e.to_string()))?;
-        crate::dir::write_private(&dir.join("identity.json"), &json).map_err(fail)
+            serde_json::to_vec_pretty(&file).map_err(|e| AgentError::Identity(e.to_string()))?;
+        crate::dir::write_private(&dir.join("identity.json"), &json).map_err(fail)?;
+        // The files of earlier versions and the enrolment key are no longer needed.
+        for old in ["key.pem", "cert.pem", "ca.pem", ENROLMENT_KEY] {
+            let _ = std::fs::remove_file(dir.join(old));
+        }
+        Ok(())
+    }
+
+    /// Whether the client certificate has expired: the control plane refuses it in the TLS
+    /// handshake, which a data plane would otherwise see as an unreachable control plane.
+    fn expired(&self, now: i64) -> bool {
+        self.not_after <= now
     }
 
     /// Whether a third or less of the certificate's life is left.
@@ -171,11 +205,61 @@ impl Identity {
 /// A new key and a signing request for it.
 fn key_and_csr() -> Result<(String, String), AgentError> {
     let key = rcgen::KeyPair::generate().map_err(|e| AgentError::Identity(e.to_string()))?;
+    csr_for(&key.serialize_pem())
+}
+
+/// A signing request for the key `key_pem`.
+fn csr_for(key_pem: &str) -> Result<(String, String), AgentError> {
+    let key = rcgen::KeyPair::from_pem(key_pem).map_err(|e| AgentError::Identity(e.to_string()))?;
     let csr = rcgen::CertificateParams::new(Vec::<String>::new())
         .and_then(|p| p.serialize_request(&key))
         .and_then(|r| r.pem())
         .map_err(|e| AgentError::Identity(e.to_string()))?;
-    Ok((key.serialize_pem(), csr))
+    Ok((key_pem.to_owned(), csr))
+}
+
+/// The enrolment key: the one kept from an earlier attempt, or a new one, written (mode 0600)
+/// before anything is sent.
+fn enrolment_key(dir: &Path) -> Result<String, AgentError> {
+    let path = dir.join(ENROLMENT_KEY);
+    if let Ok(pem) = std::fs::read_to_string(&path)
+        && rcgen::KeyPair::from_pem(&pem).is_ok()
+    {
+        return Ok(pem);
+    }
+    let key = rcgen::KeyPair::generate().map_err(|e| AgentError::Identity(e.to_string()))?;
+    let pem = key.serialize_pem();
+    crate::dir::write_private(&path, pem.as_bytes())
+        .map_err(|e| AgentError::Identity(format!("{}: {e}", path.display())))?;
+    Ok(pem)
+}
+
+/// Warns once when this instance's clock differs from the control plane's (the
+/// [`crate::protocol::TIME_HEADER`] of an answer received at `now_ms`) by more than
+/// [`crate::protocol::CLOCK_SKEW_WARNING`]: leases on a shared directory, limit windows and
+/// member counts assume clocks within a few seconds (review finding M6).
+fn check_clock(server_ms: Option<u64>, checked: &AtomicBool) {
+    let Some(server_ms) = server_ms else {
+        return;
+    };
+    if checked.swap(true, Ordering::Relaxed) {
+        return;
+    }
+    let now = crate::clock::Clock::now_ms(&crate::clock::SystemClock);
+    let skew = now.abs_diff(server_ms);
+    let limit = u64::try_from(crate::protocol::CLOCK_SKEW_WARNING.as_millis()).unwrap_or(0);
+    if skew > limit {
+        let direction = if now > server_ms {
+            "ahead of"
+        } else {
+            "behind"
+        };
+        warn!(
+            skew_ms = skew,
+            "this instance's clock is {} s {direction} the control plane's; cluster-scoped limits, member counts and leases on a shared directory assume clocks within a few seconds of each other: synchronise the clocks (NTP)",
+            skew / 1000
+        );
+    }
 }
 
 /// Accepts the control plane when its chain holds a CA certificate with the pinned digest
@@ -315,14 +399,14 @@ fn https_client(
     Ok(Client::builder(TokioExecutor::new()).build(connector))
 }
 
-/// One call: status and body, within `limit`.
+/// One call: status, body and the control plane's clock, within `limit`.
 async fn call(
     client: &HttpsClient,
     method: Method,
     url: &str,
     body: Option<Vec<u8>>,
     limit: Duration,
-) -> Result<(StatusCode, Bytes), AgentError> {
+) -> Result<(StatusCode, Bytes, Option<u64>), AgentError> {
     let mut builder = Request::builder().method(method).uri(url);
     if body.is_some() {
         builder = builder.header("content-type", "application/json");
@@ -346,12 +430,17 @@ async fn call(
             }
         })?;
     let status = response.status();
+    let server_ms = response
+        .headers()
+        .get(crate::protocol::TIME_HEADER)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.parse::<u64>().ok());
     let bytes = tokio::time::timeout(limit, response.into_body().collect())
         .await
         .map_err(|_| AgentError::Unreachable("timed out reading the answer".to_owned()))?
         .map_err(|e| AgentError::Unreachable(e.to_string()))?
         .to_bytes();
-    Ok((status, bytes))
+    Ok((status, bytes, server_ms))
 }
 
 fn refusal(status: StatusCode, body: &Bytes) -> AgentError {
@@ -373,6 +462,8 @@ pub struct Channel {
     client: Arc<Mutex<HttpsClient>>,
     identity: Arc<Mutex<Identity>>,
     settings: AgentSettings,
+    /// Whether the clocks were compared (on the first answer).
+    clock_checked: Arc<AtomicBool>,
 }
 
 impl std::fmt::Debug for Channel {
@@ -386,12 +477,13 @@ impl std::fmt::Debug for Channel {
 /// Loads the identity, or enrols with the join token (retrying with backoff while the control
 /// plane cannot be reached; a refused token is final).
 pub async fn connect(settings: AgentSettings) -> Result<Channel, AgentError> {
+    let clock_checked = Arc::new(AtomicBool::new(false));
     let identity = if let Some(identity) = Identity::load(&settings.identity_dir)? {
         identity
     } else {
         let mut delay = Duration::from_millis(500);
         loop {
-            match enroll(&settings).await {
+            match enroll(&settings, &clock_checked).await {
                 Ok(identity) => break identity,
                 Err(AgentError::Unreachable(e)) => {
                     warn!(error = %e, retry_in = ?delay, "cannot reach the control plane to enrol; trying again");
@@ -412,17 +504,18 @@ pub async fn connect(settings: AgentSettings) -> Result<Channel, AgentError> {
         client: Arc::new(Mutex::new(client)),
         identity: Arc::new(Mutex::new(identity)),
         settings,
+        clock_checked,
     })
 }
 
-async fn enroll(settings: &AgentSettings) -> Result<Identity, AgentError> {
+async fn enroll(settings: &AgentSettings, clock: &AtomicBool) -> Result<Identity, AgentError> {
     let token = settings.join_token.clone().ok_or_else(|| {
         AgentError::Identity(
             "this instance is not enrolled: set `cluster.control.join_token` (from `rdock control token create`)".to_owned(),
         )
     })?;
     let client = https_client(settings.ca_pem.as_deref(), settings.ca_pin.as_deref(), None)?;
-    let (key_pem, csr_pem) = key_and_csr()?;
+    let (key_pem, csr_pem) = csr_for(&enrolment_key(&settings.identity_dir)?)?;
     let request = EnrollRequest {
         token,
         csr_pem,
@@ -432,7 +525,7 @@ async fn enroll(settings: &AgentSettings) -> Result<Identity, AgentError> {
     let body = serde_json::to_vec(&request).map_err(|e| AgentError::Identity(e.to_string()))?;
     drop(request);
     let url = format!("{}/cluster/v1/enroll", settings.url.trim_end_matches('/'));
-    let (status, bytes) = call(
+    let (status, bytes, server_ms) = call(
         &client,
         Method::POST,
         &url,
@@ -440,6 +533,10 @@ async fn enroll(settings: &AgentSettings) -> Result<Identity, AgentError> {
         Duration::from_secs(30),
     )
     .await?;
+    check_clock(server_ms, clock);
+    if status == StatusCode::SERVICE_UNAVAILABLE {
+        return Err(AgentError::Unreachable(refusal(status, &bytes).to_string()));
+    }
     if !status.is_success() {
         return Err(refusal(status, &bytes));
     }
@@ -546,14 +643,16 @@ impl Channel {
         limit: Duration,
     ) -> Result<(StatusCode, Bytes), AgentError> {
         let body = serde_json::to_vec(value).map_err(|e| AgentError::Identity(e.to_string()))?;
-        call(
+        let (status, bytes, server_ms) = call(
             &self.client(),
             Method::POST,
             &format!("{}{path}", self.url),
             Some(body),
             limit,
         )
-        .await
+        .await?;
+        check_clock(server_ms, &self.clock_checked);
+        Ok((status, bytes))
     }
 
     /// Renews the client certificate when a third of its life or less is left.
@@ -645,6 +744,15 @@ impl Channel {
     }
 
     async fn once(&self, sink: &dyn BundleSink) -> Result<(), AgentError> {
+        let identity = self.identity();
+        if identity.expired(unix_now()) {
+            return Err(AgentError::Refused(format!(
+                "the cluster certificate of `{}` expired (Unix time {}); this instance must enrol again: remove the identity in {} and set `cluster.control.join_token` to a new token from `rdock control token create`",
+                identity.instance,
+                identity.not_after,
+                self.settings.identity_dir.display()
+            )));
+        }
         if let Err(e) = self.renew_if_due().await {
             warn!(error = %e, "cannot renew the cluster certificate");
             if matches!(e, AgentError::Refused(_)) {
@@ -658,7 +766,7 @@ impl Channel {
             sink.serving(),
             wait.as_secs()
         );
-        let (status, bytes) = call(
+        let (status, bytes, server_ms) = call(
             &self.client(),
             Method::GET,
             &url,
@@ -666,6 +774,7 @@ impl Channel {
             wait + Duration::from_secs(15),
         )
         .await?;
+        check_clock(server_ms, &self.clock_checked);
         if status == StatusCode::NO_CONTENT {
             return Ok(());
         }
@@ -722,7 +831,7 @@ impl Channel {
                 self.url,
                 wait.as_secs()
             );
-            let (status, bytes) = call(
+            let (status, bytes, _) = call(
                 &self.client(),
                 Method::GET,
                 &url,
@@ -788,6 +897,7 @@ impl RemoteStore {
                 },
                 "lost" => StoreError::Lost(message),
                 "invalid_key" => StoreError::InvalidKey(message),
+                "forbidden" => StoreError::Forbidden(message),
                 _ => StoreError::Backend(message),
             }),
             other => Ok(other),
@@ -954,6 +1064,59 @@ mod tests {
             rollback_of: None,
             document,
         }
+    }
+
+    /// Review findings L4 and L2: the identity is one file, mode 0600, replacing the previous
+    /// one atomically; an identity of the earlier layout (PEM files beside `identity.json`)
+    /// still loads; the enrolment key is kept until the identity is saved.
+    #[test]
+    fn the_identity_is_one_private_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let key = enrolment_key(dir.path()).unwrap();
+        assert_eq!(enrolment_key(dir.path()).unwrap(), key, "kept for a retry");
+        let identity = Identity {
+            cluster_id: "c1".into(),
+            instance: "edge-1".into(),
+            not_after: 4_000_000_000,
+            ca_pem: "ca".into(),
+            cert_pem: "cert".into(),
+            key_pem: key,
+        };
+        identity.save(dir.path()).unwrap();
+        assert!(!dir.path().join(ENROLMENT_KEY).exists());
+        let loaded = Identity::load(dir.path()).unwrap().unwrap();
+        assert_eq!(loaded.cert_pem, "cert");
+        assert_eq!(loaded.instance, "edge-1");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(dir.path().join("identity.json"))
+                .unwrap()
+                .permissions()
+                .mode();
+            assert_eq!(mode & 0o777, 0o600);
+        }
+        // The earlier layout.
+        let old = tempfile::tempdir().unwrap();
+        std::fs::write(
+            old.path().join("identity.json"),
+            br#"{"cluster_id": "c1", "instance": "edge-2", "not_after": 1}"#,
+        )
+        .unwrap();
+        for (name, text) in [("ca.pem", "ca"), ("cert.pem", "c"), ("key.pem", "k")] {
+            std::fs::write(old.path().join(name), text).unwrap();
+        }
+        let loaded = Identity::load(old.path()).unwrap().unwrap();
+        assert_eq!(
+            (loaded.cert_pem.as_str(), loaded.key_pem.as_str()),
+            ("c", "k")
+        );
+        assert!(
+            loaded.expired(2),
+            "expired: reported as such, not as unreachable"
+        );
+        std::fs::remove_file(old.path().join("key.pem")).unwrap();
+        assert!(Identity::load(old.path()).is_err());
     }
 
     #[test]

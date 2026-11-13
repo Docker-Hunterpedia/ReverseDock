@@ -155,6 +155,11 @@ async fn read_reply_inner<R: AsyncBufReadExt + Unpin + Send>(
     let (kind, rest) = line.split_at(line.len().min(1));
     match kind {
         "+" => Ok(Reply::Simple(rest.to_owned())),
+        // An error inside an array leaves the rest of the array unread: the connection is out
+        // of step and must not be used again (review finding L7).
+        "-" if depth > 0 => Err(RespError::Protocol(
+            "an error inside an array reply".to_owned(),
+        )),
         "-" => Err(RespError::Refused(rest.to_owned())),
         ":" => rest
             .parse()
@@ -190,6 +195,22 @@ async fn read_reply_inner<R: AsyncBufReadExt + Unpin + Send>(
 }
 
 impl Reply {
+    /// The reply to `TIME` as milliseconds since the Unix epoch, by the server's clock.
+    pub fn time_ms(&self) -> Result<u64, RespError> {
+        let bad = || RespError::Protocol(format!("expected the reply to TIME, got {self:?}"));
+        let Self::Array(Some(items)) = self else {
+            return Err(bad());
+        };
+        let number = |i: usize| -> Option<u64> {
+            match items.get(i)? {
+                Self::Bulk(Some(text)) => std::str::from_utf8(text).ok()?.parse().ok(),
+                _ => None,
+            }
+        };
+        let (secs, micros) = (number(0).ok_or_else(bad)?, number(1).ok_or_else(bad)?);
+        Ok(secs.saturating_mul(1000).saturating_add(micros / 1000))
+    }
+
     /// The integer of an integer reply.
     pub fn integer(&self) -> Result<i64, RespError> {
         match self {
@@ -259,8 +280,9 @@ impl RespClient {
         Ok(connection)
     }
 
-    /// Sends one command and reads its reply; a broken or timed-out connection is dropped and
-    /// opened again on the next command.
+    /// Sends one command and reads its reply. After any error (a refusal, a timeout, a broken
+    /// or malformed reply) the connection is dropped and opened again on the next command, so
+    /// a reply left half read is never taken for the next command's (review finding L7).
     pub async fn command(&self, args: &[&[u8]]) -> Result<Reply, RespError> {
         let mut guard = self.connection.lock().await;
         if guard.is_none() {
@@ -270,10 +292,7 @@ impl RespClient {
             return Err(RespError::Unreachable("no connection".to_owned()));
         };
         let result = roundtrip(connection, args, self.settings.timeout).await;
-        if matches!(
-            result,
-            Err(RespError::Unreachable(_) | RespError::Protocol(_))
-        ) {
+        if result.is_err() {
             *guard = None;
         }
         result
@@ -368,6 +387,12 @@ mod tests {
         assert!(matches!(
             read_reply(&mut reader).await,
             Err(RespError::Refused(m)) if m == "ERR no"
+        ));
+        // An error inside an array is a protocol error (the connection is dropped).
+        let mut nested = BufReader::new(&b"*2\r\n-ERR inner\r\n:1\r\n"[..]);
+        assert!(matches!(
+            read_reply(&mut nested).await,
+            Err(RespError::Protocol(_))
         ));
         let mut bad = BufReader::new(&b"$99999999\r\n"[..]);
         assert!(matches!(

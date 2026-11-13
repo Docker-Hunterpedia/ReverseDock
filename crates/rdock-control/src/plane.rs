@@ -14,14 +14,19 @@ use rdock_cluster::{ClusterStore, DirStore};
 use rdock_credentials::Secret;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
-use tokio::sync::{Mutex, broadcast, watch};
+use tokio::sync::{Mutex, mpsc, watch};
 use tracing::{info, warn};
 
 use crate::bundles::History;
 use crate::ca::ClusterCa;
 use crate::registry::{Instance, LastReport, Registry};
 use crate::rollout::{self, Refusal, Rollout};
-use crate::tokens::{TokenRecord, Tokens};
+use crate::tokens::{TokenRecord, TokenUse, Tokens};
+
+/// How long the certificate a renewal replaced keeps working, so calls in flight finish.
+const RENEWAL_GRACE: i64 = 600;
+/// How often the control plane removes left-over records from its store.
+const TIDY: Duration = Duration::from_secs(60);
 use crate::{Error, unix_now};
 
 /// `<data>/control/cluster.json`.
@@ -49,7 +54,10 @@ pub struct ControlPlane {
     /// Bumped on every change that can alter which revision an instance is given (a
     /// publication, a rollout step), to wake long polls.
     changes: watch::Sender<u64>,
-    events: broadcast::Sender<rollout::Event>,
+    /// Rollout events for the audit log: unbounded, so none is ever dropped (they come one or
+    /// two per publication; review finding L8).
+    events: mpsc::UnboundedSender<rollout::Event>,
+    events_rx: std::sync::Mutex<Option<mpsc::UnboundedReceiver<rollout::Event>>>,
     store: DirStore,
     root: PathBuf,
 }
@@ -135,7 +143,7 @@ impl ControlPlane {
         )?;
         let rollout = Rollout::load(&root, settings.rollout.clone(), history.latest_revision())?;
         let (changes, _) = watch::channel(0);
-        let (events, _) = broadcast::channel(64);
+        let (events, events_rx) = mpsc::unbounded_channel();
         let plane = Self {
             cluster_id: cluster.id,
             ca,
@@ -148,6 +156,7 @@ impl ControlPlane {
             }),
             changes,
             events,
+            events_rx: std::sync::Mutex::new(Some(events_rx)),
             store: DirStore::exclusive(root.join("store")),
             root,
             settings,
@@ -204,43 +213,106 @@ impl ControlPlane {
         self.state.lock().await.tokens.list()
     }
 
-    /// Enrols a data plane that presents a valid join token.
-    pub async fn enroll(&self, request: &EnrollRequest) -> Result<EnrollResponse, Error> {
+    /// Enrols a data plane that presents a valid join token. `presented` is the identity of
+    /// the client certificate the caller presented, if any (instance and serial).
+    ///
+    /// - A name that is enrolled and not revoked is refused, unless the caller presents that
+    ///   instance's current client certificate (it enrols again). Two machines can therefore
+    ///   never share an instance name; a lost instance is replaced by revoking it first
+    ///   (review finding H2).
+    /// - A revoked name may be enrolled again with a new token: the new certificate replaces
+    ///   the old one, whose serial no longer matches, so the old machine stays shut out.
+    /// - A request with a token already used by the same key, while the token is valid, is
+    ///   answered again with a new certificate for the instance it enrolled: a lost answer
+    ///   does not spend the token (review finding L2).
+    pub async fn enroll(
+        &self,
+        request: &EnrollRequest,
+        presented: Option<(&str, &str)>,
+    ) -> Result<EnrollResponse, Error> {
+        let key = crate::ca::csr_key_digest(&request.csr_pem)?;
         let mut state = self.state.lock().await;
-        let name = match &request.name {
-            Some(name) if rdock_model::cluster::is_instance_name(name) => name.to_owned(),
+        let now = unix_now();
+        let requested = match &request.name {
+            Some(name) if rdock_model::cluster::is_instance_name(name) => Some(name.to_owned()),
             Some(_) => return Err(Error::Refused("the instance name is not valid".to_owned())),
-            None => format!(
-                "dp-{}",
-                rdock_credentials::random_base62(8)
-                    .ok_or_else(|| Error::State("the system random generator failed".to_owned()))?
-                    .to_ascii_lowercase()
-            ),
+            None => None,
         };
-        if state.registry.get(&name).is_some_and(|i| i.revoked) {
-            return Err(Error::Refused(format!(
-                "the instance `{name}` was revoked; enrol it under another name"
-            )));
-        }
-        let token_id = state.tokens.consume(&request.token, &name)?;
+        let (token_id, name, fresh) = match state.tokens.check(&request.token, &key)? {
+            TokenUse::Retry { id, instance } => {
+                if requested.as_ref().is_some_and(|r| *r != instance) {
+                    return Err(Error::Refused(
+                        "the join token is not valid (unknown, expired or already used)".to_owned(),
+                    ));
+                }
+                let current = state
+                    .registry
+                    .get(&instance)
+                    .is_some_and(|i| !i.revoked && i.token_id == id);
+                if !current {
+                    return Err(Error::Refused(
+                        "the join token is not valid (unknown, expired or already used)".to_owned(),
+                    ));
+                }
+                info!(%instance, token = %id, "answering an enrolment again (the first answer was lost)");
+                (id, instance, false)
+            }
+            TokenUse::Fresh(id) => {
+                let name = match requested {
+                    Some(name) => name,
+                    None => format!(
+                        "dp-{}",
+                        rdock_credentials::random_base62(8)
+                            .ok_or_else(|| Error::State(
+                                "the system random generator failed".to_owned()
+                            ))?
+                            .to_ascii_lowercase()
+                    ),
+                };
+                if let Some(existing) = state.registry.get(&name)
+                    && !existing.revoked
+                {
+                    let holder = presented.is_some_and(|(instance, serial)| {
+                        instance == name && state.registry.admits(&name, serial, now)
+                    });
+                    if !holder {
+                        return Err(Error::Refused(format!(
+                            "the instance name `{name}` is already enrolled; to replace a lost instance, revoke it first (`rdock control revoke {name}`) and enrol again with a new token, or choose another name"
+                        )));
+                    }
+                }
+                (id, name, true)
+            }
+        };
         let lifetime = self.settings.identity_lifetime.as_std();
         let (certificate_pem, serial, not_after) =
             self.ca
                 .client_certificate(&request.csr_pem, &self.cluster_id, &name, lifetime)?;
+        if fresh {
+            state.tokens.mark_used(&token_id, &name, &key)?;
+        }
+        let rollout_state = state
+            .registry
+            .get(&name)
+            .filter(|i| !i.revoked)
+            .map(|i| (i.serving, i.last_report.clone()));
+        let (serving, last_report) = rollout_state.unwrap_or((0, None));
         state.registry.insert(Instance {
             name: name.clone(),
-            enrolled_at: unix_now(),
+            enrolled_at: now,
             token_id: token_id.clone(),
             certificate_serial: serial,
             certificate_not_after: not_after,
+            previous_serial: None,
+            previous_until: None,
             revoked: false,
-            last_seen: Some(unix_now()),
+            last_seen: Some(now),
             version: Some(request.version.clone()),
-            serving: 0,
-            last_report: None,
+            serving,
+            last_report,
         });
         state.registry.save()?;
-        state.seen.insert(name.clone(), unix_now());
+        state.seen.insert(name.clone(), now);
         info!(instance = %name, token = %token_id, "enrolled a data plane");
         Ok(EnrollResponse {
             cluster_id: self.cluster_id.clone(),
@@ -251,7 +323,8 @@ impl ControlPlane {
         })
     }
 
-    /// Issues an enrolled instance a new certificate.
+    /// Issues an enrolled instance a new certificate. The one it replaces keeps working for a
+    /// few minutes, so calls in flight finish; then only the new one does.
     pub async fn renew(&self, instance: &str, csr_pem: &str) -> Result<EnrollResponse, Error> {
         let mut state = self.state.lock().await;
         if !state.registry.allowed(instance) {
@@ -262,7 +335,9 @@ impl ControlPlane {
             self.ca
                 .client_certificate(csr_pem, &self.cluster_id, instance, lifetime)?;
         if let Some(entry) = state.registry.get_mut(instance) {
-            entry.certificate_serial = serial;
+            let previous = std::mem::replace(&mut entry.certificate_serial, serial);
+            entry.previous_serial = Some(previous);
+            entry.previous_until = Some(unix_now() + RENEWAL_GRACE);
             entry.certificate_not_after = not_after;
         }
         state.registry.save()?;
@@ -276,10 +351,11 @@ impl ControlPlane {
         })
     }
 
-    /// Whether `instance` may call (enrolled, not revoked); records that it called.
-    pub async fn admit(&self, instance: &str) -> bool {
+    /// Whether the certificate with `serial` may call as `instance` (enrolled, not revoked, the
+    /// newest certificate issued to it); records that it called.
+    pub async fn admit(&self, instance: &str, serial: &str) -> bool {
         let mut state = self.state.lock().await;
-        let allowed = state.registry.allowed(instance);
+        let allowed = state.registry.admits(instance, serial, unix_now());
         if allowed {
             state.seen.insert(instance.to_owned(), unix_now());
         }
@@ -325,11 +401,15 @@ impl ControlPlane {
         }
     }
 
-    /// Subscribes to rollout events (canary chosen, soaking, complete, halted), for the audit
-    /// log.
+    /// Takes the stream of rollout events (canary chosen, soaking, complete, halted), for the
+    /// audit log; `None` once taken. Every event is delivered (the channel is unbounded and
+    /// events are rare).
     #[must_use]
-    pub fn events(&self) -> broadcast::Receiver<rollout::Event> {
-        self.events.subscribe()
+    pub fn take_events(&self) -> Option<mpsc::UnboundedReceiver<rollout::Event>> {
+        self.events_rx
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .take()
     }
 
     fn announce(&self, events: Vec<rollout::Event>) {
@@ -392,10 +472,15 @@ impl ControlPlane {
     pub async fn drive(self: Arc<Self>, mut stop: watch::Receiver<bool>) {
         let mut tick = tokio::time::interval(Duration::from_secs(1));
         tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut last_tidy: Option<std::time::Instant> = None;
         loop {
             tokio::select! {
                 _ = stop.changed() => return,
                 _ = tick.tick() => {}
+            }
+            if last_tidy.is_none_or(|at| at.elapsed() >= TIDY) {
+                last_tidy = Some(std::time::Instant::now());
+                self.tidy().await;
             }
             let events = {
                 let mut state = self.state.lock().await;
@@ -410,6 +495,19 @@ impl ControlPlane {
                 events
             };
             self.announce(events);
+        }
+    }
+
+    /// Removes left-over records from the store by this process's clock, which is the
+    /// store's: ended limit windows, answers of orders whose holder died, confirmations of
+    /// answers that are gone and heartbeats of members that left (review findings L9, M3, M6).
+    pub async fn tidy(&self) {
+        let now = rdock_cluster::Clock::now_ms(&rdock_cluster::SystemClock);
+        if let Err(e) = rdock_cluster::janitor::tidy(&self.store, now).await {
+            warn!(error = %e, "cannot remove left-over records from the cluster store");
+        }
+        if let Err(e) = rdock_cluster::janitor::tidy_all_limits(&self.store, now).await {
+            warn!(error = %e, "cannot remove ended limit windows from the cluster store");
         }
     }
 
@@ -436,29 +534,29 @@ impl ControlPlane {
 
     /// An operator abandons a halted or running rollout: the stable revision's document is
     /// published again as a new revision, which every instance takes at once (the instances
-    /// already given the abandoned revision are sent back).
+    /// already given the abandoned revision are sent back). Choosing the target, marking the
+    /// rollout abandoned and publishing happen under one lock, so a publication in between
+    /// cannot be marked abandoned in its place (review finding L6).
     pub async fn abandon(&self, by: &str) -> Result<Bundle, Error> {
-        let (stable, document) = {
-            let state = self.state.lock().await;
-            let stable = state
-                .rollout
-                .abandon_target()
-                .map_err(|Refusal::Conflict(m)| Error::Conflict(m))?;
-            let document = state
-                .history
-                .get(stable)?
-                .map(|b| b.document)
-                .ok_or_else(|| Error::Conflict(format!("revision {stable} is no longer kept")))?;
-            (stable, document)
-        };
-        {
-            let mut state = self.state.lock().await;
-            state.rollout.abandoned(by, unix_now());
-            state.rollout.save()?;
-        }
+        let mut state = self.state.lock().await;
+        let stable = state
+            .rollout
+            .abandon_target()
+            .map_err(|Refusal::Conflict(m)| Error::Conflict(m))?;
+        let document = state
+            .history
+            .get(stable)?
+            .map(|b| b.document)
+            .ok_or_else(|| Error::Conflict(format!("revision {stable} is no longer kept")))?;
+        Self::check_publishable(&document)?;
+        state.rollout.abandoned(by, unix_now());
+        state.rollout.save()?;
         info!(by, stable, "the rollout was abandoned");
-        self.publish(document, Some(stable), Some(by.to_owned()))
-            .await
+        let (bundle, events) =
+            self.publish_locked(&mut state, document, Some(stable), Some(by.to_owned()))?;
+        drop(state);
+        self.announce(events);
+        Ok(bundle)
     }
 
     /// Records a data plane's report on a bundle.
@@ -516,7 +614,17 @@ impl ControlPlane {
         rollback_of: Option<u64>,
         published_by: Option<String>,
     ) -> Result<Bundle, Error> {
-        let problems = rdock_model::cluster::bundle_diagnostics(&document);
+        Self::check_publishable(&document)?;
+        let mut state = self.state.lock().await;
+        let (bundle, events) =
+            self.publish_locked(&mut state, document, rollback_of, published_by)?;
+        drop(state);
+        self.announce(events);
+        Ok(bundle)
+    }
+
+    fn check_publishable(document: &Value) -> Result<(), Error> {
+        let problems = rdock_model::cluster::bundle_diagnostics(document);
         if let Some(problem) = problems.first() {
             return Err(Error::Refused(format!(
                 "{}: {}",
@@ -528,7 +636,16 @@ impl ControlPlane {
                 "an empty configuration is never published".to_owned(),
             ));
         }
-        let mut state = self.state.lock().await;
+        Ok(())
+    }
+
+    fn publish_locked(
+        &self,
+        state: &mut Mutable,
+        document: Value,
+        rollback_of: Option<u64>,
+        published_by: Option<String>,
+    ) -> Result<(Bundle, Vec<rollout::Event>), Error> {
         let revision = state.history.latest_revision() + 1;
         let bundle = Bundle {
             format: rdock_cluster::protocol::VERSION,
@@ -540,18 +657,19 @@ impl ControlPlane {
             rollback_of,
             document,
         };
-        let pinned = state.rollout.state().stable;
+        // The revision that is stable once this one is published: never evicted (review
+        // finding L1; the stable revision recorded before a rollout that completed at once is
+        // older than the one instances fall back to).
+        let pinned = state.rollout.next_stable();
         state.history.add(bundle.clone(), pinned)?;
         let now = unix_now();
-        let online = self.online(&state, now);
+        let online = self.online(state, now);
         let events = state
             .rollout
             .start(revision, rollback_of.is_some(), &online, now);
         state.rollout.save()?;
-        drop(state);
         info!(revision, sha256 = %bundle.sha256, rollback_of, "published a bundle");
-        self.announce(events);
-        Ok(bundle)
+        Ok((bundle, events))
     }
 
     /// The document of a kept revision.
@@ -730,5 +848,195 @@ impl ControlPlane {
     #[must_use]
     pub fn shared_store(&self) -> Arc<dyn ClusterStore> {
         Arc::new(self.store.clone())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn csr() -> (String, rcgen::KeyPair) {
+        let key = rcgen::KeyPair::generate().unwrap();
+        let csr = rcgen::CertificateParams::new(Vec::<String>::new())
+            .unwrap()
+            .serialize_request(&key)
+            .unwrap()
+            .pem()
+            .unwrap();
+        (csr, key)
+    }
+
+    fn request(token: &Secret, csr: &str, name: Option<&str>) -> EnrollRequest {
+        EnrollRequest {
+            token: token.expose().to_owned(),
+            csr_pem: csr.to_owned(),
+            name: name.map(str::to_owned),
+            version: "test".into(),
+        }
+    }
+
+    fn serial_of(answer: &EnrollResponse) -> String {
+        use rustls_pki_types::pem::PemObject;
+        let der =
+            rustls_pki_types::CertificateDer::from_pem_slice(answer.certificate_pem.as_bytes())
+                .unwrap();
+        crate::ca::identity_of(&der, &answer.cluster_id).unwrap().1
+    }
+
+    fn plane(
+        settings: rdock_model::cluster::ControlPlane,
+    ) -> (tempfile::TempDir, Arc<ControlPlane>) {
+        let dir = tempfile::tempdir().unwrap();
+        let plane = ControlPlane::open(dir.path(), settings).unwrap();
+        (dir, plane)
+    }
+
+    /// Review finding H2: a second machine cannot enrol under a live instance's name; the
+    /// holder of the name's current certificate can; a revoked name can be enrolled again and
+    /// the old certificate stays shut out.
+    #[tokio::test]
+    async fn an_enrolled_name_is_not_given_to_another_machine() {
+        let (_dir, plane) = plane(rdock_model::cluster::ControlPlane::default());
+        let (token_a, _) = plane.create_token(None, None).await.unwrap();
+        let (csr_a, _) = csr();
+        let first = plane
+            .enroll(&request(&token_a, &csr_a, Some("edge-1")), None)
+            .await
+            .unwrap();
+        let first_serial = serial_of(&first);
+        assert!(plane.admit("edge-1", &first_serial).await);
+        // Another machine with another token and the same name: refused.
+        let (token_b, _) = plane.create_token(None, None).await.unwrap();
+        let (csr_b, _) = csr();
+        let refused = plane
+            .enroll(&request(&token_b, &csr_b, Some("edge-1")), None)
+            .await
+            .unwrap_err();
+        assert!(refused.to_string().contains("revoke it first"), "{refused}");
+        assert!(
+            plane.admit("edge-1", &first_serial).await,
+            "the first one is untouched"
+        );
+        // The holder of the current certificate may enrol again (with a token).
+        let again = plane
+            .enroll(
+                &request(&token_b, &csr_b, Some("edge-1")),
+                Some(("edge-1", &first_serial)),
+            )
+            .await
+            .unwrap();
+        let second_serial = serial_of(&again);
+        assert!(!plane.admit("edge-1", &first_serial).await, "replaced");
+        assert!(plane.admit("edge-1", &second_serial).await);
+        // A revoked name may be enrolled again; the old certificate stays refused.
+        assert!(plane.revoke("edge-1").await.unwrap());
+        let (token_c, _) = plane.create_token(None, None).await.unwrap();
+        let (csr_c, _) = csr();
+        let replaced = plane
+            .enroll(&request(&token_c, &csr_c, Some("edge-1")), None)
+            .await
+            .unwrap();
+        assert!(plane.admit("edge-1", &serial_of(&replaced)).await);
+        assert!(!plane.admit("edge-1", &second_serial).await);
+        // A certificate of another instance's name does not count as the holder.
+        let (token_d, _) = plane.create_token(None, None).await.unwrap();
+        let (csr_d, _) = csr();
+        let other = plane
+            .enroll(&request(&token_d, &csr_d, Some("edge-2")), None)
+            .await
+            .unwrap();
+        let (token_e, _) = plane.create_token(None, None).await.unwrap();
+        assert!(
+            plane
+                .enroll(
+                    &request(&token_e, &csr_d, Some("edge-1")),
+                    Some(("edge-2", &serial_of(&other)))
+                )
+                .await
+                .is_err()
+        );
+    }
+
+    /// Review finding L2: a lost answer does not spend the token; the same key asks again and
+    /// gets a certificate for the same instance; another key with that token does not.
+    #[tokio::test]
+    async fn a_retry_with_the_same_key_is_answered_again() {
+        let (_dir, plane) = plane(rdock_model::cluster::ControlPlane::default());
+        let (token, _) = plane.create_token(None, None).await.unwrap();
+        let (csr_a, key) = csr();
+        let first = plane
+            .enroll(&request(&token, &csr_a, None), None)
+            .await
+            .unwrap();
+        // The answer was lost; the data plane asks again with the same key (a new request).
+        let csr_again = rcgen::CertificateParams::new(Vec::<String>::new())
+            .unwrap()
+            .serialize_request(&key)
+            .unwrap()
+            .pem()
+            .unwrap();
+        let again = plane
+            .enroll(&request(&token, &csr_again, None), None)
+            .await
+            .unwrap();
+        assert_eq!(again.instance, first.instance, "a generated name is kept");
+        assert!(plane.admit(&again.instance, &serial_of(&again)).await);
+        let (csr_other, _) = csr();
+        assert!(
+            plane
+                .enroll(&request(&token, &csr_other, None), None)
+                .await
+                .is_err()
+        );
+    }
+
+    /// Review finding L3: after a renewal the old certificate works only for the grace time.
+    #[tokio::test]
+    async fn a_renewed_away_certificate_stops_working() {
+        let (_dir, plane) = plane(rdock_model::cluster::ControlPlane::default());
+        let (token, _) = plane.create_token(None, None).await.unwrap();
+        let (csr_a, _) = csr();
+        let first = plane
+            .enroll(&request(&token, &csr_a, Some("edge-1")), None)
+            .await
+            .unwrap();
+        let (csr_b, _) = csr();
+        let renewed = plane.renew("edge-1", &csr_b).await.unwrap();
+        assert!(plane.admit("edge-1", &serial_of(&renewed)).await);
+        assert!(
+            plane.admit("edge-1", &serial_of(&first)).await,
+            "grace time"
+        );
+        {
+            let mut state = plane.state.lock().await;
+            let entry = state.registry.get_mut("edge-1").unwrap();
+            entry.previous_until = Some(unix_now() - 1);
+        }
+        assert!(!plane.admit("edge-1", &serial_of(&first)).await);
+        assert!(plane.admit("edge-1", &serial_of(&renewed)).await);
+    }
+
+    /// Review finding L1: with a short history, a rollout that completed at once (the first
+    /// revision, a rollback) followed by a canary publication keeps the revision instances fall
+    /// back to.
+    #[tokio::test]
+    async fn the_stable_revision_is_never_pruned() {
+        let settings = rdock_model::cluster::ControlPlane {
+            history: 2,
+            ..rdock_model::cluster::ControlPlane::default()
+        };
+        let (_dir, plane) = plane(settings);
+        let doc =
+            |n: u64| json!({ "services": { format!("s{n}"): { "url": "http://127.0.0.1:1" } } });
+        plane.publish(doc(1), None, None).await.unwrap();
+        plane.publish(doc(1), Some(1), None).await.unwrap();
+        plane.publish(doc(3), None, None).await.unwrap();
+        let state = plane.state.lock().await;
+        let stable = state.rollout.state().stable;
+        assert_eq!(stable, 2);
+        assert!(
+            state.history.get(stable).unwrap().is_some(),
+            "revision {stable} was evicted"
+        );
     }
 }

@@ -88,6 +88,16 @@ impl DirStore {
             Some(lock) => Some(lock.clone().lock_owned().await),
             None => None,
         };
+        self.read_only(op).await
+    }
+
+    /// Runs `op` on a blocking thread without the in-process lock: for reads, which see
+    /// either the old or the new file of a value (values are replaced by rename), so a long
+    /// listing never holds up writes (review finding M3).
+    async fn read_only<T: Send + 'static>(
+        &self,
+        op: impl FnOnce(&Paths) -> Result<T, StoreError> + Send + 'static,
+    ) -> Result<T, StoreError> {
         let paths = Paths {
             root: self.root.clone(),
             clock: self.clock.clone(),
@@ -115,14 +125,19 @@ impl Paths {
 
     /// Holds the lock file of `key` (a value key, or `.leases/<name>`) until dropped.
     fn lock(&self, key: &str) -> Result<KeyLock, StoreError> {
-        let path = self.root.join(".locks").join(key);
-        if let Some(parent) = path.parent() {
-            create_dir(parent)?;
-        }
+        let locks = self.root.join(".locks");
+        let path = locks.join(key);
         let started = Instant::now();
         loop {
+            if let Some(parent) = path.parent() {
+                create_dir_racing(parent)?;
+            }
             match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(_) => return Ok(KeyLock { path }),
+                Ok(_) => {
+                    return Ok(KeyLock { path, stop: locks });
+                }
+                // Another operation removed the emptied directory meanwhile: make it again.
+                Err(e) if e.kind() == io::ErrorKind::NotFound => {}
                 Err(e) if e.kind() == io::ErrorKind::AlreadyExists => {
                     let stale = fs::metadata(&path)
                         .and_then(|m| m.modified())
@@ -215,14 +230,35 @@ impl Paths {
     }
 }
 
-/// Removes its lock file when dropped.
+/// Removes its lock file, and the directories that leaves empty, when dropped.
 struct KeyLock {
     path: PathBuf,
+    stop: PathBuf,
 }
 
 impl Drop for KeyLock {
     fn drop(&mut self) {
-        let _ = fs::remove_file(&self.path);
+        if fs::remove_file(&self.path).is_ok()
+            && let Some(parent) = self.path.parent()
+        {
+            remove_empty_dirs(parent, &self.stop);
+        }
+    }
+}
+
+/// Removes `dir` and its parents while they are empty, up to (not including) `stop`. A
+/// directory another writer has just filled again stays (review finding M3: without this, one
+/// directory per limit window or challenge was left behind for ever).
+fn remove_empty_dirs(dir: &Path, stop: &Path) {
+    let mut current = dir;
+    while current != stop && current.starts_with(stop) {
+        if fs::remove_dir(current).is_err() {
+            return;
+        }
+        match current.parent() {
+            Some(parent) => current = parent,
+            None => return,
+        }
     }
 }
 
@@ -231,7 +267,7 @@ impl ClusterStore for DirStore {
     async fn get(&self, key: &str) -> Result<Option<Entry>, StoreError> {
         check_key(key, false)?;
         let key = key.to_owned();
-        self.run(move |p| p.read(&key)).await
+        self.read_only(move |p| p.read(&key)).await
     }
 
     async fn put(
@@ -265,8 +301,14 @@ impl ClusterStore for DirStore {
             let _lock = p.lock(&key)?;
             p.check_fence(fence.as_ref())?;
             p.check_expect(&key, expect)?;
-            match fs::remove_file(p.value(&key)) {
-                Ok(()) => Ok(()),
+            let path = p.value(&key);
+            match fs::remove_file(&path) {
+                Ok(()) => {
+                    if let Some(parent) = path.parent() {
+                        remove_empty_dirs(parent, &p.root);
+                    }
+                    Ok(())
+                }
                 Err(e) if e.kind() == io::ErrorKind::NotFound => Ok(()),
                 Err(e) => Err(e.into()),
             }
@@ -277,7 +319,7 @@ impl ClusterStore for DirStore {
     async fn list(&self, prefix: &str) -> Result<Vec<String>, StoreError> {
         check_key(prefix, true)?;
         let prefix = prefix.to_owned();
-        self.run(move |p| {
+        self.read_only(move |p| {
             let mut keys = Vec::new();
             let start = if prefix.is_empty() {
                 p.root.clone()
@@ -368,7 +410,7 @@ impl ClusterStore for DirStore {
     async fn lease(&self, name: &str) -> Result<Option<Lease>, StoreError> {
         check_key(name, false)?;
         let name = name.to_owned();
-        self.run(move |p| p.read_lease(&name)).await
+        self.read_only(move |p| p.read_lease(&name)).await
     }
 
     fn fencing(&self) -> Fencing {
@@ -418,6 +460,24 @@ fn walk(dir: &Path, prefix: &str, out: &mut Vec<String>) -> Result<(), StoreErro
     Ok(())
 }
 
+/// [`create_dir`] while other operations may remove emptied directories at the same time
+/// ([`remove_empty_dirs`]): a step that loses that race is tried again.
+fn create_dir_racing(dir: &Path) -> io::Result<()> {
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        match create_dir(dir) {
+            Err(e)
+                if attempts < 20
+                    && matches!(
+                        e.kind(),
+                        io::ErrorKind::NotFound | io::ErrorKind::AlreadyExists
+                    ) => {}
+            other => return other,
+        }
+    }
+}
+
 /// Creates `dir` and its parents, readable only by the owner.
 pub fn create_dir(dir: &Path) -> io::Result<()> {
     let mut builder = fs::DirBuilder::new();
@@ -433,19 +493,30 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::other("path has no parent directory"))?;
-    create_dir(dir)?;
     let name = path
         .file_name()
         .and_then(|n| n.to_str())
         .ok_or_else(|| io::Error::other("path has no file name"))?;
     let tmp = dir.join(format!(".{name}.{}.tmp", std::process::id()));
-    let mut options = OpenOptions::new();
-    options.write(true).create(true).truncate(true);
-    #[cfg(unix)]
-    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(&tmp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    fs::rename(&tmp, path)
+    let mut attempts = 0;
+    loop {
+        attempts += 1;
+        let result = (|| {
+            create_dir_racing(dir)?;
+            let mut options = OpenOptions::new();
+            options.write(true).create(true).truncate(true);
+            #[cfg(unix)]
+            std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+            let mut file = options.open(&tmp)?;
+            file.write_all(bytes)?;
+            file.sync_all()?;
+            drop(file);
+            fs::rename(&tmp, path)
+        })();
+        match result {
+            // A delete elsewhere removed the directory once it was empty: make it again.
+            Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < 5 => {}
+            other => return other,
+        }
+    }
 }

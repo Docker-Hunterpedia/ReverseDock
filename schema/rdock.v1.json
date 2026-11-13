@@ -1973,7 +1973,7 @@
       ]
     },
     "ClusterLimits": {
-      "description": "Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).\n\nEach instance claims a part of each key's budget from the store ahead of use and admits\nrequests against what it claimed, so the request path never waits on the store. The\ncluster admits at most `L + N × c` per key and window, where `L` is the limit, `N` the\nnumber of instances and `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the headroom an\ninstance may use beyond its claims.",
+      "description": "Shared budgets for `rate_limit` and `quota` with `scope: cluster` (ADR-0031).\n\nEach instance claims a part of each key's budget from the store ahead of use and admits\nrequests against what it claimed, so the request path never waits on the store. The\ncluster admits at most `L + N × max(c, ⌈L / N⌉)` per key and window, where `L` is the\nlimit, `N` the number of instances, `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)` the\nheadroom an instance may use beyond its claims, and `⌈L / N⌉` what an instance admits for a\nkey new to it until its first claim returns.",
       "type": "object",
       "properties": {
         "fallback": {
@@ -7552,7 +7552,7 @@
       ]
     },
     "RedisStore": {
-      "description": "A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses\n`INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `AUTH`, `SELECT` and\n`PING`.",
+      "description": "A Redis-compatible server (Redis, Valkey, …) for cluster-scoped limits. rdock uses\n`INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `TIME` (membership is\njudged by the server's clock; without it, by each instance's), `AUTH`, `SELECT` and\n`PING`.",
       "type": "object",
       "properties": {
         "allow_plaintext": {

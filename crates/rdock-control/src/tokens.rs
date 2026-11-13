@@ -8,6 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::{Error, unix_now};
 
+fn refused() -> Error {
+    Error::Refused("the join token is not valid (unknown, expired or already used)".to_owned())
+}
+
 /// A stored token.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenRecord {
@@ -25,6 +29,25 @@ pub struct TokenRecord {
     /// The instance that used it, once used.
     #[serde(default)]
     pub used_by: Option<String>,
+    /// SHA-256 of the public key it was used with: a retry with the same key while the token
+    /// is valid is answered again, so a lost answer does not spend the token for good (review
+    /// finding L2).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub used_with_key: Option<String>,
+}
+
+/// What a join token allows.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TokenUse {
+    /// Unused and valid: enrol (the token's id).
+    Fresh(String),
+    /// Already used, for this key, and still valid: answer the instance it enrolled again.
+    Retry {
+        /// The token's id.
+        id: String,
+        /// The instance it enrolled.
+        instance: String,
+    },
 }
 
 /// The token file.
@@ -71,6 +94,7 @@ impl Tokens {
             expires_at: now.saturating_add(i64::try_from(ttl.as_secs()).unwrap_or(i64::MAX)),
             created_by,
             used_by: None,
+            used_with_key: None,
         };
         // Forget tokens that expired more than a day ago.
         self.records.retain(|r| r.expires_at + 86_400 > now);
@@ -79,30 +103,52 @@ impl Tokens {
         Ok((generated.value, record))
     }
 
-    /// Uses `value` for `instance`: fails when it is malformed, unknown, expired or used.
-    pub fn consume(&mut self, value: &str, instance: &str) -> Result<String, Error> {
-        let refused = || {
-            Error::Refused(
-                "the join token is not valid (unknown, expired or already used)".to_owned(),
-            )
-        };
+    /// What `value` allows for a request with the public key `key` (its SHA-256): fails when
+    /// it is malformed, unknown, expired, or used with another key.
+    pub fn check(&self, value: &str, key: &str) -> Result<TokenUse, Error> {
         let (id, secret) = JOIN_TOKEN.parse(value.trim()).ok_or_else(refused)?;
-        let now = unix_now();
+        let record = self
+            .records
+            .iter()
+            .find(|r| r.id == id)
+            .ok_or_else(refused)?;
+        if record.expires_at <= unix_now()
+            || !hashes_match(&hash_secret(secret), &record.secret_sha256)
+        {
+            return Err(refused());
+        }
+        match (&record.used_by, &record.used_with_key) {
+            (None, _) => Ok(TokenUse::Fresh(record.id.clone())),
+            (Some(instance), Some(used)) if hashes_match(used, key) => Ok(TokenUse::Retry {
+                id: record.id.clone(),
+                instance: instance.clone(),
+            }),
+            _ => Err(refused()),
+        }
+    }
+
+    /// Marks the token `id` used by `instance` with the public key `key` (its SHA-256).
+    pub fn mark_used(&mut self, id: &str, instance: &str, key: &str) -> Result<(), Error> {
         let record = self
             .records
             .iter_mut()
             .find(|r| r.id == id)
             .ok_or_else(refused)?;
-        if record.used_by.is_some()
-            || record.expires_at <= now
-            || !hashes_match(&hash_secret(secret), &record.secret_sha256)
-        {
-            return Err(refused());
-        }
         record.used_by = Some(instance.to_owned());
-        let id = record.id.clone();
-        self.save()?;
-        Ok(id)
+        record.used_with_key = Some(key.to_owned());
+        self.save()
+    }
+
+    /// Uses `value` for `instance` with the key `key`: fails when it is malformed, unknown,
+    /// expired or used (also by the same key).
+    pub fn consume(&mut self, value: &str, instance: &str, key: &str) -> Result<String, Error> {
+        match self.check(value, key)? {
+            TokenUse::Fresh(id) => {
+                self.mark_used(&id, instance, key)?;
+                Ok(id)
+            }
+            TokenUse::Retry { .. } => Err(refused()),
+        }
     }
 
     /// Every token, newest first, without secrets.
@@ -128,15 +174,37 @@ mod tests {
         assert!(value.expose().starts_with("rdk_join_"));
         let stored = std::fs::read_to_string(dir.path().join("tokens.json")).unwrap();
         assert!(!stored.contains(value.expose()), "only the hash is stored");
-        assert!(tokens.consume("rdk_join_nonsense", "a").is_err());
-        assert_eq!(tokens.consume(value.expose(), "a").unwrap(), record.id);
-        assert!(tokens.consume(value.expose(), "b").is_err(), "single use");
+        assert!(tokens.consume("rdk_join_nonsense", "a", "k1").is_err());
+        assert_eq!(
+            tokens.consume(value.expose(), "a", "k1").unwrap(),
+            record.id
+        );
+        assert!(
+            tokens.consume(value.expose(), "b", "k2").is_err(),
+            "single use"
+        );
+        // The same key may ask again (its answer was lost); another key may not.
+        assert_eq!(
+            tokens.check(value.expose(), "k1").unwrap(),
+            TokenUse::Retry {
+                id: record.id.clone(),
+                instance: "a".into()
+            }
+        );
+        assert!(tokens.check(value.expose(), "k2").is_err());
         let (expired, _) = tokens.create(std::time::Duration::ZERO, None).unwrap();
-        assert!(tokens.consume(expired.expose(), "c").is_err(), "expired");
+        assert!(
+            tokens.consume(expired.expose(), "c", "k3").is_err(),
+            "expired"
+        );
         let mut reloaded = Tokens::load(dir.path()).unwrap();
         assert!(
-            reloaded.consume(value.expose(), "d").is_err(),
+            reloaded.consume(value.expose(), "d", "k4").is_err(),
             "use survives a restart"
         );
+        assert!(matches!(
+            reloaded.check(value.expose(), "k1"),
+            Ok(TokenUse::Retry { .. })
+        ));
     }
 }

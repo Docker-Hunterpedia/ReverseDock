@@ -395,7 +395,10 @@ async fn serve(
         Source::File(path) => match crate::cluster::read(Some(path)) {
             Some(settings) => {
                 match crate::cluster::context(settings, &args.data_dir, plane.metrics()).await {
-                    Ok(context) => Some(context),
+                    Ok(context) => {
+                        crate::cluster::prime(&context, &plane.challenges()).await;
+                        Some(context)
+                    }
                     Err(err) => {
                         eprintln!("error: {err:#}");
                         return Ok(ExitCode::from(1));

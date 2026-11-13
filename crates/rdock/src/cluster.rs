@@ -158,6 +158,27 @@ pub(crate) async fn context(
     })
 }
 
+/// How long a member waits at start for its first copy of the challenge answers.
+const PRIME_WITHIN: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Before the listeners accept: writes this member's heartbeat and copies the challenge answers
+/// in the store, so a member that has just started can already answer a validation another
+/// member started (a CA may ask any member). Bounded: with the store away the start goes on
+/// after [`PRIME_WITHIN`] and the answers follow once it answers.
+pub(crate) async fn prime(context: &ClusterContext, challenges: &Arc<rdock_tls::Challenges>) {
+    let Some(acme) = &context.acme else {
+        return;
+    };
+    if acme.prime(challenges, PRIME_WITHIN).await {
+        tracing::debug!("copied the cluster's challenge answers before accepting");
+    } else {
+        tracing::warn!(
+            within = ?PRIME_WITHIN,
+            "the cluster store did not answer at start; starting without the challenge answers, which follow once it answers"
+        );
+    }
+}
+
 /// Hands bundles to the engine and the channel's state to the status and metrics.
 struct EngineSink {
     engine: Arc<crate::engine::Engine>,

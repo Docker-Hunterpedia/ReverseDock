@@ -67,9 +67,24 @@ cluster:
 At its first start the data plane checks that the control plane's certificate chains to a CA with
 that pin, makes its own key, sends a signing request with the token, and receives a client
 certificate naming `edge-1`. The key never leaves the data plane; the token is spent. Later starts
-use the identity in `$RDOCK_DATA_DIR/cluster/` and need no token and no control plane. A token
-that was used, expired or never existed is refused, and so is a control plane whose certificate
-does not match the pin: the data plane stops with an error instead of retrying.
+use the identity in `$RDOCK_DATA_DIR/cluster/identity.json` (key, certificate and CA in one file,
+mode 0600) and need no token and no control plane. A token that was used, expired or never
+existed is refused, and so is a control plane whose certificate does not match the pin: the data
+plane stops with an error instead of retrying. If the answer to the enrolment is lost (a timeout,
+a crash before the identity was written), the data plane asks again with the same key and the
+same token while the token is valid, and gets its certificate again; the token is not lost.
+
+**One name, one machine.** The control plane refuses to enrol a name that is already enrolled and
+not revoked, unless the caller presents that instance's current client certificate. Every call
+is checked against the newest certificate issued to the name (the one a renewal replaced works
+for ten more minutes), so a copied identity directory or an old certificate stops working. Give
+each instance its own `cluster.instance`, or leave it out for a generated name: a configuration
+file shared by several replicas (a Compose `replicas:` service, a Kubernetes Deployment) with a
+fixed `cluster.instance` enrols only the first of them. To **replace a lost instance** under the
+same name, revoke it first (`rdock control revoke edge-1`), then enrol the new machine with a new
+token; the old machine's certificate stays refused. On a shared directory, which cannot check
+anyone's identity, two processes with one name log "another process writes the heartbeat of this
+instance name" and never hold a lease together.
 
 Every later call is mutual TLS over HTTP/2. The client certificate lives
 `control.identity_lifetime` (30 days by default) and is renewed when a third of it is left.
@@ -90,8 +105,11 @@ rdock control publish site.yaml -c /etc/rdock/control.yaml --data-dir /var/lib/r
 or `POST /api/v1/cluster/revisions` with `{"document": …}` (operator role, audited). The control
 plane refuses what `rdock validate` refuses, an empty document, and a document with `cluster` or
 `control`. References such as `${file:…}` and `${env:…}` are published as written and resolved
-on each data plane, so secrets stay on the data planes; `${env:PORT}` in a listener address gives
-each machine its own value.
+on each data plane, so the control plane never sees the values they point to; `${env:PORT}` in
+a listener address gives each machine its own value. The other side of this: whoever may publish
+can make every data plane read any file and variable rdock's user can read there and send it out
+(in a header, an upstream URL, a static route), so the publishing role on the control plane is
+trusted with every data plane (see [the trust model](#who-can-read-what-the-trust-model)).
 
 Each data plane pulls the revision (a long poll; `cluster.control.poll_timeout`), checks it and
 answers:
@@ -190,7 +208,11 @@ On a data plane the Cluster page says "Not a control plane": the cluster API ans
 - Certificates stored on the control plane keep serving; new ones are not ordered or renewed
   until it returns (renewal starts weeks before expiry).
 - A data plane whose client certificate expires during a very long outage (at least 10 days with
-  the defaults) keeps serving but must enrol again with a new token.
+  the defaults) keeps serving but must enrol again with a new token; it logs "the cluster
+  certificate of … expired" with what to do (remove `identity.json`, set a new `join_token`)
+  instead of reporting the control plane unreachable.
+- A data plane whose clock differs from the control plane's by more than 2 s says so in its log
+  at its first call; keep clocks in step (NTP).
 
 A data plane that has never received a revision waits for its first one before it starts its
 admin API and listeners.
@@ -202,7 +224,42 @@ rdock control revoke edge-3 -c /etc/rdock/control.yaml --data-dir /var/lib/rdock
 ```
 
 A revoked instance can no longer fetch revisions or use the store. It keeps serving its last
-revision until you stop it. Its name cannot enrol again.
+revision until you stop it. The name can be enrolled again with a new token (a replacement
+machine); the revoked machine's certificate stays refused, because every call is checked against
+the newest certificate issued to the name.
+
+Revocation stops future access; it **does not take back what the instance already read**. A
+member that issues certificates has read the ACME account key and the private keys of every
+certificate in the store (see below). If you revoke a member because it was compromised, also:
+
+1. **Revoke it** (`rdock control revoke <name>`) and stop the machine.
+2. **Replace the ACME account key.** Remove the account from the store (on the control plane
+   `<data dir>/control/store/accounts/<directory>/account.json`; with a shared directory, the same
+   path under `cluster.store.path`). The next order creates a new account under its lease. If you
+   can, deactivate the old account at the CA with a tool that holds its key (RFC 8555 §7.3.6).
+3. **Reissue every certificate**: `POST /api/v1/certificates/{name}/renew` on any member for each
+   name (each renewal makes a new private key).
+4. **Revoke the old certificates at the CA** with a tool that holds their keys or the old
+   account, if the CA supports it and the exposure warrants it.
+
+## Who can read what: the trust model
+
+- **Every data plane that is a member of the store reads every secret in it**: the ACME account
+  key and the private key of every certificate the cluster issues. That is the price of data
+  planes that issue certificates themselves (an instance cut off from the control plane still
+  completes an order another started, and any member can answer the CA). The control plane's
+  store does not encrypt per member.
+- **What a member may write is limited** to what the protocol needs: a certificate's files, its
+  order journal and its challenge answers only while it holds that certificate's lease; the
+  account only under the account's lease; only its own heartbeat and confirmations; limit
+  counts only upwards; records of others only once they are left over (an ended limit window a
+  minute later, by the control plane's clock; an answer after an hour; a heartbeat after a day).
+  Leases are always taken in the name of the calling instance, as its client certificate says.
+- **The control plane and whoever may publish to it are trusted with every data plane**: a
+  publication runs on all of them (and its `${file:}` and `${env:}` references are resolved
+  there), and the control plane holds the cluster CA, which can enrol new members.
+- **Revocation** shuts a member out from then on; rotate the account key and reissue the
+  certificates (above) when the member may have been compromised.
 
 ## What the control plane stores, and how to protect it
 

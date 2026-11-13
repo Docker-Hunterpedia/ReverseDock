@@ -50,6 +50,15 @@ struct Instance {
 
 impl Instance {
     fn start(name: &str, store: Arc<dyn ClusterStore>, data: &std::path::Path) -> Self {
+        Self::start_with(name, Some(store), data)
+    }
+
+    /// `store: None` is a single instance with its own storage directory `data/<name>`.
+    fn start_with(
+        name: &str,
+        store: Option<Arc<dyn ClusterStore>>,
+        data: &std::path::Path,
+    ) -> Self {
         let runtime = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
@@ -98,7 +107,7 @@ impl Instance {
             challenges,
             metrics: metrics.clone(),
             dns: Arc::new(NoDns),
-            cluster: Some(ClusterAcme {
+            cluster: store.map(|store| ClusterAcme {
                 store,
                 instance: name.to_owned(),
                 lease_ttl: Duration::from_secs(3),
@@ -282,7 +291,10 @@ async fn a_successor_finishes_the_journalled_order() {
         assert!(Instant::now() < deadline, "no order was created");
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    let victim = instances.iter().position(|i| i.name == holder).unwrap();
+    let victim = instances
+        .iter()
+        .position(|i| holder.split('@').next() == Some(i.name.as_str()))
+        .unwrap();
     instances[victim].kill();
     let survivors: Vec<SocketAddr> = instances
         .iter()
@@ -303,4 +315,111 @@ async fn a_successor_finishes_the_journalled_order() {
             .unwrap()
             .is_none()
     );
+}
+
+/// The leaf's DNS names.
+fn names_of(der: &[u8]) -> Vec<String> {
+    let (_, cert) = x509_parser::parse_x509_certificate(der).unwrap();
+    let mut names: Vec<String> = cert
+        .subject_alternative_name()
+        .unwrap()
+        .map(|san| {
+            san.value
+                .general_names
+                .iter()
+                .filter_map(|n| match n {
+                    x509_parser::extensions::GeneralName::DNSName(d) => Some((*d).to_owned()),
+                    _ => None,
+                })
+                .collect()
+        })
+        .unwrap_or_default();
+    names.sort();
+    names
+}
+
+async fn wait_serving(
+    instance: &Instance,
+    name: &str,
+    with: &[&str],
+    not: Option<&[u8]>,
+    fake: &FakeAcme,
+) -> Vec<u8> {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        if let Some(served) = instance.serving(name)
+            && names_of(&served) == with
+            && not.is_none_or(|n| n != served.as_slice())
+        {
+            return served;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "{} never served {with:?} for {name}: orders {:?}, failures {:?}",
+            instance.name,
+            fake.orders_created(),
+            fake.failures()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+}
+
+/// Review finding H1, through the manager, for a single instance (its own directory, as in
+/// 0.8) and a cluster member: the name list of a certificate grows with the same first name,
+/// and a second request shares that first name. One more order stores a certificate with all
+/// the names, every name is served, and after a restart the stored certificate loads without
+/// another order (the first v0.9 code left `cert.pem` replaced and `meta.json` stale, so
+/// nothing loaded and every retry ordered again).
+#[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+async fn a_changed_name_list_is_stored_and_survives_a_restart() {
+    for clustered in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Option<Arc<dyn ClusterStore>> = clustered
+            .then(|| Arc::new(DirStore::shared(dir.path().join("store"))) as Arc<dyn ClusterStore>);
+        let mut instance = Instance::start_with("edge-1", store.clone(), dir.path());
+        let fake = FakeAcme::start(vec![instance.http], Vec::new()).await;
+        let root = dir.path().join("root.pem");
+        std::fs::write(&root, fake.root_pem()).unwrap();
+        let mut plan = plan(&fake, &root);
+        let request = |names: &[&str]| CertRequest {
+            names: names.iter().map(|n| (*n).to_owned()).collect(),
+            dns_provider: None,
+        };
+        plan.requests = vec![request(&["a.example.com"])];
+        instance.plan(&plan);
+        let first = wait_serving(&instance, "a.example.com", &["a.example.com"], None, &fake).await;
+        // The list grows with the same first name; another request shares the first name.
+        plan.requests = vec![
+            request(&["a.example.com", "c.example.com"]),
+            request(&["a.example.com"]),
+            request(&["a.example.com", "d.example.com"]),
+        ];
+        instance.plan(&plan);
+        let all = ["a.example.com", "c.example.com", "d.example.com"];
+        let second = wait_serving(&instance, "c.example.com", &all, Some(&first), &fake).await;
+        assert_eq!(instance.serving("a.example.com").unwrap(), second);
+        assert_eq!(instance.serving("d.example.com").unwrap(), second);
+        assert_eq!(
+            fake.issued().values().sum::<usize>(),
+            2,
+            "clustered {clustered}: {:?} {:?}",
+            fake.issued(),
+            fake.failures()
+        );
+        // A restart loads the stored certificate: no further order.
+        instance.kill();
+        let instance = Instance::start_with("edge-1", store.clone(), dir.path());
+        fake.set_targets(vec![instance.http], Vec::new());
+        instance.plan(&plan);
+        let again = wait_serving(&instance, "c.example.com", &all, None, &fake).await;
+        assert_eq!(again, second);
+        assert_eq!(
+            fake.issued().values().sum::<usize>(),
+            2,
+            "{:?}",
+            fake.issued()
+        );
+        assert!(fake.failures().is_empty(), "{:?}", fake.failures());
+        drop(instance);
+    }
 }

@@ -360,12 +360,14 @@ async fn three_data_planes_survive_a_control_plane_outage() {
             bundle["revision"], 2,
             "edge-{i} stored the bundle it acknowledged"
         );
+        // The identity (key, certificate, CA) is one file, written atomically and private.
         let mode = std::os::unix::fs::PermissionsExt::mode(
-            &std::fs::metadata(m.rdock.data_dir().join("cluster/key.pem"))
+            &std::fs::metadata(m.rdock.data_dir().join("cluster/identity.json"))
                 .unwrap()
                 .permissions(),
         );
-        assert_eq!(mode & 0o777, 0o600, "edge-{i}'s identity key is private");
+        assert_eq!(mode & 0o777, 0o600, "edge-{i}'s identity is private");
+        assert!(!m.rdock.data_dir().join("cluster/enroll-key.pem").exists());
     }
 
     // Requests run against all three for the whole outage.
@@ -826,9 +828,10 @@ async fn admitted(
                 other => panic!("{path} on edge-{i}: {other:?}\n{}", m.rdock.log()),
             }
         }
-        // Long enough for a claim to come back from the store between rounds on a slow
-        // machine: an instance admits from what it has claimed and never waits for the store.
-        tokio::time::sleep(Duration::from_millis(50)).await;
+        // An instance admits from what it has claimed (and, for a key new to it, up to its
+        // share until its first claim returns) and never waits for the store, so the pause
+        // between rounds needs no room for a store round trip.
+        tokio::time::sleep(Duration::from_millis(5)).await;
     }
     counts
 }
@@ -842,15 +845,17 @@ fn metric(member: &Member, name: &str) -> Option<f64> {
 }
 
 /// Cluster-scoped limits (H-HA-04): three data planes share a `rate_limit` and a `quota` of
-/// 30 through the control plane's store and admit no more than the documented bound
-/// `L + N × c` = 30 + 3 × ⌈30 × 10 / 300⌉ = 33; with the control plane stopped each falls back
-/// to its share ⌈30 / 3⌉ = 10 (counted by a metric and logged); when it returns they share
-/// again within the bound.
+/// 30 through the control plane's store and admit at least the limit less one headroom per
+/// instance and no more than the documented bound `L + N × max(c, ⌈L / N⌉)` =
+/// 30 + 3 × max(⌈30 × 10 / 300⌉, ⌈30 / 3⌉) = 60; with the control plane stopped each falls
+/// back to its share ⌈30 / 3⌉ = 10 (counted by a metric and logged); when it returns they
+/// share again within the bound.
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
 #[allow(clippy::too_many_lines)] // one scenario, in order
 async fn three_data_planes_share_cluster_scoped_limits() {
     const LIMIT: u64 = 30;
-    const BOUND: u64 = 33;
+    // L + N × max(c, ⌈L / N⌉) with L = 30, N = 3, c = 1.
+    const BOUND: u64 = 60;
     // Fixed windows of an hour from the epoch: do not start within two minutes of the end of
     // one, so the scenario stays inside a single window.
     let into_hour = std::time::SystemTime::now()
@@ -978,8 +983,8 @@ async fn three_data_planes_share_cluster_scoped_limits() {
             "{path} after the store returned: {total} ({counts:?}), bound {BOUND}"
         );
     }
-    // The second client's fallback admissions were added to the store's count: nothing more
-    // is admitted for it (beyond each instance's headroom of 1).
+    // The second client's fallback admissions were added to the store's count, which leaves
+    // nothing for it: at most each instance's headroom of 1 more.
     let counts = admitted(&members, "/q", second, 10).await;
     assert!(counts.iter().sum::<u64>() <= 3, "{counts:?}");
     assert!(
@@ -1044,7 +1049,7 @@ middlewares:\n  shared-rate: {{ type: rate_limit, average: 30, period: 1h, burst
     .await;
     let counts = admitted(&members, "/rl", std::net::Ipv4Addr::new(127, 0, 0, 21), 60).await;
     let total: u64 = counts.iter().sum();
-    assert!((27..=33).contains(&total), "{total} ({counts:?})");
+    assert!((27..=60).contains(&total), "{total} ({counts:?})");
     assert!(redis.commands() > 0);
     // Stopped: each instance admits its share ⌈30 / 3⌉ of a fresh client's budget.
     redis.stop();
@@ -1074,7 +1079,7 @@ middlewares:\n  shared-rate: {{ type: rate_limit, average: 30, period: 1h, burst
     .await;
     let counts = admitted(&members, "/rl", std::net::Ipv4Addr::new(127, 0, 0, 23), 60).await;
     let total: u64 = counts.iter().sum();
-    assert!((27..=33).contains(&total), "{total} ({counts:?})");
+    assert!((27..=60).contains(&total), "{total} ({counts:?})");
     for m in &members {
         let log = m.rdock.log();
         assert!(!log.contains(PASSWORD), "the password is in a log:\n{log}");

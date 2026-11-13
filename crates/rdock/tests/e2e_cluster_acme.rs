@@ -362,7 +362,9 @@ async fn the_lease_holder_killed_mid_order_leaves_one_order() {
         assert!(Instant::now() < deadline, "no order was journalled");
         tokio::time::sleep(Duration::from_millis(50)).await;
     };
-    let victim: usize = holder.trim_start_matches("edge-").parse().unwrap();
+    // On a shared directory the holder is the instance and a tag of its process.
+    let instance = holder.split('@').next().unwrap();
+    let victim: usize = instance.trim_start_matches("edge-").parse().unwrap();
     trio.instances[victim].kill();
     let alive: Vec<usize> = (0..3).filter(|i| *i != victim).collect();
     trio.fake.set_targets(

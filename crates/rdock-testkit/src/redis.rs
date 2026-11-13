@@ -1,6 +1,6 @@
 //! An in-process stand-in for a Redis-compatible server: the RESP2 commands rdock's
 //! cluster-scoped limits use (`AUTH`, `SELECT`, `PING`, `GET`, `INCRBY`, `DECRBY`,
-//! `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`), optionally behind TLS and a password. It
+//! `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`, `ZCARD`, `TIME`), optionally behind TLS and a password. It
 //! can be stopped and started again on the same port with its data kept, to test a store that
 //! goes away and returns. Expiry is recorded, not enforced.
 
@@ -228,6 +228,17 @@ fn execute(name: &str, args: &[Vec<u8>], data: &Mutex<Data>) -> String {
     let arg = |i: usize| args.get(i).cloned().unwrap_or_default();
     match name {
         "PING" => "+PONG\r\n".to_owned(),
+        "TIME" => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default();
+            let (secs, micros) = (now.as_secs().to_string(), now.subsec_micros().to_string());
+            format!(
+                "*2\r\n${}\r\n{secs}\r\n${}\r\n{micros}\r\n",
+                secs.len(),
+                micros.len()
+            )
+        }
         "SELECT" => "+OK\r\n".to_owned(),
         "GET" => match data.strings.get(&arg(1)) {
             Some(n) => {

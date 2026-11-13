@@ -3,6 +3,7 @@
 pub mod agent;
 pub mod clock;
 pub mod dir;
+pub mod janitor;
 pub mod limits;
 pub mod memory;
 pub mod protocol;

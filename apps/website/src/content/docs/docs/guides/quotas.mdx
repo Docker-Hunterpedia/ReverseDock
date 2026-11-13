@@ -128,7 +128,7 @@ off by default; `Retry-After` takes precedence, as the draft says. The older
 
 - **Per instance by default.** Each ReverseDock process counts on its own: three replicas allow
   up to three times the quota. With `scope: cluster` <Status planned="v0.9" /> the instances of a
-  cluster share it, within the bound `L + N × c` and with a fallback to each instance's share while
+  cluster share it, within the bound `L + N × max(c, ⌈L / N⌉)` and with a fallback to each instance's share while
   the store is away ([details](/docs/guides/rate-limiting/#share-a-limit-across-instances));
   cluster-scoped quotas are not written to `<data dir>/quota/` and do not appear in
   `rdock consumers quota`.

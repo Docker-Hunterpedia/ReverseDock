@@ -181,16 +181,30 @@ cluster:
 
 **How it works.** For each key and window, the budget `L` is a counter in the store. Each
 instance **claims** parts of it ahead of use, from a background task, and admits requests
-against what it claimed plus a small headroom; the store never grants more than `L` in total.
-A request never waits for the store.
+against what it claimed plus a small headroom `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)`;
+the store never grants more than `L` in total. A request never waits for the store. A key an
+instance has not seen yet in the window has no claim yet: until its first claim returns
+(one store round trip), the instance admits up to its share `⌈L / N⌉`, so a client's first burst
+(a browser's parallel requests) is not refused, and then adds what it admitted beyond its
+grant to the store's count.
 
 **The bound.** While the store answers, a cluster of `N` instances admits at most
 
-> `L + N × c` requests per key and window, with `c = max(1, ⌈L × headroom_percent / (100 × N)⌉)`
+> `L + N × max(c, ⌈L / N⌉)` requests per key and window
 
-For `L = 600`, `N = 3` and the default 10 %: `c = 20`, so at most 660. A larger
-`headroom_percent` absorbs store latency at high request rates; a smaller one tightens the bound.
-Once the store says the budget is used up, no headroom is used.
+With `headroom_percent` at most 100, `c` is never above `⌈L / N⌉`, so this is
+`L + N × ⌈L / N⌉`, about twice `L`. That worst case needs instances to meet a key for the first
+time after the others used the budget up; a key whose requests keep reaching the same
+instances stays within `L + N × c` (for `L = 600`, `N = 3` and the default 10 %: `c = 20`, 660).
+A larger `headroom_percent` absorbs store latency at high request rates; a smaller one tightens
+`c`. Once the store says the budget is used up, no headroom is used.
+
+**Clocks.** Windows are cut by each instance's clock, and a window's count is removed a minute
+after it ended, so instances whose clocks differ by less than a minute share one count per
+window; they only change windows at slightly different moments. `N` does not depend on clocks:
+an instance counts a member while that member's heartbeat keeps changing. A data plane warns at
+start when its clock differs from the control plane's by more than 2 s; keep clocks in step
+with NTP.
 
 **What `scope: cluster` counts.** For `rate_limit`, the cluster admits at most `average`
 requests per key in each `period`, in fixed windows from the Unix epoch (so up to twice
@@ -219,8 +233,9 @@ cluster:
       timeout: 1s                                   # 100ms–10s, per connect and command
 ```
 
-rdock uses `AUTH`, `SELECT`, `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE` and
-`ZCARD`; keys start with `key_prefix` (`rdock:`) and expire a minute after their window. Plain
+rdock uses `AUTH`, `SELECT`, `INCRBY`, `DECRBY`, `PEXPIREAT`, `ZADD`, `ZREMRANGEBYSCORE`,
+`ZCARD` and `TIME` (members are counted by the server's clock); keys start with `key_prefix`
+(`rdock:`) and expire a minute after their window, by the server's clock. Plain
 `redis://` is accepted for a loopback address only, unless you set `allow_plaintext: true`.
 
 **Not shared:** `in_flight` (`scope: cluster` is refused, a cluster-wide count is planned),

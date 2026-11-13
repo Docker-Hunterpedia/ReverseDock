@@ -35,6 +35,13 @@ pub struct Instance {
     pub certificate_serial: String,
     /// Expiry of its newest client certificate (Unix seconds).
     pub certificate_not_after: i64,
+    /// The serial of the certificate the newest one replaced at renewal, accepted until
+    /// `previous_until` so calls in flight during a renewal still finish.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_serial: Option<String>,
+    /// Until when `previous_serial` is accepted (Unix seconds).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub previous_until: Option<i64>,
     /// Revoked instances can no longer fetch bundles or use the store.
     #[serde(default)]
     pub revoked: bool,
@@ -105,5 +112,23 @@ impl Registry {
     #[must_use]
     pub fn allowed(&self, name: &str) -> bool {
         self.instances.get(name).is_some_and(|i| !i.revoked)
+    }
+
+    /// Whether the certificate with `serial` may call as `name` at `now`: the instance is
+    /// enrolled and not revoked, and the certificate is the newest one issued to it (or the one
+    /// that one replaced, for a short time after a renewal). A copy of an older identity, a
+    /// certificate renewed away and the certificate of a machine whose name was enrolled again
+    /// stop working (review findings H2, L3).
+    #[must_use]
+    pub fn admits(&self, name: &str, serial: &str, now: i64) -> bool {
+        let serial = crate::ca::normalize_serial(serial);
+        self.instances.get(name).is_some_and(|i| {
+            !i.revoked
+                && (crate::ca::normalize_serial(&i.certificate_serial) == serial
+                    || (i.previous_until.is_some_and(|until| now < until)
+                        && i.previous_serial
+                            .as_deref()
+                            .is_some_and(|p| crate::ca::normalize_serial(p) == serial)))
+        })
     }
 }

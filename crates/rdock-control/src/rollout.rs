@@ -254,6 +254,17 @@ impl Rollout {
         }
     }
 
+    /// The stable revision once the next revision is published (what [`Rollout::start`] will
+    /// make it): the current one when its rollout completed, else the current stable one.
+    #[must_use]
+    pub fn next_stable(&self) -> u64 {
+        if self.state.phase == Phase::Complete {
+            self.state.revision
+        } else {
+            self.state.stable
+        }
+    }
+
     /// Starts rolling out `revision`. `immediate` (a rollback) skips the canary. `online` are
     /// the online, unrevoked instances by name.
     pub fn start(

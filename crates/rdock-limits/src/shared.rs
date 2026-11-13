@@ -4,10 +4,24 @@
 //! Each key's budget `L` for a window is claimed from a shared store in parts. An instance
 //! admits a request while what it admitted in the window (`used`) is below what it claimed
 //! (`granted`) plus a headroom `c = max(1, ⌈L × h / (100 × N)⌉)` (`h` the headroom percentage,
-//! `N` the instances it knows of), and asks for more as soon as its headroom is being used. The
-//! store never grants more than `L` in total, so the cluster admits at most **`L + N × c`**
-//! per key and window. Claims are sent by a background task (`rdock-cluster`), never by the
-//! request.
+//! `N` the instances it knows of), and asks for more as soon as its headroom is being used.
+//! Claims are sent by a background task (`rdock-cluster`), never by the request.
+//!
+//! A key an instance sees for the first time in a window has no answer from the store yet: until
+//! its first claim returns, the instance admits up to its fair share `s = ⌈L / N⌉` (not just `c`,
+//! which refused a browser's parallel requests with 429 for a store round trip; review finding
+//! M4), and when the answer comes, what it admitted beyond the grant is added to the store's
+//! count (a *forced* claim), exactly as after an outage.
+//!
+//! **The bound.** The store never grants more than `L` in non-forced claims. Each instance admits
+//! at most `max(c, s)` beyond what it was granted: while the key is new to it at most `s` in all;
+//! after that `c` beyond its claims, its forced claim being at most `s − 1 − c` when its first
+//! claim was granted in full, and the key being exhausted (no headroom) when it was not. So the
+//! cluster admits at most **`L + N × max(c, ⌈L / N⌉)`** per key and window (with `h` at most 100,
+//! `c ≤ ⌈L / N⌉`, so this is `L + N × ⌈L / N⌉`, about `2 × L`), and only when instances meet a key
+//! for the first time after the others used it up; a key whose requests keep coming to the same
+//! instances stays within `L + N × c`. The bound assumes every instance counts the same `N`;
+//! see `bound` for clock skew.
 //!
 //! While the store is away an instance admits up to `max(granted, ⌈L / N⌉)` (fallback
 //! `share`) or `L` (fallback `instance`) against its own count; when the store returns, what it
@@ -99,6 +113,9 @@ struct KeyState {
     total: u64,
     /// A claim for this key is queued or in flight.
     asked: bool,
+    /// A claim for this key in this window has been answered (until then the key is new to
+    /// this instance and admits up to the fair share).
+    answered: bool,
     /// The store answered that nothing is left: do not ask again this window unless forced.
     exhausted: bool,
 }
@@ -169,14 +186,29 @@ pub fn headroom(limit: u64, percent: u32, members: u64) -> u64 {
         .max(1)
 }
 
-/// The documented bound: the most a cluster of `members` instances admits per key and window
-/// for a limit `limit` with `percent` headroom while the store answers.
+/// The fair share `s = ⌈L / N⌉`: what an instance admits for a key new to it until its first
+/// claim returns, and while the store is away (fallback `share`).
+#[must_use]
+pub fn share(limit: u64, members: u64) -> u64 {
+    ceil_div(limit, members.max(1))
+}
+
+/// The documented bound, `L + N × max(c, ⌈L / N⌉)`: the most a cluster of `members` instances
+/// admits per key and window for a limit `limit` with `percent` headroom while the store
+/// answers (see the module documentation).
+///
+/// It assumes every instance counts `members`. An instance whose count is lower (it joined
+/// moments ago, or a member's heartbeat stopped changing) uses a larger `c` and `s`; the bound
+/// then holds with each instance's own `max(c, s)` summed. Clocks do not change the count: a
+/// member counts while its heartbeat keeps changing, by the reader's monotonic clock. A clock
+/// that differs from the others by less than the store's window margin (60 s) moves the
+/// instant an instance changes windows, not the count of a window: totals are removed only a
+/// minute after a window ended.
 #[must_use]
 pub fn bound(limit: u64, percent: u32, members: u64) -> u64 {
+    let members = members.max(1);
     limit.saturating_add(
-        members
-            .max(1)
-            .saturating_mul(headroom(limit, percent, members)),
+        members.saturating_mul(headroom(limit, percent, members).max(share(limit, members))),
     )
 }
 
@@ -337,6 +369,7 @@ impl Budget {
             granted: 0,
             total: 0,
             asked: false,
+            answered: false,
             exhausted: false,
         });
         if state.window != window {
@@ -347,6 +380,7 @@ impl Budget {
                 granted: 0,
                 total: 0,
                 asked: false,
+                answered: false,
                 exhausted: false,
             };
         }
@@ -354,6 +388,12 @@ impl Budget {
         let allowance = if up && state.exhausted {
             // The store said nothing is left: no headroom beyond what was granted.
             state.granted
+        } else if up && !state.answered {
+            // New to this instance: the fair share until the first claim returns.
+            state
+                .granted
+                .saturating_add(headroom(limit, percent, members))
+                .max(share(limit, members))
         } else if up {
             state
                 .granted
@@ -361,7 +401,7 @@ impl Budget {
         } else if inner.fallback_instance.load(Ordering::Relaxed) {
             limit
         } else {
-            state.granted.max(ceil_div(limit, members))
+            state.granted.max(share(limit, members))
         };
         let admitted = state.used < allowance;
         if admitted {
@@ -425,16 +465,60 @@ impl Budget {
     }
 
     /// Records the store's answer to a claim: `granted` of what was asked, the key's total
-    /// after it. A claim for a window that has passed is dropped.
-    pub fn granted(&self, key: &str, window: (u64, u64), granted: u64, total: u64, asked: u64) {
-        let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
-        if let Some(state) = keys.get_mut(key)
-            && state.window == window
+    /// after it, whether the claim was forced. A claim for a window that has passed is
+    /// dropped. The first answer for a key reconciles what was admitted beyond it while the
+    /// key was new (a forced claim of the difference).
+    pub fn granted(
+        &self,
+        key: &str,
+        window: (u64, u64),
+        granted: u64,
+        total: u64,
+        asked: u64,
+        forced: bool,
+    ) {
+        let mut reconcile = None;
         {
-            state.granted = state.granted.saturating_add(granted);
-            state.total = state.total.max(total);
-            state.asked = false;
-            state.exhausted = granted < asked && total >= state.limit;
+            let mut keys = self.keys.lock().unwrap_or_else(PoisonError::into_inner);
+            if let Some(state) = keys.get_mut(key)
+                && state.window == window
+            {
+                state.granted = state.granted.saturating_add(granted);
+                state.total = state.total.max(total);
+                state.asked = false;
+                state.exhausted = if forced {
+                    total >= state.limit
+                } else {
+                    granted < asked && total >= state.limit
+                };
+                if !state.answered {
+                    state.answered = true;
+                    if state.used > state.granted {
+                        state.asked = true;
+                        reconcile = Some((state.used - state.granted, state.limit));
+                    }
+                }
+            }
+        }
+        if let Some((amount, limit)) = reconcile {
+            match self.arc() {
+                Some(budget) => {
+                    self.inner
+                        .pending
+                        .lock()
+                        .unwrap_or_else(PoisonError::into_inner)
+                        .push(Claim {
+                            budget,
+                            key: key.to_owned(),
+                            window,
+                            amount,
+                            limit,
+                            forced: true,
+                        });
+                    self.inner.notify.notify_one();
+                }
+                None => self.failed(key, window),
+            }
         }
     }
 
@@ -511,9 +595,14 @@ mod tests {
                     claim.amount.min(claim.limit.saturating_sub(*total))
                 };
                 *total += grant;
-                claim
-                    .budget
-                    .granted(&claim.key, claim.window, grant, *total, claim.amount);
+                claim.budget.granted(
+                    &claim.key,
+                    claim.window,
+                    grant,
+                    *total,
+                    claim.amount,
+                    claim.forced,
+                );
             }
         }
     }
@@ -533,12 +622,68 @@ mod tests {
         assert_eq!(headroom(30, 10, 3), 1);
         assert_eq!(headroom(1000, 10, 4), 25);
         assert_eq!(headroom(1000, 0, 4), 1);
-        assert_eq!(bound(30, 10, 3), 33);
-        assert_eq!(bound(1000, 10, 4), 1100);
+        assert_eq!(share(30, 3), 10);
+        assert_eq!(share(31, 3), 11);
+        // L + N × max(c, ⌈L / N⌉).
+        assert_eq!(bound(30, 10, 3), 60);
+        assert_eq!(bound(1000, 10, 4), 2000);
+        assert_eq!(bound(7, 0, 3), 7 + 3 * 3);
+        assert_eq!(bound(30, 10, 1), 60);
+    }
+
+    /// Review finding M4: a key new to an instance is not refused after `c` requests while its
+    /// first claim is on its way; up to the fair share is admitted, and what passed the grant
+    /// is then added to the store's count.
+    #[test]
+    fn a_new_key_admits_the_fair_share_until_its_first_claim_returns() {
+        let (limits, budget) = instance(10, 3);
+        let admitted = (0..20)
+            .filter(|_| matches!(budget.take_at("k", 60, T), Take::Allowed { .. }))
+            .count();
+        assert_eq!(admitted, 20, "⌈60 / 3⌉ before any answer, not c = 2");
+        assert!(matches!(budget.take_at("k", 60, T), Take::Exceeded { .. }));
+        // One claim was sent (1 + c); its answer reconciles the other 17 as a forced claim.
+        let mut claims = limits.drain();
+        assert_eq!(claims.len(), 1);
+        let first = claims.remove(0);
+        assert_eq!(first.amount, 3);
+        assert!(!first.forced);
+        budget.granted("k", first.window, 3, 3, 3, false);
+        let forced = limits.drain();
+        assert_eq!(forced.len(), 1);
+        assert!(forced[0].forced);
+        assert_eq!(forced[0].amount, 17);
+        budget.granted("k", forced[0].window, 17, 20, 17, true);
+        assert_eq!(budget.usage("k"), Some((20, 20)));
+        // From now on the headroom rule: c = 2 more before the next claim returns.
+        let more = (0..10)
+            .filter(|_| matches!(budget.take_at("k", 60, T), Take::Allowed { .. }))
+            .count();
+        assert_eq!(more, 2);
+    }
+
+    /// A key new to an instance after the others used the whole budget: the instance admits at
+    /// most its share, and the store's answer (nothing left) leaves it exhausted, even after
+    /// its forced claim.
+    #[test]
+    fn a_new_key_on_a_used_up_budget_stops_at_the_share() {
+        let (limits, budget) = instance(10, 3);
+        let admitted = (0..30)
+            .filter(|_| matches!(budget.take_at("k", 30, T), Take::Allowed { .. }))
+            .count();
+        assert_eq!(admitted, 10);
+        let first = limits.drain().remove(0);
+        budget.granted("k", first.window, 0, 30, first.amount, false);
+        let forced = limits.drain().remove(0);
+        assert_eq!(forced.amount, 10);
+        budget.granted("k", forced.window, 10, 40, 10, true);
+        assert!(matches!(budget.take_at("k", 30, T), Take::Exceeded { .. }));
+        assert!(limits.drain().is_empty(), "exhausted: nothing asked again");
     }
 
     /// The worst case: every instance's claims are answered only after it used its whole
-    /// headroom, in every order. The cluster never admits more than `L + N × c`.
+    /// headroom, in every order. The cluster never admits more than
+    /// `L + N × max(c, ⌈L / N⌉)`.
     #[test]
     fn the_cluster_never_admits_more_than_the_bound() {
         for (limit, percent, n) in [(30u64, 10u8, 3u64), (100, 10, 4), (1000, 25, 5), (7, 0, 3)] {

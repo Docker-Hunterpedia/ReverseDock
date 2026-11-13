@@ -14,7 +14,13 @@
 //! | Report | `POST /cluster/v1/report` | [`Report`] → `204` |
 //! | Store | `POST /cluster/v1/store` | [`StoreRequest`] → [`StoreResponse`] |
 //!
-//! A revoked or unknown instance gets `403` on every call but enrolment.
+//! A revoked or unknown instance, or one presenting a certificate other than the newest issued to
+//! its name (the one a renewal replaced works for ten more minutes), gets `403` on every call but
+//! enrolment. Enrolment of a name that is enrolled and not revoked needs that instance's current
+//! certificate; a token already used answers again only the same public key. Every answer
+//! carries [`TIME_HEADER`]. Nothing of this version was released, so the review fixes of
+//! ADR-0031 (the header, the store's `forbidden` error, the enrolment rules, the layout of limit
+//! totals) stay version 1.
 
 use serde::{Deserialize, Serialize};
 
@@ -22,6 +28,14 @@ use crate::store::{Expect, Lease};
 
 /// The protocol version in paths and documents.
 pub const VERSION: u32 = 1;
+
+/// The header on every answer of the control plane: its clock, in milliseconds since the Unix
+/// epoch. A data plane compares it with its own clock on its first call and warns when they
+/// differ by more than [`CLOCK_SKEW_WARNING`].
+pub const TIME_HEADER: &str = "x-rdock-time-ms";
+
+/// How far a data plane's clock may differ from the control plane's before it warns at start.
+pub const CLOCK_SKEW_WARNING: std::time::Duration = std::time::Duration::from_secs(2);
 
 /// The media type of a compressed bundle.
 pub const BUNDLE_MEDIA_TYPE: &str = "application/vnd.rdock.bundle+zstd";

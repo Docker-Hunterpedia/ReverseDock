@@ -90,6 +90,10 @@ pub enum StoreError {
     /// A key or lease name is not well-formed.
     #[error("`{0}` is not a valid store key")]
     InvalidKey(String),
+    /// The store does not let this member make this change (the control plane's store
+    /// allows each member only the writes the protocol needs).
+    #[error("not allowed: {0}")]
+    Forbidden(String),
     /// The store cannot be reached or refused the request.
     #[error("store unavailable: {0}")]
     Unavailable(String),

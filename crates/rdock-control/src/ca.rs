@@ -178,6 +178,40 @@ impl ClusterCa {
     }
 }
 
+/// A certificate serial in hex as the registry keeps it: lower case, without leading zero bytes
+/// (DER drops them, so the presented serial may be shorter than the one generated).
+#[must_use]
+pub fn normalize_serial(hex: &str) -> String {
+    let lower = hex.to_ascii_lowercase().replace(':', "");
+    let mut rest = lower.as_str();
+    while rest.len() > 2 && rest.starts_with("00") {
+        rest = &rest[2..];
+    }
+    rest.to_owned()
+}
+
+/// The SHA-256 (hex) of the public key a signing request is for: what binds a join token to
+/// the key that first used it, so a retry with the same key is answered again (review finding
+/// L2). The request's signature is verified while it is parsed.
+pub fn csr_key_digest(csr_pem: &str) -> Result<String, Error> {
+    use rcgen::PublicKeyData as _;
+    let csr = CertificateSigningRequestParams::from_pem(csr_pem)
+        .map_err(|e| Error::Refused(format!("not a valid signing request: {e}")))?;
+    let digest = ring::digest::digest(&ring::digest::SHA256, csr.public_key.der_bytes());
+    Ok(rdock_credentials::hex(digest.as_ref()))
+}
+
+/// Who a client certificate names, when it is one of `cluster_id`'s: the instance, and the
+/// certificate's serial (normalized hex), which the registry compares with the newest one it
+/// issued.
+#[must_use]
+pub fn identity_of(cert: &CertificateDer<'_>, cluster_id: &str) -> Option<(String, String)> {
+    let instance = instance_of(cert, cluster_id)?;
+    let (_, parsed) = x509_parser::parse_x509_certificate(cert.as_ref()).ok()?;
+    let serial = normalize_serial(&rdock_credentials::hex(parsed.raw_serial()));
+    Some((instance, serial))
+}
+
 /// The instance a client certificate names, when it is one of `cluster_id`'s.
 #[must_use]
 pub fn instance_of(cert: &CertificateDer<'_>, cluster_id: &str) -> Option<String> {
@@ -225,6 +259,16 @@ mod tests {
         assert!(not_after > OffsetDateTime::now_utc().unix_timestamp());
         let der = CertificateDer::from_pem_slice(pem.as_bytes()).unwrap();
         assert_eq!(instance_of(&der, "c1").as_deref(), Some("edge-1"));
+        assert_eq!(
+            identity_of(&der, "c1"),
+            Some(("edge-1".to_owned(), normalize_serial(&serial)))
+        );
+        assert_eq!(normalize_serial("00AB:cd"), "abcd");
+        assert_eq!(
+            csr_key_digest(&csr).unwrap(),
+            csr_key_digest(&csr).unwrap(),
+            "the same key, the same digest"
+        );
         assert_eq!(instance_of(&der, "c2"), None, "another cluster's id");
         assert!(
             ca.client_certificate("not a csr", "c1", "x", std::time::Duration::from_secs(60))

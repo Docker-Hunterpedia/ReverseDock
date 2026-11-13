@@ -246,3 +246,44 @@ async fn directory_values_are_private_and_hidden_files_are_not_listed() {
     assert_eq!(mode & 0o777, 0o600);
     assert_eq!(store.list("").await.unwrap(), ["certs/app/key.pem"]);
 }
+
+/// Review finding M3: deleting the last key under a directory removes the directories it
+/// leaves empty (and the lock files' directories), so per-window and per-answer directories
+/// do not pile up; a directory that still holds a key stays.
+#[tokio::test]
+async fn deleting_the_last_key_removes_empty_directories() {
+    for exclusive in [false, true] {
+        let dir = tempfile::tempdir().unwrap();
+        let store: Arc<dyn ClusterStore> = if exclusive {
+            Arc::new(DirStore::exclusive(dir.path()))
+        } else {
+            Arc::new(DirStore::shared(dir.path()))
+        };
+        store
+            .put("a/b/c", b"1".to_vec(), Expect::Any, None)
+            .await
+            .unwrap();
+        store
+            .put("a/d", b"2".to_vec(), Expect::Any, None)
+            .await
+            .unwrap();
+        store.delete("a/b/c", Expect::Any, None).await.unwrap();
+        assert!(!dir.path().join("a/b").exists());
+        assert!(dir.path().join("a/d").exists());
+        store.delete("a/d", Expect::Any, None).await.unwrap();
+        assert!(!dir.path().join("a").exists());
+        assert!(dir.path().exists(), "the root stays");
+        // Nothing is left of the lock files either.
+        let locks = dir.path().join(".locks");
+        assert!(
+            !locks.exists() || std::fs::read_dir(&locks).unwrap().next().is_none(),
+            "lock directories left behind"
+        );
+        // Writing below a removed directory makes it again.
+        store
+            .put("a/b/c", b"3".to_vec(), Expect::Any, None)
+            .await
+            .unwrap();
+        assert_eq!(store.list("a").await.unwrap(), ["a/b/c"]);
+    }
+}
