@@ -616,3 +616,104 @@ impl Default for Lifecycle {
         }
     }
 }
+
+/// In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or
+/// `SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one
+/// drains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Upgrade {
+    /// The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default
+    /// `/usr/local/bin/rdock`, where the systemd unit and the release image install it. It
+    /// must be a regular file owned by root or rdock's user and not writable by the group or
+    /// others, in a directory with the same owners that the group and others cannot write to
+    /// (unless it is sticky, like /tmp).
+    pub binary: PathBuf,
+    /// How long the old process may still serve its open connections (HTTP/1 keep-alive is
+    /// switched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default
+    /// 10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,
+    /// possibly vulnerable binary serving for as long as a client holds a connection.
+    pub drain: DrainLimit,
+    /// How long the new process may take to report that it is ready, and then that it serves;
+    /// otherwise the old process resumes and the upgrade fails. Default 30s.
+    pub start_timeout: Duration,
+    /// minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of
+    /// the binary by one of them.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub trusted_keys: Vec<String>,
+}
+
+impl Default for Upgrade {
+    fn default() -> Self {
+        Self {
+            binary: PathBuf::from("/usr/local/bin/rdock"),
+            drain: DrainLimit::Within(Duration::from_secs(600)),
+            start_timeout: Duration::from_secs(30),
+            trusted_keys: Vec::new(),
+        }
+    }
+}
+
+/// A drain bound: a duration, or `unlimited`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DrainLimit {
+    /// At most this long.
+    Within(Duration),
+    /// Until the last connection closes.
+    Unlimited,
+}
+
+impl DrainLimit {
+    /// The bound, `None` when unlimited.
+    #[must_use]
+    pub fn get(self) -> Option<std::time::Duration> {
+        match self {
+            Self::Within(d) => Some(d.as_std()),
+            Self::Unlimited => None,
+        }
+    }
+}
+
+impl Serialize for DrainLimit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Within(d) => d.serialize(serializer),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for DrainLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Word(String),
+            Other(serde_json::Value),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Word(w) if w == "unlimited" => Ok(Self::Unlimited),
+            Raw::Word(w) => w
+                .parse::<Duration>()
+                .map(Self::Within)
+                .map_err(serde::de::Error::custom),
+            Raw::Other(v) => serde_json::from_value::<Duration>(v)
+                .map(Self::Within)
+                .map_err(serde::de::Error::custom),
+        }
+    }
+}
+
+impl JsonSchema for DrainLimit {
+    fn schema_name() -> std::borrow::Cow<'static, str> {
+        std::borrow::Cow::Borrowed("DrainLimit")
+    }
+
+    fn json_schema(generator: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        let duration = generator.subschema_for::<Duration>();
+        schemars::json_schema!({
+            "description": "A duration, or `unlimited`.",
+            "anyOf": [ duration, { "type": "string", "enum": ["unlimited"] } ]
+        })
+    }
+}

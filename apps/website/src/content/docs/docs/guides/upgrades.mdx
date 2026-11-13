@@ -1,0 +1,178 @@
+---
+title: Upgrade the binary in place
+description: Replace the running rdock binary without dropping a connection, by handing the listeners to a new process (Linux, systemd or bare metal).
+sidebar:
+  order: 14
+---
+
+import Status from '../../../../components/Status.astro';
+
+ReverseDock <Status planned="v0.9" /> can replace its own binary while it serves: the running
+process starts the new binary, hands it the listening sockets, and drains its own open
+connections. No connection attempt is refused or reset, because both processes share the same
+sockets and their queues. The design is
+[ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md).
+
+Listener changes never needed this: adding, removing or moving listeners applies with a
+[reload](/docs/guides/reloads/). An in-place upgrade is for a new **binary**.
+
+## What you need
+
+- Linux. On other systems `rdock upgrade` is refused; restart with the new binary instead.
+- rdock running under a service manager (systemd) or by hand, **not as PID 1**. In a container
+  rdock is the entry point (PID 1): when the old process exits, the container ends with it, so
+  an in-place upgrade is refused there with a message that says so. Replace the container with
+  one from the new image instead (a rolling update in Kubernetes or Swarm, `docker compose up -d`
+  elsewhere).
+- The new binary at `upgrade.binary` (default `/usr/local/bin/rdock`), as a regular file owned
+  by root or by rdock's user, not writable by its group or others, in a directory with the same
+  owners that its group and others cannot write to either (a sticky directory such as `/tmp` is
+  accepted): otherwise someone else could swap the file between the checks and the start.
+
+## How
+
+```sh
+sudo install -m 0755 rdock-new/rdock /usr/local/bin/rdock   # replace the file
+sudo rdock upgrade                                           # hand over to it
+```
+
+`rdock upgrade` talks to the running process over its admin **Unix socket** only (the file
+`admin.sock` in the data directory, readable by its owner), with the operator role. The admin
+API's TCP listener and the dashboard never accept it: an upgrade runs a file. `--binary <path>`
+runs another file than `upgrade.binary`; `SIGUSR2` does the same as `rdock upgrade` without
+arguments (`systemctl kill -s USR2 rdock`).
+
+The command waits and prints the outcome:
+
+```text
+upgraded: pid 31236 serves now; pid 31218 drains for up to 600 s
+```
+
+## What happens
+
+1. The running process checks the binary (regular file, owner, mode, and the signature when
+   `upgrade.trusted_keys` is set) and runs `<binary> validate` on the configuration file.
+2. From here until the handover ends, the old process serves without the HTTP caches (the new
+   process owns the cache directories) and its admin API refuses changes with 503 (the new
+   process has already read the users, tokens and configuration). It starts the binary as
+   `rdock run --inherit` with one end of a socket pair as its standard
+   input and sends it, over that pair, a manifest and the listening sockets (TCP and UDP), the
+   admin API's sockets, the data directory's lock and the TLS ticket keys.
+3. The new process loads the configuration, takes over the sockets, binds any it was not given,
+   and builds everything without accepting. Then it says `ready`.
+4. The old process stops accepting (new connections wait in the shared listen queues; its admin
+   connections close once they have answered the request in progress) and stops
+   everything that writes shared state: certificate issuance and renewal, the local CA, the
+   Cloudflare range sync, alerts, the providers (the Kubernetes provider releases its lease), the
+   Vault refresh and the quota counters' files. It tells the new process `go`.
+5. The new process starts accepting and the writers, and says `serving`. Under systemd the old
+   process tells systemd the new main PID (`MAINPID=`), then closes its copies of the listening
+   sockets and drains.
+
+If the new process exits, or `ready` or `serving` does not arrive within `upgrade.start_timeout`
+(30 s), the old process accepts again, restarts its writers, caches again and accepts admin
+changes again: nothing was closed, and the command reports the failure (exit code 1).
+
+## Drain
+
+While the old process drains, HTTP/1 keep-alive is off and HTTP/2 clients get `GOAWAY`, so
+their next requests go to new connections, which the new process accepts. Open requests,
+WebSockets, server-sent event streams, uploads and TCP relays go on until they end or until
+`upgrade.drain` (10 minutes by default, Envoy's drain time) has passed; what is left then is
+closed and the old process exits. `upgrade.drain: unlimited` waits for every connection, which
+keeps an old, possibly vulnerable binary serving for as long as a client holds a connection; it
+is allowed with a warning.
+
+```yaml title="rdock.yaml"
+upgrade:
+  binary: /usr/local/bin/rdock
+  drain: 2m
+  start_timeout: 30s
+
+listeners:
+  websecure:
+    address: ":443"
+    tls: {}
+certificates:
+  example:
+    cert_file: /etc/rdock/certs/example.com.pem
+    key_file: /etc/rdock/certs/example.com.key
+routes:
+  app:
+    match: "Host(`example.com`)"
+    service: app
+    tls: { certificate: example }
+services:
+  app:
+    backends:
+      - address: "127.0.0.1:3000"
+```
+
+## What does not survive
+
+- **UDP sessions** end at the handover: the old process stops reading the shared socket and
+  ends its sessions; a client's next datagram opens a session in the new process, with a new
+  socket towards the backend. Protocols that keep state per source port on the backend start
+  over.
+- **Established connections** stay with the old process until they end or the drain is over;
+  they are not moved to the new process.
+- **Counters** of `/metrics` start from zero in the new process (Prometheus handles resets).
+  The TLS session cache starts empty; session **tickets** keep working, because their keys are
+  handed over.
+
+What does survive: the listening sockets and their queues, the admin socket (never unlinked),
+the data directory's lock (held without a gap), TLS ticket keys, sticky-cookie keys (on disk),
+quota counts (the old process writes them before it stops writing and sends what it counted
+while draining when it exits), and the configuration history.
+
+## Verify the binary
+
+`upgrade.trusted_keys` takes minisign public keys (`RWQ…`). When it is set, `<binary>.minisig`
+must be a valid minisign signature of the binary by one of them, or the upgrade is refused.
+Releases are signed with keyless cosign today, not minisign: check a downloaded release with
+`cosign verify-blob` as on [Verify a download](/docs/install/verify/) before you install it, or
+sign the binaries you build with your own minisign key and list its public key here.
+
+## systemd
+
+The unit in `deploy/systemd/rdock.service` has `NotifyAccess=main`, so the old main process may
+name the new one. `systemctl stop rdock` while a drain runs ends both processes (the default
+`KillMode=control-group`), and `TimeoutStopSec` is unrelated to the drain. The unit's system call
+filter (`@system-service`) already allows starting a process.
+
+## Check
+
+```sh
+sudo rdock status                 # pid and upgrade_generation of the serving process
+curl -s localhost:2080/metrics | grep rdock_upgrade
+```
+
+- `rdock_upgrades_total{result}` counts upgrades this process started (`ok`, `failed`,
+  `refused`).
+- `rdock_upgrade_generation` is the number of upgrades behind the serving process.
+- `rdock_upgrade_draining_connections` is the old process's open connections, reported every
+  second while it drains; `rdock_upgrade_drain_deadline_seconds` is when its drain ends.
+
+The audit log has an `upgrade` record with who asked (or `signal`), the binary's SHA-256 and the
+result; the new process writes it for a successful upgrade, the old one for a refusal or
+failure.
+
+## One process per data directory
+
+Two independent `rdock run` processes on one data directory would overwrite each other's
+state, so the second is refused, naming the first one's pid:
+
+```text
+error: another rdock (pid 31236) is running with the data directory /var/lib/rdock
+```
+
+The lock is the kernel's (`flock` on `rdock.lock`), not the file's content: a process that was
+killed leaves no lock behind. Commands that only read or talk to the running process (`status`,
+`reload`, `validate`, `version`, `audit verify`, the admin commands) are unaffected.
+
+## Related
+
+- [Upgrade to a new release](/docs/install/upgrade/)
+- [Reload the configuration](/docs/guides/reloads/)
+- [`upgrade` reference](/docs/reference/configuration/upgrade/)
+- [Metrics](/docs/reference/metrics/)

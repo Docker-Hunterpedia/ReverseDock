@@ -11,9 +11,13 @@ homepage.workspace = true
 publish.workspace = true
 
 [dependencies]
+base64.workspace = true
+# BLAKE2b-512 for minisign's prehashed signatures (`ED`); the version argon2 already brings in.
+blake2 = "0.11.0"
 crc32fast.workspace = true
 ring.workspace = true
 subtle.workspace = true
+thiserror.workspace = true
 
 [lints]
 workspace = true

@@ -244,6 +244,16 @@ export type TokenView = {
     role: Access;
 };
 
+/**
+ * What `POST /upgrade` takes.
+ */
+export type UpgradeBody = {
+    /**
+     * The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
+     */
+    binary?: string | null;
+};
+
 export type UserChange = {
     disabled?: boolean | null;
     password?: string | null;
@@ -1161,6 +1171,11 @@ export type RdockConfig = {
         [key: string]: RdockUdpService;
     };
     /**
+     * In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and
+     * the start timeout.
+     */
+    upgrade?: RdockUpgrade | null;
+    /**
      * Configuration format version. Only `1` exists; omit it to use the latest.
      */
     version?: number | null;
@@ -1186,7 +1201,7 @@ export type RdockConfig = {
         [key: string]: RdockUdpRoute;
     } | {
         [key: string]: RdockUdpService;
-    } | number | null | undefined;
+    } | RdockUpgrade | null | number | null | undefined;
 };
 
 /**
@@ -1363,6 +1378,11 @@ export type RdockDockerProvider = {
 };
 
 /**
+ * A duration, or `unlimited`.
+ */
+export type RdockDrainLimit = RdockDuration | 'unlimited';
+
+/**
  * Duration made of numbers with units: ms, s, m, h, d.
  */
 export type RdockDuration = string;
@@ -1437,6 +1457,11 @@ export type RdockFileProvider = {
     watch?: boolean;
     [key: string]: unknown | Array<string> | boolean | undefined;
 };
+
+/**
+ * A number, or `unlimited` to remove the limit.
+ */
+export type RdockFloodLimit = number | 'unlimited';
 
 /**
  * Google Cloud DNS (`type: google_cloud_dns`).
@@ -1834,6 +1859,11 @@ export type RdockListener = {
      */
     address: RdockListenAddress;
     /**
+     * HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset
+     * values keep the behaviour before v0.9.
+     */
+    http2?: RdockListenerHttp2 | null;
+    /**
      * A path answered `200 OK` for any host before routing, for load-balancer health
      * monitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.
      */
@@ -1869,7 +1899,57 @@ export type RdockListener = {
      * TLS termination settings.
      */
     tls?: RdockListenerTls | null;
-    [key: string]: unknown | RdockListenAddress | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockListenerSocket | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+    [key: string]: unknown | RdockListenAddress | RdockListenerHttp2 | null | string | null | RdockListenerProtocol | null | RdockProxyProtocolIn | null | RdockUdpSessions | null | RdockListenerSocket | null | RdockStartTls | null | RdockListenerTimeouts | RdockListenerTls | null | undefined;
+};
+
+/**
+ * HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and
+ * h2 0.4.20 do; the limits that protect against stream and reset floods can only be removed
+ * by writing `unlimited`.
+ */
+export type RdockListenerHttp2 = {
+    /**
+     * Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1.
+     */
+    initial_connection_window?: RdockByteSize | null;
+    /**
+     * Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request
+     * body a client may send before rdock reads it. Default 65535 bytes (the protocol's
+     * initial value); at most 2^31-1.
+     */
+    initial_stream_window?: RdockByteSize | null;
+    /**
+     * Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100
+     * (Pingora's bound); at most 10000 unless `unlimited`.
+     */
+    max_concurrent_streams?: RdockFloodLimit | null;
+    /**
+     * Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384
+     * to 16777215 (RFC 9113 §6.5.2).
+     */
+    max_frame_size?: RdockByteSize | null;
+    /**
+     * Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB
+     * (Pingora's bound); 1KiB to 16MiB.
+     */
+    max_header_list_size?: RdockByteSize | null;
+    /**
+     * Streams rdock resets because the client misbehaved before the connection is closed (the
+     * `MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless
+     * `unlimited`.
+     */
+    max_local_error_reset_streams?: RdockFloodLimit | null;
+    /**
+     * Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset
+     * mitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`.
+     */
+    max_pending_accept_reset_streams?: RdockFloodLimit | null;
+    /**
+     * Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);
+     * 16KiB to 16MiB.
+     */
+    max_send_buffer?: RdockByteSize | null;
+    [key: string]: unknown | RdockByteSize | null | RdockByteSize | null | RdockFloodLimit | null | RdockByteSize | null | RdockByteSize | null | RdockFloodLimit | null | RdockFloodLimit | null | RdockByteSize | null | undefined;
 };
 
 /**
@@ -1979,7 +2059,17 @@ export type RdockListenerTls = {
      * TLS versions and cipher suites.
      */
     policy?: RdockTlsPolicy;
-    [key: string]: unknown | Array<string> | RdockClientAuth | null | number | null | RdockTlsPolicy | undefined;
+    /**
+     * Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when
+     * tickets are off), shared like the ticket keys. Default 256 sessions.
+     */
+    session_cache?: RdockTlsSessionCache | null;
+    /**
+     * Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by
+     * every listener of the same security class and kept across reloads and binary upgrades.
+     */
+    tickets?: RdockTlsTickets | null;
+    [key: string]: unknown | Array<string> | RdockClientAuth | null | number | null | RdockTlsPolicy | RdockTlsSessionCache | null | RdockTlsTickets | null | undefined;
 };
 
 /**
@@ -4238,6 +4328,47 @@ export type RdockTlsMode = 'auto' | 'off';
 export type RdockTlsPolicy = 'modern' | 'intermediate';
 
 /**
+ * The in-memory session cache of a TLS listener.
+ */
+export type RdockTlsSessionCache = {
+    /**
+     * Sessions kept (0 turns the cache off). Default 256, rustls's default.
+     */
+    size?: number;
+    [key: string]: unknown | number | undefined;
+};
+
+/**
+ * TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners
+ * share ticket keys only when their TLS policy, client authentication (mode and CA
+ * certificates), certificate scope and these settings are equal, so a session from a listener
+ * without client authentication can never be resumed on one that requires it. 0-RTT (early
+ * data) is never accepted.
+ */
+export type RdockTlsTickets = {
+    /**
+     * Issue and accept tickets.
+     */
+    enabled?: boolean;
+    /**
+     * Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,
+     * one per line (`openssl rand -base64 32`), the first current, the others still accepted.
+     * The file must not be readable by the group or others, is read again when it changes, and
+     * rotating it is then your job (a warning when it is older than 24 hours). Without it, keys
+     * are generated, live in memory only and are handed to the next process in a binary
+     * upgrade.
+     */
+    key_file?: string | null;
+    /**
+     * How often a new ticket key is made; the previous key still decrypts for one more
+     * interval, so tickets live at most twice this (announced to clients, capped at 7 days by
+     * RFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h.
+     */
+    rotate?: RdockDuration;
+    [key: string]: unknown | boolean | string | null | RdockDuration | undefined;
+};
+
+/**
  * Token endpoint client authentication (OpenID Connect Core §9).
  */
 export type RdockTokenEndpointAuth = 'client_secret_basic' | 'client_secret_post';
@@ -4514,6 +4645,40 @@ export type RdockUnauthenticated = 'auto' | 'redirect' | 'deny';
  * What `validate` does with requests outside the OpenAPI document.
  */
 export type RdockUnknownOperations = 'deny' | 'allow';
+
+/**
+ * In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or
+ * `SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one
+ * drains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).
+ */
+export type RdockUpgrade = {
+    /**
+     * The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default
+     * `/usr/local/bin/rdock`, where the systemd unit and the release image install it. It
+     * must be a regular file owned by root or rdock's user and not writable by the group or
+     * others, in a directory with the same owners that the group and others cannot write to
+     * (unless it is sticky, like /tmp).
+     */
+    binary?: string;
+    /**
+     * How long the old process may still serve its open connections (HTTP/1 keep-alive is
+     * switched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default
+     * 10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,
+     * possibly vulnerable binary serving for as long as a client holds a connection.
+     */
+    drain?: RdockDrainLimit;
+    /**
+     * How long the new process may take to report that it is ready, and then that it serves;
+     * otherwise the old process resumes and the upgrade fails. Default 30s.
+     */
+    start_timeout?: RdockDuration;
+    /**
+     * minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of
+     * the binary by one of them.
+     */
+    trusted_keys?: Array<string>;
+    [key: string]: unknown | string | RdockDrainLimit | RdockDuration | Array<string> | undefined;
+};
 
 /**
  * TLS to backends.
@@ -6863,6 +7028,56 @@ export type RevokeTokenResponses = {
 };
 
 export type RevokeTokenResponse = RevokeTokenResponses[keyof RevokeTokenResponses];
+
+export type UpgradeData = {
+    /**
+     * The binary to run (optional)
+     */
+    body: UpgradeBody;
+    path?: never;
+    query?: never;
+    url: '/api/v1/upgrade';
+};
+
+export type UpgradeErrors = {
+    /**
+     * No valid session or token.
+     */
+    401: ErrorBody;
+    /**
+     * Not over the Unix socket, or the role cannot
+     */
+    403: ErrorBody;
+    /**
+     * Refused; nothing changed
+     */
+    409: {
+        [key: string]: unknown;
+    };
+    /**
+     * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
+     */
+    429: ErrorBody;
+    /**
+     * Failed and rolled back; this process serves on
+     */
+    500: {
+        [key: string]: unknown;
+    };
+};
+
+export type UpgradeError = UpgradeErrors[keyof UpgradeErrors];
+
+export type UpgradeResponses = {
+    /**
+     * The new process serves; this one drains
+     */
+    200: {
+        [key: string]: unknown;
+    };
+};
+
+export type UpgradeResponse = UpgradeResponses[keyof UpgradeResponses];
 
 export type UsersData = {
     body?: never;

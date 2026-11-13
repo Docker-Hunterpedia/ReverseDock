@@ -7,6 +7,12 @@
 #
 # `systemctl reload rdock` re-reads the configuration (SIGHUP); file changes are picked up
 # automatically too. Listener changes apply without a restart.
+#
+# In-place binary upgrade (ADR-0031): install the new binary over /usr/local/bin/rdock (as root,
+# mode 0755), then run `rdock upgrade` (as root, through the admin socket in /var/lib/rdock) or
+# `systemctl kill -s USR2 rdock`. The running process hands its listeners to the new one and
+# tells systemd the new main PID (`NotifyAccess=main`); it drains for `upgrade.drain` and exits.
+# `systemctl stop` ends both while one drains (the default KillMode=control-group).
 [Unit]
 Description=ReverseDock reverse proxy
 Documentation=https://github.com/Docker-Hunterpedia/ReverseDock
@@ -15,6 +21,8 @@ Wants=network-online.target
 
 [Service]
 Type=notify
+# The old process names the new one as main process after a binary upgrade (MAINPID=).
+NotifyAccess=main
 ExecStart=/usr/local/bin/rdock run --config /etc/rdock/rdock.yaml --data-dir /var/lib/rdock
 ExecReload=/bin/kill -HUP $MAINPID
 Restart=on-failure
@@ -47,6 +55,8 @@ RestrictSUIDSGID=yes
 LockPersonality=yes
 MemoryDenyWriteExecute=yes
 SystemCallArchitectures=native
+# @system-service includes @process (fork, execve), which a binary upgrade needs to start the
+# new process; nothing was widened for it.
 SystemCallFilter=@system-service
 RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
 LimitNOFILE=1048576

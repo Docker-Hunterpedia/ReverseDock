@@ -70,6 +70,10 @@ pub struct Config {
     /// The proxy's worker threads; read at start, so a change needs a restart.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub runtime: Option<RuntimeSettings>,
+    /// In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and
+    /// the start timeout.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upgrade: Option<crate::settings::Upgrade>,
     /// External secret stores that secret fields can reference (`${vault:…}`).
     #[serde(skip_serializing_if = "crate::secrets::Secrets::is_empty")]
     pub secrets: crate::secrets::Secrets,
@@ -233,6 +237,105 @@ pub struct Listener {
     /// options keep the kernel's behaviour, except `backlog`, which defaults to 4096.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub socket: Option<ListenerSocket>,
+    /// HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset
+    /// values keep the behaviour before v0.9.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http2: Option<ListenerHttp2>,
+}
+
+/// HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and
+/// h2 0.4.20 do; the limits that protect against stream and reset floods can only be removed
+/// by writing `unlimited`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct ListenerHttp2 {
+    /// Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100
+    /// (Pingora's bound); at most 10000 unless `unlimited`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_concurrent_streams: Option<FloodLimit>,
+    /// Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request
+    /// body a client may send before rdock reads it. Default 65535 bytes (the protocol's
+    /// initial value); at most 2^31-1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_stream_window: Option<ByteSize>,
+    /// Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub initial_connection_window: Option<ByteSize>,
+    /// Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384
+    /// to 16777215 (RFC 9113 §6.5.2).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_frame_size: Option<ByteSize>,
+    /// Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB
+    /// (Pingora's bound); 1KiB to 16MiB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_header_list_size: Option<ByteSize>,
+    /// Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset
+    /// mitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_pending_accept_reset_streams: Option<FloodLimit>,
+    /// Streams rdock resets because the client misbehaved before the connection is closed (the
+    /// `MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless
+    /// `unlimited`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_local_error_reset_streams: Option<FloodLimit>,
+    /// Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);
+    /// 16KiB to 16MiB.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub max_send_buffer: Option<ByteSize>,
+}
+
+/// A limit that guards against a flood: a number, or `unlimited` to remove it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum FloodLimit {
+    /// At most this many.
+    Count(u32),
+    /// No limit.
+    Unlimited,
+}
+
+impl Serialize for FloodLimit {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        match self {
+            Self::Count(n) => serializer.serialize_u32(*n),
+            Self::Unlimited => serializer.serialize_str("unlimited"),
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for FloodLimit {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum Raw {
+            Count(u64),
+            Word(String),
+        }
+        match Raw::deserialize(deserializer)? {
+            Raw::Count(n) => u32::try_from(n)
+                .map(Self::Count)
+                .map_err(|_| serde::de::Error::custom("too large; write `unlimited` for no limit")),
+            Raw::Word(w) if w == "unlimited" => Ok(Self::Unlimited),
+            Raw::Word(w) => Err(serde::de::Error::custom(format!(
+                "`{w}` is not a number or `unlimited`"
+            ))),
+        }
+    }
+}
+
+impl JsonSchema for FloodLimit {
+    fn schema_name() -> Cow<'static, str> {
+        Cow::Borrowed("FloodLimit")
+    }
+
+    fn json_schema(_: &mut schemars::SchemaGenerator) -> schemars::Schema {
+        schemars::json_schema!({
+            "description": "A number, or `unlimited` to remove the limit.",
+            "oneOf": [
+                { "type": "integer", "minimum": 1, "maximum": 4_294_967_295_u64 },
+                { "type": "string", "enum": ["unlimited"] }
+            ]
+        })
+    }
 }
 
 /// Socket options of a listener. Options that do not apply to the listener's transport are
@@ -318,6 +421,7 @@ impl Listener {
             ping: None,
             sessions: None,
             socket: None,
+            http2: None,
         }
     }
 
@@ -503,6 +607,76 @@ pub struct ListenerTls {
     /// Unset: no bound (ADR-0031).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub max_handshakes: Option<u32>,
+    /// Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by
+    /// every listener of the same security class and kept across reloads and binary upgrades.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub tickets: Option<TlsTickets>,
+    /// Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when
+    /// tickets are off), shared like the ticket keys. Default 256 sessions.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub session_cache: Option<TlsSessionCache>,
+}
+
+impl ListenerTls {
+    /// The ticket settings, with the defaults when `tickets` is omitted.
+    #[must_use]
+    pub fn tickets(&self) -> TlsTickets {
+        self.tickets.clone().unwrap_or_default()
+    }
+
+    /// The session cache settings, with the defaults when `session_cache` is omitted.
+    #[must_use]
+    pub fn session_cache(&self) -> TlsSessionCache {
+        self.session_cache.unwrap_or_default()
+    }
+}
+
+/// TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners
+/// share ticket keys only when their TLS policy, client authentication (mode and CA
+/// certificates), certificate scope and these settings are equal, so a session from a listener
+/// without client authentication can never be resumed on one that requires it. 0-RTT (early
+/// data) is never accepted.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TlsTickets {
+    /// Issue and accept tickets.
+    pub enabled: bool,
+    /// How often a new ticket key is made; the previous key still decrypts for one more
+    /// interval, so tickets live at most twice this (announced to clients, capped at 7 days by
+    /// RFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h.
+    pub rotate: Duration,
+    /// Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,
+    /// one per line (`openssl rand -base64 32`), the first current, the others still accepted.
+    /// The file must not be readable by the group or others, is read again when it changes, and
+    /// rotating it is then your job (a warning when it is older than 24 hours). Without it, keys
+    /// are generated, live in memory only and are handed to the next process in a binary
+    /// upgrade.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub key_file: Option<PathBuf>,
+}
+
+impl Default for TlsTickets {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            rotate: Duration::from_secs(6 * 60 * 60),
+            key_file: None,
+        }
+    }
+}
+
+/// The in-memory session cache of a TLS listener.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct TlsSessionCache {
+    /// Sessions kept (0 turns the cache off). Default 256, rustls's default.
+    pub size: u32,
+}
+
+impl Default for TlsSessionCache {
+    fn default() -> Self {
+        Self { size: 256 }
+    }
 }
 
 /// Client certificate verification.

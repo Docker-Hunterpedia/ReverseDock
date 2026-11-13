@@ -881,10 +881,36 @@ fn is_provider_listener(name: &str) -> bool {
 
 fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, String> {
     let tls = match &listener.tls {
-        Some(tls) => Some(crate::runtime::ListenerTls {
-            policy: tls.policy,
-            client_auth: tls.client_auth.as_ref().map(client_auth).transpose()?,
-        }),
+        Some(tls) => {
+            let tickets = tls.tickets();
+            let file_keys = match (&tickets.key_file, tickets.enabled) {
+                (Some(path), true) => {
+                    let (keys, age) =
+                        rdock_tls::tickets::read_key_file(path).map_err(|e| e.to_string())?;
+                    if age.is_some_and(|a| a > rdock_tls::tickets::KEY_FILE_MAX_AGE) {
+                        tracing::warn!(
+                            listener = name,
+                            file = %path.display(),
+                            "the ticket key file has not changed for more than 24 hours; with `key_file` rotating the keys is your job"
+                        );
+                    }
+                    Some(keys)
+                }
+                _ => None,
+            };
+            Some(crate::runtime::ListenerTls {
+                policy: tls.policy,
+                client_auth: tls.client_auth.as_ref().map(client_auth).transpose()?,
+                resumption: rdock_tls::ResumptionSettings {
+                    tickets: tickets.enabled,
+                    rotate: tickets.rotate.as_std(),
+                    key_file: tickets.key_file.filter(|_| tickets.enabled),
+                    cache_size: usize::try_from(tls.session_cache().size).unwrap_or(usize::MAX),
+                },
+                scope: (!tls.certificates.is_empty()).then(|| name.to_owned()),
+                file_keys,
+            })
+        }
         None => None,
     };
     Ok(ListenerRuntime {
@@ -896,6 +922,7 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
         timeouts: listener.timeouts,
         socket: listener.socket(),
         max_handshakes: listener.tls.as_ref().and_then(|t| t.max_handshakes),
+        http2: listener.http2.unwrap_or_default(),
         proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),

@@ -7,7 +7,7 @@ sidebar:
 
 ReverseDock is in pre-release (0.x). A new release can change the configuration format; each one says so in the [changelog](/docs/project/changelog/) under **Breaking**. Read it before you upgrade.
 
-Changing the binary needs a restart. Requests in flight during the stop get up to `lifecycle.drain_timeout` (8 seconds by default) to finish; new connections are refused until the new process is ready. Upgrades without that gap are planned for v0.9.
+Changing the binary with a restart gives requests in flight up to `lifecycle.drain_timeout` (8 seconds by default) to finish, and new connections are refused until the new process is ready. On Linux under systemd or on bare metal, [`rdock upgrade`](/docs/guides/upgrades/) replaces the binary in place instead: the running process hands its listeners to the new one and drains, and no connection is refused. Containers are replaced, not upgraded in place.
 
 ## 1. Read the changelog
 
@@ -38,11 +38,12 @@ docker compose up -d rdock
 docker compose exec rdock rdock version
 ```
 
-**systemd:** replace the binary and restart:
+**systemd:** replace the binary and hand over in place ([details](/docs/guides/upgrades/)), or restart:
 
 ```sh
 sudo install -m 0755 rdock-0.8.0-alpha.1-x86_64-unknown-linux-musl/rdock /usr/local/bin/rdock
-sudo systemctl restart rdock
+sudo rdock upgrade              # in place, no refused connections (from v0.9)
+# or: sudo systemctl restart rdock
 rdock version
 ```
 

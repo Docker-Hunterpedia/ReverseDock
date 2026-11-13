@@ -36,6 +36,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`tcp_services`](/docs/reference/configuration/tcp-services/): TCP backend pools.
 - [`udp_routes`](/docs/reference/configuration/udp-routes/): UDP routes: which `udp` listener's datagrams go to which UDP service.
 - [`udp_services`](/docs/reference/configuration/udp-services/): UDP backend pools.
+- [`upgrade`](/docs/reference/configuration/upgrade/): In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and
 - [`version`](/docs/reference/configuration/version/): Configuration format version. Only `1` exists; omit it to use the latest.
 
 ## Value types
@@ -64,6 +65,10 @@ Examples: `32KiB`, `100MiB`, `1048576`
 
 A certificate authority.
 
+### DrainLimit
+
+A duration, or `unlimited`.
+
 ### Duration
 
 Duration made of numbers with units: ms, s, m, h, d.
@@ -75,6 +80,10 @@ Examples: `10s`, `250ms`, `1h30m`
 
 
 Examples: `unix:///var/run/docker.sock`, `tcp://socket-proxy:2375`
+
+### FloodLimit
+
+A number, or `unlimited` to remove the limit.
 
 ### HttpUrl
 

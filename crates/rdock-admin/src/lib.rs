@@ -34,7 +34,7 @@ use async_trait::async_trait;
 
 pub use cache::{CachePurge, PurgeOutcome};
 pub use openapi::json as openapi_json;
-pub use server::{Running, StartError, start};
+pub use server::{Running, Sockets, StartError, start, start_with};
 
 /// What the admin API reads from and asks of the running process.
 #[async_trait]
@@ -93,6 +93,33 @@ pub trait Control: Send + Sync {
         let _ = (consumer, middleware);
         0
     }
+    /// Replaces the running binary by handing the listeners to a new process (ADR-0031);
+    /// returns once the new process serves or the attempt failed. Only offered on the Unix
+    /// socket.
+    async fn upgrade(&self, request: UpgradeRequest) -> UpgradeOutcome {
+        let _ = request;
+        UpgradeOutcome::Refused(serde_json::json!({ "error": "binary upgrades are not available" }))
+    }
+}
+
+/// A binary upgrade asked for over the admin socket (`rdock upgrade`).
+#[derive(Debug, Clone)]
+pub struct UpgradeRequest {
+    /// The binary to run; `upgrade.binary` when not given.
+    pub binary: Option<std::path::PathBuf>,
+    /// Who asked, as the audit log names them.
+    pub actor: String,
+}
+
+/// How a binary upgrade ended.
+#[derive(Debug, Clone)]
+pub enum UpgradeOutcome {
+    /// The new process serves; this one drains. The document describes it.
+    Serving(serde_json::Value),
+    /// Not attempted (a check failed, or another upgrade runs); nothing changed.
+    Refused(serde_json::Value),
+    /// Attempted and rolled back: this process serves on.
+    Failed(serde_json::Value),
 }
 
 /// The outcome of a conditional write of the API provider's objects.
@@ -205,7 +232,7 @@ struct State {
     /// `/metrics` answers without a token (loopback listener and the setting on).
     metrics_open: bool,
     trust_forwarded: bool,
-    audit: audit::Audit,
+    audit: Arc<audit::Audit>,
     api_writes: bool,
     logs: Arc<stream::Hub>,
     events: Arc<stream::Hub>,

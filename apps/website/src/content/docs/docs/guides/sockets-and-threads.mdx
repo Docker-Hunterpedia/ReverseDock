@@ -1,6 +1,6 @@
 ---
 title: Sockets and threads
-description: Tune listener sockets (backlog, SO_REUSEPORT, buffers, keep-alive, Fast Open, DSCP), bound concurrent TLS handshakes and set the proxy's threads.
+description: Tune listener sockets (backlog, SO_REUSEPORT, buffers, keep-alive, Fast Open, DSCP), HTTP/2 settings, bound concurrent TLS handshakes and set the proxy's threads.
 sidebar:
   order: 13
 ---
@@ -166,6 +166,46 @@ the values in use:
 ```text
 runtime      4 worker threads, at most 64 blocking
 ```
+
+## HTTP/2 settings <Status planned="v0.9" />
+
+`listeners.<name>.http2` sets the HTTP/2 options of an `http` (h2c) or `https` listener. Unset
+values keep what ReverseDock did before v0.9; only values that are set appear in the SETTINGS
+frame a client receives. A reload applies them to new connections; open ones keep theirs.
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls: {}
+    http2:
+      max_concurrent_streams: 250
+      initial_stream_window: 1MiB
+      initial_connection_window: 8MiB
+```
+
+| Setting | Default (where it comes from) | Range |
+|---|---|---|
+| `max_concurrent_streams` | 100 (Pingora 0.9.1, `src/protocols/http/v2/server.rs` lines 57 and 72) | 1–10000, or `unlimited` |
+| `initial_stream_window` | 65535 bytes (h2 0.4.20, `src/frame/settings.rs` line 44; the RFC 9113 initial value) | 1–2147483647 |
+| `initial_connection_window` | 65535 bytes (the protocol's; h2 sends no `WINDOW_UPDATE` unless set, `src/server.rs` line 1543) | 65535–2147483647 |
+| `max_frame_size` | 16384 bytes (h2 0.4.20, `src/frame/settings.rs` line 47) | 16384–16777215 (RFC 9113 §6.5.2) |
+| `max_header_list_size` | 64 KiB (Pingora 0.9.1, `src/protocols/http/v2/server.rs` lines 56 and 71) | 1 KiB–16 MiB |
+| `max_pending_accept_reset_streams` | 20 (h2 0.4.20, `src/proto/mod.rs` line 34) | 1–10000, or `unlimited` |
+| `max_local_error_reset_streams` | 1024 (h2 0.4.20, `src/proto/mod.rs` line 35) | 1–100000, or `unlimited` |
+| `max_send_buffer` | 400 KiB per stream (h2 0.4.20, `src/proto/mod.rs` line 47) | 16 KiB–16 MiB |
+
+Sources read on 2026-11-13. `max_pending_accept_reset_streams` is the mitigation of HTTP/2
+Rapid Reset (CVE-2023-44487) and `max_local_error_reset_streams` that of MadeYouReset
+(CVE-2025-8671); with `max_concurrent_streams` they protect against floods, so removing one
+must be spelled `unlimited` (with a warning): a plain number above the ceiling is refused with a
+message that names `unlimited`.
+
+Larger windows let one client upload faster over a long, fast path, at the cost of memory: a
+connection can hold up to `max_concurrent_streams` × `initial_stream_window` of request bodies,
+and `max_send_buffer` per stream of response data for a client that reads slowly. A client that
+stops reading never makes the proxy buffer a large response: flow control stops the response at
+its window plus the send buffer, and back-pressure reaches the backend.
 
 ## Related
 

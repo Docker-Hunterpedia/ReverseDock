@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use pingora::apps::{HttpServerOptions, ServerApp};
 use pingora::listeners::TlsAccept;
 use pingora::listeners::tls::{Acceptor, TlsSettings};
-use pingora::protocols::http::v2::server::default_h2_options;
+use pingora::protocols::http::v2::server::{H2Options, default_h2_options};
 use pingora::protocols::l4::stream::Stream as L4Stream;
 use pingora::protocols::tls::TlsRef;
 use pingora::protocols::{GetSocketDigest, SocketDigest, Stream};
@@ -21,7 +21,8 @@ use pingora::proxy::HttpProxy;
 use pingora::server::configuration::ServerConf;
 use rdock_middleware::ClientIdentity;
 use rdock_model::config::{
-    ListenerProtocol, ListenerSocket, ListenerTimeouts, ProxyProtocolIn, StartTls,
+    FloodLimit, ListenerHttp2, ListenerProtocol, ListenerSocket, ListenerTimeouts, ProxyProtocolIn,
+    StartTls,
 };
 use rdock_model::values::ListenAddress;
 use rdock_observability::Metrics;
@@ -115,12 +116,22 @@ fn identity(der: &[u8]) -> Option<ClientIdentity> {
 
 /// Builds a TLS acceptor for `tls`. Pingora's `TlsSettings` is only used for its
 /// handshake-complete callback; the rustls configuration is ours.
-pub fn acceptor(tls: &ListenerTls, resolver: Arc<ListenerResolver>) -> Result<Acceptor, String> {
+///
+/// Resumption comes from `tickets`: one ticketer and session cache per security class, shared
+/// with the other listeners of that class and kept across reloads (H-PERF-02).
+pub fn acceptor(
+    tls: &ListenerTls,
+    resolver: Arc<ListenerResolver>,
+    tickets: &rdock_tls::TicketRegistry,
+) -> Result<Acceptor, String> {
     let verifier = match &tls.client_auth {
         Some(auth) => Some(auth.verifier().map_err(|e| e.to_string())?),
         None => None,
     };
-    let config = rdock_tls::server_config(tls.policy, resolver.clone(), verifier)
+    let resumption = tickets
+        .resumption(&tls.class(), tls.file_keys.clone())
+        .map_err(|e| e.to_string())?;
+    let config = rdock_tls::server_config(tls.policy, resolver.clone(), verifier, &resumption)
         .map_err(|e| e.to_string())?;
     let mut settings =
         TlsSettings::with_callbacks(Box::new(CaptureHandshake)).map_err(|e| e.to_string())?;
@@ -466,6 +477,35 @@ impl Socket {
         })
     }
 
+    /// A listening socket handed over by another process (binary upgrade): `udp` says which
+    /// kind it is. Must be called inside the runtime.
+    ///
+    /// # Errors
+    ///
+    /// The descriptor cannot be made non-blocking or registered with the runtime, or is not a
+    /// socket of the expected kind.
+    pub fn from_fd(fd: std::os::fd::OwnedFd, udp: bool) -> io::Result<Self> {
+        let socket = socket2::Socket::from(fd);
+        let kind = socket.r#type()?;
+        let expected = if udp {
+            socket2::Type::DGRAM
+        } else {
+            socket2::Type::STREAM
+        };
+        if kind != expected {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the handed-over socket is not of the expected kind",
+            ));
+        }
+        socket.set_nonblocking(true)?;
+        Ok(if udp {
+            Self::Udp(tokio::net::UdpSocket::from_std(socket.into())?)
+        } else {
+            Self::Tcp(tokio::net::TcpListener::from_std(socket.into())?)
+        })
+    }
+
     /// A duplicate descriptor of the socket, to change its options while the listener runs.
     pub(crate) fn control(&self) -> io::Result<socket2::Socket> {
         match self {
@@ -475,11 +515,74 @@ impl Socket {
     }
 }
 
+/// HTTP/2 options for `http2` (H-PERF-03). Unset values give exactly what Pingora's
+/// `default_h2_options()` gave before v0.9: a 64 KiB header list and 100 streams
+/// (`pingora-core` 0.9.1, `src/protocols/http/v2/server.rs` lines 56-57 and 69-74), the rest
+/// h2 0.4.20's defaults. Only values that are set are sent in the SETTINGS frame, as before.
+#[must_use]
+pub fn h2_options(http2: &ListenerHttp2) -> H2Options {
+    let mut options = default_h2_options();
+    if let Some(size) = http2.max_header_list_size {
+        options.max_header_list_size(u32::try_from(size.as_u64()).unwrap_or(u32::MAX));
+    }
+    match http2.max_concurrent_streams {
+        Some(FloodLimit::Count(n)) => {
+            options.max_concurrent_streams(n);
+        }
+        // h2's own default sends no limit; Pingora's 100 was set above, so start again from
+        // h2's defaults and keep the header-list bound.
+        Some(FloodLimit::Unlimited) => {
+            let header_list = http2
+                .max_header_list_size
+                .map_or(64 * 1024, |s| u32::try_from(s.as_u64()).unwrap_or(u32::MAX));
+            options = H2Options::default();
+            options.max_header_list_size(header_list);
+        }
+        None => {}
+    }
+    let window =
+        |size: rdock_model::values::ByteSize| u32::try_from(size.as_u64()).unwrap_or(u32::MAX);
+    if let Some(size) = http2.initial_stream_window {
+        options.initial_window_size(window(size));
+    }
+    if let Some(size) = http2.initial_connection_window {
+        options.initial_connection_window_size(window(size));
+    }
+    // Validation keeps the frame size within 16384..=16777215, which h2 asserts.
+    if let Some(size) = http2.max_frame_size {
+        options.max_frame_size(window(size).clamp(16_384, 16_777_215));
+    }
+    match http2.max_pending_accept_reset_streams {
+        Some(FloodLimit::Count(n)) => {
+            options.max_pending_accept_reset_streams(usize::try_from(n).unwrap_or(usize::MAX));
+        }
+        Some(FloodLimit::Unlimited) => {
+            options.max_pending_accept_reset_streams(usize::MAX);
+        }
+        None => {}
+    }
+    match http2.max_local_error_reset_streams {
+        Some(FloodLimit::Count(n)) => {
+            options.max_local_error_reset_streams(Some(usize::try_from(n).unwrap_or(usize::MAX)));
+        }
+        Some(FloodLimit::Unlimited) => {
+            options.max_local_error_reset_streams(None);
+        }
+        None => {}
+    }
+    if let Some(size) = http2.max_send_buffer {
+        // h2 asserts the size fits in a u32; validation keeps it at 16 MiB or less.
+        options.max_send_buffer_size(usize::try_from(window(size)).unwrap_or(usize::MAX));
+    }
+    options
+}
+
 /// The HTTP engine of one listener.
 pub fn http_engine(
     name: Arc<str>,
     shared: Arc<Shared>,
     timeouts: &ListenerTimeouts,
+    http2: &ListenerHttp2,
 ) -> Arc<HttpProxy<RdockProxy>> {
     let idle = shared.runtime.load().limits.upstream_idle_connections;
     let conf = Arc::new(ServerConf {
@@ -497,7 +600,7 @@ pub fn http_engine(
     options.h2c = true;
     options.h2_idle_timeout = Some(timeouts.idle.as_std());
     proxy.server_options = Some(options);
-    proxy.h2_options = Some(default_h2_options());
+    proxy.h2_options = Some(h2_options(http2));
     Arc::new(proxy)
 }
 
@@ -518,6 +621,8 @@ pub struct Settings {
     pub connection: ConnectionOptions,
     /// The bound on concurrent TLS handshakes, if the listener has one.
     pub handshakes: Option<Handshakes>,
+    /// HTTP/2 settings; a change builds a new HTTP engine for new connections.
+    pub http2: ListenerHttp2,
 }
 
 /// How a listener is asked to stop.
@@ -558,7 +663,12 @@ pub struct Running {
     /// Resolves once the listener's socket is closed (the sender is dropped) or handed back.
     released: oneshot::Receiver<Socket>,
     task: tokio::task::JoinHandle<()>,
+    /// The HTTP engine new connections get (TCP listeners), and what it was built with.
+    engine: Option<(Engine, (ListenerHttp2, Duration))>,
 }
+
+/// A listener's HTTP engine, replaced when its HTTP/2 settings or idle timeout change.
+type Engine = Arc<ArcSwap<HttpProxy<RdockProxy>>>;
 
 impl Running {
     /// Starts accepting on `socket` (or, for a UDP socket, receiving datagrams); `options`
@@ -580,15 +690,24 @@ impl Running {
                 None
             }
         };
+        let key = (settings.http2, settings.timeouts.idle.as_std());
         let settings = Arc::new(ArcSwap::from_pointee(settings));
+        let mut engine = None;
         let task = match socket {
             Socket::Tcp(socket) => {
-                let engine = http_engine(name.clone(), shared.clone(), &settings.load().timeouts);
+                let current = settings.load();
+                let built: Engine = Arc::new(ArcSwap::new(http_engine(
+                    name.clone(),
+                    shared.clone(),
+                    &current.timeouts,
+                    &current.http2,
+                )));
+                engine = Some((built.clone(), key));
                 tokio::spawn(accept_loop(
                     name,
                     socket,
                     settings.clone(),
-                    engine,
+                    built,
                     (stop_rx, hand_back),
                     shared,
                 ))
@@ -605,7 +724,33 @@ impl Running {
             stop,
             released,
             task,
+            engine,
         }
+    }
+
+    /// Builds a new HTTP engine for new connections when the HTTP/2 settings or the idle
+    /// timeout changed; open connections keep the engine they started with.
+    pub fn update_engine(
+        &mut self,
+        name: &str,
+        http2: &ListenerHttp2,
+        timeouts: &ListenerTimeouts,
+        shared: &Arc<Shared>,
+    ) {
+        let Some((engine, key)) = self.engine.as_mut() else {
+            return;
+        };
+        let wanted = (*http2, timeouts.idle.as_std());
+        if *key == wanted {
+            return;
+        }
+        engine.store(http_engine(
+            Arc::from(name),
+            shared.clone(),
+            timeouts,
+            http2,
+        ));
+        *key = wanted;
     }
 
     /// Applies changed socket options to the running socket: the backlog, the buffers and Fast
@@ -631,6 +776,15 @@ impl Running {
             ..*options
         };
         Ok(())
+    }
+
+    /// A new duplicate of the socket's descriptor and its options, for the next process in a
+    /// binary upgrade.
+    #[must_use]
+    pub fn handle(&self) -> Option<(std::os::fd::OwnedFd, ListenerSocket)> {
+        let (control, options) = self.control.as_ref()?;
+        let dup = control.try_clone().ok()?;
+        Some((std::os::fd::OwnedFd::from(dup), *options))
     }
 
     /// The socket options the running socket has.
@@ -716,18 +870,33 @@ async fn accept_loop(
     name: Arc<str>,
     socket: tokio::net::TcpListener,
     settings: Arc<ArcSwap<Settings>>,
-    engine: Arc<HttpProxy<RdockProxy>>,
+    engine: Engine,
     (mut stop, hand_back): (watch::Receiver<Option<Stop>>, oneshot::Sender<Socket>),
     shared: Arc<Shared>,
 ) {
     let metrics: &Metrics = &shared.metrics;
     let (closing, closing_rx) = watch::channel(false);
     let mut connections = JoinSet::new();
+    let mut accepting = shared.accepting.subscribe();
     // A permit of `tls.max_handshakes` taken before the next accept: while none is free, new
     // connections wait in the kernel's backlog and established ones keep the CPU.
     let mut permit: Option<OwnedSemaphorePermit> = None;
     let request = loop {
         while connections.try_join_next().is_some() {}
+        // Paused by a binary upgrade: new connections wait in the backlog, which both processes
+        // share, so none is refused or reset.
+        if !*accepting.borrow_and_update() {
+            tokio::select! {
+                changed = stop.changed() => {
+                    let requested = *stop.borrow();
+                    if changed.is_err() || requested.is_some() {
+                        break requested.unwrap_or(Stop::drain(Duration::ZERO));
+                    }
+                }
+                _ = accepting.changed() => {}
+            }
+            continue;
+        }
         if permit.is_none()
             && let Some(bound) = settings.load().handshakes.clone()
         {
@@ -753,12 +922,14 @@ async fn accept_loop(
             }
         }
         tokio::select! {
+            biased;
             changed = stop.changed() => {
                 let requested = *stop.borrow();
                 if changed.is_err() || requested.is_some() {
                     break requested.unwrap_or(Stop::drain(Duration::ZERO));
                 }
             }
+            _ = accepting.changed() => {}
             accepted = socket.accept() => match accepted {
                 Ok((tcp, peer)) => {
                     metrics.connections_total.with_label_values(&[&name]).inc();
@@ -771,7 +942,7 @@ async fn accept_loop(
                         tcp,
                         peer,
                         (current, taken),
-                        engine.clone(),
+                        engine.load_full(),
                         closing_rx.clone(),
                         shared.clone(),
                     ));
@@ -792,10 +963,42 @@ async fn accept_loop(
         drop(socket);
         drop(hand_back);
     }
-    let drain = request.drain;
+    drain_connections(
+        &name,
+        &settings,
+        &engine,
+        closing,
+        connections,
+        request.drain,
+    )
+    .await;
+}
+
+/// Ends a stopped listener's connections: HTTP/1 keep-alive off and HTTP/2 GOAWAY at once,
+/// idle connections closed after a short grace, the rest closed at the end of `drain`.
+async fn drain_connections(
+    name: &str,
+    settings: &ArcSwap<Settings>,
+    engine: &Engine,
+    closing: watch::Sender<bool>,
+    mut connections: JoinSet<()>,
+    drain: Duration,
+) {
+    // HTTP/1 keep-alive off for new sessions and GOAWAY on HTTP/2 connections, at once.
     let _ = closing.send(true);
-    engine.cleanup().await;
-    let drained = tokio::time::timeout(drain, async {
+    // Pingora's `cleanup` drops every connection still waiting in `read_request`, without an
+    // answer (`pingora-proxy` 0.9.1, `src/lib.rs` lines 332-338). That is right for an idle
+    // keep-alive connection, but not for one accepted a moment ago whose first request is on its
+    // way (a binary upgrade stops this process just after it last accepted). Those get a short
+    // grace first, never longer than the drain.
+    let started = tokio::time::Instant::now();
+    let grace = drain.min(CLEANUP_GRACE);
+    let _ = tokio::time::timeout(grace, async {
+        while connections.join_next().await.is_some() {}
+    })
+    .await;
+    engine.load().cleanup().await;
+    let drained = tokio::time::timeout(drain.saturating_sub(started.elapsed()), async {
         while connections.join_next().await.is_some() {}
     })
     .await;
@@ -809,6 +1012,10 @@ async fn accept_loop(
         connections.abort_all();
     }
 }
+
+/// How long a stopping listener's connections that have not sent a request yet may still send
+/// their first one before idle connections are closed (bounded by the drain).
+const CLEANUP_GRACE: Duration = Duration::from_secs(2);
 
 /// The TCP routes a connection on `name` may go to: always for a `tcp` listener (possibly none),
 /// and for an `https` listener only when it has some, since it then hands matching
@@ -832,15 +1039,23 @@ fn tcp_routes_of(
     (tcp || !routes.is_empty()).then_some(routes)
 }
 
-/// Guard that keeps the open-connections gauge right however the task ends.
-struct Open<'a>(&'a Metrics, &'a str);
+/// Guard that keeps the open-connections gauge and count right however the task ends.
+struct Open<'a>(&'a Shared, &'a str);
 
 impl Drop for Open<'_> {
     fn drop(&mut self) {
-        self.0.connections.with_label_values(&[self.1]).dec();
+        self.0
+            .metrics
+            .connections
+            .with_label_values(&[self.1])
+            .dec();
+        self.0
+            .open_connections
+            .fetch_sub(1, std::sync::atomic::Ordering::Relaxed);
     }
 }
 
+#[allow(clippy::too_many_lines)] // the steps of a connection, in order
 async fn serve(
     name: Arc<str>,
     tcp: tokio::net::TcpStream,
@@ -851,7 +1066,10 @@ async fn serve(
     shared: Arc<Shared>,
 ) {
     shared.metrics.connections.with_label_values(&[&name]).inc();
-    let _open = Open(&shared.metrics, &name);
+    shared
+        .open_connections
+        .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let _open = Open(&shared, &name);
     let _ = tcp.set_nodelay(true);
     settings.connection.apply(&tcp, &name);
     // Until its handshake ends, a TLS connection counts as one in flight and holds its permit.

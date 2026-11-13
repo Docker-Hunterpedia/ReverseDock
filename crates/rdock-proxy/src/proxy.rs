@@ -49,6 +49,16 @@ pub struct Shared {
     pub in_flight: Arc<std::sync::atomic::AtomicU32>,
     /// Spool directory for held request bodies over 64 KiB; unset, they stay in memory.
     pub spool: std::sync::OnceLock<Arc<rdock_middleware::Spool>>,
+    /// Whether listeners accept new connections (and `udp` listeners read datagrams). A binary
+    /// upgrade starts the new process with `false` and pauses the old one between `ready` and
+    /// `serving`; connections wait in the kernel's backlog meanwhile.
+    pub accepting: tokio::sync::watch::Sender<bool>,
+    /// Client connections open across TCP listeners (a draining process reports them).
+    pub open_connections: std::sync::atomic::AtomicU64,
+    /// Serve without the HTTP caches. A binary upgrade sets it in the old process from the
+    /// start of the handover: the new process owns the cache directories from then on (its
+    /// start-up walk removes unfinished files) and the old one only drains.
+    pub cache_bypass: std::sync::atomic::AtomicBool,
 }
 
 /// One request counted in [`Shared::in_flight`] until dropped.
@@ -1024,6 +1034,13 @@ impl ProxyHttp for RdockProxy {
         ctx: &mut RequestCtx,
     ) -> pingora::Result<()> {
         let mirrored = ctx.mirror.is_some();
+        if self
+            .shared
+            .cache_bypass
+            .load(std::sync::atomic::Ordering::Relaxed)
+        {
+            return Ok(());
+        }
         if let Some(cc) = ctx.cache.as_mut() {
             crate::cache::enable(session, cc, mirrored);
         }

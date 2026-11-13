@@ -22,6 +22,7 @@ base64.workspace = true
 # BLAKE2b-512 for minisign's prehashed signatures (`ED`); the version argon2 already brings in.
 blake2 = "0.11.0"
 http.workspace = true
+rdock-credentials.workspace = true
 rdock-plugin-api.workspace = true
 ring.workspace = true
 thiserror.workspace = true

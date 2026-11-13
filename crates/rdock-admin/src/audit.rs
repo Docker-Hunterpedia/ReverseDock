@@ -144,6 +144,23 @@ fn open_append(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
+/// The end of the chain in `dir`: the last sequence number, the hash of the last line and the
+/// newest file.
+fn head(dir: &Path) -> io::Result<(u64, String, Option<PathBuf>)> {
+    let Some(path) = files(dir)?.pop() else {
+        return Ok((0, GENESIS.to_owned(), None));
+    };
+    match last_line(&path)? {
+        Some(line) => {
+            let record: Value = serde_json::from_str(&line)
+                .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
+            let seq = record["seq"].as_u64().unwrap_or(0);
+            Ok((seq, sha256_hex(line.as_bytes()), Some(path)))
+        }
+        None => Ok((0, GENESIS.to_owned(), Some(path))),
+    }
+}
+
 impl Audit {
     /// Opens the log in `dir`, continuing the chain of the newest file.
     pub fn open(
@@ -154,18 +171,7 @@ impl Audit {
     ) -> io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
-        let (seq, prev) = match files(dir)?.last() {
-            Some(path) => match last_line(path)? {
-                Some(line) => {
-                    let record: Value = serde_json::from_str(&line)
-                        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-                    let seq = record["seq"].as_u64().unwrap_or(0);
-                    (seq, sha256_hex(line.as_bytes()))
-                }
-                None => (0, GENESIS.to_owned()),
-            },
-            None => (0, GENESIS.to_owned()),
-        };
+        let (seq, prev, _) = head(dir)?;
         Ok(Self {
             dir: dir.to_owned(),
             max_bytes,
@@ -181,6 +187,32 @@ impl Audit {
             events: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
         })
+    }
+
+    /// Reads the end of the chain from the files again and appends to the newest one. A binary
+    /// upgrade calls this when the process becomes the log's writer: the other process may have
+    /// appended records since this one opened the log.
+    ///
+    /// # Errors
+    ///
+    /// The files cannot be read; the chain in memory is unchanged.
+    pub fn resync(&self) -> io::Result<()> {
+        let (seq, prev, newest) = head(&self.dir)?;
+        let (file, size) = match newest {
+            Some(path) => {
+                let size = std::fs::metadata(&path)?.len();
+                (Some(open_append(&path)?), size)
+            }
+            None => (None, 0),
+        };
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        *writer = Writer {
+            file,
+            size,
+            seq,
+            prev,
+        };
+        Ok(())
     }
 
     /// Also publishes every record on the events stream (`type: admin`).
@@ -561,6 +593,29 @@ mod tests {
                 .permissions(),
         );
         assert_eq!(mode & 0o777, 0o600);
+    }
+
+    #[test]
+    fn a_resync_continues_the_chain_another_writer_extended() {
+        let dir = tempfile::tempdir().unwrap();
+        // The new process opens the log while the old one still writes it (binary upgrade).
+        let old = audit(dir.path(), 1 << 20);
+        old.record(login("a"));
+        let new = audit(dir.path(), 1 << 20);
+        old.record(login("b"));
+        old.record(login("c"));
+        // `go`: the old process writes no more; the new one takes the end of the chain.
+        new.resync().unwrap();
+        new.record(login("d"));
+        assert_eq!(
+            verify(dir.path()).unwrap(),
+            Verdict::Intact {
+                records: 4,
+                files: 1
+            },
+            "appended to the newest file, continuing its chain"
+        );
+        assert_eq!(new.recent(1, None).unwrap()[0]["seq"], 4);
     }
 
     #[test]

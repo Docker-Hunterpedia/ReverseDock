@@ -2869,9 +2869,12 @@ dependencies = [
 name = "rdock-credentials"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "base64 0.23.1",
+ "blake2 0.11.0",
  "crc32fast",
  "ring",
  "subtle",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -3024,10 +3027,13 @@ name = "rdock-tls"
 version = "0.8.0-alpha.1"
 dependencies = [
  "arc-swap",
+ "base64 0.23.1",
  "pkcs8",
  "rdock-model",
+ "ring",
  "rustls",
  "rustls-pki-types",
+ "subtle",
  "thiserror 2.0.21",
  "tokio",
  "x509-parser 0.18.1",
@@ -3040,6 +3046,7 @@ dependencies = [
  "base64 0.23.1",
  "blake2 0.11.0",
  "http",
+ "rdock-credentials",
  "rdock-plugin-api",
  "ring",
  "thiserror 2.0.21",

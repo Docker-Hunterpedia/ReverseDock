@@ -14,6 +14,7 @@ pub struct Rdock {
     pub dir: TempDir,
     pub admin: SocketAddr,
     binary: PathBuf,
+    env: Vec<(String, String)>,
 }
 
 impl Drop for Rdock {
@@ -35,6 +36,15 @@ impl Rdock {
 
     /// Like [`Self::start`]; the error is the process output.
     pub fn try_start(binary: &str, config: &str) -> Result<Self, String> {
+        Self::try_start_with_env(binary, config, &[])
+    }
+
+    /// Like [`Self::try_start`], with extra environment variables for the process.
+    pub fn try_start_with_env(
+        binary: &str,
+        config: &str,
+        env: &[(&str, &str)],
+    ) -> Result<Self, String> {
         let dir = tempfile::tempdir().unwrap();
         let admin_port = crate::free_port();
         let admin: SocketAddr = format!("127.0.0.1:{admin_port}").parse().unwrap();
@@ -43,6 +53,10 @@ impl Rdock {
             dir,
             admin,
             binary: PathBuf::from(binary),
+            env: env
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
         };
         rdock.write_config(config);
         rdock.spawn();
@@ -78,6 +92,7 @@ impl Rdock {
             .arg("--data-dir")
             .arg(self.data_dir())
             .env_remove("RDOCK_ADMIN_TOKEN")
+            .envs(self.env.iter().map(|(k, v)| (k.as_str(), v.as_str())))
             .stdout(std::fs::File::create(self.dir.path().join("access.log")).unwrap())
             .stderr(std::fs::File::create(self.dir.path().join("rdock.log")).unwrap())
             .stdin(Stdio::null())
@@ -120,6 +135,16 @@ impl Rdock {
 
     pub fn pid(&self) -> u32 {
         self.child.as_ref().unwrap().id()
+    }
+
+    /// The exit status of the process started here, once it has exited (it is reaped then).
+    pub fn try_exit(&mut self) -> Option<ExitStatus> {
+        let status = self
+            .child
+            .as_mut()
+            .and_then(|c| c.try_wait().ok().flatten())?;
+        self.child = None;
+        Some(status)
     }
 
     pub fn signal(&self, signal: &str) {

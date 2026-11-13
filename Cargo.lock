@@ -4242,6 +4242,7 @@ dependencies = [
  "clap",
  "flate2",
  "futures-util",
+ "h2",
  "http",
  "http-body-util",
  "hyper",
@@ -4259,6 +4260,7 @@ dependencies = [
  "rdock-config",
  "rdock-credentials",
  "rdock-dns-providers",
+ "rdock-limits",
  "rdock-middleware",
  "rdock-migrate",
  "rdock-model",
@@ -4269,8 +4271,10 @@ dependencies = [
  "rdock-provider-swarm",
  "rdock-proxy",
  "rdock-testkit",
+ "rdock-tls",
  "rdock-wasm",
  "ring",
+ "rustix",
  "rustls",
  "rustls-pki-types",
  "sd-notify",
@@ -4280,6 +4284,7 @@ dependencies = [
  "serde_path_to_error",
  "stats_alloc",
  "tempfile",
+ "thiserror 2.0.21",
  "tokio",
  "tokio-tungstenite",
  "tracing",
@@ -4435,9 +4440,12 @@ dependencies = [
 name = "rdock-credentials"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "base64 0.23.1",
+ "blake2 0.11.0",
  "crc32fast",
  "ring",
  "subtle",
+ "thiserror 2.0.21",
 ]
 
 [[package]]
@@ -4792,12 +4800,15 @@ name = "rdock-tls"
 version = "0.8.0-alpha.1"
 dependencies = [
  "arc-swap",
+ "base64 0.23.1",
  "pkcs8",
  "proptest",
  "rcgen",
  "rdock-model",
+ "ring",
  "rustls",
  "rustls-pki-types",
+ "subtle",
  "tempfile",
  "thiserror 2.0.21",
  "tokio",
@@ -4811,6 +4822,7 @@ dependencies = [
  "base64 0.23.1",
  "blake2 0.11.0",
  "http",
+ "rdock-credentials",
  "rdock-plugin-api",
  "ring",
  "tempfile",
@@ -5020,9 +5032,9 @@ dependencies = [
 
 [[package]]
 name = "rustix"
-version = "1.1.5"
+version = "1.1.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "891efababe418670775f199f0d233d84843c227a0949a883ce15b37c78d6629d"
+checksum = "e5e76742e5294153d4dde1207dbec5bdd81eef6fabdc0d2118babadabfd858aa"
 dependencies = [
  "bitflags",
  "errno",

@@ -43,12 +43,14 @@ pub use rdock_plugin_api::Registry;
 
 mod admin_cli;
 mod ctl;
+mod datadir;
 mod engine;
 mod hash;
 mod migrate;
 mod providers;
 mod run;
 mod trust;
+mod upgrade;
 mod validate;
 mod watch;
 mod zero_config;
@@ -83,6 +85,9 @@ enum Command {
     Status(StatusArgs),
     /// Exit 0 when the running proxy is ready (for container health checks).
     Healthcheck(CtlArgs),
+    /// Replace the running binary without dropping connections (Linux; over the admin Unix
+    /// socket only). The running process hands its listeners to the new binary and drains.
+    Upgrade(UpgradeArgs),
     /// Create an argon2id password hash for `basic_auth` (reads the password from stdin).
     Hash(HashArgs),
     /// Install the local CA's root (for localhost and private names) into the system trust
@@ -202,6 +207,10 @@ struct RunArgs {
     /// Format of the application log.
     #[arg(long, env = "RDOCK_LOG_FORMAT", value_enum, default_value_t = LogFormatArg::Auto)]
     log_format: LogFormatArg,
+    /// Internal (binary upgrade): take over the listening sockets a running rdock hands over on
+    /// standard input. Started by `rdock upgrade`; not for use by hand.
+    #[arg(long, hide = true)]
+    inherit: bool,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -244,6 +253,19 @@ struct CtlArgs {
     /// Data directory, to find the admin socket.
     #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
     data_dir: PathBuf,
+}
+
+#[derive(Args)]
+struct UpgradeArgs {
+    /// The new binary [default: `upgrade.binary`, /usr/local/bin/rdock].
+    #[arg(long)]
+    binary: Option<PathBuf>,
+    /// Data directory, to find the admin socket.
+    #[arg(long, env = "RDOCK_DATA_DIR", default_value = DEFAULT_DATA_DIR)]
+    data_dir: PathBuf,
+    /// Configuration file, to find `admin.socket` when it is set.
+    #[arg(short, long, env = "RDOCK_CONFIG", default_value = DEFAULT_CONFIG)]
+    config: PathBuf,
 }
 
 #[derive(Args)]
@@ -304,6 +326,7 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Reload(args) => ctl::reload(&args),
         Command::Status(args) => ctl::status(&args),
         Command::Healthcheck(args) => Ok(ctl::healthcheck(&args)),
+        Command::Upgrade(args) => ctl::upgrade(&args),
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),

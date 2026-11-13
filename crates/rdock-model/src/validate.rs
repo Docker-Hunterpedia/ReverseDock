@@ -59,6 +59,9 @@ impl Config {
         v.check_version();
         v.check_listeners();
         v.check_sockets();
+        v.check_resumption();
+        v.check_http2();
+        v.check_upgrade();
         v.check_defaults();
         v.check_routes();
         v.check_services();
@@ -2541,7 +2544,9 @@ fn public_ip(host: &str) -> Option<IpAddr> {
 mod cache;
 mod extensions;
 mod gateway;
+mod http2;
 mod oidc;
+mod resumption;
 mod shaping;
 mod socket;
 mod static_files;
@@ -2549,3 +2554,4 @@ mod tcp;
 #[cfg(test)]
 mod tests;
 mod udp;
+mod upgrade;

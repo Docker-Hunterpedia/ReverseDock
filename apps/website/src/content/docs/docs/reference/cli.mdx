@@ -20,6 +20,7 @@ Commands:
   reload       Ask the running proxy to reload its configuration
   status       Show the state of the running proxy
   healthcheck  Exit 0 when the running proxy is ready (for container health checks)
+  upgrade      Replace the running binary without dropping connections (Linux; over the admin Unix socket only). The running process hands its listeners to the new binary and drains
   hash         Create an argon2id password hash for `basic_auth` (reads the password from stdin)
   trust        Install the local CA's root (for localhost and private names) into the system trust stores, or remove it with --uninstall
   migrate      Turn another proxy's configuration into rdock.yaml
@@ -146,6 +147,21 @@ Options:
       --admin <ADMIN>        Admin listener of the running proxy. Read from the configuration file when omitted [env: RDOCK_ADMIN=]
   -c, --config <CONFIG>      Configuration file, to find the admin listener [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
       --data-dir <DATA_DIR>  Data directory, to find the admin socket [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+  -h, --help                 Print help
+  -V, --version              Print version
+```
+
+## `rdock upgrade`
+
+```text
+Replace the running binary without dropping connections (Linux; over the admin Unix socket only). The running process hands its listeners to the new binary and drains
+
+Usage: rdock upgrade [OPTIONS]
+
+Options:
+      --binary <BINARY>      The new binary [default: `upgrade.binary`, /usr/local/bin/rdock]
+      --data-dir <DATA_DIR>  Data directory, to find the admin socket [env: RDOCK_DATA_DIR=] [default: /var/lib/rdock]
+  -c, --config <CONFIG>      Configuration file, to find `admin.socket` when it is set [env: RDOCK_CONFIG=] [default: /etc/rdock/rdock.yaml]
   -h, --help                 Print help
   -V, --version              Print version
 ```

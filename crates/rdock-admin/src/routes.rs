@@ -53,6 +53,7 @@ pub(crate) fn documented(guard: impl FnOnce(Api) -> Api) -> Api {
     let api = Api::new()
         .routes(routes!(status))
         .routes(routes!(reload))
+        .routes(routes!(upgrade))
         .routes(routes!(manage::users, manage::create_user))
         .routes(routes!(manage::change_user, manage::delete_user))
         .routes(routes!(manage::tokens, manage::create_token))
@@ -232,6 +233,82 @@ async fn status(
         .await
     {
         Ok(document) => axum::Json(document).into_response(),
+        Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down"),
+    }
+}
+
+/// What `POST /upgrade` takes.
+#[derive(Debug, Default, serde::Deserialize, utoipa::ToSchema)]
+#[serde(deny_unknown_fields)]
+struct UpgradeBody {
+    /// The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
+    #[serde(default)]
+    binary: Option<String>,
+}
+
+/// Replaces the running binary without dropping connections: the listeners are handed to a
+/// new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin
+/// Unix socket (operator role), never over TCP: it runs a file. Returns when the new process
+/// serves or the attempt was rolled back.
+#[utoipa::path(post, path = "/upgrade", tag = "status",
+    request_body(content = UpgradeBody, description = "The binary to run (optional)"),
+    responses(
+        (status = OK, description = "The new process serves; this one drains", body = Object),
+        (status = FORBIDDEN, description = "Not over the Unix socket, or the role cannot", body = crate::openapi::ErrorBody),
+        (status = CONFLICT, description = "Refused; nothing changed", body = Object),
+        (status = INTERNAL_SERVER_ERROR, description = "Failed and rolled back; this process serves on", body = Object),
+    ))]
+async fn upgrade(
+    Extract(state): Extract<Arc<State>>,
+    Extension(caller): Extension<Caller>,
+    Extension(transport): Extension<crate::Transport>,
+    body: Option<axum::Json<UpgradeBody>>,
+) -> Response {
+    if transport != crate::Transport::Socket {
+        state.audit.record(crate::audit::Event {
+            outcome: crate::audit::Outcome::Denied,
+            reason: Some("binary upgrades are only accepted on the admin Unix socket".into()),
+            ..caller.event("upgrade")
+        });
+        return error(
+            StatusCode::FORBIDDEN,
+            "binary upgrades are only accepted on the admin Unix socket (`rdock upgrade` on the host)",
+        );
+    }
+    if let Err(denied) = caller::need(&caller, Access::Operator) {
+        return denied.into_response();
+    }
+    let body = body.map(|b| b.0).unwrap_or_default();
+    let request = crate::UpgradeRequest {
+        binary: body.binary.map(std::path::PathBuf::from),
+        actor: caller.event("upgrade").actor,
+    };
+    let control = state.control.clone();
+    match state
+        .main
+        .spawn(async move { control.upgrade(request).await })
+        .await
+    {
+        // The new process records the upgrade in the audit log: it is the log's writer now.
+        Ok(crate::UpgradeOutcome::Serving(document)) => axum::Json(document).into_response(),
+        Ok(crate::UpgradeOutcome::Refused(document)) => {
+            state.audit.record(crate::audit::Event {
+                outcome: crate::audit::Outcome::Failed,
+                resource: document["sha256"].as_str().map(|h| format!("sha256:{h}")),
+                reason: document["error"].as_str().map(str::to_owned),
+                ..caller.event("upgrade")
+            });
+            (StatusCode::CONFLICT, axum::Json(document)).into_response()
+        }
+        Ok(crate::UpgradeOutcome::Failed(document)) => {
+            state.audit.record(crate::audit::Event {
+                outcome: crate::audit::Outcome::Failed,
+                resource: document["sha256"].as_str().map(|h| format!("sha256:{h}")),
+                reason: document["error"].as_str().map(str::to_owned),
+                ..caller.event("upgrade")
+            });
+            (StatusCode::INTERNAL_SERVER_ERROR, axum::Json(document)).into_response()
+        }
         Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down"),
     }
 }

@@ -398,6 +398,29 @@ in place.
 serve connections) or `max_blocking` (most threads for blocking work). See
 [`runtime`](/docs/guides/sockets-and-threads/#runtime-threads); a change needs a restart.
 
+## Binary upgrades
+
+### `rdock_upgrades_total` <Status planned="v0.9" />
+
+**Counter.** [Binary upgrades](/docs/guides/upgrades/) this process started. Label `result`: `ok`
+(the new process serves), `failed` (rolled back; this process serves on) or `refused` (a check
+failed; nothing changed).
+
+### `rdock_upgrade_generation` <Status planned="v0.9" />
+
+**Gauge.** Binary upgrades behind the serving process: 0 for a process started normally, 1 after
+the first upgrade, and so on.
+
+### `rdock_upgrade_draining_connections` <Status planned="v0.9" />
+
+**Gauge.** Open connections of the previous process while it drains after an upgrade, as it
+reports them every second; 0 once it has exited.
+
+### `rdock_upgrade_drain_deadline_seconds` <Status planned="v0.9" />
+
+**Gauge.** When the previous process's drain ends, in Unix seconds; 0 when none drains or the
+drain is `unlimited`.
+
 ## When series appear
 
 Counters and gauges with labels appear after their first event: `rdock_tls_handshake_errors_total`

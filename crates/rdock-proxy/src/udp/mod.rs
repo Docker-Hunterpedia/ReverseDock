@@ -202,7 +202,10 @@ pub(crate) async fn serve(
     let mut deadline: Option<Instant> = None;
     let mut stop_open = true;
     let mut hand_off = false;
+    let mut accepting = listener.shared.accepting.subscribe();
     loop {
+        // Paused by a binary upgrade: the other process reads the shared socket.
+        let reading = *accepting.borrow_and_update();
         while sessions.try_join_next().is_some() {}
         if deadline.is_some() && sessions.is_empty() {
             break;
@@ -240,7 +243,8 @@ pub(crate) async fn serve(
                 break;
             }
             Some(_) = sessions.join_next(), if !sessions.is_empty() => {}
-            received = listener.socket.recv_from(&mut buf) => match received {
+            _ = accepting.changed() => {}
+            received = listener.socket.recv_from(&mut buf), if reading => match received {
                 Ok((n, client)) => {
                     let datagram = buf.get(..n).unwrap_or_default();
                     if let Some(session) = listener.datagram(datagram, client, deadline.is_some()) {

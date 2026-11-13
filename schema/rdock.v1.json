@@ -241,6 +241,17 @@
       },
       "default": {}
     },
+    "upgrade": {
+      "description": "In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and\nthe start timeout.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Upgrade"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "version": {
       "description": "Configuration format version. Only `1` exists; omit it to use the latest.",
       "type": [
@@ -2155,6 +2166,20 @@
         "^x-": {}
       }
     },
+    "DrainLimit": {
+      "description": "A duration, or `unlimited`.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Duration"
+        },
+        {
+          "type": "string",
+          "enum": [
+            "unlimited"
+          ]
+        }
+      ]
+    },
     "Duration": {
       "description": "Duration made of numbers with units: ms, s, m, h, d.",
       "type": "string",
@@ -2281,6 +2306,22 @@
       },
       "required": [
         "paths"
+      ]
+    },
+    "FloodLimit": {
+      "description": "A number, or `unlimited` to remove the limit.",
+      "oneOf": [
+        {
+          "type": "integer",
+          "maximum": 4294967295,
+          "minimum": 1
+        },
+        {
+          "type": "string",
+          "enum": [
+            "unlimited"
+          ]
+        }
       ]
     },
     "GoogleCloudDnsProvider": {
@@ -3033,6 +3074,17 @@
           "description": "Address to bind, e.g. `:443` or `127.0.0.1:8080`.",
           "$ref": "#/$defs/ListenAddress"
         },
+        "http2": {
+          "description": "HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset\nvalues keep the behaviour before v0.9.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerHttp2"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ping": {
           "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
           "type": [
@@ -3129,6 +3181,104 @@
       "required": [
         "address"
       ]
+    },
+    "ListenerHttp2": {
+      "description": "HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and\nh2 0.4.20 do; the limits that protect against stream and reset floods can only be removed\nby writing `unlimited`.",
+      "type": "object",
+      "properties": {
+        "initial_connection_window": {
+          "description": "Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "initial_stream_window": {
+          "description": "Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request\nbody a client may send before rdock reads it. Default 65535 bytes (the protocol's\ninitial value); at most 2^31-1.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_concurrent_streams": {
+          "description": "Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100\n(Pingora's bound); at most 10000 unless `unlimited`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloodLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_frame_size": {
+          "description": "Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384\nto 16777215 (RFC 9113 §6.5.2).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_header_list_size": {
+          "description": "Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB\n(Pingora's bound); 1KiB to 16MiB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_local_error_reset_streams": {
+          "description": "Streams rdock resets because the client misbehaved before the connection is closed (the\n`MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless\n`unlimited`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloodLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_pending_accept_reset_streams": {
+          "description": "Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset\nmitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FloodLimit"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_send_buffer": {
+          "description": "Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);\n16KiB to 16MiB.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ByteSize"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "ListenerProtocol": {
       "description": "Listener protocols.",
@@ -3315,6 +3465,28 @@
           "description": "TLS versions and cipher suites.",
           "$ref": "#/$defs/TlsPolicy",
           "default": "intermediate"
+        },
+        "session_cache": {
+          "description": "Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when\ntickets are off), shared like the ticket keys. Default 256 sessions.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TlsSessionCache"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "tickets": {
+          "description": "Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by\nevery listener of the same security class and kept across reloads and binary upgrades.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/TlsTickets"
+            },
+            {
+              "type": "null"
+            }
+          ]
         }
       },
       "additionalProperties": false,
@@ -7460,6 +7632,50 @@
         }
       ]
     },
+    "TlsSessionCache": {
+      "description": "The in-memory session cache of a TLS listener.",
+      "type": "object",
+      "properties": {
+        "size": {
+          "description": "Sessions kept (0 turns the cache off). Default 256, rustls's default.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 256,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "TlsTickets": {
+      "description": "TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners\nshare ticket keys only when their TLS policy, client authentication (mode and CA\ncertificates), certificate scope and these settings are equal, so a session from a listener\nwithout client authentication can never be resumed on one that requires it. 0-RTT (early\ndata) is never accepted.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Issue and accept tickets.",
+          "type": "boolean",
+          "default": true
+        },
+        "key_file": {
+          "description": "Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,\none per line (`openssl rand -base64 32`), the first current, the others still accepted.\nThe file must not be readable by the group or others, is read again when it changes, and\nrotating it is then your job (a warning when it is older than 24 hours). Without it, keys\nare generated, live in memory only and are handed to the next process in a binary\nupgrade.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "rotate": {
+          "description": "How often a new ticket key is made; the previous key still decrypts for one more\ninterval, so tickets live at most twice this (announced to clients, capped at 7 days by\nRFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h.",
+          "$ref": "#/$defs/Duration",
+          "default": "6h"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "TokenEndpointAuth": {
       "description": "Token endpoint client authentication (OpenID Connect Core §9).",
       "oneOf": [
@@ -7945,6 +8161,38 @@
           "const": "allow"
         }
       ]
+    },
+    "Upgrade": {
+      "description": "In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or\n`SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one\ndrains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).",
+      "type": "object",
+      "properties": {
+        "binary": {
+          "description": "The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default\n`/usr/local/bin/rdock`, where the systemd unit and the release image install it. It\nmust be a regular file owned by root or rdock's user and not writable by the group or\nothers, in a directory with the same owners that the group and others cannot write to\n(unless it is sticky, like /tmp).",
+          "type": "string",
+          "default": "/usr/local/bin/rdock"
+        },
+        "drain": {
+          "description": "How long the old process may still serve its open connections (HTTP/1 keep-alive is\nswitched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default\n10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,\npossibly vulnerable binary serving for as long as a client holds a connection.",
+          "$ref": "#/$defs/DrainLimit",
+          "default": "10m"
+        },
+        "start_timeout": {
+          "description": "How long the new process may take to report that it is ready, and then that it serves;\notherwise the old process resumes and the upgrade fails. Default 30s.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "trusted_keys": {
+          "description": "minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of\nthe binary by one of them.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "UpstreamTls": {
       "description": "TLS to backends.",

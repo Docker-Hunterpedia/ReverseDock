@@ -39,6 +39,14 @@ pub struct Metrics {
     pub tls_handshake_waits: IntCounterVec,
     /// The proxy runtime's thread settings in effect (`kind`: `worker`, `max_blocking`).
     pub runtime_threads: IntGaugeVec,
+    /// Binary upgrades this process started, by `result` (`ok`, `failed`, `refused`).
+    pub upgrades: IntCounterVec,
+    /// Connections the previous process still serves while it drains after a binary upgrade.
+    pub upgrade_draining_connections: IntGauge,
+    /// Binary upgrades behind this process (0 for a process started normally).
+    pub upgrade_generation: IntGauge,
+    /// When the previous process's drain ends (Unix seconds); 0 when none drains.
+    pub upgrade_drain_deadline: IntGauge,
     /// Connections closed by the PROXY protocol step, by listener and reason (`untrusted`,
     /// `missing`, `malformed`, `timeout`, `too_large`).
     pub proxy_protocol_rejected: IntCounterVec,
@@ -245,6 +253,33 @@ impl Metrics {
             "rdock_runtime_threads",
             "Thread settings of the proxy runtime (worker threads, most blocking threads).",
             &["kind"],
+        )?;
+        let upgrades = counters(
+            &registry,
+            "rdock_upgrades_total",
+            "Binary upgrades started by this process, by result (ok, failed, refused).",
+            &["result"],
+        )?;
+        let upgrade_draining_connections = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_upgrade_draining_connections",
+                "Connections the previous process still serves while it drains after a binary upgrade.",
+            ),
+        )?;
+        let upgrade_generation = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_upgrade_generation",
+                "Binary upgrades behind this process (0 for a process started normally).",
+            ),
+        )?;
+        let upgrade_drain_deadline = registered(
+            &registry,
+            IntGauge::new(
+                "rdock_upgrade_drain_deadline_seconds",
+                "When the previous process's drain ends, in Unix seconds; 0 when none drains.",
+            ),
         )?;
         let proxy_protocol_rejected = counters(
             &registry,
@@ -563,6 +598,10 @@ impl Metrics {
             tls_handshakes_in_flight,
             tls_handshake_waits,
             runtime_threads,
+            upgrades,
+            upgrade_draining_connections,
+            upgrade_generation,
+            upgrade_drain_deadline,
             proxy_protocol_rejected,
             tcp_connections,
             tcp_bytes,

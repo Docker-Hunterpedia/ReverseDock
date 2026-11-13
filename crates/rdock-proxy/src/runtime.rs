@@ -102,6 +102,8 @@ pub struct ListenerRuntime {
     pub socket: rdock_model::config::ListenerSocket,
     /// `https` listeners: TLS handshakes in progress at once; `None` is no bound.
     pub max_handshakes: Option<u32>,
+    /// HTTP/2 settings (`http` and `https` listeners).
+    pub http2: rdock_model::config::ListenerHttp2,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.
@@ -129,6 +131,30 @@ pub struct ListenerTls {
     pub policy: TlsPolicy,
     /// Client certificate verification.
     pub client_auth: Option<rdock_tls::ClientAuth>,
+    /// Session resumption: tickets and the session cache.
+    pub resumption: rdock_tls::ResumptionSettings,
+    /// The listener's name when it serves certificates of its own (`tls.certificates`): its
+    /// server identities differ from the shared ones, so it is a resumption class of its own.
+    pub scope: Option<String>,
+    /// Keys read from `tls.tickets.key_file`; a change rebuilds the acceptor, which replaces
+    /// the keys of the class in place.
+    pub file_keys: Option<Vec<rdock_tls::tickets::TicketKey>>,
+}
+
+impl ListenerTls {
+    /// The resumption class of this listener (`rdock_tls::tickets`).
+    #[must_use]
+    pub fn class(&self) -> rdock_tls::ClassKey {
+        rdock_tls::ClassKey {
+            policy: format!("{:?}", self.policy).to_ascii_lowercase(),
+            client_auth: self
+                .client_auth
+                .as_ref()
+                .map(|auth| (auth.required, auth.identity())),
+            scope: self.scope.clone(),
+            settings: self.resumption.clone(),
+        }
+    }
 }
 
 /// The automatic HTTP to HTTPS redirect of a plain listener.

@@ -370,6 +370,13 @@ fn config_operations(rdock: &Rdock, check: &mut Checker, backend: &str) {
         &[],
         "",
     );
+    // A binary that does not exist: refused (409) before anything is started.
+    check.call(
+        rdock,
+        ("POST", "/api/v1/upgrade", "/api/v1/upgrade"),
+        &[json_type],
+        r#"{"binary":"/nonexistent/rdock"}"#,
+    );
     check.call(rdock, ("GET", "/api/v1/{kind}", "/api/v1/routes"), &[], "");
     check.call(
         rdock,

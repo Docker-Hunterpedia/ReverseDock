@@ -2,6 +2,8 @@
 
 use std::fmt;
 
+pub mod minisign;
+
 use ring::digest::{SHA256, digest};
 use ring::rand::{SecureRandom, SystemRandom};
 use subtle::ConstantTimeEq;

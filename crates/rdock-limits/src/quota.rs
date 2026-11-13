@@ -470,6 +470,78 @@ impl QuotaCounter {
         result
     }
 
+    /// The counts now (window start, key → used), as a base for [`Self::increments_since`].
+    #[must_use]
+    pub fn snapshot(&self) -> (i64, HashMap<String, u64>) {
+        let state = self.lock();
+        (
+            state.start,
+            state
+                .counts
+                .iter()
+                .map(|(k, &(used, _))| (k.clone(), used))
+                .collect(),
+        )
+    }
+
+    /// What was counted since `base` in the same window: (key, increment, limit). Empty when
+    /// the window changed since (the new window's counts are then all increments).
+    #[must_use]
+    pub fn increments_since(
+        &self,
+        base: &(i64, HashMap<String, u64>),
+    ) -> (i64, Vec<(String, u64, u64)>) {
+        let state = self.lock();
+        let same_window = state.start == base.0;
+        let out = state
+            .counts
+            .iter()
+            .filter_map(|(key, &(used, limit))| {
+                let before = if same_window {
+                    base.1.get(key).copied().unwrap_or(0)
+                } else {
+                    0
+                };
+                (used > before).then(|| (key.clone(), used - before, limit))
+            })
+            .collect();
+        (state.start, out)
+    }
+
+    /// Adds what another process counted (binary upgrade: the old process's draining
+    /// connections) when it is for the current window.
+    pub fn add_increments(&self, start: i64, increments: &[(String, u64, u64)]) {
+        let mut state = self.lock();
+        if state.start != start {
+            return;
+        }
+        for (key, delta, limit) in increments {
+            if !state.counts.contains_key(key)
+                && let Some(class) = KeyClass::of(key)
+            {
+                state.sizes[class.index()] += 1;
+            }
+            let entry = state.counts.entry(key.clone()).or_insert((0, *limit));
+            entry.0 = entry.0.saturating_add(*delta);
+        }
+        drop(state);
+        self.dirty.store(true, Ordering::Relaxed);
+    }
+
+    /// Reads the counts from the file again, replacing those in memory, when it holds the
+    /// current window. A process that counted nothing yet calls this when it takes over from
+    /// one that wrote its counts last (binary upgrade).
+    pub fn reread(&self) {
+        let Some(file) = self.path.as_deref().and_then(read_file) else {
+            return;
+        };
+        let mut state = self.lock();
+        if file.window == self.window && file.start == state.start {
+            state.counts = file.counts;
+            state.recount();
+        }
+    }
+
     fn due(&self) -> bool {
         let every = *self
             .flush_every

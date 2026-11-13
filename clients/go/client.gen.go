@@ -400,6 +400,12 @@ type TokenView struct {
 	Role Access `json:"role"`
 }
 
+// UpgradeBody What `POST /upgrade` takes.
+type UpgradeBody struct {
+	// Binary The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.
+	Binary *string `json:"binary,omitempty"`
+}
+
 // UserChange defines model for UserChange.
 type UserChange struct {
 	Disabled *bool   `json:"disabled,omitempty"`
@@ -651,6 +657,9 @@ type SetupJSONRequestBody = Credentials
 
 // CreateTokenJSONRequestBody defines body for CreateToken for application/json ContentType.
 type CreateTokenJSONRequestBody = TokenRequest
+
+// UpgradeJSONRequestBody defines body for Upgrade for application/json ContentType.
+type UpgradeJSONRequestBody = UpgradeBody
 
 // CreateUserJSONRequestBody defines body for CreateUser for application/json ContentType.
 type CreateUserJSONRequestBody = NewUser
@@ -1312,6 +1321,24 @@ type ClientInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/tokens/{id} (the `RevokeToken` operationId).
 	RevokeToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UpgradeWithBody Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+	//
+	// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+	//
+	// Takes any type of body and a specified content type.
+	//
+	// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+	UpgradeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// Upgrade Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+	//
+	// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+	//
+	// Takes a body of the `application/json` content type.
+	//
+	// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+	Upgrade(ctx context.Context, body UpgradeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// Users Every user (admin role)
 	//
@@ -2712,6 +2739,44 @@ func (c *Client) CreateToken(ctx context.Context, body CreateTokenJSONRequestBod
 // Corresponds with DELETE /api/v1/tokens/{id} (the `RevokeToken` operationId).
 func (c *Client) RevokeToken(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRevokeTokenRequest(c.Server, id)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// UpgradeWithBody Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+//
+// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+//
+// Takes any type of body and a specified content type.
+//
+// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+func (c *Client) UpgradeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpgradeRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+// Upgrade Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+//
+// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+//
+// Takes a body of the `application/json` content type.
+//
+// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+func (c *Client) Upgrade(ctx context.Context, body UpgradeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUpgradeRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -5133,6 +5198,46 @@ func NewRevokeTokenRequest(server string, id string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewUpgradeRequest calls the generic Upgrade builder with application/json body
+func NewUpgradeRequest(server string, body UpgradeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewUpgradeRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewUpgradeRequestWithBody constructs an http.Request for the Upgrade method, with any body, and a specified content type
+func NewUpgradeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/v1/upgrade")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest(http.MethodPost, queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 // NewUsersRequest constructs an http.Request for the Users method
 func NewUsersRequest(server string) (*http.Request, error) {
 	var err error
@@ -6249,6 +6354,24 @@ type ClientWithResponsesInterface interface {
 	//
 	// Corresponds with DELETE /api/v1/tokens/{id} (the `RevokeToken` operationId).
 	RevokeTokenWithResponse(ctx context.Context, id string, reqEditors ...RequestEditorFn) (*RevokeTokenResponse, error)
+
+	// UpgradeWithBodyWithResponse Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+	//
+	// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+	//
+	// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+	UpgradeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpgradeResponse, error)
+
+	// UpgradeWithResponse Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+	//
+	// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+	//
+	// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+	//
+	// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+	UpgradeWithResponse(ctx context.Context, body UpgradeJSONRequestBody, reqEditors ...RequestEditorFn) (*UpgradeResponse, error)
 
 	// UsersWithResponse Every user (admin role)
 	//
@@ -10321,6 +10444,89 @@ func (r RevokeTokenResponse) ContentType() string {
 	return ""
 }
 
+// UpgradeResponse429Headers the declared response headers of an HTTP 429 response for Upgrade
+type UpgradeResponse429Headers struct {
+	RetryAfter *int
+}
+
+type UpgradeResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	// JSON200 the response for an HTTP 200 `application/json` response
+	JSON200 *map[string]interface{}
+	// JSON401 the response for an HTTP 401 `application/json` response
+	JSON401 *Unauthenticated
+	// JSON403 the response for an HTTP 403 `application/json` response
+	JSON403 *ErrorBody
+	// JSON409 the response for an HTTP 409 `application/json` response
+	JSON409 *map[string]interface{}
+	// JSON429 the response for an HTTP 429 `application/json` response
+	JSON429 *RateLimited
+	// JSON500 the response for an HTTP 500 `application/json` response
+	JSON500 *map[string]interface{}
+	// Headers429 the parsed response headers for an HTTP 429 response
+	Headers429 *UpgradeResponse429Headers
+}
+
+// GetJSON200 returns the response for an HTTP 200 `application/json` response
+func (r UpgradeResponse) GetJSON200() *map[string]interface{} {
+	return r.JSON200
+}
+
+// GetJSON401 returns the response for an HTTP 401 `application/json` response
+func (r UpgradeResponse) GetJSON401() *Unauthenticated {
+	return r.JSON401
+}
+
+// GetJSON403 returns the response for an HTTP 403 `application/json` response
+func (r UpgradeResponse) GetJSON403() *ErrorBody {
+	return r.JSON403
+}
+
+// GetJSON409 returns the response for an HTTP 409 `application/json` response
+func (r UpgradeResponse) GetJSON409() *map[string]interface{} {
+	return r.JSON409
+}
+
+// GetJSON429 returns the response for an HTTP 429 `application/json` response
+func (r UpgradeResponse) GetJSON429() *RateLimited {
+	return r.JSON429
+}
+
+// GetJSON500 returns the response for an HTTP 500 `application/json` response
+func (r UpgradeResponse) GetJSON500() *map[string]interface{} {
+	return r.JSON500
+}
+
+// GetBody returns the raw response body bytes
+func (r UpgradeResponse) GetBody() []byte {
+	return r.Body
+}
+
+// Status returns HTTPResponse.Status
+func (r UpgradeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UpgradeResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+// ContentType is a convenience method to retrieve the Content-Type value from the HTTP response headers
+func (r UpgradeResponse) ContentType() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Header.Get("Content-Type")
+	}
+	return ""
+}
+
 // UsersResponse429Headers the declared response headers of an HTTP 429 response for Users
 type UsersResponse429Headers struct {
 	RetryAfter *int
@@ -12179,6 +12385,36 @@ func (c *ClientWithResponses) RevokeTokenWithResponse(ctx context.Context, id st
 		return nil, err
 	}
 	return ParseRevokeTokenResponse(rsp)
+}
+
+// UpgradeWithBodyWithResponse Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+//
+// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+//
+// Takes any type of body and a specified content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+func (c *ClientWithResponses) UpgradeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*UpgradeResponse, error) {
+	rsp, err := c.UpgradeWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpgradeResponse(rsp)
+}
+
+// UpgradeWithResponse Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)
+//
+// Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.
+//
+// Takes a body of the `application/json` content type, and returns a wrapper object for the known response body format(s).
+//
+// Corresponds with POST /api/v1/upgrade (the `Upgrade` operationId).
+func (c *ClientWithResponses) UpgradeWithResponse(ctx context.Context, body UpgradeJSONRequestBody, reqEditors ...RequestEditorFn) (*UpgradeResponse, error) {
+	rsp, err := c.Upgrade(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUpgradeResponse(rsp)
 }
 
 // UsersWithResponse Every user (admin role)
@@ -15839,6 +16075,80 @@ func ParseRevokeTokenResponse(rsp *http.Response) (*RevokeTokenResponse, error) 
 	switch {
 	case rsp.StatusCode == 429:
 		var headers RevokeTokenResponse429Headers
+		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
+			var value int
+			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {
+				return nil, err
+			}
+			headers.RetryAfter = &value
+		}
+		response.Headers429 = &headers
+	}
+
+	return response, nil
+}
+
+// ParseUpgradeResponse parses an HTTP response from a UpgradeWithResponse call
+func ParseUpgradeResponse(rsp *http.Response) (*UpgradeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UpgradeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest Unauthenticated
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest ErrorBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest RateLimited
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest map[string]interface{}
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
+
+	}
+
+	switch {
+	case rsp.StatusCode == 429:
+		var headers UpgradeResponse429Headers
 		if values := rsp.Header.Values("Retry-After"); len(values) > 0 {
 			var value int
 			if err := runtime.BindStyledParameterWithOptions("simple", "Retry-After", values[0], &value, runtime.BindStyledParameterOptions{ParamLocation: runtime.ParamLocationHeader, Explode: false, Required: false, Type: "integer", Format: ""}); err != nil {

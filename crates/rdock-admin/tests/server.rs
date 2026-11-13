@@ -505,6 +505,92 @@ async fn the_bootstrap_token_creates_one_admin_who_can_log_in() {
 }
 
 /// Sends a JSON `POST` over the CLI socket and returns the raw response.
+/// A binary upgrade makes the old admin API read-only from the spawn on, and closes its open
+/// connections (after the request in progress) once it pauses accepting.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_handover_makes_the_api_read_only_and_closes_open_connections() {
+    let dir = tempfile::tempdir().unwrap();
+    let address: SocketAddr = format!("127.0.0.1:{}", free_port()).parse().unwrap();
+    let (stop, stop_rx) = watch::channel(false);
+    let (gate, gate_rx) = watch::channel(true);
+    let settings = Settings {
+        address,
+        tls: None,
+        socket: Some(dir.path().join("admin.sock")),
+        allowed_hosts: Vec::new(),
+        threads: 1,
+        state_dir: dir.path().join("admin"),
+        passwords: AdminPasswords::default(),
+        sessions: AdminSessions::default(),
+        mfa: MfaPolicy::default(),
+        dashboard: false,
+        tokens: AdminTokens::default(),
+        metrics_unauthenticated_on_loopback: false,
+        trust_forwarded_on_loopback: false,
+        audit_dir: dir.path().join("audit"),
+        audit: AdminAudit::default(),
+        api_writes: true,
+        feeds: None,
+    };
+    let running = rdock_admin::start_with(
+        settings,
+        Arc::new(Fake::default()),
+        stop_rx,
+        rdock_admin::Sockets {
+            accepting: Some(gate_rx),
+            ..rdock_admin::Sockets::default()
+        },
+    )
+    .unwrap();
+    let socket = dir.path().join("admin.sock");
+    let post = |socket: std::path::PathBuf| {
+        tokio::task::spawn_blocking(move || {
+            socket_post(&socket, "/api/v1/config/reload", &serde_json::json!({}))
+        })
+    };
+    running.set_read_only(true);
+    let refused = post(socket.clone()).await.unwrap();
+    assert!(refused.starts_with("HTTP/1.1 503"), "{refused}");
+    assert!(
+        refused.to_ascii_lowercase().contains("retry-after: 5"),
+        "{refused}"
+    );
+    // Reads still answer.
+    let path = socket.clone();
+    let kept = tokio::task::spawn_blocking(move || {
+        let mut stream = std::os::unix::net::UnixStream::connect(path).unwrap();
+        stream
+            .set_read_timeout(Some(std::time::Duration::from_secs(10)))
+            .unwrap();
+        stream
+            .write_all(b"GET /api/v1/status HTTP/1.1\r\nHost: localhost\r\n\r\n")
+            .unwrap();
+        let mut buf = [0u8; 4096];
+        let n = stream.read(&mut buf).unwrap();
+        assert!(buf[..n].starts_with(b"HTTP/1.1 200"));
+        stream
+    })
+    .await
+    .unwrap();
+    // Paused: the kept-alive connection is closed by the server.
+    gate.send_replace(false);
+    let closed = tokio::task::spawn_blocking(move || {
+        let mut stream = kept;
+        let mut buf = [0u8; 64];
+        stream.read(&mut buf).map_or(true, |n| n == 0)
+    })
+    .await
+    .unwrap();
+    assert!(closed, "the open connection was closed");
+    // The upgrade failed: accepting and writable again.
+    gate.send_replace(true);
+    running.set_read_only(false);
+    let applied = post(socket).await.unwrap();
+    assert!(applied.starts_with("HTTP/1.1 200"), "{applied}");
+    stop.send(true).unwrap();
+    running.stopped().await;
+}
+
 fn socket_post(socket: &std::path::Path, path: &str, body: &serde_json::Value) -> String {
     let body = body.to_string();
     let mut stream = std::os::unix::net::UnixStream::connect(socket).unwrap();

@@ -2059,3 +2059,97 @@ fn provider_objects_hold_no_references_in_secret_fields() {
         );
     }
 }
+
+#[test]
+fn ticket_rotation_and_cache_size_are_bounded() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": { "tickets": { "rotate": "100h" }, "session_cache": { "size": 2_000_000 } } },
+            "b": { "address": ":8443", "tls": { "tickets": { "enabled": false, "key_file": "/k" } } },
+            "c": { "address": ":9443", "tls": { "tickets": { "rotate": "1h", "key_file": "/k" }, "session_cache": { "size": 0 } } }
+        }}),
+    );
+    let found = errors(config.clone());
+    assert!(has(
+        &found,
+        "listeners.a.tls.tickets.rotate",
+        "between 1s and 84h"
+    ));
+    assert!(has(&found, "listeners.a.tls.session_cache.size", "at most"));
+    assert!(!found.iter().any(|(p, _)| p.starts_with("listeners.c")));
+    assert!(has(
+        &warnings(config),
+        "listeners.b.tls.tickets.key_file",
+        "not read"
+    ));
+}
+
+#[test]
+fn http2_settings_follow_rfc_9113_and_floods_need_unlimited() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": {}, "http2": {
+                "max_concurrent_streams": 1_000_000,
+                "initial_stream_window": 2_147_483_648_u64,
+                "max_frame_size": 1024,
+                "max_local_error_reset_streams": 0
+            } },
+            "b": { "address": ":80", "http2": { "max_pending_accept_reset_streams": "unlimited", "max_frame_size": 16_777_215 } },
+            "c": { "address": ":5432", "protocol": "tcp", "http2": {} }
+        }}),
+    );
+    let found = errors(config.clone());
+    assert!(has(
+        &found,
+        "listeners.a.http2.max_concurrent_streams",
+        "write `unlimited`"
+    ));
+    assert!(has(
+        &found,
+        "listeners.a.http2.initial_stream_window",
+        "between 1 and 2147483647"
+    ));
+    assert!(has(
+        &found,
+        "listeners.a.http2.max_frame_size",
+        "between 16384 and 16777215"
+    ));
+    assert!(has(
+        &found,
+        "listeners.a.http2.max_local_error_reset_streams",
+        "greater than zero"
+    ));
+    assert!(!found.iter().any(|(p, _)| p.starts_with("listeners.b")));
+    assert!(has(&found, "listeners.c.http2", "`http` and `https`"));
+    assert!(has(
+        &warnings(config),
+        "listeners.b.http2.max_pending_accept_reset_streams",
+        "floods"
+    ));
+}
+
+#[test]
+fn upgrade_settings_are_checked() {
+    let config = with(
+        app(),
+        json!({ "upgrade": {
+            "binary": "rdock",
+            "drain": "unlimited",
+            "start_timeout": "1h",
+            "trusted_keys": ["RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3", "nope"]
+        }}),
+    );
+    let found = errors(config.clone());
+    assert!(has(&found, "upgrade.binary", "absolute"));
+    assert!(has(&found, "upgrade.start_timeout", "between 1s and 10m"));
+    assert!(has(&found, "upgrade.trusted_keys[1]", "minisign"));
+    assert!(!found.iter().any(|(p, _)| p == "upgrade.trusted_keys[0]"));
+    assert!(has(&warnings(config), "upgrade.drain", "old binary"));
+    let ok: Config = serde_json::from_value(json!({ "upgrade": { "drain": "5s" } })).unwrap();
+    assert_eq!(
+        ok.upgrade.unwrap().drain,
+        crate::settings::DrainLimit::Within(crate::values::Duration::from_secs(5))
+    );
+}

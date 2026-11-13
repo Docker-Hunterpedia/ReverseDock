@@ -4,7 +4,7 @@
 
 ```
 reversedock/
-├── Cargo.toml                      # workspace: members = crates/*, crates/providers/*
+├── Cargo.toml                      # workspace: members = crates/*, crates/providers/*, the native plugin examples, benchmarks/perreq
 ├── Cargo.lock
 ├── rust-toolchain.toml             # pinned toolchain (1.99.1) + clippy, rustfmt; bumped by PR
 ├── deny.toml                       # cargo-deny: licenses, advisories, bans, sources
@@ -76,7 +76,7 @@ reversedock/
 │   ├── kubernetes/                 # install.yaml (generated from the chart by scripts/render-kubernetes-manifests.sh), namespace.yaml, kustomization.yaml
 │   └── systemd/                    # rdock.service (Type=notify, DynamicUser, CAP_NET_BIND_SERVICE; no socket activation)
 ├── examples/                       # runnable scenarios: config/, kubernetes/ (Gateway, HTTPRoute, GRPCRoute, TLSRoute, Ingress, cert-manager, secrets/), secrets/ (OpenBao Agent in Compose; examples that CI does not run), plugins/ (v0.8: header-rewrite, ip-blocklist, custom-rdock, template; workspace members, `publish = false`, tested by `rust`; wasm-header, the experimental WASM guest for `wasm32-wasip2`, outside the workspace with its own lock file, built and tested by `wasm`), waf/ (v0.8: CRS WAF as a `forward` agent in Compose, `smoke.sh` run by `waf-example`)
-├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/
+├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/; perreq/ (v0.9: allocations, system calls and CPU time per request without Docker; a workspace member, `publish = false`)
 ├── tests/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # compose files + expected routing tables
@@ -119,6 +119,8 @@ reversedock/
 | `wasm` | off, experimental | WASM plugins (`type: wasm`) on wasmtime 36 LTS with Cranelift and the component model (`rdock-wasm`; also a feature of `rdock-middleware` and `rdock-proxy`); about 50 more crates. Without it `type: wasm` is refused with a diagnostic. Tested only in the non-required `wasm` CI job ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
 | `cache` | none: always built | The HTTP cache (`rdock-cache`, v0.8) is in every build: `pingora-proxy` compiles `pingora-cache` anyway, so a feature would save no dependency ([ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)) |
 | `http3` | off, experimental | HTTP/3 ingress on `quinn` and `h3` with the listener's rustls configuration; about 7 more crates; not in release binaries ([ADR-0032](decisions/0032-http3-on-quinn-and-h3.md)). Without it `http3.enabled: true` is refused with a diagnostic |
+| `alloc-count` | off, bench only | `rdock` counts allocations with `stats_alloc` for `benchmarks/perreq` (v0.9, ADR-0031); the system allocator instead of mimalloc; never in a release build or a CI artefact |
+| `fault-injection` | off, tests only | faults for the admin API's tests (`RDOCK_FAULT`) and the binary upgrade's (`RDOCK_UPGRADE_FAULT`, also in debug builds); a fault can only make an operation fail; never in a release build |
 | `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
 
 `cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard). The features appear as their crates gain code; M0 has none yet.

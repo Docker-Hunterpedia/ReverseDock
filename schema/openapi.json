@@ -614,6 +614,20 @@
         ],
         "type": "object"
       },
+      "UpgradeBody": {
+        "additionalProperties": false,
+        "description": "What `POST /upgrade` takes.",
+        "properties": {
+          "binary": {
+            "description": "The new binary; `upgrade.binary` (default `/usr/local/bin/rdock`) when omitted.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
       "UserChange": {
         "additionalProperties": false,
         "properties": {
@@ -2388,6 +2402,17 @@
             "description": "UDP backend pools.",
             "type": "object"
           },
+          "upgrade": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Upgrade"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and\nthe start timeout."
+          },
           "version": {
             "default": null,
             "description": "Configuration format version. Only `1` exists; omit it to use the latest.",
@@ -2830,6 +2855,20 @@
         },
         "type": "object"
       },
+      "rdock.DrainLimit": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/rdock.Duration"
+          },
+          {
+            "enum": [
+              "unlimited"
+            ],
+            "type": "string"
+          }
+        ],
+        "description": "A duration, or `unlimited`."
+      },
       "rdock.Duration": {
         "description": "Duration made of numbers with units: ms, s, m, h, d.",
         "examples": [
@@ -2957,6 +2996,22 @@
           "paths"
         ],
         "type": "object"
+      },
+      "rdock.FloodLimit": {
+        "description": "A number, or `unlimited` to remove the limit.",
+        "oneOf": [
+          {
+            "maximum": 4294967295,
+            "minimum": 1,
+            "type": "integer"
+          },
+          {
+            "enum": [
+              "unlimited"
+            ],
+            "type": "string"
+          }
+        ]
       },
       "rdock.GoogleCloudDnsProvider": {
         "additionalProperties": false,
@@ -3711,6 +3766,17 @@
             "$ref": "#/components/schemas/rdock.ListenAddress",
             "description": "Address to bind, e.g. `:443` or `127.0.0.1:8080`."
           },
+          "http2": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ListenerHttp2"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "HTTP/2 settings of `http` (h2c) and `https` listeners (H-PERF-03, ADR-0031). Unset\nvalues keep the behaviour before v0.9."
+          },
           "ping": {
             "default": null,
             "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
@@ -3803,6 +3869,104 @@
         "required": [
           "address"
         ],
+        "type": "object"
+      },
+      "rdock.ListenerHttp2": {
+        "additionalProperties": false,
+        "description": "HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and\nh2 0.4.20 do; the limits that protect against stream and reset floods can only be removed\nby writing `unlimited`.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "initial_connection_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Flow-control window of the whole connection. Default 65535 bytes; 65535 to 2^31-1."
+          },
+          "initial_stream_window": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Flow-control window of each stream (`SETTINGS_INITIAL_WINDOW_SIZE`): how much request\nbody a client may send before rdock reads it. Default 65535 bytes (the protocol's\ninitial value); at most 2^31-1."
+          },
+          "max_concurrent_streams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FloodLimit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Streams a client may have open at once (`SETTINGS_MAX_CONCURRENT_STREAMS`). Default 100\n(Pingora's bound); at most 10000 unless `unlimited`."
+          },
+          "max_frame_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Largest frame payload rdock accepts (`SETTINGS_MAX_FRAME_SIZE`). Default 16384; 16384\nto 16777215 (RFC 9113 §6.5.2)."
+          },
+          "max_header_list_size": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Largest decoded request header list (`SETTINGS_MAX_HEADER_LIST_SIZE`). Default 64KiB\n(Pingora's bound); 1KiB to 16MiB."
+          },
+          "max_local_error_reset_streams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FloodLimit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Streams rdock resets because the client misbehaved before the connection is closed (the\n`MadeYouReset` mitigation, CVE-2025-8671). Default 1024 (h2's); at most 100000 unless\n`unlimited`."
+          },
+          "max_pending_accept_reset_streams": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FloodLimit"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid Reset\nmitigation, CVE-2023-44487). Default 20 (h2's); at most 10000 unless `unlimited`."
+          },
+          "max_send_buffer": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ByteSize"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's);\n16KiB to 16MiB."
+          }
+        },
         "type": "object"
       },
       "rdock.ListenerProtocol": {
@@ -3993,6 +4157,28 @@
             "$ref": "#/components/schemas/rdock.TlsPolicy",
             "default": "intermediate",
             "description": "TLS versions and cipher suites."
+          },
+          "session_cache": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TlsSessionCache"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when\ntickets are off), shared like the ticket keys. Default 256 sessions."
+          },
+          "tickets": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.TlsTickets"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by\nevery listener of the same security class and kept across reloads and binary upgrades."
           }
         },
         "type": "object"
@@ -8135,6 +8321,50 @@
           }
         ]
       },
+      "rdock.TlsSessionCache": {
+        "additionalProperties": false,
+        "description": "The in-memory session cache of a TLS listener.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "size": {
+            "default": 256,
+            "description": "Sessions kept (0 turns the cache off). Default 256, rustls's default.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TlsTickets": {
+        "additionalProperties": false,
+        "description": "TLS session tickets. A ticket lets a returning client skip the full handshake. Listeners\nshare ticket keys only when their TLS policy, client authentication (mode and CA\ncertificates), certificate scope and these settings are equal, so a session from a listener\nwithout client authentication can never be resumed on one that requires it. 0-RTT (early\ndata) is never accepted.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "enabled": {
+            "default": true,
+            "description": "Issue and accept tickets.",
+            "type": "boolean"
+          },
+          "key_file": {
+            "description": "Keys you provide, to share tickets between instances: one or more 32-byte keys in base64,\none per line (`openssl rand -base64 32`), the first current, the others still accepted.\nThe file must not be readable by the group or others, is read again when it changes, and\nrotating it is then your job (a warning when it is older than 24 hours). Without it, keys\nare generated, live in memory only and are handed to the next process in a binary\nupgrade.",
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "rotate": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "6h",
+            "description": "How often a new ticket key is made; the previous key still decrypts for one more\ninterval, so tickets live at most twice this (announced to clients, capped at 7 days by\nRFC 8446 §4.6.1). Default 6h, rustls's own default; at most 84h."
+          }
+        },
+        "type": "object"
+      },
       "rdock.TokenEndpointAuth": {
         "description": "Token endpoint client authentication (OpenID Connect Core §9).",
         "oneOf": [
@@ -8620,6 +8850,38 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.Upgrade": {
+        "additionalProperties": false,
+        "description": "In-place binary upgrades (H-PERF-04, ADR-0031): `rdock upgrade` on the admin Unix socket or\n`SIGUSR2` hands the listeners to a new process, which serves once it is ready; this one\ndrains and exits. Linux only; refused when rdock is PID 1 (replace the container instead).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "binary": {
+            "default": "/usr/local/bin/rdock",
+            "description": "The binary `SIGUSR2` and `rdock upgrade` without `--binary` run. Default\n`/usr/local/bin/rdock`, where the systemd unit and the release image install it. It\nmust be a regular file owned by root or rdock's user and not writable by the group or\nothers, in a directory with the same owners that the group and others cannot write to\n(unless it is sticky, like /tmp).",
+            "type": "string"
+          },
+          "drain": {
+            "$ref": "#/components/schemas/rdock.DrainLimit",
+            "default": "10m",
+            "description": "How long the old process may still serve its open connections (HTTP/1 keep-alive is\nswitched off and HTTP/2 clients get GOAWAY at once); the rest are closed then. Default\n10m (Envoy's drain time); `unlimited` waits for every connection, which keeps an old,\npossibly vulnerable binary serving for as long as a client holds a connection."
+          },
+          "start_timeout": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "How long the new process may take to report that it is ready, and then that it serves;\notherwise the old process resumes and the upgrade fails. Default 30s."
+          },
+          "trusted_keys": {
+            "description": "minisign public keys (`RWQ…`); when set, `<binary>.minisig` must be a valid signature of\nthe binary by one of them.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "type": "object"
       },
       "rdock.UpstreamTls": {
         "additionalProperties": false,
@@ -12037,6 +12299,83 @@
         "summary": "Revokes one of the caller's tokens, or anyone's for an admin",
         "tags": [
           "tokens"
+        ]
+      }
+    },
+    "/api/v1/upgrade": {
+      "post": {
+        "description": "Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031). Only on the admin Unix socket (operator role), never over TCP: it runs a file. Returns when the new process serves or the attempt was rolled back.",
+        "operationId": "upgrade",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/UpgradeBody"
+              }
+            }
+          },
+          "description": "The binary to run (optional)",
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "The new process serves; this one drains"
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthenticated"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            },
+            "description": "Not over the Unix socket, or the role cannot"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Refused; nothing changed"
+          },
+          "429": {
+            "$ref": "#/components/responses/RateLimited"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Failed and rolled back; this process serves on"
+          }
+        },
+        "security": [
+          {
+            "token": []
+          },
+          {
+            "session": []
+          }
+        ],
+        "summary": "Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)",
+        "tags": [
+          "status"
         ]
       }
     },
