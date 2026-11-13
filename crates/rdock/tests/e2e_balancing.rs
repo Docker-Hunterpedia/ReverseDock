@@ -166,15 +166,23 @@ async fn peak_ewma_sheds_a_slow_backend_and_takes_it_back() {
         "the slow backend gets a clearly smaller share: {slow:?}"
     );
     assert!(slow.get("b1").copied().unwrap_or(0) > 20 && slow.get("b2").copied().unwrap_or(0) > 20);
-    // Without the delay, its estimate decays (200 ms × e^(-t / 1 s) is below the others'
-    // after about 6 s) and it competes again.
+    // Without the delay, its estimate decays (200 ms × e^(-t / 1 s)) until it is below the
+    // others' and it competes again. How long that takes depends on how fast the others
+    // answer on this machine (about 6 s at 0.5 ms, 8.3 s at 0.05 ms), so wait for it.
     pool.backends[0].set_delay(Duration::ZERO);
-    tokio::time::sleep(Duration::from_secs(8)).await;
-    let recovered = shares(pool.port, "/", 90).await;
-    assert!(
-        recovered.get("b0").copied().unwrap_or(0) >= 10,
-        "it recovered: {recovered:?}"
-    );
+    tokio::time::sleep(Duration::from_secs(6)).await;
+    let deadline = std::time::Instant::now() + Duration::from_secs(60);
+    loop {
+        let recovered = shares(pool.port, "/", 90).await;
+        if recovered.get("b0").copied().unwrap_or(0) >= 10 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "it recovered: {recovered:?}"
+        );
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
 }
 
 #[tokio::test]
