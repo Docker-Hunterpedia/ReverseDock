@@ -28,7 +28,7 @@ thiserror.workspace = true
 tracing.workspace = true
 # wasmtime 36 is the LTS line (supported for 24 months) whose MSRV (1.86) fits the workspace's
 # 1.89; later LTS lines need Rust 1.95 (ADR-0030). No WASI, no pooling, no parallel compilation.
-wasmtime = { version = "36.0.20", optional = true, default-features = false, features = ["std", "runtime", "cranelift", "component-model", "wat"] }
+wasmtime = { version = "40.0.4", optional = true, default-features = false, features = ["std", "runtime", "cranelift", "component-model", "wat"] }
 
 [dev-dependencies]
 tempfile.workspace = true
