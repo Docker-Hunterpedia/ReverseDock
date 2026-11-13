@@ -826,7 +826,9 @@ async fn admitted(
                 other => panic!("{path} on edge-{i}: {other:?}\n{}", m.rdock.log()),
             }
         }
-        tokio::time::sleep(Duration::from_millis(5)).await;
+        // Long enough for a claim to come back from the store between rounds on a slow
+        // machine: an instance admits from what it has claimed and never waits for the store.
+        tokio::time::sleep(Duration::from_millis(50)).await;
     }
     counts
 }
