@@ -177,6 +177,12 @@ Sent by: No healthy backend, an agent's open breaker. Has `retry_after` (5 s).
 
 Sent by: `maintenance` without a `file` (with one, the file is sent). Has `retry_after` when `retry_after` is set.
 
+### `overloaded`
+
+**503 — Overloaded.** The service has more requests than it can handle well and sheds some. Retry after the time given in `Retry-After`.
+
+Sent by: `admission` when the requests in flight are at the share of its adaptive limit that the route's `priority_class` may fill. Has `retry_after` (the middleware's `retry_after`, 1 s by default). See [Admission control](/docs/guides/admission/).
+
 ### `identity-provider-unavailable`
 
 **503 — Identity provider unavailable.** The identity provider cannot be reached, so a new login cannot start. Try again later.

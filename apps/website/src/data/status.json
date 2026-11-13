@@ -54,5 +54,33 @@
     "what": "Automatic rollback of a rollout on the canary's health",
     "value": true,
     "fixture": "control:\n  rollout: { auto_rollback: true }\n"
+  },
+  {
+    "path": "tenants.<name>.listeners",
+    "planned": "a later version",
+    "what": "Tenant-owned listeners",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    listeners: [web]\n"
+  },
+  {
+    "path": "tenants.<name>.certificates",
+    "planned": "a later version",
+    "what": "Tenant-owned certificates",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    certificates: [acme]\n"
+  },
+  {
+    "path": "tenants.<name>.metrics_label",
+    "planned": "a later version",
+    "what": "A tenant label on the core metrics",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    metrics_label: true\n"
+  },
+  {
+    "path": "tenants.<name>.dashboard",
+    "planned": "a later version",
+    "what": "A dashboard view limited to a tenant",
+    "value": true,
+    "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    dashboard: true\n"
   }
 ]

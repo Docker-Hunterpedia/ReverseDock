@@ -461,6 +461,7 @@ fn add_route(b: &mut Builder<'_>, ing: &Ing<'_>, new: NewRoute) {
             matcher: MatchSpec::Rule(new.expr.to_string()),
             listeners: None,
             priority: new.priority,
+            priority_class: rdock_model::route::PriorityClass::Normal,
             middlewares,
             service: Some(new.service),
             tls: Some(new.tls),

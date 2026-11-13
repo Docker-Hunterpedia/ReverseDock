@@ -144,12 +144,13 @@ pub struct QuotaConfig {
     pub limit: u64,
     /// The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st).
     pub window: QuotaWindow,
-    /// What to count by; only `consumer` (the default) is accepted. Requests without a
-    /// consumer are counted per client IP.
+    /// What to count by: `consumer` (the default) or `group` (the consumer's primary group,
+    /// the first of its `groups`: all consumers of a group share one count). Requests without
+    /// a consumer are counted per client IP.
     #[serde(default = "consumer_key")]
     pub key: crate::values::RateLimitKey,
-    /// Group → limit, for consumers in that group (the first of the consumer's groups that has
-    /// one wins).
+    /// Group → limit, for consumers in that group (with `key: consumer`, the first of the
+    /// consumer's groups that has one wins; with `key: group`, the primary group's).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, u64>,
     /// `draft` adds `RateLimit-Policy` and `RateLimit` to responses, in the syntax of

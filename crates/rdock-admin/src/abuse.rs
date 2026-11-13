@@ -35,7 +35,13 @@ pub(crate) async fn bans(
     }
     let control = state.control.clone();
     match state.main.spawn(async move { control.bans().await }).await {
-        Ok(value) => axum::Json(value).into_response(),
+        Ok(value) => match caller.scope() {
+            // A tenant sees the bans of its own `abuse` middlewares only.
+            Some(scope) => {
+                axum::Json(crate::tenancy::by_middleware(scope, value, "bans")).into_response()
+            }
+            None => axum::Json(value).into_response(),
+        },
         Err(_) => error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down"),
     }
 }
@@ -56,6 +62,19 @@ pub(crate) async fn remove_ban(
 ) -> Response {
     if let Err(denied) = need(&caller, Access::Operator) {
         return denied.into_response();
+    }
+    if let Some(tenant) = caller.scope()
+        && !scope
+            .middleware
+            .as_deref()
+            .is_some_and(|m| tenant.owns_merged(m))
+    {
+        return crate::caller::tenant_denied(
+            &state,
+            &caller,
+            format!("/api/v1/abuse/bans/{key}"),
+            "name one of the tenant's own `abuse` middlewares in `?middleware=`",
+        );
     }
     let control = state.control.clone();
     let (which, middleware) = (key.clone(), scope.middleware.clone());

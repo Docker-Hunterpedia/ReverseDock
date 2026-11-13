@@ -269,6 +269,13 @@
       },
       "default": {}
     },
+    "tenants": {
+      "description": "Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and\nwrite only the API objects under its name prefix, whose routes stay inside its host\nclaims. Without this section, nothing is scoped.",
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/Tenant"
+      }
+    },
     "udp_routes": {
       "description": "UDP routes: which `udp` listener's datagrams go to which UDP service.",
       "type": "object",
@@ -858,6 +865,42 @@
           "format": "uint16",
           "default": 90,
           "maximum": 65535,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
+    },
+    "AdmissionMode": {
+      "description": "How `admission` adapts its limit.",
+      "oneOf": [
+        {
+          "description": "Additive increase, multiplicative decrease on slow or failed samples.",
+          "type": "string",
+          "const": "aimd"
+        },
+        {
+          "description": "The ratio of the long-term latency to each sample's (Gradient2).",
+          "type": "string",
+          "const": "gradient"
+        }
+      ]
+    },
+    "AdmissionShares": {
+      "description": "How much of the limit each lower priority class may fill.",
+      "type": "object",
+      "properties": {
+        "normal": {
+          "description": "Routes with `priority_class: normal`, in percent of the limit (default 90).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 90,
+          "minimum": 0
+        },
+        "sheddable": {
+          "description": "Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most\n`normal`).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 75,
           "minimum": 0
         }
       },
@@ -4775,7 +4818,7 @@
               "default": "client_ip"
             },
             "overrides": {
-              "description": "Group → limit for consumers in that group, with `key: consumer`. The first of the\nconsumer's groups (in its `groups` order) that has an override wins.",
+              "description": "Group → limit for consumers in that group, with `key: consumer` or `key: group`. With\n`consumer`, the first of the consumer's groups (in its `groups` order) that has an\noverride wins; with `group`, the override of the primary group (the first one) applies.",
               "type": "object",
               "additionalProperties": {
                 "$ref": "#/$defs/RateOverride"
@@ -6018,7 +6061,7 @@
               "default": "off"
             },
             "key": {
-              "description": "What to count by; only `consumer` (the default) is accepted. Requests without a\nconsumer are counted per client IP.",
+              "description": "What to count by: `consumer` (the default) or `group` (the consumer's primary group,\nthe first of its `groups`: all consumers of a group share one count). Requests without\na consumer are counted per client IP.",
               "$ref": "#/$defs/RateLimitKey",
               "default": "consumer"
             },
@@ -6029,7 +6072,7 @@
               "minimum": 0
             },
             "overrides": {
-              "description": "Group → limit, for consumers in that group (the first of the consumer's groups that has\none wins).",
+              "description": "Group → limit, for consumers in that group (with `key: consumer`, the first of the\nconsumer's groups that has one wins; with `key: group`, the primary group's).",
               "type": "object",
               "additionalProperties": {
                 "type": "integer",
@@ -6433,6 +6476,126 @@
           },
           "required": [
             "type"
+          ]
+        },
+        {
+          "description": "An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the\nroutes using it can have in flight from their latency (`aimd` or `gradient`) and\nanswers the rest with `503` and `Retry-After`, routes of the lowest `priority_class`\nfirst. Off unless configured.",
+          "type": "object",
+          "properties": {
+            "backoff_percent": {
+              "description": "`aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "initial": {
+              "description": "The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "latency": {
+              "description": "`aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's\n`timeout`). Measured from admission to the response headers.",
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Duration"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "max": {
+              "description": "The highest limit (default 1000, Envoy's `max_concurrency_limit`).",
+              "type": "integer",
+              "format": "uint32",
+              "default": 1000,
+              "minimum": 0
+            },
+            "min": {
+              "description": "The lowest limit (default 3, Envoy's `min_concurrency`).",
+              "type": "integer",
+              "format": "uint32",
+              "default": 3,
+              "minimum": 0
+            },
+            "mode": {
+              "description": "`aimd` or `gradient`.",
+              "$ref": "#/$defs/AdmissionMode"
+            },
+            "probe": {
+              "description": "`gradient` only: samples at `min` concurrency that make one measurement of the no-load\nlatency (default 50, Envoy's `request_count`; 5–1000).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "queue": {
+              "description": "`gradient` only: requests allowed above the estimate (default 4, Netflix's\n`queueSize`).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "retry_after": {
+              "description": "`Retry-After` of a shed request (default 1s).",
+              "$ref": "#/$defs/Duration",
+              "default": "1s"
+            },
+            "shares": {
+              "description": "The share of the limit `normal` and `sheddable` routes may fill, in percent.",
+              "$ref": "#/$defs/AdmissionShares",
+              "default": {
+                "normal": 90,
+                "sheddable": 75
+              }
+            },
+            "smoothing_percent": {
+              "description": "`gradient` only: the weight of a new estimate, in percent (default 20, 1–100).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "tolerance_percent": {
+              "description": "`gradient` only: how much slower than the no-load latency a sample may be before the\nlimit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            },
+            "type": {
+              "type": "string",
+              "const": "admission"
+            },
+            "window": {
+              "description": "`gradient` only: samples between two measurements of the no-load latency (default\n600; 10–100000).",
+              "type": [
+                "integer",
+                "null"
+              ],
+              "format": "uint32",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "type",
+            "mode"
           ]
         }
       ]
@@ -6956,6 +7119,26 @@
         "schema"
       ]
     },
+    "PriorityClass": {
+      "description": "A route's class for load shedding by `admission` (H-LB-04).",
+      "oneOf": [
+        {
+          "description": "Shed last: may fill the whole limit.",
+          "type": "string",
+          "const": "critical"
+        },
+        {
+          "description": "The default: may fill `shares.normal` of the limit.",
+          "type": "string",
+          "const": "normal"
+        },
+        {
+          "description": "Shed first: may fill `shares.sheddable` of the limit.",
+          "type": "string",
+          "const": "sheddable"
+        }
+      ]
+    },
     "Providers": {
       "description": "Configuration sources besides this file.",
       "type": "object",
@@ -7127,7 +7310,7 @@
         "client_ip",
         "header:X-Api-Key"
       ],
-      "pattern": "^(client_ip|route|consumer|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
+      "pattern": "^(client_ip|route|consumer|group|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$"
     },
     "RateOverride": {
       "description": "A limit for the consumers of one group.",
@@ -7551,6 +7734,10 @@
           "type": "integer",
           "format": "int64",
           "default": 0
+        },
+        "priority_class": {
+          "description": "Which requests an `admission` middleware sheds first under overload: `sheddable`,\nthen `normal` (the default), `critical` last. Unrelated to `priority`, which orders\nmatching.",
+          "$ref": "#/$defs/PriorityClass"
         },
         "service": {
           "description": "Service that handles matching requests (`name` or `name@provider`). Required unless the\nlast middleware answers every request itself (`static` without `pass_through`, or\n`maintenance` enabled for everyone).",
@@ -8755,6 +8942,92 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "Tenant": {
+      "description": "One tenant.",
+      "type": "object",
+      "properties": {
+        "backend_networks": {
+          "description": "Networks the tenant's backends must be in. Empty: any address except loopback,\nlink-local, unspecified and `localhost`; set: only IP literals inside these networks\n(DNS names and SRV records are refused, since they can resolve anywhere).",
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/IpNetwork"
+          }
+        },
+        "certificates": {
+          "description": "Planned: certificates the tenant owns.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "dashboard": {
+          "description": "Planned: a dashboard view limited to the tenant.",
+          "type": "boolean"
+        },
+        "hosts": {
+          "description": "The host names the tenant's routes may match: `shop.example.com` or\n`*.shop.example.com` (any name below it, not the name itself). Claims of two tenants\nmay not overlap.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "listeners": {
+          "description": "Planned: listeners the tenant owns.",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "metrics_label": {
+          "description": "Planned: a `tenant` label on the core metrics.",
+          "type": "boolean"
+        },
+        "prefix": {
+          "description": "The start of the names of the tenant's objects in the admin API (routes, services,\nmiddlewares). Defaults to `<tenant>-`. No tenant's prefix may start another's.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "shared": {
+          "description": "Objects outside the prefix that the tenant's objects may reference (`name` for the\nconfiguration file's, `name@provider` for a provider's).",
+          "$ref": "#/$defs/TenantShared"
+        }
+      },
+      "additionalProperties": false
+    },
+    "TenantShared": {
+      "description": "Objects outside a tenant's prefix that its objects may reference.",
+      "type": "object",
+      "properties": {
+        "caches": {
+          "description": "Cache stores (`caches`), for `cache` middlewares.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "middlewares": {
+          "description": "Middlewares.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        },
+        "services": {
+          "description": "Services.",
+          "type": "array",
+          "default": [],
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "additionalProperties": false
     },
     "Timeouts": {
       "description": "Upstream timeouts.",

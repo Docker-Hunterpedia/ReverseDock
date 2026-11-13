@@ -26,6 +26,10 @@ export type AuditRecord = {
     result: AuditResult;
     seq: number;
     /**
+     * The tenant of a tenant-scoped caller.
+     */
+    tenant?: string | null;
+    /**
      * RFC 3339.
      */
     time: string;
@@ -359,6 +363,10 @@ export type NewUser = {
     name: string;
     password: string;
     role: Role;
+    /**
+     * Scope the user to this tenant (`tenants.<name>`).
+     */
+    tenant?: string | null;
 };
 
 /**
@@ -459,6 +467,11 @@ export type TokenRequest = {
     expires_in_days?: number | null;
     name: string;
     role: Access;
+    /**
+     * Scope the token to this tenant. A tenant-scoped caller's tokens always have its
+     * tenant.
+     */
+    tenant?: string | null;
 };
 
 export type TokenView = {
@@ -471,6 +484,10 @@ export type TokenView = {
     last_used_from?: string | null;
     name: string;
     role: Access;
+    /**
+     * The tenant the token is scoped to, if any.
+     */
+    tenant?: string | null;
 };
 
 /**
@@ -491,6 +508,10 @@ export type UserChange = {
      */
     reset_mfa?: boolean;
     role?: Role | null;
+    /**
+     * Scopes the user to this tenant; `null` removes the scope.
+     */
+    tenant?: string | null;
 };
 
 export type UserView = {
@@ -499,6 +520,10 @@ export type UserView = {
     mfa: boolean;
     name: string;
     role: Role;
+    /**
+     * The tenant the user is scoped to (`tenants.<name>`), if any.
+     */
+    tenant?: string | null;
 };
 
 /**
@@ -821,6 +846,26 @@ export type RdockAdminTokens = {
      * Lifetime of a new token when its creator gives none, in days (1–365).
      */
     default_expiry_days?: number;
+};
+
+/**
+ * How `admission` adapts its limit.
+ */
+export type RdockAdmissionMode = 'aimd' | 'gradient';
+
+/**
+ * How much of the limit each lower priority class may fill.
+ */
+export type RdockAdmissionShares = {
+    /**
+     * Routes with `priority_class: normal`, in percent of the limit (default 90).
+     */
+    normal?: number;
+    /**
+     * Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most
+     * `normal`).
+     */
+    sheddable?: number;
 };
 
 /**
@@ -1559,6 +1604,14 @@ export type RdockConfig = {
         [key: string]: RdockTcpService;
     };
     /**
+     * Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and
+     * write only the API objects under its name prefix, whose routes stay inside its host
+     * claims. Without this section, nothing is scoped.
+     */
+    tenants?: {
+        [key: string]: RdockTenant;
+    };
+    /**
      * UDP routes: which `udp` listener's datagrams go to which UDP service.
      */
     udp_routes?: {
@@ -1597,6 +1650,8 @@ export type RdockConfig = {
         [key: string]: RdockTcpRoute;
     } | {
         [key: string]: RdockTcpService;
+    } | {
+        [key: string]: RdockTenant;
     } | {
         [key: string]: RdockUdpRoute;
     } | {
@@ -2978,8 +3033,9 @@ export type RdockMiddleware = {
      */
     key?: RdockRateLimitKey;
     /**
-     * Group → limit for consumers in that group, with `key: consumer`. The first of the
-     * consumer's groups (in its `groups` order) that has an override wins.
+     * Group → limit for consumers in that group, with `key: consumer` or `key: group`. With
+     * `consumer`, the first of the consumer's groups (in its `groups` order) that has an
+     * override wins; with `group`, the override of the primary group (the first one) applies.
      */
     overrides?: {
         [key: string]: RdockRateOverride;
@@ -3729,8 +3785,9 @@ export type RdockMiddleware = {
      */
     headers?: RdockLimitHeaders;
     /**
-     * What to count by; only `consumer` (the default) is accepted. Requests without a
-     * consumer are counted per client IP.
+     * What to count by: `consumer` (the default) or `group` (the consumer's primary group,
+     * the first of its `groups`: all consumers of a group share one count). Requests without
+     * a consumer are counted per client IP.
      */
     key?: RdockRateLimitKey;
     /**
@@ -3738,8 +3795,8 @@ export type RdockMiddleware = {
      */
     limit: number;
     /**
-     * Group → limit, for consumers in that group (the first of the consumer's groups that has
-     * one wins).
+     * Group → limit, for consumers in that group (with `key: consumer`, the first of the
+     * consumer's groups that has one wins; with `key: group`, the primary group's).
      */
     overrides?: {
         [key: string]: number;
@@ -4008,6 +4065,65 @@ export type RdockMiddleware = {
      */
     window?: RdockDuration;
     [key: string]: unknown | RdockAbuseAction | RdockDuration | Array<RdockAbuseEvent> | Array<RdockIpNetwork> | RdockAbuseKey | number | RdockTarpit | 'abuse' | undefined;
+} | {
+    /**
+     * `aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).
+     */
+    backoff_percent?: number | null;
+    /**
+     * The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
+     */
+    initial?: number | null;
+    /**
+     * `aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's
+     * `timeout`). Measured from admission to the response headers.
+     */
+    latency?: RdockDuration | null;
+    /**
+     * The highest limit (default 1000, Envoy's `max_concurrency_limit`).
+     */
+    max?: number;
+    /**
+     * The lowest limit (default 3, Envoy's `min_concurrency`).
+     */
+    min?: number;
+    /**
+     * `aimd` or `gradient`.
+     */
+    mode: RdockAdmissionMode;
+    /**
+     * `gradient` only: samples at `min` concurrency that make one measurement of the no-load
+     * latency (default 50, Envoy's `request_count`; 5–1000).
+     */
+    probe?: number | null;
+    /**
+     * `gradient` only: requests allowed above the estimate (default 4, Netflix's
+     * `queueSize`).
+     */
+    queue?: number | null;
+    /**
+     * `Retry-After` of a shed request (default 1s).
+     */
+    retry_after?: RdockDuration;
+    /**
+     * The share of the limit `normal` and `sheddable` routes may fill, in percent.
+     */
+    shares?: RdockAdmissionShares;
+    /**
+     * `gradient` only: the weight of a new estimate, in percent (default 20, 1–100).
+     */
+    smoothing_percent?: number | null;
+    /**
+     * `gradient` only: how much slower than the no-load latency a sample may be before the
+     * limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).
+     */
+    tolerance_percent?: number | null;
+    type: 'admission';
+    /**
+     * `gradient` only: samples between two measurements of the no-load latency (default
+     * 600; 10–100000).
+     */
+    window?: number | null;
 };
 
 /**
@@ -4283,6 +4399,11 @@ export type RdockPathParameters = {
      */
     schema: unknown;
 };
+
+/**
+ * A route's class for load shedding by `admission` (H-LB-04).
+ */
+export type RdockPriorityClass = 'critical' | 'normal' | 'sheddable';
 
 /**
  * Configuration sources besides this file.
@@ -4592,6 +4713,12 @@ export type RdockRoute = {
      */
     priority?: number;
     /**
+     * Which requests an `admission` middleware sheds first under overload: `sheddable`,
+     * then `normal` (the default), `critical` last. Unrelated to `priority`, which orders
+     * matching.
+     */
+    priority_class?: RdockPriorityClass;
+    /**
      * Service that handles matching requests (`name` or `name@provider`). Required unless the
      * last middleware answers every request itself (`static` without `pass_through`, or
      * `maintenance` enabled for everyone).
@@ -4605,7 +4732,7 @@ export type RdockRoute = {
      * TLS for this route: `auto`, `off` or detailed settings. Defaults to `defaults.tls`.
      */
     tls?: RdockRouteTls | null;
-    [key: string]: unknown | boolean | RdockErrorSettings | null | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
+    [key: string]: unknown | boolean | RdockErrorSettings | null | Array<string> | null | RdockMatchSpec | RdockByteSize | null | Array<string> | RdockMirror | null | number | RdockPriorityClass | string | null | RdockRouteTimeouts | RdockRouteTls | null | undefined;
 };
 
 /**
@@ -5255,6 +5382,68 @@ export type RdockTcpTimeouts = {
      */
     termination_delay?: RdockDuration;
     [key: string]: unknown | RdockDuration | undefined;
+};
+
+/**
+ * One tenant.
+ */
+export type RdockTenant = {
+    /**
+     * Networks the tenant's backends must be in. Empty: any address except loopback,
+     * link-local, unspecified and `localhost`; set: only IP literals inside these networks
+     * (DNS names and SRV records are refused, since they can resolve anywhere).
+     */
+    backend_networks?: Array<RdockIpNetwork>;
+    /**
+     * Planned: certificates the tenant owns.
+     */
+    certificates?: Array<string>;
+    /**
+     * Planned: a dashboard view limited to the tenant.
+     */
+    dashboard?: boolean;
+    /**
+     * The host names the tenant's routes may match: `shop.example.com` or
+     * `*.shop.example.com` (any name below it, not the name itself). Claims of two tenants
+     * may not overlap.
+     */
+    hosts?: Array<string>;
+    /**
+     * Planned: listeners the tenant owns.
+     */
+    listeners?: Array<string>;
+    /**
+     * Planned: a `tenant` label on the core metrics.
+     */
+    metrics_label?: boolean;
+    /**
+     * The start of the names of the tenant's objects in the admin API (routes, services,
+     * middlewares). Defaults to `<tenant>-`. No tenant's prefix may start another's.
+     */
+    prefix?: string | null;
+    /**
+     * Objects outside the prefix that the tenant's objects may reference (`name` for the
+     * configuration file's, `name@provider` for a provider's).
+     */
+    shared?: RdockTenantShared;
+};
+
+/**
+ * Objects outside a tenant's prefix that its objects may reference.
+ */
+export type RdockTenantShared = {
+    /**
+     * Cache stores (`caches`), for `cache` middlewares.
+     */
+    caches?: Array<string>;
+    /**
+     * Middlewares.
+     */
+    middlewares?: Array<string>;
+    /**
+     * Services.
+     */
+    services?: Array<string>;
 };
 
 /**

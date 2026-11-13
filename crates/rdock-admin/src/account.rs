@@ -642,7 +642,12 @@ pub(crate) async fn sessions(
         Ok(found) => found,
         Err(refused) => return refused.into_response(),
     };
-    let user = (session.role != Role::Admin).then_some(session.user.as_str());
+    // A tenant-scoped admin sees its own sessions, like any other user.
+    let scoped = state
+        .users
+        .find(&session.user)
+        .is_some_and(|u| u.tenant.is_some());
+    let user = (session.role != Role::Admin || scoped).then_some(session.user.as_str());
     axum::Json(state.sessions.list(user, value)).into_response()
 }
 
@@ -664,8 +669,12 @@ pub(crate) async fn end_session(
         Ok(found) => found,
         Err(refused) => return refused.into_response(),
     };
+    let scoped = state
+        .users
+        .find(&session.user)
+        .is_some_and(|u| u.tenant.is_some());
     let ended = state.sessions.end_by_id(&id, |s| {
-        session.role == Role::Admin || s.user == session.user
+        (session.role == Role::Admin && !scoped) || s.user == session.user
     });
     if ended {
         state.audit.record(Event {

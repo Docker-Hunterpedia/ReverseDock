@@ -1374,6 +1374,16 @@ impl rdock_admin::Control for Engine {
         (api::document(&self.api_fragment()), self.api_etag())
     }
 
+    async fn tenants(&self) -> rdock_model::tenant::Tenants {
+        self.applied
+            .lock()
+            .await
+            .config
+            .as_ref()
+            .map(|c| c.tenants.clone())
+            .unwrap_or_default()
+    }
+
     async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {
         let fragment = api::parse(candidate)?;
         let (ok, diagnostics) = self.api_dry_run(fragment);

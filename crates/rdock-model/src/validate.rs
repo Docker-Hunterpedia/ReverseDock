@@ -82,6 +82,7 @@ impl Config {
         v.check_locality();
         v.check_edge();
         v.check_cluster();
+        v.check_tenants();
         v.out
     }
 }
@@ -457,6 +458,7 @@ impl Validator<'_> {
             self.check_terminal_position(&path, route);
             self.check_route_cache(&path, route);
             self.check_route_consumer_keys(&path, route);
+            self.check_route_admission(&path, route);
             self.check_route_oidc(&path, route, expr.as_ref());
             self.check_route_validation(&path, route);
             self.check_route_edge(&path, route, expr.as_ref());
@@ -1073,6 +1075,7 @@ impl Validator<'_> {
                 Middleware::Transform(t) => self.check_transform(&path, t),
                 Middleware::Oidc(o) => self.check_oidc(&path, o),
                 Middleware::Abuse(a) => self.check_abuse(&path, a),
+                Middleware::Admission(a) => self.check_admission(&path, a),
                 Middleware::ClientCert(c) => {
                     self.check_client_cert_identity(&path, c);
                     for (i, pattern) in c.allow.iter().enumerate() {
@@ -2550,6 +2553,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
     (!local).then_some(ip)
 }
 
+mod admission;
 mod balancing;
 mod cache;
 mod cluster;
@@ -2563,6 +2567,7 @@ mod shaping;
 mod socket;
 mod static_files;
 mod tcp;
+mod tenants;
 #[cfg(test)]
 mod tests;
 mod udp;

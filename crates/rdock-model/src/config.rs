@@ -89,6 +89,11 @@ pub struct Config {
     /// configuration from, and where certificates are shared.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub cluster: Option<Box<crate::cluster::Cluster>>,
+    /// Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and
+    /// write only the API objects under its name prefix, whose routes stay inside its host
+    /// claims. Without this section, nothing is scoped.
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub tenants: crate::tenant::Tenants,
     /// The control plane's own settings, read only by `rdock control run`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub control: Option<Box<crate::cluster::ControlPlane>>,

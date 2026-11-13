@@ -38,6 +38,7 @@ bursts of up to 50.
 | `cookie:<name>` <Status since="v0.4" /> | Value of a cookie, for example `cookie:session`. Requests without it share one bucket. |
 | `claim:<name>` <Status since="v0.4" /> | A claim of the token verified by an earlier [`jwt`](/docs/guides/jwt/) middleware, for example `claim:sub`. |
 | `consumer` <Status since="v0.8" /> | The [consumer](/docs/guides/api-keys/) an earlier `api_key` or `cloudflare_access` middleware set. Requests without one (`anonymous: allow`) are counted per client IP. |
+| `group` <Status planned="v0.9" /> | The consumer's **primary group**: the first entry of its `groups`. All consumers whose primary group is `acme` share one bucket, so a customer with many keys or users gets one limit. A consumer without a group is counted on its own (as with `consumer`); requests without a consumer per client IP. Group, consumer and address counts never mix. |
 
 If ReverseDock runs behind a load balancer or CDN that is not listed in
 `security.trusted_proxies`, every request seems to come from that proxy and all clients share
@@ -96,6 +97,31 @@ middlewares:
 Clients without the header share one bucket and can block each other. To keep them out of
 the route, require the header in the rule, for example
 ``Host(`api.example.com`) && HeaderRegexp(`X-Api-Key`, `.`)``.
+
+## Per group
+
+<Status planned="v0.9" /> `key: group` counts all consumers of a group together. With
+`overrides`, the override of the **primary group** applies (with `key: consumer`, the first of
+the consumer's groups that has one). It works with `scope: cluster` too: the group's count is
+shared by the instances like any other key.
+
+```yaml title="rdock.yaml (excerpt)"
+consumers:
+  ann: { groups: [acme, gold] }   # counted under acme
+  bob: { groups: [acme] }         # shares acme's bucket with ann
+  cy:  { groups: [globex] }
+middlewares:
+  per-customer:
+    type: rate_limit
+    key: group
+    average: 100
+    period: 1m
+    overrides:
+      globex: { average: 1000 }
+```
+
+`in_flight` and `bandwidth` accept `key: group` with the same meaning. To give each
+[tenant](/docs/guides/tenants/) one shared limit, put its consumers in a group named after it.
 
 ## Per consumer, with group overrides
 

@@ -1261,6 +1261,7 @@ fn compile_route(
     Some(Arc::new(RouteRuntime {
         name: Arc::from(name),
         priority,
+        priority_class: route.priority_class,
         rule,
         service,
         expr: expr.to_string(),

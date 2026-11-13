@@ -620,6 +620,7 @@ impl RdockProxy {
         cx.client_cert = client_identity(session);
         cx.fingerprint = connection_fingerprint(session, self.listener(&ctx.runtime));
         cx.has_body = !session.is_body_empty() && !is_upgrade(session.req_header());
+        cx.priority_class = route.priority_class;
         let chain = &route.middlewares;
         chain.start(&mut cx);
         let answered = chain.request(session.req_header_mut(), &mut cx).await;
@@ -851,6 +852,11 @@ impl RdockProxy {
                 .map(str::to_owned),
             asn: geo.asn.filter(|_| wanted.asn),
             abuse: ctx.mw.as_ref().and_then(|cx| cx.abuse).map(str::to_owned),
+            admission: ctx
+                .mw
+                .as_ref()
+                .and_then(|cx| cx.admission)
+                .map(str::to_owned),
             spiffe_id: ctx
                 .mw
                 .as_ref()

@@ -19,6 +19,8 @@ use crate::{Context, Flow, Middleware, ProblemKind, Reply};
 pub(crate) struct Quota {
     name: String,
     limit: u64,
+    /// `key: group`: count per primary group instead of per consumer.
+    by_group: bool,
     overrides: Vec<(String, u64)>,
     headers: LimitHeaders,
     counter: Arc<QuotaCounter>,
@@ -52,6 +54,7 @@ impl Quota {
         Self {
             name: name.to_owned(),
             limit: config.limit,
+            by_group: config.key == rdock_model::values::RateLimitKey::Group,
             overrides: config
                 .overrides
                 .iter()
@@ -77,6 +80,16 @@ impl Quota {
         let Some(consumer) = &cx.consumer else {
             return (anonymous_key(cx.client_ip), self.limit);
         };
+        if self.by_group
+            && let Some(primary) = consumer.groups.first()
+        {
+            let limit = self
+                .overrides
+                .iter()
+                .find(|(group, _)| **group == **primary)
+                .map_or(self.limit, |(_, l)| *l);
+            return (rdock_limits::quota::group_key(primary), limit);
+        }
         let limit = consumer
             .groups
             .iter()
@@ -260,5 +273,43 @@ mod tests {
             assert!(key.bytes().all(|b| b.is_ascii_lowercase()));
             assert!(number.parse::<u64>().is_ok());
         }
+    }
+
+    #[test]
+    fn group_quotas_count_per_primary_group() {
+        use rdock_model::values::RateLimitKey;
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert("gold".to_owned(), 3);
+        let config = QuotaConfig {
+            limit: 2,
+            window: QuotaWindow::Day,
+            key: RateLimitKey::Group,
+            overrides,
+            headers: LimitHeaders::Off,
+            flush_interval: rdock_model::values::Duration::from_secs(10),
+            scope: rdock_model::middleware::LimitScope::Instance,
+        };
+        let registry = QuotaRegistry::default();
+        let quota = Quota::new("q", &config, &registry, None, None);
+        let with = |name: &str, groups: &[&str]| {
+            let mut c = crate::test_support::cx();
+            c.consumer = Some(crate::Consumer {
+                groups: groups.iter().map(|g| Arc::from(*g)).collect(),
+                ..crate::Consumer::named(name)
+            });
+            quota.key_and_limit(&c)
+        };
+        assert_eq!(with("ann", &["acme", "gold"]), ("group:acme".to_owned(), 2));
+        assert_eq!(with("bob", &["gold"]), ("group:gold".to_owned(), 3));
+        assert_eq!(with("solo", &[]), ("solo".to_owned(), 2));
+        assert_eq!(
+            quota.key_and_limit(&crate::test_support::cx()).0,
+            "ip:192.0.2.10"
+        );
+        assert_eq!(
+            rdock_limits::quota::KeyClass::of("group:acme"),
+            Some(rdock_limits::quota::KeyClass::Group)
+        );
+        assert_eq!(rdock_limits::quota::key_consumer("group:acme"), None);
     }
 }

@@ -828,7 +828,7 @@ schema!(Endpoint, "Endpoint", {
 // ---------------------------------------------------------------------------------------------
 // RateLimitKey
 
-/// What a limit counts by: `client_ip`, `route`, `consumer`, `ja4`, `header:<Name>`,
+/// What a limit counts by: `client_ip`, `route`, `consumer`, `group`, `ja4`, `header:<Name>`,
 /// `cookie:<name>` or `claim:<name>`.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub enum RateLimitKey {
@@ -847,9 +847,23 @@ pub enum RateLimitKey {
     /// `cloudflare_access`, `jwt` with `consumer_claim`); requests without one are counted
     /// per client IP.
     Consumer,
+    /// The *primary group* of the request's consumer: the first entry of its `groups`
+    /// (`consumers.<name>.groups`, or the group a token middleware assigns). Every consumer
+    /// whose primary group is `acme` shares one count (ADR-0031, H-LB-04). A consumer without
+    /// a group is counted on its own, like `consumer`; requests without a consumer per client
+    /// IP. Group, consumer and address counts never mix.
+    Group,
     /// The JA4 TLS client fingerprint of the connection (needs `tls.fingerprint` on the
     /// listener); requests without one are counted per client IP.
     Ja4,
+}
+
+impl RateLimitKey {
+    /// Whether the key needs a consumer set by an earlier middleware (`consumer`, `group`).
+    #[must_use]
+    pub fn needs_consumer(&self) -> bool {
+        matches!(self, Self::Consumer | Self::Group)
+    }
 }
 
 impl FromStr for RateLimitKey {
@@ -860,13 +874,14 @@ impl FromStr for RateLimitKey {
             "client_ip" => Ok(Self::ClientIp),
             "route" => Ok(Self::Route),
             "consumer" => Ok(Self::Consumer),
+            "group" => Ok(Self::Group),
             "ja4" => Ok(Self::Ja4),
             _ => match s.split_once(':') {
                 Some(("header", name)) if is_token(name) => Ok(Self::Header(name.to_owned())),
                 Some(("cookie", name)) if is_token(name) => Ok(Self::Cookie(name.to_owned())),
                 Some(("claim", name)) if is_token(name) => Ok(Self::Claim(name.to_owned())),
                 _ => Err(ValueError::new(format!(
-                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+                    "invalid key `{s}`: use `client_ip`, `route`, `consumer`, `group`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
                 ))),
             },
         }
@@ -882,6 +897,7 @@ impl fmt::Display for RateLimitKey {
             Self::Cookie(name) => write!(f, "cookie:{name}"),
             Self::Claim(name) => write!(f, "claim:{name}"),
             Self::Consumer => f.write_str("consumer"),
+            Self::Group => f.write_str("group"),
             Self::Ja4 => f.write_str("ja4"),
         }
     }
@@ -889,11 +905,11 @@ impl fmt::Display for RateLimitKey {
 
 string_serde!(
     RateLimitKey,
-    "`client_ip`, `route`, `consumer`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
+    "`client_ip`, `route`, `consumer`, `group`, `ja4`, `header:<Name>`, `cookie:<name>` or `claim:<name>`"
 );
 schema!(RateLimitKey, "RateLimitKey", {
     "type": "string",
-    "pattern": "^(client_ip|route|consumer|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
+    "pattern": "^(client_ip|route|consumer|group|ja4|(header|cookie|claim):[A-Za-z0-9!#$%&'*+.^_`|~-]+)$",
     "examples": ["client_ip", "header:X-Api-Key"]
 });
 

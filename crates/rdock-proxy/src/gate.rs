@@ -43,6 +43,7 @@ impl Gate<'_> {
 }
 
 /// Reports every setting this version cannot honour.
+#[allow(clippy::too_many_lines, reason = "a flat list of independent checks")]
 pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
     let mut gate = Gate { mode, out };
     for (name, middleware) in &config.middlewares {
@@ -125,6 +126,7 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
             "a later version",
         );
     }
+    check_tenants(config, &mut gate);
     // `control` belongs to `rdock control run`; a data plane never reads it.
     if config.control.is_some() && mode == Mode::Run {
         gate.out.push(
@@ -157,6 +159,41 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
                 "PROXY protocol on UDP listeners",
                 "a later version",
             );
+        }
+    }
+}
+
+/// Tenants scope the admin API only (ADR-0031); what a tenant would own on the data plane or
+/// in the dashboard is planned.
+fn check_tenants(config: &Config, gate: &mut Gate<'_>) {
+    for (name, tenant) in &config.tenants {
+        let path = path_key("tenants", name);
+        let planned = [
+            (
+                !tenant.listeners.is_empty(),
+                "listeners",
+                "tenant-owned listeners",
+            ),
+            (
+                !tenant.certificates.is_empty(),
+                "certificates",
+                "tenant-owned certificates",
+            ),
+            (
+                tenant.metrics_label,
+                "metrics_label",
+                "a tenant label on the core metrics",
+            ),
+            (
+                tenant.dashboard,
+                "dashboard",
+                "a dashboard view limited to a tenant",
+            ),
+        ];
+        for (set, field, what) in planned {
+            if set {
+                gate.unsupported(format!("{path}.{field}"), what, "a later version");
+            }
         }
     }
 }
@@ -216,6 +253,37 @@ middlewares:
             Mode::Validate,
         );
         assert!(validate.iter().all(|d| !d.is_error()), "{validate:?}");
+    }
+
+    #[test]
+    fn tenant_owned_listeners_certificates_metrics_and_dashboards_are_planned() {
+        let yaml = r#"
+tenants:
+  acme:
+    hosts: ["acme.example.com"]
+    listeners: [web]
+    certificates: [acme]
+    metrics_label: true
+    dashboard: true
+  globex: { hosts: ["globex.example.com"] }
+"#;
+        let run = diagnostics(yaml, Mode::Run);
+        let paths: Vec<&str> = run.iter().map(|d| d.path.as_str()).collect();
+        assert_eq!(
+            paths,
+            [
+                "tenants.acme.listeners",
+                "tenants.acme.certificates",
+                "tenants.acme.metrics_label",
+                "tenants.acme.dashboard"
+            ]
+        );
+        assert!(run.iter().all(Diagnostic::is_error));
+        assert!(
+            diagnostics(yaml, Mode::Validate)
+                .iter()
+                .all(|d| !d.is_error())
+        );
     }
 
     #[test]

@@ -71,6 +71,9 @@ pub struct Token {
     /// Address of the last use.
     #[serde(default)]
     pub last_used_from: Option<IpAddr>,
+    /// The tenant the token is scoped to; a token of a scoped user always has its user's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tenant: Option<String>,
 }
 
 /// What a new token needs.
@@ -85,6 +88,8 @@ pub struct NewToken {
     pub lifetime: Option<Duration>,
     /// Client networks it is accepted from.
     pub allowed_from: Vec<IpNet>,
+    /// The tenant it is scoped to.
+    pub tenant: Option<String>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -158,6 +163,7 @@ impl Tokens {
             secret_sha256: made.secret_sha256,
             last_used_at: None,
             last_used_from: None,
+            tenant: new.tenant,
         };
         let mut inner = self.lock();
         inner.list.push(token.clone());
@@ -252,6 +258,7 @@ mod tests {
             created_by: "root".into(),
             lifetime: Some(Duration::from_secs(3600)),
             allowed_from: Vec::new(),
+            tenant: None,
         }
     }
 

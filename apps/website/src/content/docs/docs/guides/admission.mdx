@@ -1,0 +1,134 @@
+---
+title: Admission control
+description: Keep a backend fast under overload with the admission middleware, an adaptive concurrency limit (AIMD or gradient) that sheds the lowest priority class first with 503 and Retry-After.
+sidebar:
+  order: 35
+---
+
+import Status from '../../../../components/Status.astro';
+
+The `admission` middleware <Status planned="v0.9" /> keeps a backend in the range where it
+answers quickly. It learns how many requests the backend can have **in flight** from how its
+latency reacts, and answers the rest with **503 Service Unavailable** (problem type
+[`overloaded`](/docs/reference/problems/#overloaded)) and `Retry-After`, before they reach
+the backend. Routes declare which requests go first: under overload, `sheddable` routes are
+refused before `normal` ones, and `critical` routes last. It is off unless you configure it.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+defaults: { listeners: [web], tls: off }
+middlewares:
+  shed:
+    type: admission
+    mode: aimd
+    min: 4
+    max: 200
+    latency: 300ms      # a slower answer counts as a sign of overload
+routes:
+  checkout:
+    match: "Host(`shop.example.com`) && PathPrefix(`/checkout`)"
+    service: shop
+    middlewares: [shed]
+    priority_class: critical
+  reports:
+    match: "Host(`shop.example.com`) && PathPrefix(`/reports`)"
+    service: shop
+    middlewares: [shed]
+    priority_class: sheddable
+  pages:
+    match: "Host(`shop.example.com`)"
+    service: shop
+    middlewares: [shed]
+services:
+  shop:
+    backends: [{ address: "127.0.0.1:3000" }]
+```
+
+Every route that names the same `admission` middleware shares **one** limit. Use one middleware
+per backend pool, and put it before the middlewares that do work (it costs two atomic
+operations per request, and takes no lock).
+
+## How the limit adapts
+
+`mode` is required and picks the algorithm; both come from published designs (read on
+2026-11-13):
+
+- **`aimd`**, Netflix concurrency-limits' `AIMDLimit`
+  ([source](https://github.com/Netflix/concurrency-limits)): an answer slower than `latency`,
+  or a `502`, `503` or `504` (the backend failed or timed out), multiplies the limit by
+  `backoff_percent`; any other answer adds one while at least half of the limit is in use.
+  Simple and predictable; you choose the latency you accept.
+- **`gradient`**: the gradient of Envoy's adaptive concurrency filter
+  ([docs](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/adaptive_concurrency_filter))
+  with the smoothing of Netflix's `Gradient2Limit`: the limit follows
+  `tolerance × no-load latency ÷ latency`, clamped to 0.5–1, plus `queue`, smoothed. The
+  no-load latency is measured, as in Envoy: at start and every `window` answers, the limit is
+  held at `min` until `probe` requests admitted at that concurrency have finished, and their
+  median becomes the reference. Requests above `min` get `503` meanwhile; Envoy documents the
+  same effect. Nothing to tune for a backend whose latency is unknown.
+
+Latency is measured from admission to the response headers. The limit starts at `initial` and
+starts again from there after a reload.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `mode` | required | `aimd` or `gradient`. |
+| `min` | `3` | The lowest limit (Envoy's `min_concurrency`). |
+| `max` | `1000` | The highest limit (Envoy's `max_concurrency_limit`); at most 100000. |
+| `initial` | `20` | The limit at start (Netflix's), kept between `min` and `max`. |
+| `latency` | `5s` | `aimd`: answers slower than this lower the limit (Netflix's `timeout`). |
+| `backoff_percent` | `90` | `aimd`: the factor applied on a slow or failed answer, 50–99. |
+| `tolerance_percent` | `150` | `gradient`: how much slower than the no-load latency an answer may be, 100–1000 (Netflix's `rttTolerance`). |
+| `smoothing_percent` | `20` | `gradient`: weight of a new estimate, 1–100. |
+| `queue` | `4` | `gradient`: requests allowed above the estimate (Netflix's `queueSize`). |
+| `window` | `600` | `gradient`: answers between two measurements of the no-load latency, 10–100000. |
+| `probe` | `50` | `gradient`: answers that make one measurement, 5–1000 (Envoy's `request_count`). |
+| `shares.normal` | `90` | Percent of the limit `normal` routes may fill. |
+| `shares.sheddable` | `75` | Percent of the limit `sheddable` routes may fill; at most `shares.normal`. |
+| `retry_after` | `1s` | `Retry-After` of a refused request. |
+
+A setting of the other algorithm is refused (`latency` with `mode: gradient`, `window` with
+`mode: aimd`, …), as are `min` above `max`, an `initial` outside them and `sheddable` above
+`normal`.
+
+## Priority classes
+
+`priority_class` is a route setting: `critical`, `normal` (the default) or `sheddable`. It is
+unrelated to the route's `priority`, which only orders matching.
+
+- A `sheddable` request is admitted while the requests in flight are below
+  `shares.sheddable` of the limit, a `normal` one below `shares.normal`, a `critical` one below
+  the whole limit.
+- `critical` and `normal` requests also keep a **reserve** of their own: the part of the limit
+  between their share and the next lower one (with the defaults, 10 % and 15 %). When the
+  limit falls below what lower classes already hold, those requests drain first and the reserve
+  keeps critical requests going meanwhile. So the requests in flight stay below the limit once
+  it is steady, and below twice the limit at worst while it falls.
+
+A `priority_class` on a route without an `admission` middleware has no effect; validation
+warns.
+
+## Seeing it work
+
+- Metrics: `rdock_admission_limit{middleware}`, `rdock_admission_in_flight{middleware}` and
+  `rdock_admission_shed_total{middleware,class}` ([metrics](/docs/reference/metrics/)).
+- The access log has `admission: "shed:<class>"` on refused requests.
+
+## What to know
+
+- **Per instance.** Each instance learns its own limit; there is no cluster-wide admission.
+- **One per route.** Two `admission` middlewares on one route are refused, and so is an
+  `in_flight` with `key: route` next to one: two caps on the same requests would hide the
+  latency the adaptive one learns from. `in_flight` per client (`key: client_ip`, `consumer`,
+  `group`, …) is fine beside it.
+- **No queue.** Requests over the limit are answered at once; clients should honour
+  `Retry-After`. Health checks, the admin API and ACME challenges never pass through it.
+- **Samples are not all used.** An answer that finishes while another one updates the limit is
+  skipped rather than waited for, so no request waits on another.
+
+## Related
+
+- [Rate limiting](/docs/guides/rate-limiting/), [Quotas](/docs/guides/quotas/) and
+  `in_flight` in [Timeouts and limits](/docs/guides/timeouts-and-limits/)
+- [Backends](/docs/guides/backends/): outlier detection and circuit breaking

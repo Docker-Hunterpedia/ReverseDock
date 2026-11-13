@@ -190,3 +190,65 @@ fn counting_per_consumer_needs_a_middleware_that_sets_one() {
     );
     assert!(text.contains("middlewares.rl.overrides"), "{text}");
 }
+
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn group_keys_share_one_count_per_primary_group() {
+    let backend = Backend::start("api").await;
+    let port = free_port();
+    let (ann_key, ann_id, ann_hash) = mint();
+    let (bob_key, bob_id, bob_hash) = mint();
+    let (cy_key, cy_id, cy_hash) = mint();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off, errors: {{ format: problem }} }}
+consumers:
+  ann: {{ groups: [acme, gold], keys: [{{ id: {ann_id}, hash: "{ann_hash}" }}] }}
+  bob: {{ groups: [acme], keys: [{{ id: {bob_id}, hash: "{bob_hash}" }}] }}
+  cy: {{ groups: [globex], keys: [{{ id: {cy_id}, hash: "{cy_hash}" }}] }}
+routes:
+  rate: {{ match: "Host(`rate.test`)", service: api, middlewares: [keys, per_group] }}
+  quota: {{ match: "Host(`quota.test`)", service: api, middlewares: [keys, monthly] }}
+middlewares:
+  keys: {{ type: api_key }}
+  per_group: {{ type: rate_limit, key: group, average: 3, period: 1h, overrides: {{ globex: {{ average: 1, period: 1h }} }} }}
+  monthly: {{ type: quota, key: group, limit: 2, window: month }}
+services:
+  api: {{ backends: [{{ address: "{backend}" }}] }}
+"#,
+        backend = backend.addr,
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let status = |host: &'static str, key: String| async move {
+        client::http1(addr(port), call(host, &key)).await.status
+    };
+    // Ann and Bob share acme's three; Cy has globex's one (its override).
+    assert_eq!(status("rate.test", ann_key.clone()).await, 200);
+    assert_eq!(status("rate.test", bob_key.clone()).await, 200);
+    assert_eq!(status("rate.test", ann_key.clone()).await, 200);
+    assert_eq!(
+        status("rate.test", bob_key.clone()).await,
+        429,
+        "acme's 3 are used"
+    );
+    assert_eq!(status("rate.test", cy_key.clone()).await, 200);
+    assert_eq!(status("rate.test", cy_key.clone()).await, 429);
+    // The quota counts the group as one key.
+    assert_eq!(status("quota.test", ann_key.clone()).await, 200);
+    assert_eq!(status("quota.test", bob_key.clone()).await, 200);
+    assert_eq!(status("quota.test", bob_key.clone()).await, 429);
+    assert_eq!(status("quota.test", cy_key).await, 200);
+    let (_, quotas) = rdock.get_admin("/api/v1/quota").unwrap();
+    assert!(quotas.contains("group:acme"), "{quotas}");
+    let (code, body) = rdock
+        .admin_request("DELETE", "/api/v1/quota/group:acme")
+        .unwrap();
+    assert_eq!(code, 200, "{body}");
+    assert!(body.contains("\"reset\":1"), "{body}");
+    assert_eq!(
+        status("quota.test", bob_key).await,
+        200,
+        "acme's count was reset"
+    );
+}

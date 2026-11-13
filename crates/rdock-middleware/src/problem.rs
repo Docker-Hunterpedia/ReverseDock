@@ -52,6 +52,9 @@ pub enum ProblemKind {
     ServiceUnavailable,
     /// 503: the route is in maintenance.
     Maintenance,
+    /// 503: an `admission` middleware sheds load: more requests are in flight than the
+    /// backend handles well.
+    Overloaded,
     /// 401: an OIDC login could not be completed (the provider refused it, the login
     /// expired or its answer did not verify).
     LoginFailed,
@@ -63,7 +66,7 @@ pub enum ProblemKind {
 
 impl ProblemKind {
     /// Every kind, for the reference page and the tests.
-    pub const ALL: [Self; 23] = [
+    pub const ALL: [Self; 24] = [
         Self::BadRequest,
         Self::ValidationFailed,
         Self::Unauthenticated,
@@ -85,6 +88,7 @@ impl ProblemKind {
         Self::BadGateway,
         Self::ServiceUnavailable,
         Self::Maintenance,
+        Self::Overloaded,
         Self::IdentityProviderUnavailable,
         Self::GatewayTimeout,
     ];
@@ -132,7 +136,10 @@ impl ProblemKind {
             Self::HeadersTooLarge => 431,
             Self::InternalError => 500,
             Self::BadGateway => 502,
-            Self::ServiceUnavailable | Self::Maintenance | Self::IdentityProviderUnavailable => 503,
+            Self::ServiceUnavailable
+            | Self::Maintenance
+            | Self::Overloaded
+            | Self::IdentityProviderUnavailable => 503,
             Self::GatewayTimeout => 504,
         }
     }
@@ -161,6 +168,7 @@ impl ProblemKind {
             Self::BadGateway => "bad-gateway",
             Self::ServiceUnavailable => "service-unavailable",
             Self::Maintenance => "maintenance",
+            Self::Overloaded => "overloaded",
             Self::LoginFailed => "login-failed",
             Self::IdentityProviderUnavailable => "identity-provider-unavailable",
             Self::GatewayTimeout => "gateway-timeout",
@@ -197,6 +205,7 @@ impl ProblemKind {
             Self::BadGateway => "Bad gateway",
             Self::ServiceUnavailable => "Service unavailable",
             Self::Maintenance => "Down for maintenance",
+            Self::Overloaded => "Overloaded",
             Self::LoginFailed => "Login failed",
             Self::IdentityProviderUnavailable => "Identity provider unavailable",
             Self::GatewayTimeout => "Gateway timeout",
@@ -238,6 +247,9 @@ impl ProblemKind {
             Self::BadGateway => "The upstream service could not be reached or answered badly.",
             Self::ServiceUnavailable => "The service cannot take the request now.",
             Self::Maintenance => "The service is down for maintenance.",
+            Self::Overloaded => {
+                "The service has more requests than it can handle well and sheds some. Retry after the time given in `Retry-After`."
+            }
             Self::LoginFailed => {
                 "The login could not be completed. Open the page again to start a new login."
             }
@@ -263,6 +275,7 @@ mod tests {
                 kind,
                 ProblemKind::QuotaExceeded
                     | ProblemKind::Maintenance
+                    | ProblemKind::Overloaded
                     | ProblemKind::ValidationFailed
                     | ProblemKind::PatchFailed
                     | ProblemKind::LoginFailed

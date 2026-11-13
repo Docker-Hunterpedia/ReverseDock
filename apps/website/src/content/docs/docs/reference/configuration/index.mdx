@@ -38,6 +38,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`services`](/docs/reference/configuration/services/): Backend pools that routes send traffic to.
 - [`tcp_routes`](/docs/reference/configuration/tcp-routes/): TCP routes (SNI routing, passthrough, plain TCP).
 - [`tcp_services`](/docs/reference/configuration/tcp-services/): TCP backend pools.
+- [`tenants`](/docs/reference/configuration/tenants/): Tenants of the admin API (H-SEC-07): API tokens and users scoped to a tenant read and
 - [`udp_routes`](/docs/reference/configuration/udp-routes/): UDP routes: which `udp` listener's datagrams go to which UDP service.
 - [`udp_services`](/docs/reference/configuration/udp-services/): UDP backend pools.
 - [`upgrade`](/docs/reference/configuration/upgrade/): In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and

@@ -34,6 +34,9 @@ pub enum KeyClass {
     Token,
     /// A consumer defined in `consumers`; never overflows.
     Consumer,
+    /// A consumer group (`key: group`, `group:<name>`); groups come from the configuration,
+    /// so they never overflow.
+    Group,
 }
 
 impl KeyClass {
@@ -46,6 +49,8 @@ impl KeyClass {
             Some(Self::Anonymous)
         } else if key.starts_with('~') {
             Some(Self::Token)
+        } else if key.starts_with(GROUP_PREFIX) {
+            Some(Self::Group)
         } else {
             Some(Self::Consumer)
         }
@@ -58,6 +63,7 @@ impl KeyClass {
             Self::Anonymous => "anonymous",
             Self::Token => "token",
             Self::Consumer => "consumer",
+            Self::Group => "group",
         }
     }
 
@@ -65,7 +71,7 @@ impl KeyClass {
         match self {
             Self::Anonymous => 0,
             Self::Token => 1,
-            Self::Consumer => 2,
+            Self::Consumer | Self::Group => 2,
         }
     }
 
@@ -73,9 +79,25 @@ impl KeyClass {
         match self {
             Self::Anonymous => Some(OVERFLOW_KEY),
             Self::Token => Some(TOKEN_OVERFLOW_KEY),
-            Self::Consumer => None,
+            Self::Consumer | Self::Group => None,
         }
     }
+}
+
+/// The start of a group's counter key. A configured consumer name cannot contain `:`, so a
+/// group never shares a consumer's key.
+pub const GROUP_PREFIX: &str = "group:";
+
+/// The counter key of consumer group `name` (`key: group`).
+#[must_use]
+pub fn group_key(name: &str) -> String {
+    format!("{GROUP_PREFIX}{name}")
+}
+
+/// The group of a counter key made by [`group_key`].
+#[must_use]
+pub fn key_group(key: &str) -> Option<&str> {
+    key.strip_prefix(GROUP_PREFIX)
 }
 
 /// The counter key of a consumer: its name when `consumers` defines it (`issuer` is `None`),
@@ -95,13 +117,19 @@ pub fn consumer_key<'a>(issuer: Option<&str>, name: &'a str) -> Cow<'a, str> {
 #[must_use]
 pub fn key_consumer(key: &str) -> Option<&str> {
     match KeyClass::of(key)? {
-        KeyClass::Anonymous => None,
+        KeyClass::Anonymous | KeyClass::Group => None,
         KeyClass::Consumer => Some(key),
         KeyClass::Token => {
             let (len, rest) = key.strip_prefix('~')?.split_once(':')?;
             rest.get(len.parse::<usize>().ok()?..)
         }
     }
+}
+
+/// Whether counter `key` belongs to `name`: a consumer's own and its token users' counters,
+/// or a group's counter asked for as `group:<name>`.
+fn names(key: &str, name: &str) -> bool {
+    key_consumer(key) == Some(name) || (key_group(key).is_some() && key == name)
 }
 
 /// Seconds since the Unix epoch, from a clock tests can replace.
@@ -364,7 +392,7 @@ impl QuotaCounter {
             .lock()
             .counts
             .iter()
-            .filter(|(key, _)| key_consumer(key) == Some(name))
+            .filter(|(key, _)| names(key, name))
             .map(|(key, &(used, limit))| Usage {
                 key: key.clone(),
                 used,
@@ -382,7 +410,7 @@ impl QuotaCounter {
         let keys: Vec<String> = state
             .counts
             .keys()
-            .filter(|key| key_consumer(key) == Some(name))
+            .filter(|key| names(key, name))
             .cloned()
             .collect();
         for key in &keys {

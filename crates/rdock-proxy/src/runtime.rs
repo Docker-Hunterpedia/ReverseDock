@@ -181,6 +181,8 @@ pub struct RouteRuntime {
     pub name: Arc<str>,
     /// Effective priority (explicit, or the rule length).
     pub priority: i64,
+    /// The route's class for `admission` load shedding.
+    pub priority_class: rdock_model::route::PriorityClass,
     /// Compiled rule.
     pub rule: Rule,
     /// The rule in canonical form, to find routes that can never match.

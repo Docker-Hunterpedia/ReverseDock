@@ -1385,6 +1385,7 @@ fn emit(
                         matcher: MatchSpec::Rule(expr.to_string()),
                         listeners: Some(vec![internal.to_owned()]),
                         priority: precedence.priority(),
+                        priority_class: rdock_model::route::PriorityClass::Normal,
                         middlewares: middlewares.clone(),
                         service: Some(plan.service.clone()),
                         tls: Some(RouteTls::Mode(TlsMode::Off)),

@@ -261,6 +261,9 @@ type AuditRecord struct {
 	Result AuditResult `json:"result"`
 	Seq    int64       `json:"seq"`
 
+	// Tenant The tenant of a tenant-scoped caller.
+	Tenant *string `json:"tenant,omitempty"`
+
 	// Time RFC 3339.
 	Time string `json:"time"`
 }
@@ -466,6 +469,9 @@ type CreatedToken struct {
 	// Prometheus; the others are the user roles.
 	Role Access `json:"role"`
 
+	// Tenant The tenant the token is scoped to, if any.
+	Tenant *string `json:"tenant,omitempty"`
+
 	// Token `rdk_pat_…`
 	Token string `json:"token"`
 }
@@ -527,6 +533,9 @@ type NewUser struct {
 
 	// Role What a user may do (ADR-0024, "What each role may do").
 	Role Role `json:"role"`
+
+	// Tenant Scope the user to this tenant (`tenants.<name>`).
+	Tenant *string `json:"tenant,omitempty"`
 }
 
 // Owned One object and the provider that owns it, secrets masked.
@@ -609,6 +618,10 @@ type TokenRequest struct {
 	// Role What a caller may do, in increasing order. `metrics` reads `/metrics` only, for
 	// Prometheus; the others are the user roles.
 	Role Access `json:"role"`
+
+	// Tenant Scope the token to this tenant. A tenant-scoped caller's tokens always have its
+	// tenant.
+	Tenant *string `json:"tenant,omitempty"`
 }
 
 // TokenView defines model for TokenView.
@@ -625,6 +638,9 @@ type TokenView struct {
 	// Role What a caller may do, in increasing order. `metrics` reads `/metrics` only, for
 	// Prometheus; the others are the user roles.
 	Role Access `json:"role"`
+
+	// Tenant The tenant the token is scoped to, if any.
+	Tenant *string `json:"tenant,omitempty"`
 }
 
 // UpgradeBody What `POST /upgrade` takes.
@@ -641,6 +657,9 @@ type UserChange struct {
 	// ResetMfa Removes the user's second factor, so they enrol again at the next login.
 	ResetMfa *bool `json:"reset_mfa,omitempty"`
 	Role     *Role `json:"role,omitempty"`
+
+	// Tenant Scopes the user to this tenant; `null` removes the scope.
+	Tenant *string `json:"tenant,omitempty"`
 }
 
 // UserView defines model for UserView.
@@ -652,6 +671,9 @@ type UserView struct {
 
 	// Role What a user may do (ADR-0024, "What each role may do").
 	Role Role `json:"role"`
+
+	// Tenant The tenant the user is scoped to (`tenants.<name>`), if any.
+	Tenant *string `json:"tenant,omitempty"`
 }
 
 // ConfigBusy A refusal or failure.
@@ -1006,7 +1028,7 @@ type ClientInterface interface {
 
 	// Audit Recent audit records, newest first
 	//
-	// Recent audit records, newest first. Admins only.
+	// Recent audit records, newest first. Admins only; a tenant-scoped admin gets its tenant's records only.
 	//
 	// Corresponds with GET /api/v1/audit (the `Audit` operationId).
 	Audit(ctx context.Context, params *AuditParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1621,9 +1643,9 @@ type ClientInterface interface {
 	// Corresponds with GET /api/v1/status (the `Status` operationId).
 	Status(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Tokens The caller's tokens, or everyone's for an admin
+	// Tokens The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's)
 	//
-	// The caller's tokens, or everyone's for an admin.
+	// The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's).
 	//
 	// Corresponds with GET /api/v1/tokens (the `Tokens` operationId).
 	Tokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1835,7 +1857,7 @@ func (c *Client) RemoveBan(ctx context.Context, key string, params *RemoveBanPar
 
 // Audit Recent audit records, newest first
 //
-// Recent audit records, newest first. Admins only.
+// Recent audit records, newest first. Admins only; a tenant-scoped admin gets its tenant's records only.
 //
 // Corresponds with GET /api/v1/audit (the `Audit` operationId).
 func (c *Client) Audit(ctx context.Context, params *AuditParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -3220,9 +3242,9 @@ func (c *Client) Status(ctx context.Context, reqEditors ...RequestEditorFn) (*ht
 	return c.Client.Do(req)
 }
 
-// Tokens The caller's tokens, or everyone's for an admin
+// Tokens The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's)
 //
-// The caller's tokens, or everyone's for an admin.
+// The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's).
 //
 // Corresponds with GET /api/v1/tokens (the `Tokens` operationId).
 func (c *Client) Tokens(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -6616,7 +6638,7 @@ type ClientWithResponsesInterface interface {
 
 	// AuditWithResponse Recent audit records, newest first
 	//
-	// Recent audit records, newest first. Admins only.
+	// Recent audit records, newest first. Admins only; a tenant-scoped admin gets its tenant's records only.
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -7307,9 +7329,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with GET /api/v1/status (the `Status` operationId).
 	StatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*StatusResponse, error)
 
-	// TokensWithResponse The caller's tokens, or everyone's for an admin
+	// TokensWithResponse The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's)
 	//
-	// The caller's tokens, or everyone's for an admin.
+	// The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -13130,7 +13152,7 @@ func (c *ClientWithResponses) RemoveBanWithResponse(ctx context.Context, key str
 
 // AuditWithResponse Recent audit records, newest first
 //
-// Recent audit records, newest first. Admins only.
+// Recent audit records, newest first. Admins only; a tenant-scoped admin gets its tenant's records only.
 //
 // Returns a wrapper object for the known response body format(s).
 //
@@ -14283,9 +14305,9 @@ func (c *ClientWithResponses) StatusWithResponse(ctx context.Context, reqEditors
 	return ParseStatusResponse(rsp)
 }
 
-// TokensWithResponse The caller's tokens, or everyone's for an admin
+// TokensWithResponse The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's)
 //
-// The caller's tokens, or everyone's for an admin.
+// The caller's tokens, or everyone's for an admin (a tenant-scoped admin: its tenant's).
 //
 // Returns a wrapper object for the known response body format(s).
 //

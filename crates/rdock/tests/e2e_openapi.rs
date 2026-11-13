@@ -165,7 +165,7 @@ async fn every_documented_operation_answers_as_documented() {
     let backend = Backend::start("openapi-backend").await;
     let port = free_port();
     let config = format!(
-        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  file: {{ match: \"Host(`file.test`)\", service: file }}\nservices:\n  file: {{ backends: [{{ address: \"{}\" }}] }}\nadmin:\n  listener: \"{{admin}}\"\n  mfa: optional\n",
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  file: {{ match: \"Host(`file.test`)\", service: file }}\nservices:\n  file: {{ backends: [{{ address: \"{}\" }}] }}\nadmin:\n  listener: \"{{admin}}\"\n  mfa: optional\ntenants:\n  acme: {{ hosts: [\"acme.test\"] }}\n",
         backend.addr
     );
     let rdock = Rdock::start(RDOCK, &config);
@@ -255,19 +255,33 @@ fn session_operations(rdock: &Rdock, check: &mut Checker, admin: &str) {
 fn user_and_token_operations(rdock: &Rdock, check: &mut Checker) {
     let json_type = [("Content-Type", "application/json")];
     check.call(rdock, ("GET", "/api/v1/users", "/api/v1/users"), &[], "");
-    let user = json!({ "name": "viewer1", "role": "viewer", "password": PASSWORD }).to_string();
-    check.call(
+    let user =
+        json!({ "name": "viewer1", "role": "viewer", "password": PASSWORD, "tenant": "acme" })
+            .to_string();
+    let created = check.call(
         rdock,
         ("POST", "/api/v1/users", "/api/v1/users"),
         &json_type,
         &user,
     );
-    check.call(
+    assert_eq!(created.json()["tenant"], "acme", "{}", created.body);
+    let unknown =
+        json!({ "name": "viewer2", "role": "viewer", "password": PASSWORD, "tenant": "ghost" })
+            .to_string();
+    let refused = check.call(
+        rdock,
+        ("POST", "/api/v1/users", "/api/v1/users"),
+        &json_type,
+        &unknown,
+    );
+    assert_eq!(refused.status, 422, "{}", refused.body);
+    let changed = check.call(
         rdock,
         ("PATCH", "/api/v1/users/{name}", "/api/v1/users/viewer1"),
         &json_type,
-        r#"{"disabled":true}"#,
+        r#"{"disabled":true,"tenant":null}"#,
     );
+    assert!(changed.json().get("tenant").is_none(), "{}", changed.body);
     check.call(
         rdock,
         ("DELETE", "/api/v1/users/{name}", "/api/v1/users/viewer1"),
@@ -279,8 +293,9 @@ fn user_and_token_operations(rdock: &Rdock, check: &mut Checker) {
         rdock,
         ("POST", "/api/v1/tokens", "/api/v1/tokens"),
         &json_type,
-        r#"{"name":"ci","role":"viewer","expires_in_days":30}"#,
+        r#"{"name":"ci","role":"viewer","expires_in_days":30,"tenant":"acme"}"#,
     );
+    assert_eq!(token.json()["tenant"], "acme", "{}", token.body);
     let id = token.json()["id"].as_str().unwrap_or("missing").to_owned();
     check.call(
         rdock,

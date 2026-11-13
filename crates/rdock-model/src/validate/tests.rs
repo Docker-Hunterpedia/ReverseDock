@@ -2654,3 +2654,319 @@ fn kubernetes_members_of_a_control_plane_cluster_may_use_acme() {
     ));
     assert!(has(&directory, "acme", "providers.kubernetes"));
 }
+
+#[test]
+fn group_keys_need_a_consumer_and_accept_overrides() {
+    let config = with(
+        app(),
+        json!({
+            "middlewares": {
+                "per_group": { "type": "rate_limit", "key": "group", "average": 10,
+                               "overrides": { "gold": { "average": 100 } } },
+                "monthly": { "type": "quota", "key": "group", "limit": 1000, "window": "month" },
+                "by_ip": { "type": "rate_limit", "average": 10, "overrides": { "gold": { "average": 1 } } }
+            },
+            "routes": { "app": { "middlewares": ["per_group", "monthly", "by_ip"] } }
+        }),
+    );
+    let found = errors(config);
+    assert!(
+        has(&found, "routes.app.middlewares[0]", "counts per consumer"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "routes.app.middlewares[1]", "counts per consumer"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.by_ip.overrides", "`key: group`"),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.per_group")),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with("middlewares.monthly")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn admission_refuses_meaningless_settings() {
+    let config = with(
+        app(),
+        json!({
+            "middlewares": {
+                "bad": { "type": "admission", "mode": "aimd", "min": 50, "max": 10,
+                         "window": 100, "shares": { "normal": 50, "sheddable": 80 } },
+                "grad": { "type": "admission", "mode": "gradient", "latency": "1s", "max": 200_000 },
+                "ok": { "type": "admission", "mode": "gradient" },
+                "slots": { "type": "in_flight", "amount": 10, "key": "route" }
+            },
+            "routes": { "app": { "middlewares": ["ok", "slots"], "priority_class": "critical" } }
+        }),
+    );
+    let found = errors(config.clone());
+    assert!(
+        has(&found, "middlewares.bad.min", "above `max`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.bad.window", "does not apply"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.bad.shares.sheddable", "above `normal`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.latency", "does not apply"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.max", "at most 100000"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "routes.app.middlewares[1]", "two caps"),
+        "{found:?}"
+    );
+    assert!(
+        !found.iter().any(|(p, _)| p.starts_with("middlewares.ok")),
+        "{found:?}"
+    );
+    // A class without an admission middleware does nothing: a warning.
+    let lone = with(
+        app(),
+        json!({ "routes": { "app": { "priority_class": "sheddable" } } }),
+    );
+    assert!(has(
+        &warnings(lone),
+        "routes.app.priority_class",
+        "only matters"
+    ));
+}
+
+fn merged_errors(value: Value) -> Vec<(String, String)> {
+    let config: Config = serde_json::from_value(value).unwrap();
+    config
+        .validate_merged()
+        .into_iter()
+        .filter(Diagnostic::is_error)
+        .map(|d| (d.path, d.message))
+        .collect()
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn tenant_objects_stay_inside_their_claims_and_prefix() {
+    let backend = json!({ "backends": [{ "address": "10.0.0.1:80" }] });
+    let config = json!({
+        "tenants": {
+            "acme": { "hosts": ["acme.example.com", "*.acme.example.com"],
+                      "shared": { "middlewares": ["compress"] } },
+            "globex": { "hosts": ["globex.example.com"] }
+        },
+        "routes": {
+            "acme-web@api": { "match": "Host(`shop.acme.example.com`) && PathPrefix(`/`)",
+                              "service": "acme-svc@api", "middlewares": ["compress", "acme-hdr@api"] },
+            "acme-out@api": { "match": "Host(`globex.example.com`)", "service": "acme-svc@api" },
+            "acme-or@api": { "match": "Host(`acme.example.com`) || Host(`globex.example.com`)", "service": "acme-svc@api" },
+            "acme-wide@api": { "match": "Host(`*.example.com`)", "service": "acme-svc@api" },
+            "acme-any@api": { "match": "PathPrefix(`/`)", "service": "acme-svc@api" },
+            "acme-steal@api": { "match": "Host(`acme.example.com`)", "service": "globex-svc@api" },
+            "globex-web@api": { "match": "Host(`globex.example.com`)", "service": "globex-svc@api" },
+            "file-route": { "match": "Host(`globex.example.com`)", "service": "file-svc" }
+        },
+        "services": {
+            "acme-svc@api": backend.clone(),
+            "acme-loop@api": { "backends": [{ "address": "127.0.0.1:9900" }] },
+            "acme-meta@api": { "backends": [{ "address": "169.254.169.254:80" }] },
+            "acme-sock@api": { "backends": [{ "address": "unix:///run/admin.sock" }] },
+            "acme-tls@api": { "backends": [{ "address": "10.0.0.2:443" }], "scheme": "https",
+                              "tls": { "ca_file": "/etc/ssl/private/ca.pem" } },
+            "globex-svc@api": backend.clone(),
+            "file-svc": backend
+        },
+        "middlewares": {
+            "compress": { "type": "compress" },
+            "acme-hdr@api": { "type": "headers", "request": { "set": { "x-key": "${env:ADMIN_TOKEN}" } } },
+            "acme-fa@api": { "type": "forward_auth", "address": "http://auth.internal:9000/check" },
+            "acme-page@api": { "type": "errors", "status": ["500"], "file": "/etc/shadow" },
+            "acme-rewrite@api": { "type": "rewrite", "regex": "^/(.*)", "replacement": "/${1}" }
+        }
+    });
+    let found = merged_errors(config);
+    let at = |path: &str, fragment: &str| has(&found, path, fragment);
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "acme-web@api"))),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-out@api")
+            ),
+            "not inside the host claims"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-or@api")
+            ),
+            "not inside"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-wide@api")
+            ),
+            "not inside"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.match",
+                crate::diagnostics::path_key("routes", "acme-any@api")
+            ),
+            "not inside"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.service",
+                crate::diagnostics::path_key("routes", "acme-steal@api")
+            ),
+            "outside tenant `acme`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.backends[0].address",
+                crate::diagnostics::path_key("services", "acme-loop@api")
+            ),
+            "loopback"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.backends[0].address",
+                crate::diagnostics::path_key("services", "acme-meta@api")
+            ),
+            "link-local"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.backends[0].address",
+                crate::diagnostics::path_key("services", "acme-sock@api")
+            ),
+            "Unix socket"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.tls.ca_file",
+                crate::diagnostics::path_key("services", "acme-tls@api")
+            ),
+            "reads a file"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.request.set.x-key",
+                crate::diagnostics::path_key("middlewares", "acme-hdr@api")
+            ),
+            "`${…}` reference"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &crate::diagnostics::path_key("middlewares", "acme-fa@api"),
+            "`type: forward_auth`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        at(
+            &format!(
+                "{}.file",
+                crate::diagnostics::path_key("middlewares", "acme-page@api")
+            ),
+            "reads a file"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key(
+                "middlewares",
+                "acme-rewrite@api"
+            ))),
+        "{found:?}"
+    );
+    // The other tenant's and the file's objects are not checked against acme.
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "globex-web@api"))),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "file-route"))),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn tenant_prefixes_and_claims_may_not_overlap() {
+    let found = errors(json!({
+        "tenants": {
+            "a": { "hosts": ["*.example.com"] },
+            "ab": { "prefix": "a-b", "hosts": ["shop.example.com"] },
+            "c": { "hosts": ["*.com", "bücher.example"] }
+        }
+    }));
+    assert!(has(&found, "tenants.ab.prefix", "overlap"), "{found:?}");
+    assert!(
+        has(&found, "tenants.ab.hosts", "overlaps `*.example.com`"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "tenants.c.hosts[0]", "top-level domain"),
+        "{found:?}"
+    );
+    assert!(has(&found, "tenants.c.hosts[1]", "A-label"), "{found:?}");
+}

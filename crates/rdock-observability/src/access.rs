@@ -106,6 +106,9 @@ pub struct AccessRecord {
     /// What an `abuse` middleware did: `banned`, `tarpit` or `tagged`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub abuse: Option<String>,
+    /// What an `admission` middleware did: `shed:<priority class>` when it answered `503`.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub admission: Option<String>,
     /// The SPIFFE ID of the client certificate, when a `client_cert` middleware with
     /// `spiffe` accepted it.
     #[serde(skip_serializing_if = "Option::is_none", default)]
@@ -229,6 +232,10 @@ fn text_line(r: &AccessRecord) -> String {
     if let Some(ja4) = &r.ja4 {
         line.push_str(" ja4=");
         line.push_str(ja4);
+    }
+    if let Some(admission) = &r.admission {
+        line.push_str(" admission=");
+        line.push_str(admission);
     }
     if let Some(abuse) = &r.abuse {
         line.push_str(" abuse=");

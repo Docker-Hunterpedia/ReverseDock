@@ -59,6 +59,9 @@ pub struct Event {
     pub reason: Option<String>,
     /// Hashes of the configuration before and after a change.
     pub config: Option<(String, String)>,
+    /// The tenant of a tenant-scoped caller (H-SEC-07); such callers read only their tenant's
+    /// records.
+    pub tenant: Option<String>,
 }
 
 impl Event {
@@ -74,6 +77,7 @@ impl Event {
             outcome: Outcome::Ok,
             reason: None,
             config: None,
+            tenant: None,
         }
     }
 }
@@ -259,6 +263,9 @@ impl Audit {
             record["config_before"] = json!(before);
             record["config_after"] = json!(after);
         }
+        if let Some(tenant) = event.tenant {
+            record["tenant"] = json!(tenant);
+        }
         let line = record.to_string();
         if writer.file.is_none() || writer.size + line.len() as u64 + 1 > self.max_bytes {
             let path = self.dir.join(format!("audit-{seq:012}.jsonl"));
@@ -321,6 +328,16 @@ impl Audit {
 
     /// Up to `limit` records, newest first, with a sequence number below `before`.
     pub fn recent(&self, limit: usize, before: Option<u64>) -> io::Result<Vec<Value>> {
+        self.recent_of(limit, before, None)
+    }
+
+    /// [`recent`](Self::recent), only the records of `tenant` when given.
+    pub fn recent_of(
+        &self,
+        limit: usize,
+        before: Option<u64>,
+        tenant: Option<&str>,
+    ) -> io::Result<Vec<Value>> {
         let mut out = Vec::new();
         for path in files(&self.dir)?.iter().rev() {
             let mut lines: Vec<Value> = BufReader::new(File::open(path)?)
@@ -328,6 +345,7 @@ impl Audit {
                 .map_while(Result::ok)
                 .filter_map(|line| serde_json::from_str(&line).ok())
                 .filter(|r: &Value| before.is_none_or(|b| r["seq"].as_u64().is_some_and(|s| s < b)))
+                .filter(|r: &Value| tenant.is_none_or(|t| r["tenant"].as_str() == Some(t)))
                 .collect();
             lines.reverse();
             for record in lines {

@@ -1,0 +1,125 @@
+---
+title: Tenants
+description: Give teams or customers their own API tokens and users that can only manage routes, services and middlewares under a name prefix and inside their host names, on a shared proxy.
+sidebar:
+  order: 13
+---
+
+import Status from '../../../../components/Status.astro';
+
+**Tenants** <Status planned="v0.9" /> let several teams or customers manage their own sites on
+one ReverseDock through the [configuration API](/docs/guides/config-api/), without seeing or
+touching each other's. A user or API token scoped to a tenant reads and writes only the API
+objects whose names start with the tenant's **prefix**, and its routes may match only the
+**host names the tenant claims**. Tenants share one data plane: the proxy itself does not know
+them, and a noisy tenant is contained by [limits](/docs/guides/rate-limiting/) and
+[admission control](/docs/guides/admission/), not by separate processes.
+
+Without a `tenants` section nothing is scoped, exactly as before.
+
+```yaml title="rdock.yaml"
+listeners:
+  web: { address: ":80" }
+defaults: { listeners: [web], tls: off }
+middlewares:
+  compress: { type: compress }
+tenants:
+  acme:
+    hosts: ["acme.example.com", "*.acme.example.com"]
+    shared: { middlewares: [compress] }
+  globex:
+    prefix: "gx-"
+    hosts: ["globex.example.org"]
+    backend_networks: [10.20.0.0/16]
+```
+
+Then create users or tokens for each tenant (as an unscoped administrator):
+
+```sh
+rdock users add alice --role operator --tenant acme
+rdock tokens create acme-ci --role operator --tenant acme
+```
+
+The API takes the same `tenant` field on `POST /api/v1/users`, `PATCH /api/v1/users/{name}`
+(`null` removes it) and `POST /api/v1/tokens`. An unknown tenant is refused with `422`.
+
+## Names and hosts
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `prefix` | `<tenant>-` | The start of the names of the tenant's routes, services and middlewares in the API. No tenant's prefix may start another's (`a-` and `a-b-` are refused together). |
+| `hosts` | none | The host names the tenant's routes may match. |
+| `shared` | none | Objects outside the prefix the tenant may reference: `services`, `middlewares` and `caches`, written as references (`compress` for the file's, `name@provider` for a provider's). |
+| `backend_networks` | none | When set, the tenant's backends must be IP addresses inside these networks; DNS names and SRV records are refused, since they can resolve anywhere. |
+
+**Host claims.** `shop.example.com` claims that one name. `*.shop.example.com` claims every
+name below it, at any depth (`a.shop.example.com`, `a.b.shop.example.com`), but not
+`shop.example.com` itself, and never a name that merely ends with the same letters:
+`evil-shop.example.com` and `evilshop.example.com` are not covered. Names are compared in
+lower case without a trailing dot. Write internationalized names in their A-label form
+(`xn--bcher-kva.example`); other non-ASCII names are refused, so two spellings of one name
+cannot pass for two names. A wildcard over a whole top-level domain (`*.com`) is refused, and
+claims of two tenants may not overlap.
+
+**A route must be provably inside the claims.** Its rule needs a ``Host(`…`)`` covered by a
+claim: alone, in an `&&` with anything else, or in every branch of an `||`. A route without a
+`Host` matcher, with `*`, a broader wildcard, `HostRegexp`, or a negation, is refused, because
+it could match another tenant's host. Certificate `domains` on the route must be claimed too.
+
+## What a tenant's objects may not do
+
+A tenant's objects may not read files on the proxy's machine, call out to other services, or
+run code. Refused with a diagnostic (`422`):
+
+| Kind | Refused |
+|---|---|
+| Middleware types | `forward_auth`, `agent`, `plugin`, `wasm`, `static`, `oidc`, `cloudflare_access` |
+| Middleware fields | `jwt.jwks_url`, `jwt.jwks_file`, `basic_auth.users_file`, `errors.file`, `maintenance.file`, `validate.openapi` |
+| Anywhere | a `${env:…}`, `${file:…}`, `${vault:…}` or `${NAME}` reference (regular-expression `replacement`s, where `${1}` names a capture group, are allowed) |
+| Services | `tls.ca_file`, `tls.cert_file`, `tls.key_file`; a Unix-socket backend; a loopback, link-local or unspecified address or `localhost`; an address outside `backend_networks` when it is set |
+| Routes | `tls.certificate` (tenant-owned certificates are planned) |
+| References | a service, middleware or cache store outside the prefix that is not in `shared` |
+
+An administrator can define such a middleware outside the tenant and list it in `shared`.
+
+These rules belong to the configuration, not to the caller: an object under a tenant's prefix
+obeys them **whoever writes it**, unscoped administrators included. When a reload narrows a
+tenant (fewer claims, a removed shared object), API objects that no longer fit are left out
+with a warning, like other provider objects.
+
+## What a scoped caller may do
+
+Authorization fails closed: every operation of the admin API is classified, and anything not
+allowed below is refused with `403`. Every refusal (`403`, and `422` from the rules above) is
+written to the [audit log](/docs/guides/config-api/) with the tenant.
+
+| Operations | A scoped caller |
+|---|---|
+| `GET/PUT/PATCH /config/api`, `POST /config/validate`, `GET /config`, `GET/PUT/DELETE /{routes,services,middlewares}/…` | Sees and writes its own objects only. `ETag`s cover its own objects, so other tenants' writes do not invalidate them. Diffs, diagnostics and reports show nothing else. |
+| `GET /backends`, `POST /backends/drain`, `/undrain` | Its own services only. |
+| `GET /metrics/summary` | Its own routes and services; no proxy total. |
+| `GET /quota…`, `DELETE /quota/{consumer}?middleware=` | Its own `quota` middlewares; a reset must name one. |
+| `GET /abuse/bans`, `DELETE /abuse/bans/{key}?middleware=` | Its own `abuse` middlewares; an unban must name one. |
+| `GET/POST/DELETE /tokens` | Its tenant's tokens; new tokens always get its tenant. |
+| `GET /audit` (admin role) | Its tenant's records only. |
+| `/auth/…` | Its own account and sessions only. |
+| Everything else | Refused: users, listeners, certificates, providers, status, reload, upgrade, consumers and keys, caches, the cluster, configuration history, rollback, export and import, `/routes/explain`, the log and event streams, `/metrics`. |
+
+Roles still apply on top: a scoped `viewer` reads its objects, a scoped `operator` also writes
+them. A token never leaves its creator's tenant. A user or token whose tenant is no longer in
+`tenants` is refused everything.
+
+Consumers and API keys are shared by all tenants and stay with unscoped administrators. To give
+a tenant one shared limit, put its consumers in a group and use
+[`key: group`](/docs/guides/rate-limiting/#per-group).
+
+## Planned
+
+Refused with a "planned for a later version" diagnostic: tenant-owned listeners
+(`tenants.<name>.listeners`), tenant-owned certificates (`certificates`), a `tenant` label on
+the core metrics (`metrics_label`) and a dashboard view per tenant (`dashboard`).
+
+## Related
+
+- [Configuration API](/docs/guides/config-api/)
+- [`tenants` reference](/docs/reference/configuration/tenants/)

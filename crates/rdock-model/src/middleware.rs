@@ -98,6 +98,11 @@ pub enum Middleware {
     /// and ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive
     /// restarts and binary upgrades.
     Abuse(AbuseConfig),
+    /// An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the
+    /// routes using it can have in flight from their latency (`aimd` or `gradient`) and
+    /// answers the rest with `503` and `Retry-After`, routes of the lowest `priority_class`
+    /// first. Off unless configured.
+    Admission(AdmissionConfig),
 }
 
 /// `type: abuse`: counts events per key in a fixed window and bans the key past `threshold`.
@@ -1100,6 +1105,128 @@ pub struct IpListConfig {
     pub cidrs: Vec<IpNetwork>,
 }
 
+/// `type: admission`: an adaptive concurrency limit shared by every route that uses this
+/// middleware. The limit moves between `min` and `max`; a request is admitted while the
+/// requests in flight stay below the limit's share for the route's `priority_class`
+/// (`critical` 100 %, `normal` `shares.normal`, `sheddable` `shares.sheddable`), otherwise it
+/// gets `503` with `Retry-After`. There is no queue.
+///
+/// `aimd` (Netflix concurrency-limits' `AIMDLimit`): a sample slower than `latency`, or
+/// answered `502`, `503` or `504`, multiplies the limit by `backoff_percent`; any other sample
+/// adds one while at least half the limit is in use. `gradient` (Envoy's adaptive concurrency
+/// filter with Netflix's `Gradient2Limit` smoothing): the limit follows `tolerance × no-load
+/// latency / sample latency`, clamped to 0.5–1, plus `queue`, smoothed by
+/// `smoothing_percent`. The no-load latency is measured at start and every `window` samples
+/// by pinning the limit to `min` until `probe` requests admitted at that concurrency have
+/// finished (their median); requests over `min` get `503` meanwhile, as Envoy warns too.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[schemars(inline)]
+#[serde(deny_unknown_fields)]
+pub struct AdmissionConfig {
+    /// `aimd` or `gradient`.
+    pub mode: AdmissionMode,
+    /// The lowest limit (default 3, Envoy's `min_concurrency`).
+    #[serde(default = "admission_min")]
+    pub min: u32,
+    /// The highest limit (default 1000, Envoy's `max_concurrency_limit`).
+    #[serde(default = "admission_max")]
+    pub max: u32,
+    /// The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub initial: Option<u32>,
+    /// `aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's
+    /// `timeout`). Measured from admission to the response headers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub latency: Option<Duration>,
+    /// `aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backoff_percent: Option<u32>,
+    /// `gradient` only: how much slower than the no-load latency a sample may be before the
+    /// limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tolerance_percent: Option<u32>,
+    /// `gradient` only: the weight of a new estimate, in percent (default 20, 1–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub smoothing_percent: Option<u32>,
+    /// `gradient` only: requests allowed above the estimate (default 4, Netflix's
+    /// `queueSize`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub queue: Option<u32>,
+    /// `gradient` only: samples between two measurements of the no-load latency (default
+    /// 600; 10–100000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub window: Option<u32>,
+    /// `gradient` only: samples at `min` concurrency that make one measurement of the no-load
+    /// latency (default 50, Envoy's `request_count`; 5–1000).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe: Option<u32>,
+    /// The share of the limit `normal` and `sheddable` routes may fill, in percent.
+    #[serde(default)]
+    pub shares: AdmissionShares,
+    /// `Retry-After` of a shed request (default 1s).
+    #[serde(default = "one_second")]
+    pub retry_after: Duration,
+}
+
+impl AdmissionConfig {
+    /// Highest `max`.
+    pub const MAX_LIMIT: u32 = 100_000;
+    /// Default `initial`.
+    pub const INITIAL: u32 = 20;
+    /// Default `latency` of `aimd`.
+    pub const LATENCY: Duration = Duration::from_secs(5);
+    /// Default `backoff_percent`.
+    pub const BACKOFF_PERCENT: u32 = 90;
+    /// Default `tolerance_percent`.
+    pub const TOLERANCE_PERCENT: u32 = 150;
+    /// Default `smoothing_percent`.
+    pub const SMOOTHING_PERCENT: u32 = 20;
+    /// Default `queue`.
+    pub const QUEUE: u32 = 4;
+    /// Default `window`.
+    pub const WINDOW: u32 = 600;
+    /// Default `probe`.
+    pub const PROBE: u32 = 50;
+}
+
+const fn admission_min() -> u32 {
+    3
+}
+
+const fn admission_max() -> u32 {
+    1000
+}
+
+/// How `admission` adapts its limit.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AdmissionMode {
+    /// Additive increase, multiplicative decrease on slow or failed samples.
+    Aimd,
+    /// The ratio of the long-term latency to each sample's (Gradient2).
+    Gradient,
+}
+
+/// How much of the limit each lower priority class may fill.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct AdmissionShares {
+    /// Routes with `priority_class: normal`, in percent of the limit (default 90).
+    pub normal: u32,
+    /// Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most
+    /// `normal`).
+    pub sheddable: u32,
+}
+
+impl Default for AdmissionShares {
+    fn default() -> Self {
+        Self {
+            normal: 90,
+            sheddable: 75,
+        }
+    }
+}
+
 /// Where a limit is counted (ADR-0031).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
@@ -1136,8 +1263,9 @@ pub struct RateLimitConfig {
     /// Period of `average`.
     #[serde(default = "one_second")]
     pub period: Duration,
-    /// Group → limit for consumers in that group, with `key: consumer`. The first of the
-    /// consumer's groups (in its `groups` order) that has an override wins.
+    /// Group → limit for consumers in that group, with `key: consumer` or `key: group`. With
+    /// `consumer`, the first of the consumer's groups (in its `groups` order) that has an
+    /// override wins; with `group`, the override of the primary group (the first one) applies.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub overrides: BTreeMap<String, crate::gateway::RateOverride>,
     /// `draft` adds `RateLimit-Policy` and `RateLimit` to responses

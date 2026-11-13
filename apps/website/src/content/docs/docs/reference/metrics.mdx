@@ -391,6 +391,22 @@ then `403`) or `tag` (served and marked). See [Abuse protection](/docs/guides/ab
 **Counter.** Bans not started because the ban list was full (`max_bans`). Label: `middleware`.
 Existing bans are never evicted to make room.
 
+### `rdock_admission_limit`
+
+**Gauge.** The current adaptive concurrency limit of each `admission` middleware (`min` while
+`mode: gradient` measures the no-load latency). Label: `middleware`. See
+[Admission control](/docs/guides/admission/).
+
+### `rdock_admission_in_flight`
+
+**Gauge.** Requests admitted by each `admission` middleware and not finished. Label:
+`middleware`.
+
+### `rdock_admission_shed_total`
+
+**Counter.** Requests an `admission` middleware answered `503`. Labels: `middleware` and
+`class`: the route's `priority_class` (`critical`, `normal` or `sheddable`).
+
 ### `rdock_geoip_build_timestamp_seconds`
 
 **Gauge.** Build time of each GeoIP database from its metadata (`build_epoch`), in Unix seconds.

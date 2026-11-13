@@ -122,8 +122,17 @@ impl RateLimit {
         }
     }
 
-    /// The limit for this request: the first of the consumer's groups with an override.
+    /// The limit for this request: with `key: consumer`, the first of the consumer's groups
+    /// with an override; with `key: group`, the primary group's override.
     fn limit(&self, cx: &Context) -> &Limit {
+        if self.key == RateLimitKey::Group
+            && let Some(primary) = cx.consumer.as_ref().and_then(|c| c.groups.first())
+        {
+            if let Some((_, limit)) = self.overrides.iter().find(|(g, _)| **g == **primary) {
+                return limit;
+            }
+            return &self.default;
+        }
         if self.key == RateLimitKey::Consumer
             && let Some(consumer) = &cx.consumer
         {
@@ -326,5 +335,86 @@ mod tests {
             block_on(mw.request(&mut a, &mut cx())),
             Flow::Reply(_)
         ));
+    }
+
+    fn member(name: &str, groups: &[&str]) -> Context {
+        let mut c = cx();
+        c.consumer = Some(crate::Consumer {
+            groups: groups.iter().map(|g| Arc::from(*g)).collect(),
+            ..crate::Consumer::named(name)
+        });
+        c
+    }
+
+    #[test]
+    fn group_keys_share_one_bucket_per_primary_group_with_its_override() {
+        let mut overrides = std::collections::BTreeMap::new();
+        overrides.insert(
+            "gold".to_owned(),
+            rdock_model::gateway::RateOverride {
+                average: 3,
+                burst: Some(3),
+                period: None,
+            },
+        );
+        let config = RateLimitConfig {
+            key: RateLimitKey::Group,
+            average: 2,
+            burst: Some(2),
+            period: Duration::from_secs(3600),
+            overrides,
+            headers: LimitHeaders::Off,
+            scope: LimitScope::Instance,
+        };
+        let mw = RateLimit::new("rl", &config, None);
+        let pass = |c: &mut Context| {
+            let mut req = request("GET", "/", &[]);
+            block_on(mw.request(&mut req, c)) == Flow::Next
+        };
+        // Ann and Bob are both in `acme` first: two requests between them.
+        assert!(pass(&mut member("ann", &["acme", "gold"])));
+        assert!(pass(&mut member("bob", &["acme"])));
+        assert!(
+            !pass(&mut member("ann", &["acme", "gold"])),
+            "acme's 2 are used"
+        );
+        // `gold` first: its override (3), its own bucket.
+        for _ in 0..3 {
+            assert!(pass(&mut member("cy", &["gold", "acme"])));
+        }
+        assert!(!pass(&mut member("dee", &["gold"])));
+        // No group: counted per consumer; no consumer: per address.
+        assert!(pass(&mut member("solo", &[])));
+        assert!(pass(&mut member("solo", &[])));
+        assert!(!pass(&mut member("solo", &[])));
+        assert!(pass(&mut cx()));
+    }
+
+    #[test]
+    fn group_keys_work_with_cluster_scope() {
+        let config = RateLimitConfig {
+            key: RateLimitKey::Group,
+            average: 4,
+            burst: Some(100),
+            period: Duration::from_secs(3600),
+            overrides: std::collections::BTreeMap::new(),
+            headers: LimitHeaders::Off,
+            scope: LimitScope::Cluster,
+        };
+        let shared = SharedLimits::default();
+        shared.attach();
+        shared.set_members(2);
+        let mw = RateLimit::new("rlg", &config, Some(&shared));
+        let admitted = |name: &str, group: &str| {
+            (0..10)
+                .filter(|_| {
+                    let mut req = request("GET", "/", &[]);
+                    block_on(mw.request(&mut req, &mut member(name, &[group]))) == Flow::Next
+                })
+                .count()
+        };
+        // Store away, two members: each group gets the share ⌈4 / 2⌉ on this instance.
+        assert_eq!(admitted("ann", "acme") + admitted("bob", "acme"), 2);
+        assert_eq!(admitted("cy", "globex"), 2);
     }
 }

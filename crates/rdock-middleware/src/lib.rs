@@ -13,6 +13,7 @@ use pingora::http::{RequestHeader, ResponseHeader};
 use rdock_model::middleware::Middleware as Config;
 
 mod abuse;
+mod admission;
 mod agent;
 mod api_key;
 mod auth;
@@ -115,6 +116,10 @@ pub struct Context {
     pub spiffe_id: Option<Arc<str>>,
     /// Slots taken by `in_flight`, freed when the request ends.
     pub admitted: Vec<rdock_limits::Admitted>,
+    /// The route's class for `admission` (`priority_class`), set by the proxy.
+    pub priority_class: rdock_model::route::PriorityClass,
+    /// What an `admission` middleware did with this request (`shed`), for the access log.
+    pub admission: Option<&'static str>,
     /// Response byte limit set by `bandwidth`.
     pub throttle: Option<Throttle>,
     /// The consumer the request is attributed to, set by an authenticating middleware.
@@ -161,6 +166,8 @@ impl Context {
             fingerprint: None,
             auth_failed: false,
             abuse: None,
+            priority_class: rdock_model::route::PriorityClass::Normal,
+            admission: None,
             spiffe_id: None,
             admitted: Vec::new(),
             throttle: None,
@@ -608,6 +615,7 @@ pub fn build(
         Config::Transform(c) => Arc::new(transform::Transform::new(name, c, env.metrics)?),
         Config::Oidc(c) => Arc::new(oidc::Oidc::new(name, c, env)?),
         Config::Abuse(c) => Arc::new(abuse::AbuseGuard::new(name, c, env)),
+        Config::Admission(c) => Arc::new(admission::Admission::new(name, c, env.metrics)),
         Config::Quota(c) => match env.quotas {
             Some(registry) => Arc::new(quota::Quota::new(
                 name,

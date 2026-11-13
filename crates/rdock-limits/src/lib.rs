@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 pub mod abuse;
+pub mod admission;
 mod bandwidth;
 mod concurrency;
 pub mod quota;

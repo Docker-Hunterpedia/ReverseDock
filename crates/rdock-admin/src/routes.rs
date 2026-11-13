@@ -204,9 +204,20 @@ async fn metrics(Extract(state): Extract<Arc<State>>, request: Request) -> Respo
     if !state.metrics_open {
         let transport = request.extensions().get::<Transport>().copied();
         let peer = request.extensions().get::<auth::Peer>().copied();
-        let allowed =
-            caller::identify(&state, request.method(), request.headers(), transport, peer)
-                .and_then(|caller| caller::need(&caller, Access::Metrics));
+        let identified =
+            caller::identify(&state, request.method(), request.headers(), transport, peer);
+        // The core metrics carry every tenant's routes; a tenant label is planned.
+        if let Ok(caller) = &identified
+            && caller.tenant().is_some()
+        {
+            return caller::tenant_denied(
+                &state,
+                caller,
+                "/metrics".to_owned(),
+                "a tenant label on the core metrics is planned",
+            );
+        }
+        let allowed = identified.and_then(|caller| caller::need(&caller, Access::Metrics));
         if let Err(denied) = allowed {
             return denied.into_response();
         }

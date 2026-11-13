@@ -192,6 +192,14 @@ pub struct Metrics {
     /// `rdock_abuse_bans_refused_total{middleware}`: bans not started because the ban list
     /// was full.
     pub abuse_bans_refused: IntCounterVec,
+    /// `rdock_admission_limit{middleware}`: the current adaptive limit of each `admission`
+    /// middleware (`min` while `gradient` measures the no-load latency).
+    pub admission_limit: IntGaugeVec,
+    /// `rdock_admission_in_flight{middleware}`: requests admitted and not finished.
+    pub admission_in_flight: IntGaugeVec,
+    /// `rdock_admission_shed_total{middleware,class}`: requests answered `503` by an
+    /// `admission` middleware, by the route's `priority_class`.
+    pub admission_shed: IntCounterVec,
 }
 
 /// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
@@ -699,6 +707,24 @@ impl Metrics {
             "Bans not started because the ban list was full.",
             &["middleware"],
         )?;
+        let admission_limit = gauges(
+            &registry,
+            "rdock_admission_limit",
+            "Current adaptive concurrency limit of each admission middleware.",
+            &["middleware"],
+        )?;
+        let admission_in_flight = gauges(
+            &registry,
+            "rdock_admission_in_flight",
+            "Requests in flight under each admission middleware.",
+            &["middleware"],
+        )?;
+        let admission_shed = counters(
+            &registry,
+            "rdock_admission_shed_total",
+            "Requests shed with 503 by admission middlewares, by priority class.",
+            &["middleware", "class"],
+        )?;
         let oidc_refreshes = counters(
             &registry,
             "rdock_oidc_refreshes_total",
@@ -712,6 +738,9 @@ impl Metrics {
             &["middleware", "operation"],
         )?;
         Ok(Self {
+            admission_limit,
+            admission_in_flight,
+            admission_shed,
             quota_overflows,
             oidc_logins,
             oidc_refreshes,

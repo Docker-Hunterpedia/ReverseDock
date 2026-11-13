@@ -329,7 +329,7 @@ What to count by.
 
 **Type:** map of names to object
 
-Group → limit for consumers in that group, with `key: consumer`. The first of the consumer's groups (in its `groups` order) that has an override wins.
+Group → limit for consumers in that group, with `key: consumer` or `key: group`. With `consumer`, the first of the consumer's groups (in its `groups` order) that has an override wins; with `group`, the override of the primary group (the first one) applies.
 
 #### `middlewares.<name>.overrides.<name>.average`
 
@@ -1397,7 +1397,7 @@ How often counters are written to disk.
 
 **Type:** [`RateLimitKey`](/docs/reference/configuration/#ratelimitkey) · **Default:** `consumer`
 
-What to count by; only `consumer` (the default) is accepted. Requests without a consumer are counted per client IP.
+What to count by: `consumer` (the default) or `group` (the consumer's primary group, the first of its `groups`: all consumers of a group share one count). Requests without a consumer are counted per client IP.
 
 ### `middlewares.<name>.limit`
 
@@ -1409,7 +1409,7 @@ Requests allowed per window.
 
 **Type:** map of names to `integer`
 
-Group → limit, for consumers in that group (the first of the consumer's groups that has one wins).
+Group → limit, for consumers in that group (with `key: consumer`, the first of the consumer's groups that has one wins; with `key: group`, the primary group's).
 
 ### `middlewares.<name>.scope`
 
@@ -1944,3 +1944,100 @@ Events within one `window` that start a ban. Default 20.
 **Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1m`
 
 The counting window. Default 1m.
+
+## `type: admission`
+
+An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the routes using it can have in flight from their latency (`aimd` or `gradient`) and answers the rest with `503` and `Retry-After`, routes of the lowest `priority_class` first. Off unless configured.
+
+### `middlewares.<name>.backoff_percent`
+
+**Type:** `integer`
+
+`aimd` only: the limit is multiplied by this percentage on a drop (default 90, 50–99).
+
+### `middlewares.<name>.initial`
+
+**Type:** `integer`
+
+The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
+
+### `middlewares.<name>.latency`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's `timeout`). Measured from admission to the response headers.
+
+### `middlewares.<name>.max`
+
+**Type:** `integer` · **Default:** `1000`
+
+The highest limit (default 1000, Envoy's `max_concurrency_limit`).
+
+### `middlewares.<name>.min`
+
+**Type:** `integer` · **Default:** `3`
+
+The lowest limit (default 3, Envoy's `min_concurrency`).
+
+### `middlewares.<name>.mode`
+
+**Type:** `aimd` · `gradient` · **Required**
+
+`aimd` or `gradient`.
+
+- `aimd`: Additive increase, multiplicative decrease on slow or failed samples.
+- `gradient`: The ratio of the long-term latency to each sample's (Gradient2).
+
+### `middlewares.<name>.probe`
+
+**Type:** `integer`
+
+`gradient` only: samples at `min` concurrency that make one measurement of the no-load latency (default 50, Envoy's `request_count`; 5–1000).
+
+### `middlewares.<name>.queue`
+
+**Type:** `integer`
+
+`gradient` only: requests allowed above the estimate (default 4, Netflix's `queueSize`).
+
+### `middlewares.<name>.retry_after`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1s`
+
+`Retry-After` of a shed request (default 1s).
+
+### `middlewares.<name>.shares`
+
+**Type:** object · **Default:** `{"normal":90,"sheddable":75}`
+
+The share of the limit `normal` and `sheddable` routes may fill, in percent.
+
+#### `middlewares.<name>.shares.normal`
+
+**Type:** `integer` · **Default:** `90`
+
+Routes with `priority_class: normal`, in percent of the limit (default 90).
+
+#### `middlewares.<name>.shares.sheddable`
+
+**Type:** `integer` · **Default:** `75`
+
+Routes with `priority_class: sheddable`, in percent of the limit (default 75; at most `normal`).
+
+### `middlewares.<name>.smoothing_percent`
+
+**Type:** `integer`
+
+`gradient` only: the weight of a new estimate, in percent (default 20, 1–100).
+
+### `middlewares.<name>.tolerance_percent`
+
+**Type:** `integer`
+
+`gradient` only: how much slower than the no-load latency a sample may be before the limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).
+
+### `middlewares.<name>.window`
+
+**Type:** `integer`
+
+`gradient` only: samples between two measurements of the no-load latency (default 600; 10–100000).

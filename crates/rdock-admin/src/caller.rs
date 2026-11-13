@@ -52,17 +52,19 @@ impl From<Role> for Access {
 pub(crate) enum Who {
     /// The Unix socket: the owner of the data directory.
     Cli,
-    /// An API token, limited to its creator's current role.
+    /// An API token, limited to its creator's current role and tenant.
     Token {
         id: String,
         access: Access,
         owner: String,
+        tenant: Option<String>,
     },
-    /// A complete dashboard session.
+    /// A complete dashboard session; the tenant is the user's current one.
     Session {
         user: String,
         role: Role,
         authenticated: Instant,
+        tenant: Option<String>,
     },
 }
 
@@ -71,6 +73,9 @@ pub(crate) enum Who {
 pub(crate) struct Caller {
     pub(crate) who: Who,
     pub(crate) client: Option<IpAddr>,
+    /// The resolved tenant scope of a scoped caller, set by [`authenticate`] for the
+    /// operations [`crate::tenancy::OPERATIONS`] lets it reach.
+    pub(crate) scope: crate::tenancy::Scoped,
 }
 
 impl Caller {
@@ -80,6 +85,19 @@ impl Caller {
             Who::Token { access, .. } => *access,
             Who::Session { role, .. } => Access::from(*role),
         }
+    }
+
+    /// The tenant the caller is scoped to, if any; the socket never is.
+    pub(crate) fn tenant(&self) -> Option<&str> {
+        match &self.who {
+            Who::Cli => None,
+            Who::Token { tenant, .. } | Who::Session { tenant, .. } => tenant.as_deref(),
+        }
+    }
+
+    /// The resolved scope of a scoped caller.
+    pub(crate) fn scope(&self) -> Option<&crate::tenancy::Scope> {
+        self.scope.as_deref()
     }
 
     /// The name recorded as owner: the user, the token's creator, or `cli`.
@@ -121,6 +139,7 @@ impl Caller {
         };
         Event {
             client: self.client,
+            tenant: self.tenant().map(str::to_owned),
             ..Event::new(actor, method, action)
         }
     }
@@ -184,6 +203,7 @@ pub(crate) fn identify(
         return Ok(Caller {
             who: Who::Cli,
             client: None,
+            scope: None,
         });
     }
     let address: Option<IpAddr> = client(state.trust_forwarded, peer, headers);
@@ -204,13 +224,16 @@ pub(crate) fn identify(
                 "missing or wrong X-CSRF-Token",
             ));
         }
+        let tenant = state.users.find(&session.user).and_then(|u| u.tenant);
         return Ok(Caller {
             who: Who::Session {
                 user: session.user,
                 role: session.role,
                 authenticated: session.authenticated,
+                tenant,
             },
             client: address,
+            scope: None,
         });
     }
     let Some(presented) = bearer(headers) else {
@@ -232,24 +255,32 @@ pub(crate) fn identify(
             ..Event::new(format!("token:{}", token.id), "token", "token.new_address")
         });
     }
-    // A token never outlives or outranks its creator.
-    let owner_access = if token.created_by == "cli" {
-        Some(Access::Admin)
+    // A token never outlives, outranks or leaves the tenant of its creator.
+    let owner = if token.created_by == "cli" {
+        Some((Access::Admin, None))
     } else {
         state
             .users
             .find(&token.created_by)
             .filter(|u| !u.disabled)
-            .map(|u| Access::from(u.role))
+            .map(|u| (Access::from(u.role), u.tenant))
     };
-    let owner_access = owner_access.ok_or_else(unauthorized)?;
+    let (owner_access, owner_tenant) = owner.ok_or_else(unauthorized)?;
+    let tenant = match (owner_tenant, token.tenant) {
+        // The creator moved to another tenant: the token no longer matches either.
+        (Some(a), Some(b)) if a != b => return Err(unauthorized()),
+        (Some(a), _) => Some(a),
+        (None, b) => b,
+    };
     Ok(Caller {
         who: Who::Token {
             id: token.id,
             access: token.role.min(owner_access),
             owner: token.created_by,
+            tenant,
         },
         client: address,
+        scope: None,
     })
 }
 
@@ -270,6 +301,74 @@ pub(crate) fn request_limiter() -> rdock_limits::RateLimiter {
     )
 }
 
+/// Marks a response whose refusal was already audited, so the generic 403 record is not
+/// written twice.
+#[derive(Debug, Clone, Copy)]
+pub(crate) struct Audited;
+
+/// A 403 for a scoped caller, audited with `reason`.
+pub(crate) fn tenant_denied(
+    state: &State,
+    caller: &Caller,
+    path: String,
+    reason: &str,
+) -> Response {
+    state.audit.record(Event {
+        resource: Some(path),
+        outcome: Outcome::Denied,
+        reason: Some(format!("outside the caller's tenant: {reason}")),
+        ..caller.event("access")
+    });
+    let mut response = crate::routes::error(
+        StatusCode::FORBIDDEN,
+        &format!("tenant-scoped callers cannot do this: {reason}"),
+    );
+    response.extensions_mut().insert(Audited);
+    response
+}
+
+/// Resolves a scoped caller's tenant for an operation it may reach, or refuses it.
+async fn scope(
+    state: &State,
+    caller: &mut Caller,
+    method: &Method,
+    template: Option<&str>,
+    path: &str,
+) -> Result<(), Box<Response>> {
+    let Some(tenant) = caller.tenant().map(str::to_owned) else {
+        return Ok(());
+    };
+    if let crate::tenancy::Tenancy::Denied(reason) = crate::tenancy::classify(method, template) {
+        return Err(Box::new(tenant_denied(
+            state,
+            caller,
+            path.to_owned(),
+            reason,
+        )));
+    }
+    let control = state.control.clone();
+    let tenants = state
+        .main
+        .spawn(async move { control.tenants().await })
+        .await
+        .unwrap_or_default();
+    match tenants.get(&tenant) {
+        Some(found) => {
+            caller.scope = Some(Arc::new(crate::tenancy::Scope {
+                prefix: found.prefix_of(&tenant),
+                name: tenant,
+            }));
+            Ok(())
+        }
+        None => Err(Box::new(tenant_denied(
+            state,
+            caller,
+            path.to_owned(),
+            "the caller's tenant is not in `tenants`",
+        ))),
+    }
+}
+
 pub(crate) async fn authenticate(
     Extract(state): Extract<Arc<State>>,
     mut request: Request,
@@ -287,7 +386,7 @@ pub(crate) async fn authenticate(
         return StatusCode::NO_CONTENT.into_response();
     }
     match identified {
-        Ok(caller) => {
+        Ok(mut caller) => {
             if let rdock_limits::Decision::Deny { retry_after } = state
                 .api_rate
                 .check(&caller.budget_key(), std::time::Instant::now())
@@ -295,9 +394,21 @@ pub(crate) async fn authenticate(
                 return crate::auth::too_many(retry_after);
             }
             let path = request.uri().path().to_owned();
+            let template = request
+                .extensions()
+                .get::<axum::extract::MatchedPath>()
+                .map(|m| m.as_str().to_owned());
+            let method = request.method().clone();
+            if let Err(refused) =
+                scope(&state, &mut caller, &method, template.as_deref(), &path).await
+            {
+                return *refused;
+            }
             request.extensions_mut().insert(caller.clone());
             let response = next.run(request).await;
-            if response.status() == StatusCode::FORBIDDEN {
+            if response.status() == StatusCode::FORBIDDEN
+                && response.extensions().get::<Audited>().is_none()
+            {
                 state.audit.record(Event {
                     resource: Some(path),
                     outcome: Outcome::Denied,
@@ -325,8 +436,10 @@ mod tests {
                 id: "x".into(),
                 access: Access::Metrics,
                 owner: "root".into(),
+                tenant: None,
             },
             client: None,
+            scope: None,
         };
         assert!(need(&token, Access::Metrics).is_ok());
         assert!(need(&token, Access::Viewer).is_err());
@@ -334,6 +447,7 @@ mod tests {
         let cli = Caller {
             who: Who::Cli,
             client: None,
+            scope: None,
         };
         assert!(need(&cli, Access::Admin).is_ok());
     }

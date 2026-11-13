@@ -62,6 +62,9 @@ pub(crate) struct UserAdd {
     /// `viewer`, `operator` or `admin`.
     #[arg(long, default_value = "viewer")]
     role: String,
+    /// Scope the user to this tenant (`tenants.<name>`).
+    #[arg(long)]
+    tenant: Option<String>,
     #[command(flatten)]
     ctl: CtlArgs,
 }
@@ -71,6 +74,12 @@ pub(crate) struct UserSet {
     name: String,
     #[arg(long)]
     role: Option<String>,
+    /// Scope the user to this tenant.
+    #[arg(long, conflicts_with = "no_tenant")]
+    tenant: Option<String>,
+    /// Remove the user's tenant scope.
+    #[arg(long)]
+    no_tenant: bool,
     /// Turn the user off: no login, sessions end, tokens stop working.
     #[arg(long, conflicts_with = "enable")]
     disable: bool,
@@ -109,6 +118,9 @@ pub(crate) struct TokenCreate {
     /// A network it may be used from; repeat for more.
     #[arg(long = "allow")]
     allowed_from: Vec<String>,
+    /// Scope the token to this tenant (`tenants.<name>`).
+    #[arg(long)]
+    tenant: Option<String>,
     #[command(flatten)]
     ctl: CtlArgs,
 }
@@ -448,8 +460,11 @@ pub(crate) fn users(command: &UsersCommand) -> anyhow::Result<ExitCode> {
             }))
         }
         UsersCommand::Add(args) => {
-            let body =
+            let mut body =
                 json!({ "name": args.name, "role": args.role, "password": read_password()? });
+            if let Some(tenant) = &args.tenant {
+                body["tenant"] = json!(tenant);
+            }
             expect(
                 call(&args.ctl, &Call::new("POST", "/api/v1/users").json(&body))?,
                 &[201],
@@ -463,6 +478,11 @@ pub(crate) fn users(command: &UsersCommand) -> anyhow::Result<ExitCode> {
             }
             if args.disable || args.enable {
                 body["disabled"] = json!(args.disable);
+            }
+            if let Some(tenant) = &args.tenant {
+                body["tenant"] = json!(tenant);
+            } else if args.no_tenant {
+                body["tenant"] = Value::Null;
             }
             change_user(&args.ctl, &args.name, &body)
         }
@@ -508,6 +528,9 @@ pub(crate) fn tokens(command: &TokensCommand) -> anyhow::Result<ExitCode> {
                 json!({ "name": args.name, "role": args.role, "allowed_from": args.allowed_from });
             if let Some(days) = args.days {
                 body["expires_in_days"] = json!(days);
+            }
+            if let Some(tenant) = &args.tenant {
+                body["tenant"] = json!(tenant);
             }
             let answer = expect(
                 call(&args.ctl, &Call::new("POST", "/api/v1/tokens").json(&body))?,

@@ -40,6 +40,9 @@ pub(crate) struct UserView {
     disabled: bool,
     created_at: u64,
     mfa: bool,
+    /// The tenant the user is scoped to (`tenants.<name>`), if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant: Option<String>,
 }
 
 impl From<User> for UserView {
@@ -50,8 +53,35 @@ impl From<User> for UserView {
             disabled: user.disabled,
             created_at: user.created_at,
             mfa: user.mfa.is_some(),
+            tenant: user.tenant,
         }
     }
+}
+
+/// Whether `tenant` is a tenant of the running configuration.
+async fn known_tenant(state: &State, tenant: &str) -> bool {
+    let control = state.control.clone();
+    state
+        .main
+        .spawn(async move { control.tenants().await })
+        .await
+        .is_ok_and(|t| t.contains_key(tenant))
+}
+
+fn unknown_tenant() -> Response {
+    error(
+        StatusCode::UNPROCESSABLE_ENTITY,
+        "no such tenant in the configuration's `tenants`",
+    )
+}
+
+/// `Some(None)` for an explicit `null`, so a change can clear a value.
+#[allow(
+    clippy::option_option,
+    reason = "absent keeps the tenant, `null` removes it"
+)]
+fn present<'de, D: serde::Deserializer<'de>>(d: D) -> Result<Option<Option<String>>, D::Error> {
+    Option::<String>::deserialize(d).map(Some)
 }
 
 /// `GET /api/v1/users`: every user (admin role).
@@ -72,6 +102,9 @@ pub(crate) struct NewUser {
     name: String,
     role: Role,
     password: String,
+    /// Scope the user to this tenant (`tenants.<name>`).
+    #[serde(default)]
+    tenant: Option<String>,
 }
 
 /// `POST /api/v1/users`: a new user with a first password, who enrols MFA at first login
@@ -105,13 +138,19 @@ pub(crate) async fn create_user(
     if let Err(weak) = state.policy.check(&body.password) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, &weak.to_string());
     }
+    if let Some(tenant) = &body.tenant
+        && !known_tenant(&state, tenant).await
+    {
+        return unknown_tenant();
+    }
     let worker = state.clone();
     let created = hashing(&state, move || {
         let hash = worker
             .policy
             .hash(&body.password)
             .map_err(|err| AddError::Io(std::io::Error::other(err.to_string())))?;
-        let user = User::new(name, body.role, hash);
+        let mut user = User::new(name, body.role, hash);
+        user.tenant = body.tenant;
         worker.users.add(user.clone()).map(|()| user)
     })
     .await;
@@ -144,6 +183,14 @@ pub(crate) struct UserChange {
     /// Removes the user's second factor, so they enrol again at the next login.
     #[serde(default)]
     reset_mfa: bool,
+    /// Scopes the user to this tenant; `null` removes the scope.
+    #[serde(default, deserialize_with = "present")]
+    #[schema(value_type = Option<String>)]
+    #[allow(
+        clippy::option_option,
+        reason = "absent keeps the tenant, `null` removes it"
+    )]
+    tenant: Option<Option<String>>,
 }
 
 /// `PATCH /api/v1/users/{name}`: role, disabled, a new password or an MFA reset. Ends the
@@ -168,6 +215,11 @@ pub(crate) async fn change_user(
         && let Err(weak) = state.policy.check(password)
     {
         return error(StatusCode::UNPROCESSABLE_ENTITY, &weak.to_string());
+    }
+    if let Some(Some(tenant)) = &body.tenant
+        && !known_tenant(&state, tenant).await
+    {
+        return unknown_tenant();
     }
     let name = name.to_ascii_lowercase();
     let hash = match body.password.clone() {
@@ -194,6 +246,9 @@ pub(crate) async fn change_user(
         if body.reset_mfa {
             user.mfa = None;
         }
+        if let Some(tenant) = &body.tenant {
+            user.tenant.clone_from(tenant);
+        }
     });
     match changed {
         Err(err) => internal(&err),
@@ -210,6 +265,9 @@ pub(crate) async fn change_user(
                 body.disabled.map(|d| format!("disabled={d}")),
                 body.password.as_ref().map(|_| "password".to_owned()),
                 body.reset_mfa.then(|| "reset_mfa".to_owned()),
+                body.tenant
+                    .as_ref()
+                    .map(|t| format!("tenant={}", t.as_deref().unwrap_or("-"))),
             ];
             let what: Vec<String> = what.into_iter().flatten().collect();
             state.audit.record(Event {
@@ -276,6 +334,9 @@ pub(crate) struct TokenView {
     last_used_at: Option<u64>,
     #[schema(value_type = Option<String>)]
     last_used_from: Option<std::net::IpAddr>,
+    /// The tenant the token is scoped to, if any.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tenant: Option<String>,
 }
 
 /// A new token: the value is shown only in this answer.
@@ -299,11 +360,13 @@ impl From<Token> for TokenView {
             allowed_from: token.allowed_from,
             last_used_at: token.last_used_at,
             last_used_from: token.last_used_from,
+            tenant: token.tenant,
         }
     }
 }
 
-/// `GET /api/v1/tokens`: the caller's tokens, or everyone's for an admin.
+/// `GET /api/v1/tokens`: the caller's tokens, or everyone's for an admin (a tenant-scoped
+/// admin: its tenant's).
 #[utoipa::path(get, path = "/tokens", tag = "tokens",
     responses((status = OK, description = "The tokens", body = [TokenView])))]
 pub(crate) async fn tokens(
@@ -312,10 +375,12 @@ pub(crate) async fn tokens(
 ) -> Response {
     check!(need(&caller, Access::Viewer));
     let owner = (caller.access() < Access::Admin).then(|| caller.name().to_owned());
+    let tenant = caller.tenant().map(str::to_owned);
     let list: Vec<TokenView> = state
         .tokens
         .list(owner.as_deref())
         .into_iter()
+        .filter(|t| tenant.is_none() || t.tenant == tenant)
         .map(TokenView::from)
         .collect();
     axum::Json(list).into_response()
@@ -333,6 +398,10 @@ pub(crate) struct TokenRequest {
     #[serde(default)]
     #[schema(value_type = Vec<String>)]
     allowed_from: Vec<IpNet>,
+    /// Scope the token to this tenant. A tenant-scoped caller's tokens always have its
+    /// tenant.
+    #[serde(default)]
+    tenant: Option<String>,
 }
 
 /// `POST /api/v1/tokens`: a new token, shown once, with a role no higher than the caller's.
@@ -382,12 +451,31 @@ pub(crate) async fn create_token(
             );
         }
     };
+    let tenant = match (caller.tenant(), body.tenant) {
+        (Some(mine), Some(asked)) if mine != asked => {
+            return crate::caller::tenant_denied(
+                &state,
+                &caller,
+                "/api/v1/tokens".to_owned(),
+                "a token for another tenant",
+            );
+        }
+        (Some(mine), _) => Some(mine.to_owned()),
+        (None, Some(asked)) => {
+            if !known_tenant(&state, &asked).await {
+                return unknown_tenant();
+            }
+            Some(asked)
+        }
+        (None, None) => None,
+    };
     let created = state.tokens.create(NewToken {
         name: name.to_owned(),
         role: body.role,
         created_by: caller.name().to_owned(),
         lifetime,
         allowed_from: body.allowed_from,
+        tenant,
     });
     match created {
         Err(err) => internal(&err),
@@ -421,10 +509,10 @@ pub(crate) async fn revoke_token(
 ) -> Response {
     check!(need(&caller, Access::Viewer));
     let admin = caller.access() == Access::Admin;
-    match state
-        .tokens
-        .revoke(&id, |t| admin || t.created_by == caller.name())
-    {
+    let tenant = caller.tenant().map(str::to_owned);
+    match state.tokens.revoke(&id, |t| {
+        t.created_by == caller.name() || (admin && (tenant.is_none() || t.tenant == tenant))
+    }) {
         Err(err) => internal(&err),
         Ok(false) => error(StatusCode::NOT_FOUND, "no such token"),
         Ok(true) => {
@@ -439,7 +527,7 @@ pub(crate) async fn revoke_token(
 }
 
 /// `GET /api/v1/audit?limit=100&before=<seq>`: recent audit records, newest first. Admins
-/// only.
+/// only; a tenant-scoped admin gets its tenant's records only.
 #[utoipa::path(get, path = "/audit", tag = "audit", params(AuditQuery),
     responses((status = OK, description = "Audit records, newest first", body = [crate::openapi::AuditRecord])))]
 pub(crate) async fn audit(
@@ -449,7 +537,8 @@ pub(crate) async fn audit(
 ) -> Response {
     check!(need(&caller, Access::Admin));
     let limit = query.limit.unwrap_or(100).clamp(1, 1000);
-    match state.audit.recent(limit, query.before) {
+    // A tenant-scoped admin reads its tenant's records only.
+    match state.audit.recent_of(limit, query.before, caller.tenant()) {
         Ok(records) => axum::Json(records).into_response(),
         Err(err) => internal(&err),
     }

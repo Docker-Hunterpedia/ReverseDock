@@ -24,6 +24,7 @@ mod server;
 mod sessions;
 mod stream;
 mod telemetry;
+mod tenancy;
 mod tokens;
 mod totp;
 mod users;
@@ -156,6 +157,11 @@ pub trait Control: Send + Sync {
     async fn cluster_rollout_abandon(&self, actor: String) -> Option<RolloutAction> {
         let _ = actor;
         None
+    }
+    /// The configuration's tenants (H-SEC-07), for scoping users and tokens; none by default,
+    /// which refuses every scoped caller.
+    async fn tenants(&self) -> rdock_model::tenant::Tenants {
+        rdock_model::tenant::Tenants::new()
     }
     /// Replaces the running binary by handing the listeners to a new process (ADR-0031);
     /// returns once the new process serves or the attempt failed. Only offered on the Unix

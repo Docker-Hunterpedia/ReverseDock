@@ -16,6 +16,7 @@ mod schema;
 pub mod secrets;
 pub mod service;
 pub mod settings;
+pub mod tenant;
 pub mod transform;
 mod validate;
 pub mod validation;
