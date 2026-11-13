@@ -38,6 +38,9 @@ kubernetes = ["dep:rdock-provider-kubernetes"]
 # Sandboxed WASM plugins on wasmtime (experimental, ADR-0030). Off by default: without it a
 # configuration with `type: wasm` is refused with a diagnostic.
 wasm = ["rdock-proxy/wasm", "rdock-middleware/wasm"]
+# HTTP/3 ingress on quinn and h3 (experimental, ADR-0032). Off by default and in release builds:
+# without it a listener with `http3.enabled: true` is refused with a diagnostic.
+http3 = ["rdock-proxy/http3", "rdock-testkit/http3"]
 # Faults for the admin isolation test (benchmarks/isolation, H-ENG-04); never in release builds.
 fault-injection = ["rdock-admin/fault-injection"]
 # Counts allocations for the per-request measurement helper (benchmarks/perreq): the system

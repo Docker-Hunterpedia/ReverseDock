@@ -82,5 +82,61 @@
     "what": "A dashboard view limited to a tenant",
     "value": true,
     "fixture": "tenants:\n  acme:\n    hosts: [\"acme.example.com\"]\n    dashboard: true\n"
+  },
+  {
+    "path": "listeners.<name>.http3.qlog",
+    "planned": "a later version",
+    "what": "qlog traces of HTTP/3 connections",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { qlog: /var/log/rdock/qlog } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.early_data",
+    "planned": "a later version",
+    "what": "0-RTT early data on HTTP/3",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { early_data: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.migration",
+    "planned": "a later version",
+    "what": "Active connection migration on HTTP/3",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { migration: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.datagrams",
+    "planned": "a later version",
+    "what": "HTTP/3 datagrams (RFC 9297)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { datagrams: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.webtransport",
+    "planned": "a later version",
+    "what": "WebTransport over HTTP/3",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { webtransport: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.extended_connect",
+    "planned": "a later version",
+    "what": "WebSocket over HTTP/3 and CONNECT-UDP (extended CONNECT)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, http3: { extended_connect: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.http3.enabled",
+    "planned": "a later version",
+    "what": "PROXY protocol on the QUIC socket of an HTTP/3 listener",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, proxy_protocol: { trusted: [10.0.0.0/8] }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "services.<name>.scheme",
+    "planned": "a later version",
+    "what": "HTTP/3 to backends (scheme: h3)",
+    "value": true,
+    "fixture": "routes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    scheme: h3\n    backends: [{ address: \"127.0.0.1:443\" }]\n"
   }
 ]

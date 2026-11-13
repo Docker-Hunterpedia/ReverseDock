@@ -397,7 +397,9 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
     // The WASM host ABI, when this build includes it (`wasm` feature, experimental).
     let wasm_abi = rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION);
     if json {
-        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi });
+        // HTTP/3 ingress, when this build includes it (`http3` feature, experimental).
+        let http3 = rdock_proxy::http3::ENABLED;
+        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi, "http3": http3 });
         print(&format!("{info}\n"))
     } else {
         let plugins = if names.is_empty() {
@@ -409,8 +411,13 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
             || "not in this build".to_owned(),
             |abi| format!("ABI {abi} (experimental)"),
         );
+        let http3 = if rdock_proxy::http3::ENABLED {
+            "quinn and h3 (experimental)"
+        } else {
+            "not in this build"
+        };
         print(&format!(
-            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\n"
+            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\nHTTP/3: {http3}\n"
         ))
     }
 }

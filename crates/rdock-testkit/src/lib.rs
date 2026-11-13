@@ -16,6 +16,8 @@ pub mod cloudflare_access;
 pub mod dns_contract;
 pub mod fake_acme;
 pub mod fake_api;
+#[cfg(feature = "http3")]
+pub mod h3;
 pub mod haproxy;
 pub mod mmdb;
 pub mod oidc;

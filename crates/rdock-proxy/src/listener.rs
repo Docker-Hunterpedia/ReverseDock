@@ -70,7 +70,7 @@ impl TlsAccept for CaptureHandshake {
 
 /// The fields of a client certificate. rustls has already verified it, so it parses; `None`
 /// would only mean a certificate x509-parser cannot read, which then counts as absent.
-fn identity(der: &[u8]) -> Option<ClientIdentity> {
+pub(crate) fn identity(der: &[u8]) -> Option<ClientIdentity> {
     use std::fmt::Write;
     use x509_parser::extensions::GeneralName;
     use x509_parser::prelude::FromDer;
@@ -167,6 +167,32 @@ pub fn acceptor(
     let mut acceptor = settings.build();
     acceptor.acceptor = pingora::tls::TlsAcceptor::from(config);
     Ok(acceptor)
+}
+
+/// The rustls configuration of an HTTP/3 listener's QUIC endpoint: the one [`acceptor`] builds
+/// for the listener's TLS policy, certificate resolver, client authentication and resumption
+/// class, offering only `h3` (RFC 9114 §3.1). 0-RTT stays off: `max_early_data_size` is 0, and
+/// quinn accepts early data only when it is `u32::MAX` (quinn-proto 0.11.19,
+/// `crypto/rustls.rs`).
+#[cfg(feature = "http3")]
+pub(crate) fn quic_tls(
+    tls: &ListenerTls,
+    resolver: Arc<ListenerResolver>,
+    tickets: &rdock_tls::TicketRegistry,
+) -> Result<Arc<rustls::ServerConfig>, String> {
+    let verifier = match &tls.client_auth {
+        Some(auth) => Some(auth.verifier().map_err(|e| e.to_string())?),
+        None => None,
+    };
+    let resumption = tickets
+        .resumption(&tls.class(), tls.file_keys.clone())
+        .map_err(|e| e.to_string())?;
+    let config = rdock_tls::server_config(tls.policy, resolver, verifier, &resumption)
+        .map_err(|e| e.to_string())?;
+    let mut config = (*config).clone();
+    config.alpn_protocols = vec![b"h3".to_vec()];
+    config.max_early_data_size = 0;
+    Ok(Arc::new(config))
 }
 
 /// Binds a listening socket with the default options. `:port` binds all interfaces, IPv6 and
@@ -699,7 +725,7 @@ pub struct Running {
 }
 
 /// A listener's HTTP engine, replaced when its HTTP/2 settings or idle timeout change.
-type Engine = Arc<ArcSwap<HttpProxy<RdockProxy>>>;
+pub(crate) type Engine = Arc<ArcSwap<HttpProxy<RdockProxy>>>;
 
 impl Running {
     /// Starts accepting on `socket` (or, for a UDP socket, receiving datagrams); `options`
@@ -807,6 +833,12 @@ impl Running {
             ..*options
         };
         Ok(())
+    }
+
+    /// The HTTP engine of a TCP listener, which its HTTP/3 side shares.
+    #[cfg(feature = "http3")]
+    pub(crate) fn engine(&self) -> Option<Engine> {
+        self.engine.as_ref().map(|(engine, _)| engine.clone())
     }
 
     /// A new duplicate of the socket's descriptor and its options, for the next process in a

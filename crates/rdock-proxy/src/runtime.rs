@@ -112,6 +112,9 @@ pub struct ListenerRuntime {
     pub http2: rdock_model::config::ListenerHttp2,
     /// `https` listeners: the TLS client fingerprints to compute (`tls.fingerprint`).
     pub fingerprint: Option<rdock_model::config::TlsFingerprint>,
+    /// HTTP/3 settings of an `https` listener with `http3.enabled` (ADR-0032); `None` serves
+    /// no HTTP/3.
+    pub http3: Option<rdock_model::config::ListenerHttp3>,
     /// Inbound PROXY protocol.
     pub proxy_protocol: Option<ProxyProtocolIn>,
     /// Routes in evaluation order.

@@ -261,6 +261,131 @@ pub struct Listener {
     /// values keep the behaviour before v0.9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http2: Option<ListenerHttp2>,
+    /// HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
+    /// the listener then also owns the UDP socket of its address. Needs a build with the
+    /// `http3` cargo feature; off by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub http3: Option<ListenerHttp3>,
+}
+
+/// HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
+/// nothing is unlimited.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+#[allow(
+    clippy::struct_excessive_bools,
+    reason = "independent switches of the configuration file"
+)]
+pub struct ListenerHttp3 {
+    /// Serve HTTP/3 on the UDP port of the listener's address. Default `false`.
+    pub enabled: bool,
+    /// Add `Alt-Svc: h3=":<port>"` to this listener's HTTP/1 and HTTP/2 responses while the
+    /// QUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.
+    pub advertise: bool,
+    /// How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default
+    /// is 24h; shorter while experimental); 1s to 30d.
+    pub advertise_max_age: Duration,
+    /// The UDP port to advertise when it differs from the listener's (a port mapping such as
+    /// public 443 to container 8443). Default: the listener's port.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub advertise_port: Option<u16>,
+    /// When to make clients prove their address with a QUIC Retry before any handshake work
+    /// (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are
+    /// half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`.
+    pub retry: Http3Retry,
+    /// Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default
+    /// 30s (HAProxy's); 1s to 10m.
+    pub max_idle: Duration,
+    /// Request streams a client may have open at once per connection
+    /// (`initial_max_streams_bidi`). Default 100; 1 to 10000.
+    pub max_concurrent_streams: u32,
+    /// Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114
+    /// §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB.
+    pub max_header_size: ByteSize,
+    /// QUIC connections the listener holds at once. Default 10000; 1 to 1000000.
+    pub max_connections: u32,
+    /// QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.
+    pub max_connections_per_client: u32,
+    /// Congestion controller. Default `cubic`.
+    pub congestion: Http3Congestion,
+    /// UDP generic segmentation offload where the kernel supports it. Default `true`.
+    pub gso: bool,
+    /// Write qlog traces into this directory. Not supported in this version (planned).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub qlog: Option<String>,
+    /// Accept 0-RTT early data. Not supported (planned): early data can be replayed.
+    pub early_data: bool,
+    /// Let clients move a connection to another address (active migration). Not supported
+    /// (planned); NAT rebinding is handled either way.
+    pub migration: bool,
+    /// HTTP/3 datagrams (RFC 9297). Not supported (planned).
+    pub datagrams: bool,
+    /// WebTransport over HTTP/3. Not supported (planned).
+    pub webtransport: bool,
+    /// Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported
+    /// (planned).
+    pub extended_connect: bool,
+}
+
+impl ListenerHttp3 {
+    /// Default `max_header_size`.
+    pub const DEFAULT_MAX_HEADER_SIZE: ByteSize = ByteSize::kib(64);
+    /// Ceiling of `max_header_size`: h3 0.0.8 counts 32 bytes per field, so 1 MiB also stays
+    /// below the 32,768 fields that panic `http::HeaderMap` (h3 issue #379).
+    pub const MAX_HEADER_SIZE_CEILING: ByteSize = ByteSize::mib(1);
+    /// Half-open connections from which `retry: auto` sends Retry.
+    pub const RETRY_THRESHOLD: usize = 100;
+}
+
+impl Default for ListenerHttp3 {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            advertise: true,
+            advertise_max_age: Duration::from_secs(3600),
+            advertise_port: None,
+            retry: Http3Retry::Auto,
+            max_idle: Duration::from_secs(30),
+            max_concurrent_streams: 100,
+            max_header_size: Self::DEFAULT_MAX_HEADER_SIZE,
+            max_connections: 10_000,
+            max_connections_per_client: 100,
+            congestion: Http3Congestion::Cubic,
+            gso: true,
+            qlog: None,
+            early_data: false,
+            migration: false,
+            datagrams: false,
+            webtransport: false,
+            extended_connect: false,
+        }
+    }
+}
+
+/// When an HTTP/3 listener sends QUIC Retry packets.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3Retry {
+    /// While 100 or more connections are half-open.
+    #[default]
+    Auto,
+    /// For every new connection without a valid token.
+    Always,
+    /// Never.
+    Never,
+}
+
+/// QUIC congestion controllers (quinn 0.11).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum Http3Congestion {
+    /// CUBIC (RFC 9438).
+    #[default]
+    Cubic,
+    /// `NewReno` (RFC 9002 §7).
+    Newreno,
+    /// BBR; quinn marks its implementation experimental.
+    Bbr,
 }
 
 /// HTTP/2 settings of a listener (RFC 9113 §6.5.2). Unset values keep what Pingora 0.9.1 and
@@ -442,6 +567,7 @@ impl Listener {
             sessions: None,
             socket: None,
             http2: None,
+            http3: None,
         }
     }
 

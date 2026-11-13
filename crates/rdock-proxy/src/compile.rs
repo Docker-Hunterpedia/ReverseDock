@@ -1105,6 +1105,10 @@ fn new_listener(name: &str, listener: &Listener) -> Result<ListenerRuntime, Stri
             .as_ref()
             .and_then(|t| t.fingerprint.clone())
             .filter(|_| listener.effective_protocol() == ListenerProtocol::Https),
+        http3: listener
+            .http3
+            .clone()
+            .filter(|h3| h3.enabled && listener.effective_protocol() == ListenerProtocol::Https),
         proxy_protocol: listener.proxy_protocol.clone(),
         ping: listener.ping.clone(),
         routes: Vec::new(),

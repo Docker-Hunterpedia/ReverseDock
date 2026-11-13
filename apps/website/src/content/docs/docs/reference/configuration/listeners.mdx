@@ -71,6 +71,156 @@ Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid
 
 Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's); 16KiB to 16MiB.
 
+## `listeners.<name>.http3`
+
+**Type:** object
+
+HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032): the listener then also owns the UDP socket of its address. Needs a build with the `http3` cargo feature; off by default.
+
+### `listeners.<name>.http3.advertise`
+
+**Type:** `boolean` · **Default:** `true`
+
+Add `Alt-Svc: h3=":<port>"` to this listener's HTTP/1 and HTTP/2 responses while the QUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.
+
+### `listeners.<name>.http3.advertise_max_age`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `1h`
+
+How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default is 24h; shorter while experimental); 1s to 30d.
+
+### `listeners.<name>.http3.advertise_port`
+
+**Type:** `integer`
+
+The UDP port to advertise when it differs from the listener's (a port mapping such as public 443 to container 8443). Default: the listener's port.
+
+### `listeners.<name>.http3.congestion`
+
+**Type:** `cubic` · `newreno` · `bbr` · **Default:** `cubic`
+
+Congestion controller. Default `cubic`.
+
+- `cubic`: CUBIC (RFC 9438).
+- `newreno`: `NewReno` (RFC 9002 §7).
+- `bbr`: BBR; quinn marks its implementation experimental.
+
+### `listeners.<name>.http3.datagrams`
+
+**Type:** `boolean` · **Default:** `false`
+
+HTTP/3 datagrams (RFC 9297). Not supported (planned).
+
+:::note[Planned for a later version]
+HTTP/3 datagrams (RFC 9297): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `listeners.<name>.http3.early_data`
+
+**Type:** `boolean` · **Default:** `false`
+
+Accept 0-RTT early data. Not supported (planned): early data can be replayed.
+
+:::note[Planned for a later version]
+0-RTT early data on HTTP/3: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `listeners.<name>.http3.enabled`
+
+**Type:** `boolean` · **Default:** `false`
+
+Serve HTTP/3 on the UDP port of the listener's address. Default `false`.
+
+:::note[Planned for a later version]
+PROXY protocol on the QUIC socket of an HTTP/3 listener: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `listeners.<name>.http3.extended_connect`
+
+**Type:** `boolean` · **Default:** `false`
+
+Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported (planned).
+
+:::note[Planned for a later version]
+WebSocket over HTTP/3 and CONNECT-UDP (extended CONNECT): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `listeners.<name>.http3.gso`
+
+**Type:** `boolean` · **Default:** `true`
+
+UDP generic segmentation offload where the kernel supports it. Default `true`.
+
+### `listeners.<name>.http3.max_concurrent_streams`
+
+**Type:** `integer` · **Default:** `100`
+
+Request streams a client may have open at once per connection (`initial_max_streams_bidi`). Default 100; 1 to 10000.
+
+### `listeners.<name>.http3.max_connections`
+
+**Type:** `integer` · **Default:** `10000`
+
+QUIC connections the listener holds at once. Default 10000; 1 to 1000000.
+
+### `listeners.<name>.http3.max_connections_per_client`
+
+**Type:** `integer` · **Default:** `100`
+
+QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.
+
+### `listeners.<name>.http3.max_header_size`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `64KiB`
+
+Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114 §4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB.
+
+### `listeners.<name>.http3.max_idle`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration) · **Default:** `30s`
+
+Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default 30s (HAProxy's); 1s to 10m.
+
+### `listeners.<name>.http3.migration`
+
+**Type:** `boolean` · **Default:** `false`
+
+Let clients move a connection to another address (active migration). Not supported (planned); NAT rebinding is handled either way.
+
+:::note[Planned for a later version]
+Active connection migration on HTTP/3: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `listeners.<name>.http3.qlog`
+
+**Type:** `string`
+
+Write qlog traces into this directory. Not supported in this version (planned).
+
+:::note[Planned for a later version]
+qlog traces of HTTP/3 connections: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
+### `listeners.<name>.http3.retry`
+
+**Type:** `auto` · `always` · `never` · **Default:** `auto`
+
+When to make clients prove their address with a QUIC Retry before any handshake work (RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are half-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`.
+
+- `auto`: While 100 or more connections are half-open.
+- `always`: For every new connection without a valid token.
+- `never`: Never.
+
+### `listeners.<name>.http3.webtransport`
+
+**Type:** `boolean` · **Default:** `false`
+
+WebTransport over HTTP/3. Not supported (planned).
+
+:::note[Planned for a later version]
+WebTransport over HTTP/3: accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
 ## `listeners.<name>.ping`
 
 **Type:** `string`

@@ -282,7 +282,7 @@ pub fn peer(
     candidate: &Candidate,
     route: &RouteTimeouts,
 ) -> pingora::Result<HttpPeer> {
-    let tls = service.scheme == Scheme::Https;
+    let tls = matches!(service.scheme, Scheme::Https | Scheme::H3);
     let mut peer = match candidate {
         Candidate::Tcp { host, addr } => {
             let sni = service.tls.server_name.clone().unwrap_or_else(|| {
@@ -309,7 +309,9 @@ pub fn peer(
     options.idle_timeout = Some(timeouts.idle.as_std());
     match service.scheme {
         Scheme::Http => {}
-        Scheme::Https => {
+        // `h3` is refused before a configuration is served (ADR-0032); TLS over TCP if it
+        // ever got here.
+        Scheme::Https | Scheme::H3 => {
             options.set_http_version(2, 1);
             options.max_h2_streams = H2_STREAMS;
         }

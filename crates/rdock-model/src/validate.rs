@@ -61,6 +61,7 @@ impl Config {
         v.check_sockets();
         v.check_resumption();
         v.check_http2();
+        v.check_http3();
         v.check_upgrade();
         v.check_defaults();
         v.check_routes();
@@ -2561,6 +2562,7 @@ mod edge;
 mod extensions;
 mod gateway;
 mod http2;
+mod http3;
 mod oidc;
 mod resumption;
 mod shaping;

@@ -163,6 +163,29 @@ fn sticky_key(data_dir: &Path) -> anyhow::Result<Vec<u8>> {
     }
 }
 
+/// The keys of HTTP/3 stateless resets and Retry tokens (ADR-0032): `$RDOCK_DATA_DIR/quic.key`
+/// (hex, created atomically on first start with mode 0600), so the next process (a restart or a
+/// binary upgrade) answers the previous one's QUIC connections with a stateless reset and
+/// accepts its Retry tokens.
+#[cfg(feature = "http3")]
+fn quic_keys(data_dir: &Path) -> anyhow::Result<rdock_proxy::http3::endpoint::QuicKeys> {
+    use rdock_proxy::http3::endpoint::QuicKeys;
+    let path = data_dir.join("quic.key");
+    match std::fs::read_to_string(&path) {
+        Ok(text) => QuicKeys::from_text(&text)
+            .map_err(|e| anyhow::anyhow!("the QUIC key file {}: {e}", path.display())),
+        Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
+            let keys = QuicKeys::random();
+            rdock_config::state::write_atomic(&path, keys.to_text().as_bytes())
+                .with_context(|| format!("writing the QUIC key file {}", path.display()))?;
+            Ok(keys)
+        }
+        Err(err) => {
+            Err(err).with_context(|| format!("reading the QUIC key file {}", path.display()))
+        }
+    }
+}
+
 /// The CLI's Unix socket when `admin.socket` is not set.
 pub(crate) fn socket_path(data_dir: &Path) -> PathBuf {
     data_dir.join("admin.sock")
@@ -201,6 +224,8 @@ fn data_plane(
     let plane = DataPlane::new(metrics, Runtime::empty())
         .with_sticky_key(sticky_key(data_dir)?)
         .with_plugins(plugins.clone());
+    #[cfg(feature = "http3")]
+    let plane = plane.with_quic_keys(quic_keys(data_dir)?);
     let spool = crate::datadir::spool_dir(data_dir);
     // Disk cache stores without a `path` live under `<data dir>/cache/<name>` (F-WEB-03).
     plane.set_cache_dir(data_dir.join("cache"));

@@ -1,5 +1,5 @@
 # Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker,
-# clients. semgrep, waf-example and wasm report only.
+# clients. semgrep, waf-example, wasm and http3 report only.
 name: ci
 
 on:
@@ -170,6 +170,33 @@ jobs:
           tool: just
       - name: Clippy, the example guest, WASM tests and MSRV with the feature
         run: just wasm
+
+  # HTTP/3 ingress (experimental, cargo feature `http3`, ADR-0032): not required, and kept out
+  # of the `rust` job so the default build and its time are unaffected. Clippy, the unit and
+  # end-to-end tests and the MSRV check with the feature, then curl over HTTP/3 from a pinned
+  # image against a running rdock. The h3i malformed-request suite is planned.
+  http3:
+    name: http3
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: http3
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: just
+      - name: Clippy, tests and MSRV with the feature
+        run: just http3
+      - name: curl over HTTP/3 against a running rdock
+        run: |
+          cargo build --locked -p rdock --features http3
+          scripts/http3-curl.sh
 
   deny:
     name: deny

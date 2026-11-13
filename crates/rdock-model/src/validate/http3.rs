@@ -1,0 +1,115 @@
+//! HTTP/3 settings of listeners (H-PERF-05, ADR-0032). Every value is bounded: the QUIC side has
+//! no `unlimited`.
+
+use super::{Validator, protocol_name};
+use crate::config::{Http3Congestion, ListenerHttp3, ListenerProtocol};
+use crate::diagnostics::{Diagnostic, path_key};
+
+/// `advertise_max_age` bounds: 1 s to 30 days.
+const MAX_AGE: (u64, u64) = (1, 30 * 86_400);
+/// `max_idle` bounds: 1 s to 10 minutes.
+const MAX_IDLE: (u64, u64) = (1, 600);
+/// `max_concurrent_streams` ceiling (the HTTP/2 ceiling, ADR-0031).
+const MAX_STREAMS: u32 = 10_000;
+/// `max_header_size` floor.
+const MIN_HEADER_SIZE: u64 = 1 << 10;
+/// `max_connections` ceiling.
+const MAX_CONNECTIONS: u32 = 1_000_000;
+
+impl Validator<'_> {
+    pub(super) fn check_http3(&mut self) {
+        for (name, listener) in &self.config.listeners {
+            let Some(h3) = &listener.http3 else { continue };
+            let base = format!("{}.http3", path_key("listeners", name));
+            let protocol = listener.effective_protocol();
+            if protocol != ListenerProtocol::Https {
+                self.push(
+                    Diagnostic::error(
+                        base.clone(),
+                        format!(
+                            "`http3` applies to `https` listeners only; this one is `{}`",
+                            protocol_name(protocol)
+                        ),
+                    )
+                    .with_hint("HTTP/3 always runs over TLS 1.3 inside QUIC"),
+                );
+                continue;
+            }
+            self.check_http3_values(&base, h3);
+            if !h3.enabled {
+                continue;
+            }
+            // The listener owns the UDP socket of its address: a `udp` listener there would
+            // take its datagrams.
+            for (other_name, other) in &self.config.listeners {
+                if other.effective_protocol() == ListenerProtocol::Udp
+                    && other.address.overlaps(&listener.address)
+                {
+                    self.push(
+                        Diagnostic::error(
+                            format!("{base}.enabled"),
+                            format!(
+                                "the UDP port of `{}` belongs to HTTP/3 here, but the `udp` listener `{other_name}` (`{}`) uses it",
+                                listener.address, other.address
+                            ),
+                        )
+                        .with_hint("move the `udp` listener to another port or turn HTTP/3 off"),
+                    );
+                }
+            }
+        }
+    }
+
+    fn check_http3_values(&mut self, base: &str, h3: &ListenerHttp3) {
+        let in_range = |value: u64, (min, max): (u64, u64)| (min..=max).contains(&value);
+        if !in_range(h3.advertise_max_age.as_std().as_secs(), MAX_AGE)
+            || h3.advertise_max_age.as_std().subsec_nanos() != 0
+        {
+            self.error(
+                format!("{base}.advertise_max_age"),
+                "must be whole seconds between 1s and 30d",
+            );
+        }
+        if h3.advertise_port == Some(0) {
+            self.error(format!("{base}.advertise_port"), "must be a port (1-65535)");
+        }
+        if !in_range(h3.max_idle.as_std().as_secs(), MAX_IDLE) {
+            self.error(format!("{base}.max_idle"), "must be between 1s and 10m");
+        }
+        if !(1..=MAX_STREAMS).contains(&h3.max_concurrent_streams) {
+            self.error(
+                format!("{base}.max_concurrent_streams"),
+                format!("must be between 1 and {MAX_STREAMS}"),
+            );
+        }
+        let ceiling = ListenerHttp3::MAX_HEADER_SIZE_CEILING.as_u64();
+        if !(MIN_HEADER_SIZE..=ceiling).contains(&h3.max_header_size.as_u64()) {
+            self.push(
+                Diagnostic::error(
+                    format!("{base}.max_header_size"),
+                    format!("must be between {MIN_HEADER_SIZE} and {ceiling} bytes"),
+                )
+                .with_hint("the header section of HTTP/3 requests is always bounded (ADR-0032)"),
+            );
+        }
+        if !(1..=MAX_CONNECTIONS).contains(&h3.max_connections) {
+            self.error(
+                format!("{base}.max_connections"),
+                format!("must be between 1 and {MAX_CONNECTIONS}"),
+            );
+        }
+        if h3.max_connections_per_client == 0 || h3.max_connections_per_client > h3.max_connections
+        {
+            self.error(
+                format!("{base}.max_connections_per_client"),
+                "must be between 1 and `max_connections`",
+            );
+        }
+        if h3.congestion == Http3Congestion::Bbr {
+            self.warning(
+                format!("{base}.congestion"),
+                "quinn 0.11 marks its BBR implementation experimental",
+            );
+        }
+    }
+}

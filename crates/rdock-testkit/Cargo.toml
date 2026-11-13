@@ -15,10 +15,13 @@ base64.workspace = true
 bytes.workspace = true
 futures-util = "0.3.34"
 h2.workspace = true
+h3 = { workspace = true, optional = true }
+h3-quinn = { workspace = true, optional = true }
 http.workspace = true
 http-body-util.workspace = true
 percent-encoding.workspace = true
 proxy-header.workspace = true
+quinn = { workspace = true, optional = true }
 hyper.workspace = true
 hyper-util.workspace = true
 rcgen = { workspace = true, features = ["x509-parser"] }
@@ -33,6 +36,10 @@ tokio-rustls.workspace = true
 tokio-tungstenite.workspace = true
 time.workspace = true
 x509-parser.workspace = true
+
+[features]
+# An HTTP/3 client on quinn and h3 for the `http3` end-to-end tests (ADR-0032).
+http3 = ["dep:quinn", "dep:h3", "dep:h3-quinn"]
 
 [lints]
 workspace = true

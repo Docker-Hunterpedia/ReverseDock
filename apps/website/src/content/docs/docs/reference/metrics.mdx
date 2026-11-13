@@ -133,6 +133,44 @@ valid ClientHello of at most 16 KiB), `denied` (`ip_allow`, `ip_deny`), `in_flig
 and `connect_failed`. Failed handshakes of terminating routes count in
 `rdock_tls_handshake_errors_total`.
 
+## HTTP/3 <Status planned="v0.9" />
+
+Only in builds with the experimental `http3` feature ([HTTP/3](/docs/guides/http3/)). Without
+it, or while no listener serves HTTP/3, these series do not appear.
+
+### `rdock_http3_connections_total`
+
+**Counter.** QUIC connections that completed their handshake. Label: `listener`.
+
+### `rdock_http3_connections`
+
+**Gauge.** Open QUIC connections. Label: `listener`.
+
+### `rdock_http3_retries_total`
+
+**Counter.** QUIC Retry packets sent (`retry: always`, or `auto` while 100 or more handshakes are
+in progress). Label: `listener`.
+
+### `rdock_http3_connections_closed_total`
+
+**Counter.** QUIC connections that ended or were refused. Labels: `listener` and `reason`: `idle`
+(`max_idle` passed), `client` (the client closed it), `drained` (GOAWAY sent, last request done),
+`limit` (`max_connections`), `client_limit` (`max_connections_per_client`), `handshake` (failed or
+not done within `timeouts.request_header`), `protocol` (a QUIC or HTTP/3 error) and `reset_flood`
+(too many streams reset by the client).
+
+### `rdock_http3_malformed_requests_total`
+
+**Counter.** HTTP/3 requests reset (or answered `431`) before reaching a route because their head
+was malformed. Labels: `listener` and `reason`: `qpack`, `too_large`, `pseudo_header`,
+`field_name`, `field_value`, `connection_specific`, `authority`, `content_length`, `connect` and
+`h3` (refused by the h3 crate after rdock's checks passed).
+
+### `rdock_http3_requests_total`
+
+**Counter.** HTTP/3 requests answered. Labels: `listener` and `status_class` (`1xx` … `5xx`).
+`rdock_http_requests_total` counts them too, without a protocol label.
+
 ## UDP routes
 
 <Status since="v0.8" /> Metrics of [UDP routes](/docs/guides/udp-routes/).

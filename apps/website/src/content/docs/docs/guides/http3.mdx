@@ -1,0 +1,158 @@
+---
+title: HTTP/3 (experimental)
+description: Serve HTTP/3 over QUIC on an HTTPS listener with quinn and h3, advertised with Alt-Svc, with bounded connections, streams and headers. Experimental, behind a build feature.
+sidebar:
+  order: 15
+  badge:
+    text: Experimental
+    variant: caution
+---
+
+import Status from '../../../../components/Status.astro';
+
+An `https` listener can also serve HTTP/3 <Status planned="v0.9" /> (experimental; only in builds
+made with `--features http3`, not in the release binaries or images) on the UDP port of its
+address. Requests that arrive over HTTP/3 go through the same routes, middlewares, cache, retries
+and access log as HTTP/1 and HTTP/2; backends are still reached over HTTP/1.1 or HTTP/2.
+
+:::caution[Experimental]
+HTTP/3 is experimental. It is only in builds made with the cargo feature `http3`; the stock binary
+and the release images do not include it. It rests on the `h3` crate, whose own README calls it
+"still very experimental", and on a Pingora API that is not public. The configuration keys may
+change in any release. It leaves "experimental" only after an `h3` release with the fixes still
+unreleased today, an interop run and a soak ([ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)).
+:::
+
+## Build ReverseDock with HTTP/3
+
+```sh
+cargo build --release --locked -p rdock --features http3
+./target/release/rdock version
+```
+
+`rdock version` then says `HTTP/3: quinn and h3 (experimental)`. The feature adds
+[quinn](https://github.com/quinn-rs/quinn) 0.11.12 and [h3](https://github.com/hyperium/h3) 0.0.8
+on the rustls configuration ReverseDock already uses (ring, no second TLS library): seven crates.
+A build without the feature refuses `http3.enabled: true`: `rdock run` stops with
+`this build does not include HTTP/3; build with --features http3`, and `rdock validate` reports
+the same as a warning.
+
+## Turn it on
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":443"
+    tls: {}
+    http3:
+      enabled: true
+```
+
+The listener then also owns UDP port 443 of its address; a `udp` listener on the same address is
+refused. Open the port in your firewall and publish it in containers (`-p 443:443/udp` next to
+`-p 443:443`). Clients find HTTP/3 through the `Alt-Svc: h3=":443"; ma=3600` header that the
+listener adds to its HTTP/1 and HTTP/2 answers while the QUIC endpoint serves (RFC 9114 §3.1.1).
+Browsers then use QUIC for the next connections; when UDP is blocked on the way, they stay on TCP.
+
+If something else holds the UDP port when ReverseDock starts (or reloads), HTTPS serves as usual,
+ReverseDock logs `cannot bind the UDP socket for HTTP/3` once, sends no `Alt-Svc`, and tries again
+every 250 ms until the port is free.
+
+## Settings
+
+| Setting | Default | Bounds | What it does |
+|---|---|---|---|
+| `enabled` | `false` | | Serve HTTP/3 on the UDP port of the listener's address |
+| `advertise` | `true` | | Add `Alt-Svc` to this listener's HTTP/1 and HTTP/2 answers |
+| `advertise_max_age` | `1h` | 1s to 30d, whole seconds | `ma` of `Alt-Svc` (RFC 7838's default is 24 hours; shorter while experimental) |
+| `advertise_port` | the listener's port | 1–65535 | The port to advertise when it differs, e.g. public 443 mapped to container 8443 |
+| `retry` | `auto` | `auto`, `always`, `never` | When clients must prove their address with a QUIC Retry first; `auto` from 100 handshakes in progress (HAProxy's `tune.quic.retry-threshold`) |
+| `max_idle` | `30s` | 1s to 10m | Close a connection idle this long |
+| `max_concurrent_streams` | `100` | 1–10,000 | Requests a connection may have open at once |
+| `max_header_size` | `64KiB` | 1KiB to 1MiB | Largest request header section (name + value + 32 bytes per field); larger is answered `431` |
+| `max_connections` | `10000` | 1–1,000,000 | QUIC connections the listener holds |
+| `max_connections_per_client` | `100` | 1 to `max_connections` | QUIC connections one client address holds |
+| `congestion` | `cubic` | `cubic`, `newreno`, `bbr` | Congestion controller (`bbr` warns: quinn marks it experimental) |
+| `gso` | `true` | | UDP segmentation offload where the kernel supports it |
+
+```yaml title="rdock.yaml (excerpt)"
+listeners:
+  websecure:
+    address: ":8443"
+    tls: {}
+    http3:
+      enabled: true
+      advertise_port: 443        # the container's 8443 is published as 443
+      retry: always              # every new client proves its address first
+      max_connections_per_client: 20
+```
+
+A reload that changes these settings applies them to new connections. Turning HTTP/3 off,
+removing the listener or moving it stops the QUIC side: every connection gets a GOAWAY, requests
+in flight may finish for the reload's drain time but at most 10 seconds, then the endpoint closes.
+QUIC connections do not survive a [binary upgrade](/docs/guides/upgrades/): the old process stops
+its QUIC side the same way and the new one starts serving HTTP/3 once the port is free. The keys
+that sign stateless resets and Retry tokens are kept in `quic.key` in the data directory, so the
+next process ends the old process's connections at once instead of letting them time out.
+
+## What ReverseDock checks before a request reaches a route
+
+The `h3` crate leaves the rules for intermediaries to its user, so ReverseDock decodes and checks
+every request head itself and never forwards a malformed one:
+
+- pseudo-header fields: only `:method`, `:scheme` (`https`), `:authority` and `:path`, each once,
+  before the other fields; `:status`, `:protocol` and unknown ones are refused, so is `CONNECT`;
+- field names in lowercase token characters; values without NUL, CR, LF or other control
+  characters (except tab) and without surrounding spaces;
+- no `connection`, `keep-alive`, `proxy-connection`, `transfer-encoding` or `upgrade` field, and
+  `te` only as `trailers`;
+- `:authority` or `host` present and equal when both are, no user information, a valid port;
+- a `content-length` that matches the body actually sent.
+
+A malformed request is reset with `H3_MESSAGE_ERROR` (`431` when the head is too large) and
+counted in `rdock_http3_malformed_requests_total{reason}`.
+
+## Limits that always hold
+
+- Connections: `max_connections` and `max_connections_per_client`, checked before any handshake
+  work; the handshake must finish within the listener's `timeouts.request_header`; before a
+  client's address is validated, QUIC sends at most three times what it received (RFC 9000 §8.1).
+- Streams: `max_concurrent_streams` requests at once; the request head must arrive within
+  `timeouts.request_header`; a client that resets (or sends malformed) more than
+  `max(100, max_concurrent_streams)` streams within 10 seconds loses the connection with
+  `H3_EXCESSIVE_LOAD`.
+- Bodies: the listener's `timeouts.read` between pieces of a request body and, after the first
+  `timeouts.read`, at least 1 KiB/s on average, so a trickling upload cannot hold a backend
+  connection.
+- Headers: decoded with the static QPACK table only (no dynamic table), within `max_header_size`.
+
+## Not supported yet
+
+These are refused with "planned for a later version" by `rdock run` (and reported by `rdock
+validate`):
+
+- HTTP/3 to backends (`scheme: h3` on a service): Pingora has no QUIC connector;
+- 0-RTT early data (`early_data`): it can be replayed; it is also off in the TLS configuration;
+- active connection migration (`migration`); a client behind a NAT that changes its port keeps
+  working;
+- HTTP/3 datagrams (`datagrams`), WebTransport (`webtransport`), and extended CONNECT
+  (`extended_connect`), which WebSocket over HTTP/3 and CONNECT-UDP need;
+- qlog traces (`qlog`);
+- `proxy_protocol` on a listener with HTTP/3 (QUIC packets carry no PROXY header);
+- `tls.fingerprint` on a listener with HTTP/3 (no ClientHello is read for QUIC connections, so a
+  fingerprint rule could be bypassed).
+
+Server push is never sent, and the Kubernetes provider does not turn HTTP/3 on (the Gateway API has
+no HTTP/3 listener protocol). Request trailers sent by an HTTP/3 client are dropped; response
+trailers, such as a gRPC status from an h2c backend, are passed on.
+
+## Watch it
+
+The access log says `"proto": "HTTP/3"` for these requests, with the SNI and `"tls_version":
+"TLSv1.3"` (`tls_cipher` reads `unknown`: quinn does not expose it). The
+[metrics](/docs/reference/metrics/#http3) `rdock_http3_connections_total`,
+`rdock_http3_connections`, `rdock_http3_retries_total`,
+`rdock_http3_connections_closed_total{reason}`, `rdock_http3_malformed_requests_total{reason}` and
+`rdock_http3_requests_total{status_class}` count connections, Retry packets, why connections ended,
+refused requests and answers. Each listener that starts serving HTTP/3 logs one warning that it is
+experimental.

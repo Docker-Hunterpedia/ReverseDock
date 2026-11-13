@@ -59,6 +59,10 @@ pub struct Shared {
     /// start of the handover: the new process owns the cache directories from then on (its
     /// start-up walk removes unfinished files) and the old one only drains.
     pub cache_bypass: std::sync::atomic::AtomicBool,
+    /// The `Alt-Svc` value of each listener whose HTTP/3 endpoint serves and advertises
+    /// (ADR-0032), added to its HTTP/1 and HTTP/2 responses.
+    #[cfg(feature = "http3")]
+    pub alt_svc: ArcSwap<std::collections::HashMap<Arc<str>, HeaderValue>>,
 }
 
 /// One request counted in [`Shared::in_flight`] until dropped.
@@ -98,6 +102,35 @@ pub struct RdockProxy {
 }
 
 impl RdockProxy {
+    /// Adds this listener's HTTP/3 advertisement (`Alt-Svc`, RFC 9114 §3.1.1) to an HTTP/1 or
+    /// HTTP/2 response while its QUIC endpoint serves with `advertise` on (ADR-0032). It
+    /// replaces a backend's `Alt-Svc`: clients reach the proxy, not the backend.
+    #[cfg(feature = "http3")]
+    fn advertise_http3(&self, session: &Session, resp: &mut ResponseHeader) {
+        if is_http3(session) {
+            return;
+        }
+        if let Some(value) = self.shared.alt_svc.load().get(&self.listener) {
+            let _ = resp.insert_header(http::header::ALT_SVC, value.clone());
+        }
+    }
+
+    /// Counts an answered HTTP/3 request in `rdock_http3_requests_total`.
+    fn count_http3(&self, session: &Session, status: u16) {
+        if is_http3(session) {
+            self.shared
+                .metrics
+                .http3_requests
+                .with_label_values(&[&*self.listener, rdock_observability::status_class(status)])
+                .inc();
+        }
+    }
+
+    /// Without the `http3` feature there is nothing to advertise.
+    #[cfg(not(feature = "http3"))]
+    #[allow(clippy::unused_self)]
+    fn advertise_http3(&self, _session: &Session, _resp: &mut ResponseHeader) {}
+
     /// Per-backend answer counts and time to response headers (M-OBS-02). Label values come
     /// from the configuration and resolved addresses, so their number stays bounded.
     fn observe_backend(&self, service: &ServiceRuntime, ctx: &RequestCtx, status: u16) {
@@ -587,6 +620,7 @@ impl RdockProxy {
             .and_then(|cx| cx.replace_body.take())
             .map_or(body, Body::Bytes);
         resp.insert_header("x-request-id", ctx.request_id())?;
+        self.advertise_http3(session, &mut resp);
         let head = session.req_header().method == http::Method::HEAD;
         let compressed = ctx.mw.as_ref().is_some_and(|cx| cx.compression.is_some());
         if compressed && !head && session.req_header().version == Version::HTTP_11 {
@@ -774,10 +808,8 @@ impl RdockProxy {
                 })
         };
         let ssl = session.digest().and_then(|d| d.ssl_digest.clone());
-        let fingerprint = ssl
-            .as_ref()
-            .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-            .and_then(|h| h.fingerprint.get().cloned());
+        let tls_facts = handshake(session);
+        let fingerprint = tls_facts.and_then(|h| h.fingerprint.get().cloned());
         let wanted = ctx.runtime.geoip_log;
         let geo = (wanted.country || wanted.asn)
             .then(|| Some(ctx.runtime.geoip.as_ref()?.lookup(ctx.client_ip?)))
@@ -797,6 +829,8 @@ impl RdockProxy {
             query_len: ctx.query_len,
             proto: if session.is_http2() {
                 "HTTP/2".into()
+            } else if is_http3(session) {
+                "HTTP/3".into()
             } else {
                 format!("{:?}", req.version)
             },
@@ -818,10 +852,7 @@ impl RdockProxy {
             },
             tls_version: ssl.as_ref().map(|s| s.version.to_string()),
             tls_cipher: ssl.as_ref().map(|s| s.cipher.to_string()),
-            sni: ssl
-                .as_ref()
-                .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-                .and_then(|h| h.sni.clone()),
+            sni: tls_facts.and_then(|h| h.sni.clone()),
             user: ctx.mw.as_ref().and_then(|cx| cx.user.clone()),
             consumer: ctx
                 .mw
@@ -1010,9 +1041,7 @@ impl ProxyHttp for RdockProxy {
         let fingerprint = listener
             .fingerprint
             .as_ref()
-            .and_then(|_| session.digest())
-            .and_then(|d| d.ssl_digest.as_ref())
-            .and_then(|s| s.extension.get::<crate::listener::Handshake>())
+            .and_then(|_| handshake(session))
             .and_then(|h| h.fingerprint.get().cloned());
         let route = {
             let req = session.req_header();
@@ -1447,6 +1476,7 @@ impl ProxyHttp for RdockProxy {
         if !upstream_response.headers.contains_key("x-request-id") {
             upstream_response.insert_header("x-request-id", ctx.request_id())?;
         }
+        self.advertise_http3(session, upstream_response);
         Ok(())
     }
 
@@ -1671,6 +1701,7 @@ impl ProxyHttp for RdockProxy {
                 }
                 let _ = resp.insert_header(http::header::CACHE_CONTROL, "no-store");
                 let _ = resp.insert_header("x-request-id", ctx.request_id());
+                self.advertise_http3(session, &mut resp);
                 if let Some(cc) = ctx.cache.as_mut() {
                     crate::cache::decorate(session, &mut resp, cc);
                 }
@@ -1709,6 +1740,7 @@ impl ProxyHttp for RdockProxy {
         if let Some(mut trace) = ctx.trace.take() {
             trace.finish(status);
         }
+        self.count_http3(session, status);
         let route = ctx.route.as_ref();
         let route_name = route.map_or("", |r| &*r.name);
         let service = ctx.service.clone();
@@ -1806,11 +1838,34 @@ fn client_identity(session: &mut Session) -> Option<Arc<rdock_middleware::Client
     for name in rdock_middleware::IDENTITY_HEADERS {
         session.req_header_mut().remove_header(name);
     }
+    handshake(session).and_then(|h| h.client_cert.clone())
+}
+
+/// What the TLS handshake of the connection established: from Pingora's TLS digest for HTTP/1
+/// and HTTP/2, from the request's extensions for HTTP/3, whose custom session cannot carry our
+/// value in the digest (`SslDigestExtension::set` is crate-private in Pingora 0.9.1).
+fn handshake(session: &Session) -> Option<&crate::listener::Handshake> {
     session
         .digest()
         .and_then(|d| d.ssl_digest.as_ref())
         .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-        .and_then(|h| h.client_cert.clone())
+        .or_else(|| {
+            session
+                .is_custom()
+                .then(|| {
+                    session
+                        .req_header()
+                        .extensions
+                        .get::<Arc<crate::listener::Handshake>>()
+                })
+                .flatten()
+                .map(AsRef::as_ref)
+        })
+}
+
+/// Whether the request came over HTTP/3 (an `https` listener's QUIC side, ADR-0032).
+fn is_http3(session: &Session) -> bool {
+    session.is_custom() && session.req_header().version == Version::HTTP_3
 }
 
 /// The TLS client fingerprints of the connection. The listener's fingerprint headers are
@@ -1820,11 +1875,7 @@ fn connection_fingerprint(
     listener: Option<&ListenerRuntime>,
 ) -> Option<Arc<rdock_middleware::ClientFingerprint>> {
     let wanted = listener.and_then(|l| l.fingerprint.as_ref())?;
-    let found = session
-        .digest()
-        .and_then(|d| d.ssl_digest.as_ref())
-        .and_then(|s| s.extension.get::<crate::listener::Handshake>())
-        .and_then(|h| h.fingerprint.get().cloned());
+    let found = handshake(session).and_then(|h| h.fingerprint.get().cloned());
     let req = session.req_header_mut();
     for (header, value) in [
         (&wanted.header, found.as_ref().and_then(|f| f.ja4.clone())),
@@ -2166,7 +2217,7 @@ pub(crate) fn backend_authority(
         Candidate::Tcp { host, addr } => {
             let default = matches!(
                 (scheme, addr.port()),
-                (Scheme::Https, 443) | (Scheme::Http | Scheme::H2c, 80)
+                (Scheme::Https | Scheme::H3, 443) | (Scheme::Http | Scheme::H2c, 80)
             );
             if default {
                 host.clone()

@@ -69,6 +69,20 @@ struct State {
     /// since the sessions' replies leave from it, until the drain ends or a later reload needs
     /// the port for another `udp` listener (their sessions then end at once).
     draining: Vec<Stopping>,
+    /// The HTTP/3 sides of `https` listeners with `http3.enabled`, by listener name.
+    #[cfg(feature = "http3")]
+    http3: BTreeMap<String, Http3Entry>,
+}
+
+/// A running HTTP/3 side and what it was last configured with.
+#[cfg(feature = "http3")]
+struct Http3Entry {
+    side: crate::http3::endpoint::Side,
+    applied: (
+        ListenerTls,
+        rdock_model::config::ListenerHttp3,
+        rdock_model::config::ListenerTimeouts,
+    ),
 }
 
 /// Sockets and acceptors made ready before a configuration is published.
@@ -122,6 +136,9 @@ pub struct DataPlane {
     inherited: std::sync::Mutex<Vec<InheritedSocket>>,
     /// Quota counters are not written while another process is the writer (binary upgrade).
     quota_writes_paused: Arc<std::sync::atomic::AtomicBool>,
+    /// The keys of HTTP/3 stateless resets and Retry tokens (ADR-0032).
+    #[cfg(feature = "http3")]
+    quic_keys: Arc<crate::http3::endpoint::QuicKeys>,
 }
 
 /// A listening socket received from the previous process (binary upgrade).
@@ -181,6 +198,8 @@ impl DataPlane {
                 accepting: tokio::sync::watch::Sender::new(true),
                 open_connections: std::sync::atomic::AtomicU64::new(0),
                 cache_bypass: std::sync::atomic::AtomicBool::new(false),
+                #[cfg(feature = "http3")]
+                alt_svc: ArcSwap::default(),
             }),
             resolver,
             dns: Arc::new(Dns::default()),
@@ -198,12 +217,25 @@ impl DataPlane {
             state: Mutex::new(State {
                 running: BTreeMap::new(),
                 draining: Vec::new(),
+                #[cfg(feature = "http3")]
+                http3: BTreeMap::new(),
             }),
             generation: AtomicU64::new(0),
             tickets: Arc::default(),
             inherited: std::sync::Mutex::new(Vec::new()),
             quota_writes_paused: Arc::default(),
+            #[cfg(feature = "http3")]
+            quic_keys: Arc::new(crate::http3::endpoint::QuicKeys::random()),
         }
+    }
+
+    /// Signs HTTP/3 stateless resets and Retry tokens with `keys` (from the data directory)
+    /// instead of keys that live only as long as the process (ADR-0032).
+    #[cfg(feature = "http3")]
+    #[must_use]
+    pub fn with_quic_keys(mut self, keys: crate::http3::endpoint::QuicKeys) -> Self {
+        self.quic_keys = Arc::new(keys);
+        self
     }
 
     /// Sockets handed over by the previous process; the next `apply` gives each to the listener
@@ -492,6 +524,8 @@ impl DataPlane {
         take_over(&mut state, &mut prepared, &runtime, drain).await?;
         let wanted = self.publish(runtime);
         let stopping = self.reconcile(&mut state, wanted, prepared);
+        #[cfg(feature = "http3")]
+        self.sync_http3(&mut state, drain);
         for old in stopping {
             let mut old = old.stop(drain);
             if old.udp {
@@ -734,6 +768,76 @@ impl DataPlane {
         stopping
     }
 
+    /// Starts, updates and stops the HTTP/3 sides to match the served configuration. A side
+    /// that stops sends GOAWAY and drains in the background; one that starts on an address a
+    /// stopping side still holds binds once it is free.
+    #[cfg(feature = "http3")]
+    fn sync_http3(&self, state: &mut State, drain: Duration) {
+        use crate::http3::endpoint::{Side, SideConfig};
+        let runtime = self.runtime();
+        let wanted = |name: &str| {
+            let l = runtime.listeners.get(name)?;
+            let running = &state.running.get(name)?.0;
+            (l.http3.is_some() && l.tls.is_some() && running.address == l.address).then_some(l)
+        };
+        let gone: Vec<String> = state
+            .http3
+            .iter()
+            .filter(|(name, entry)| wanted(name).is_none_or(|l| l.address != entry.side.address))
+            .map(|(name, _)| name.clone())
+            .collect();
+        for name in gone {
+            if let Some(entry) = state.http3.remove(&name) {
+                tracing::info!(listener = %name, "stopping HTTP/3: GOAWAY, then drain");
+                drop(entry.side.stop(drain));
+            }
+        }
+        for (name, l) in &runtime.listeners {
+            let (Some(h3), Some(tls)) = (&l.http3, &l.tls) else {
+                continue;
+            };
+            let Some(engine) = state.running.get(name).and_then(|(r, _)| r.engine()) else {
+                continue;
+            };
+            let applied = (tls.clone(), h3.clone(), l.timeouts);
+            if state.http3.get(name).is_some_and(|e| e.applied == applied) {
+                continue;
+            }
+            let config = match crate::listener::quic_tls(
+                tls,
+                self.resolver.for_listener(name),
+                &self.tickets,
+            ) {
+                Ok(tls) => SideConfig {
+                    settings: h3.clone(),
+                    tls,
+                    timeouts: l.timeouts,
+                },
+                Err(err) => {
+                    tracing::error!(listener = %name, error = %err, "cannot build the TLS configuration of HTTP/3");
+                    continue;
+                }
+            };
+            if let Some(entry) = state.http3.get_mut(name) {
+                entry.side.update(config);
+                entry.applied = applied;
+                continue;
+            }
+            tracing::warn!(listener = %name, "HTTP/3 is experimental (ADR-0032)");
+            let side = Side::start(
+                Arc::from(name.as_str()),
+                l.address,
+                config,
+                self.quic_keys.clone(),
+                engine,
+                self.shared.clone(),
+            );
+            state
+                .http3
+                .insert(name.clone(), Http3Entry { side, applied });
+        }
+    }
+
     /// Keeps backend names resolved until `stop` fires.
     pub async fn refresh_dns(&self, mut stop: tokio::sync::watch::Receiver<bool>) {
         loop {
@@ -753,6 +857,14 @@ impl DataPlane {
     /// to `udp_drain`. With `flush_quotas`, the quota counters are written at the end (not when
     /// another process has taken over as their writer).
     pub async fn stop_listeners(&self, drain: Duration, udp_drain: Duration, flush_quotas: bool) {
+        #[cfg(feature = "http3")]
+        let sides: Vec<_> = {
+            let mut state = self.state.lock().await;
+            std::mem::take(&mut state.http3)
+                .into_values()
+                .map(|e| e.side.stop(drain))
+                .collect()
+        };
         let (running, draining): (Vec<Running>, Vec<Stopping>) = {
             let mut state = self.state.lock().await;
             (
@@ -764,6 +876,12 @@ impl DataPlane {
             )
         };
         let mut tasks = tokio::task::JoinSet::new();
+        #[cfg(feature = "http3")]
+        for side in sides {
+            tasks.spawn(async move {
+                let _ = side.await;
+            });
+        }
         for listener in running {
             let drain = if listener.udp { udp_drain } else { drain };
             tasks.spawn(listener.stop(drain).finished());

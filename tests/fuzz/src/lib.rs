@@ -274,6 +274,68 @@ pub fn json_patch(data: &[u8]) {
     }
 }
 
+/// The HTTP/3 request mapping (ADR-0032) on arbitrary HEADERS payloads: decoding and validation
+/// never panic; a section that decodes re-encodes to the same fields; and a request that passes
+/// is forwarded as exactly one HTTP/1.1 request head that an independent parser reads back with
+/// the same method, target and fields (no smuggling through the HTTP/3 to HTTP/1 translation).
+pub fn http3_request(data: &[u8]) {
+    use rdock_proxy::http3::request::{FIELD_OVERHEAD, decode, encode, map};
+    const LIMIT: u64 = 64 * 1024;
+    if let Ok(fields) = decode(data, LIMIT) {
+        let pairs: Vec<(&[u8], &[u8])> = fields
+            .iter()
+            .map(|f| (f.name.as_ref(), f.value.as_ref()))
+            .collect();
+        let again = decode(&encode::section(&pairs), LIMIT).expect("a decoded section re-encodes");
+        assert_eq!(again, fields, "decode . encode . decode is decode");
+        let size: u64 = fields
+            .iter()
+            .map(|f| f.name.len() as u64 + f.value.len() as u64 + FIELD_OVERHEAD)
+            .sum();
+        assert!(size <= LIMIT, "the limit holds");
+    }
+    let Ok(mapped) = map(data, LIMIT) else {
+        return;
+    };
+    let req = &mapped.header;
+    assert_eq!(req.version, http::Version::HTTP_3);
+    assert_ne!(req.method, http::Method::CONNECT);
+    let host = req.headers.get("host").expect("a mapped request has a host");
+    assert!(!host.as_bytes().contains(&b'@'));
+    for name in [
+        "connection",
+        "keep-alive",
+        "proxy-connection",
+        "transfer-encoding",
+        "upgrade",
+    ] {
+        assert!(!req.headers.contains_key(name), "{name} passed");
+    }
+    assert!(req.headers.get_all("cookie").iter().count() <= 1);
+    assert!(req.headers.get_all("content-length").iter().count() <= 1);
+    let mut wire = Vec::new();
+    wire.extend_from_slice(req.method.as_str().as_bytes());
+    wire.push(b' ');
+    wire.extend_from_slice(req.raw_path());
+    wire.extend_from_slice(b" HTTP/1.1\r\n");
+    let mut headers = bytes::BytesMut::new();
+    req.header_to_h1_wire(&mut headers);
+    wire.extend_from_slice(&headers);
+    wire.extend_from_slice(b"\r\n");
+    let mut slots = [httparse::EMPTY_HEADER; 4096];
+    let mut parsed = httparse::Request::new(&mut slots);
+    let status = parsed.parse(&wire).unwrap_or_else(|e| {
+        panic!(
+            "the forwarded head does not parse ({e}): {:?}",
+            String::from_utf8_lossy(&wire)
+        )
+    });
+    assert_eq!(status, httparse::Status::Complete(wire.len()), "one complete head");
+    assert_eq!(parsed.method, Some(req.method.as_str()));
+    assert_eq!(parsed.path.map(str::as_bytes), Some(req.raw_path()));
+    assert_eq!(parsed.headers.len(), req.headers.len(), "no field split or lost");
+}
+
 #[cfg(test)]
 mod tests {
     use std::path::Path;
@@ -290,6 +352,50 @@ mod tests {
             .iter()
             .map(|f| std::fs::read(f).expect("seed"))
             .collect()
+    }
+
+    #[test]
+    fn http3_request_seeds() {
+        let all = seeds("http3_request");
+        assert!(all.len() >= 5, "seed corpus present");
+        for seed in all {
+            assert!(
+                rdock_proxy::http3::request::map(&seed, 64 * 1024).is_ok(),
+                "every seed is a valid request head"
+            );
+            for cut in 0..=seed.len() {
+                super::http3_request(&seed[..cut]);
+            }
+        }
+    }
+
+    /// A deterministic mutation smoke run on stable (the real fuzzing needs nightly).
+    #[test]
+    fn http3_request_mutations() {
+        let mut state: u64 = 0x9e37_79b9_7f4a_7c15;
+        let mut next = move || {
+            state ^= state << 13;
+            state ^= state >> 7;
+            state ^= state << 17;
+            state
+        };
+        for seed in seeds("http3_request") {
+            for _ in 0..5_000 {
+                let mut data = seed.clone();
+                for _ in 0..=(next() % 4) {
+                    let at = usize::try_from(next()).unwrap_or(0) % (data.len() + 1);
+                    match next() % 3 {
+                        0 if at < data.len() => data[at] = u8::try_from(next() & 0xff).unwrap_or(0),
+                        1 => data.insert(at, u8::try_from(next() & 0xff).unwrap_or(0)),
+                        _ if at < data.len() => {
+                            data.remove(at);
+                        }
+                        _ => {}
+                    }
+                }
+                super::http3_request(&data);
+            }
+        }
     }
 
     #[test]

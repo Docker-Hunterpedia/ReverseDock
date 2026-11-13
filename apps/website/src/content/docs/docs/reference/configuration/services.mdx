@@ -442,13 +442,18 @@ Also retry non-idempotent methods such as POST. Only safe if backends are idempo
 
 ## `services.<name>.scheme`
 
-**Type:** `http` · `https` · `h2c` · **Default:** `http`
+**Type:** `http` · `https` · `h2c` · `h3` · **Default:** `http`
 
 Protocol spoken to the backends. gRPC uses `h2c` (cleartext) or `https`.
 
 - `http`: HTTP/1.1 in cleartext.
 - `https`: HTTP/1.1 or HTTP/2 over TLS.
 - `h2c`: HTTP/2 in cleartext (gRPC without TLS).
+- `h3`: HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no QUIC connector.
+
+:::note[Planned for a later version]
+HTTP/3 to backends (scheme: h3): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
 
 ## `services.<name>.split`
 

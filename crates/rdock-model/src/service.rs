@@ -194,6 +194,9 @@ pub enum Scheme {
     Https,
     /// HTTP/2 in cleartext (gRPC without TLS).
     H2c,
+    /// HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no
+    /// QUIC connector.
+    H3,
 }
 
 /// Backend selection.

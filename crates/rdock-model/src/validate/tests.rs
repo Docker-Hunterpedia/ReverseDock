@@ -2970,3 +2970,88 @@ fn tenant_prefixes_and_claims_may_not_overlap() {
     );
     assert!(has(&found, "tenants.c.hosts[1]", "A-label"), "{found:?}");
 }
+
+#[test]
+fn http3_values_are_bounded_and_need_an_https_listener() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "a": { "address": ":443", "tls": {}, "http3": {
+                "enabled": true,
+                "advertise_max_age": "0s",
+                "advertise_port": 0,
+                "max_idle": "1h",
+                "max_concurrent_streams": 0,
+                "max_header_size": "2MiB",
+                "max_connections": 10,
+                "max_connections_per_client": 11,
+                "congestion": "bbr"
+            } },
+            "b": { "address": ":80", "http3": { "enabled": true } },
+            "c": { "address": ":8443", "tls": {}, "http3": { "max_header_size": "512B", "max_connections": 0 } }
+        }}),
+    );
+    let found = errors(config.clone());
+    for (path, fragment) in [
+        ("listeners.a.http3.advertise_max_age", "between 1s and 30d"),
+        ("listeners.a.http3.advertise_port", "1-65535"),
+        ("listeners.a.http3.max_idle", "between 1s and 10m"),
+        (
+            "listeners.a.http3.max_concurrent_streams",
+            "between 1 and 10000",
+        ),
+        (
+            "listeners.a.http3.max_header_size",
+            "between 1024 and 1048576",
+        ),
+        (
+            "listeners.a.http3.max_connections_per_client",
+            "`max_connections`",
+        ),
+        ("listeners.b.http3", "`https` listeners only"),
+        (
+            "listeners.c.http3.max_header_size",
+            "between 1024 and 1048576",
+        ),
+        ("listeners.c.http3.max_connections", "between 1 and 1000000"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    assert!(has(
+        &warnings(config),
+        "listeners.a.http3.congestion",
+        "experimental"
+    ));
+}
+
+#[test]
+fn http3_owns_the_udp_port_of_its_address() {
+    let config = with(
+        app(),
+        json!({ "listeners": {
+            "web": { "address": ":443", "tls": {}, "http3": { "enabled": true } },
+            "dns": { "address": ":443", "protocol": "udp" }
+        }}),
+    );
+    assert!(has(
+        &errors(config),
+        "listeners.web.http3.enabled",
+        "the `udp` listener `dns`"
+    ));
+    // Off, the `udp` listener keeps the port (as before v0.9).
+    let off = with(
+        app(),
+        json!({ "listeners": {
+            "web": { "address": ":443", "tls": {}, "http3": { "enabled": false } },
+            "dns": { "address": ":443", "protocol": "udp" }
+        }}),
+    );
+    assert!(!errors(off).iter().any(|(p, _)| p.contains("http3")));
+    // The defaults are valid.
+    let defaults = with(
+        app(),
+        json!({ "listeners": { "websecure": { "address": ":443", "tls": {}, "http3": { "enabled": true } }, "web": { "address": ":80" } } }),
+    );
+    assert_eq!(errors(defaults.clone()), Vec::<(String, String)>::new());
+    assert_eq!(warnings(defaults), Vec::<(String, String)>::new());
+}

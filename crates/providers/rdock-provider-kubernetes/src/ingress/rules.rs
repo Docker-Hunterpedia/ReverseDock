@@ -571,6 +571,7 @@ fn backend(
         Scheme::Http => "http",
         Scheme::Https => "https",
         Scheme::H2c => "h2c",
+        Scheme::H3 => "h3",
     };
     let name = object_name(
         "isvc",

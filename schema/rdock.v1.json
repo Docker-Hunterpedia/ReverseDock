@@ -3116,6 +3116,46 @@
         "max_age"
       ]
     },
+    "Http3Congestion": {
+      "description": "QUIC congestion controllers (quinn 0.11).",
+      "oneOf": [
+        {
+          "description": "CUBIC (RFC 9438).",
+          "type": "string",
+          "const": "cubic"
+        },
+        {
+          "description": "`NewReno` (RFC 9002 §7).",
+          "type": "string",
+          "const": "newreno"
+        },
+        {
+          "description": "BBR; quinn marks its implementation experimental.",
+          "type": "string",
+          "const": "bbr"
+        }
+      ]
+    },
+    "Http3Retry": {
+      "description": "When an HTTP/3 listener sends QUIC Retry packets.",
+      "oneOf": [
+        {
+          "description": "While 100 or more connections are half-open.",
+          "type": "string",
+          "const": "auto"
+        },
+        {
+          "description": "For every new connection without a valid token.",
+          "type": "string",
+          "const": "always"
+        },
+        {
+          "description": "Never.",
+          "type": "string",
+          "const": "never"
+        }
+      ]
+    },
     "HttpUrl": {
       "type": "string",
       "format": "uri",
@@ -3698,6 +3738,17 @@
             }
           ]
         },
+        "http3": {
+          "description": "HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):\nthe listener then also owns the UDP socket of its address. Needs a build with the\n`http3` cargo feature; off by default.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ListenerHttp3"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "ping": {
           "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
           "type": [
@@ -3886,6 +3937,119 @@
               "type": "null"
             }
           ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "ListenerHttp3": {
+      "description": "HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;\nnothing is unlimited.",
+      "type": "object",
+      "properties": {
+        "advertise": {
+          "description": "Add `Alt-Svc: h3=\":<port>\"` to this listener's HTTP/1 and HTTP/2 responses while the\nQUIC endpoint serves (RFC 9114 §3.1.1). Default `true`.",
+          "type": "boolean",
+          "default": true
+        },
+        "advertise_max_age": {
+          "description": "How long clients may remember the advertisement (`ma`). Default 1h (RFC 7838's default\nis 24h; shorter while experimental); 1s to 30d.",
+          "$ref": "#/$defs/Duration",
+          "default": "1h"
+        },
+        "advertise_port": {
+          "description": "The UDP port to advertise when it differs from the listener's (a port mapping such as\npublic 443 to container 8443). Default: the listener's port.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint16",
+          "maximum": 65535,
+          "minimum": 0
+        },
+        "congestion": {
+          "description": "Congestion controller. Default `cubic`.",
+          "$ref": "#/$defs/Http3Congestion",
+          "default": "cubic"
+        },
+        "datagrams": {
+          "description": "HTTP/3 datagrams (RFC 9297). Not supported (planned).",
+          "type": "boolean",
+          "default": false
+        },
+        "early_data": {
+          "description": "Accept 0-RTT early data. Not supported (planned): early data can be replayed.",
+          "type": "boolean",
+          "default": false
+        },
+        "enabled": {
+          "description": "Serve HTTP/3 on the UDP port of the listener's address. Default `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "extended_connect": {
+          "description": "Extended CONNECT (RFC 9220 WebSocket over HTTP/3, RFC 9298 CONNECT-UDP). Not supported\n(planned).",
+          "type": "boolean",
+          "default": false
+        },
+        "gso": {
+          "description": "UDP generic segmentation offload where the kernel supports it. Default `true`.",
+          "type": "boolean",
+          "default": true
+        },
+        "max_concurrent_streams": {
+          "description": "Request streams a client may have open at once per connection\n(`initial_max_streams_bidi`). Default 100; 1 to 10000.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_connections": {
+          "description": "QUIC connections the listener holds at once. Default 10000; 1 to 1000000.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 10000,
+          "minimum": 0
+        },
+        "max_connections_per_client": {
+          "description": "QUIC connections one client address holds at once. Default 100; 1 to `max_connections`.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "max_header_size": {
+          "description": "Largest request header section (`SETTINGS_MAX_FIELD_SECTION_SIZE`, counted as RFC 9114\n§4.2.2 does: name + value + 32 bytes per field). Default 64KiB; 1KiB to 1MiB.",
+          "$ref": "#/$defs/ByteSize",
+          "default": "64KiB"
+        },
+        "max_idle": {
+          "description": "Close a connection with no activity for this long (QUIC `max_idle_timeout`). Default\n30s (HAProxy's); 1s to 10m.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        },
+        "migration": {
+          "description": "Let clients move a connection to another address (active migration). Not supported\n(planned); NAT rebinding is handled either way.",
+          "type": "boolean",
+          "default": false
+        },
+        "qlog": {
+          "description": "Write qlog traces into this directory. Not supported in this version (planned).",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "retry": {
+          "description": "When to make clients prove their address with a QUIC Retry before any handshake work\n(RFC 9000 §8.1.2). `auto` (default) sends Retry while 100 or more connections are\nhalf-open (HAProxy's `tune.quic.retry-threshold`); `always`; `never`.",
+          "$ref": "#/$defs/Http3Retry",
+          "default": "auto"
+        },
+        "webtransport": {
+          "description": "WebTransport over HTTP/3. Not supported (planned).",
+          "type": "boolean",
+          "default": false
         }
       },
       "additionalProperties": false,
@@ -8000,6 +8164,11 @@
           "description": "HTTP/2 in cleartext (gRPC without TLS).",
           "type": "string",
           "const": "h2c"
+        },
+        {
+          "description": "HTTP/3 over QUIC. Not supported in this version (planned, ADR-0032): Pingora 0.9 has no\nQUIC connector.",
+          "type": "string",
+          "const": "h3"
         }
       ]
     },

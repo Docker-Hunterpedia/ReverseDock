@@ -11,6 +11,7 @@ pub mod forwarded;
 pub mod gate;
 pub mod geoip;
 mod health;
+pub mod http3;
 pub mod listener;
 mod proxy;
 pub mod proxy_protocol;

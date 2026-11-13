@@ -71,6 +71,17 @@ wasm:
     rustup toolchain install {{msrv}} --profile minimal
     cargo +{{msrv}} check -p rdock -p rdock-wasm --all-targets --locked --features rdock/wasm,rdock-wasm/testing
 
+# HTTP/3 ingress (experimental, cargo feature `http3`, ADR-0032): clippy with the feature, the
+# HTTP/3 unit and end-to-end tests, and the MSRV check with the feature. Not part of `ci`.
+# `scripts/http3-curl.sh` (Docker) adds curl over HTTP/3 against a running rdock.
+http3:
+    cargo clippy --workspace --all-targets --locked --features rdock/http3 -- -D warnings
+    cargo test --locked -p rdock-proxy --features http3 --lib
+    cargo test --locked -p rdock-model --lib http3
+    cargo test --locked -p rdock --features http3 --test e2e_http3 --test cli
+    rustup toolchain install {{msrv}} --profile minimal
+    cargo +{{msrv}} check --workspace --all-targets --locked --features rdock/http3
+
 # Validate configuration files, e.g. `just validate examples/config/rdock.full.yaml`
 validate +files:
     cargo run --quiet --locked -p rdock -- validate {{files}}

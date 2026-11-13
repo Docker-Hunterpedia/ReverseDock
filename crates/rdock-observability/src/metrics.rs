@@ -50,6 +50,21 @@ pub struct Metrics {
     /// Connections closed by the PROXY protocol step, by listener and reason (`untrusted`,
     /// `missing`, `malformed`, `timeout`, `too_large`).
     pub proxy_protocol_rejected: IntCounterVec,
+    /// HTTP/3 (experimental, ADR-0032): QUIC connections that completed their handshake, by
+    /// listener.
+    pub http3_connections_total: IntCounterVec,
+    /// HTTP/3: open QUIC connections by listener.
+    pub http3_connections: IntGaugeVec,
+    /// HTTP/3: QUIC Retry packets sent, by listener.
+    pub http3_retries: IntCounterVec,
+    /// HTTP/3: QUIC connections that ended or were refused, by listener and reason (`idle`,
+    /// `client`, `drained`, `limit`, `client_limit`, `handshake`, `protocol`, `reset_flood`).
+    pub http3_connections_closed: IntCounterVec,
+    /// HTTP/3: request streams reset (or answered 431) before the pipeline because their
+    /// header section was malformed, by listener and reason.
+    pub http3_malformed_requests: IntCounterVec,
+    /// HTTP/3: requests answered, by listener and status class.
+    pub http3_requests: IntCounterVec,
     /// Open TCP-route connections by listener and route.
     pub tcp_connections: IntGaugeVec,
     /// Bytes relayed by TCP routes, by route and direction (`in` from the client, `out` to it).
@@ -335,6 +350,42 @@ impl Metrics {
             "rdock_proxy_protocol_rejected_total",
             "Connections closed for their PROXY protocol header, or its absence.",
             &["listener", "reason"],
+        )?;
+        let http3_connections_total = counters(
+            &registry,
+            "rdock_http3_connections_total",
+            "QUIC connections of HTTP/3 listeners that completed their handshake.",
+            &["listener"],
+        )?;
+        let http3_connections = gauges(
+            &registry,
+            "rdock_http3_connections",
+            "Open QUIC connections of HTTP/3 listeners.",
+            &["listener"],
+        )?;
+        let http3_retries = counters(
+            &registry,
+            "rdock_http3_retries_total",
+            "QUIC Retry packets sent by HTTP/3 listeners.",
+            &["listener"],
+        )?;
+        let http3_connections_closed = counters(
+            &registry,
+            "rdock_http3_connections_closed_total",
+            "QUIC connections of HTTP/3 listeners that ended or were refused, by reason.",
+            &["listener", "reason"],
+        )?;
+        let http3_malformed_requests = counters(
+            &registry,
+            "rdock_http3_malformed_requests_total",
+            "HTTP/3 requests reset before the pipeline because their header section was malformed.",
+            &["listener", "reason"],
+        )?;
+        let http3_requests = counters(
+            &registry,
+            "rdock_http3_requests_total",
+            "HTTP/3 requests answered, by status class.",
+            &["listener", "status_class"],
         )?;
         let tcp_connections = gauges(
             &registry,
@@ -781,6 +832,12 @@ impl Metrics {
             upgrade_generation,
             upgrade_drain_deadline,
             proxy_protocol_rejected,
+            http3_connections_total,
+            http3_connections,
+            http3_retries,
+            http3_connections_closed,
+            http3_malformed_requests,
+            http3_requests,
             tcp_connections,
             tcp_bytes,
             tcp_rejected,
