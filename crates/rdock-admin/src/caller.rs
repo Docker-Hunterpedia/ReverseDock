@@ -327,6 +327,53 @@ pub(crate) fn tenant_denied(
     response
 }
 
+/// Retires the users and tokens of tenants that are no longer in `tenants`, for good: users
+/// are disabled (their tenant stays recorded) and their sessions ended, tokens revoked, each
+/// audited. A tenant that is added again later under the same name starts without them, so a
+/// removed tenant's principals never attach to whoever gets the name next. Runs whenever the
+/// admin API reads the tenants (every scoped request, every user or token change that names
+/// one).
+pub(crate) fn retire_orphans(state: &State, tenants: &rdock_model::tenant::Tenants) {
+    let orphan =
+        |tenant: &Option<String>| tenant.as_ref().is_some_and(|t| !tenants.contains_key(t));
+    for user in state.users.list() {
+        if user.disabled || !orphan(&user.tenant) {
+            continue;
+        }
+        match state.users.update(&user.name, |u| u.disabled = true) {
+            Ok(()) => {
+                state.sessions.end_user(&user.name, None);
+                tracing::warn!(user = %user.name, tenant = ?user.tenant, "disabled a user whose tenant was removed");
+                state.audit.record(Event {
+                    resource: Some(user.name.clone()),
+                    reason: Some("its tenant was removed".into()),
+                    tenant: user.tenant.clone(),
+                    ..Event::new("rdock".to_owned(), "system", "user.disable")
+                });
+            }
+            Err(err) => tracing::error!(error = %err, user = %user.name, "cannot disable a user"),
+        }
+    }
+    for token in state.tokens.list(None) {
+        if !orphan(&token.tenant) {
+            continue;
+        }
+        match state.tokens.revoke(&token.id, |_| true) {
+            Ok(true) => {
+                tracing::warn!(token = %token.id, tenant = ?token.tenant, "revoked a token whose tenant was removed");
+                state.audit.record(Event {
+                    resource: Some(token.id.clone()),
+                    reason: Some("its tenant was removed".into()),
+                    tenant: token.tenant.clone(),
+                    ..Event::new("rdock".to_owned(), "system", "token.revoke")
+                });
+            }
+            Ok(false) => {}
+            Err(err) => tracing::error!(error = %err, token = %token.id, "cannot revoke a token"),
+        }
+    }
+}
+
 /// Resolves a scoped caller's tenant for an operation it may reach, or refuses it.
 async fn scope(
     state: &State,
@@ -352,6 +399,7 @@ async fn scope(
         .spawn(async move { control.tenants().await })
         .await
         .unwrap_or_default();
+    retire_orphans(state, &tenants);
     match tenants.get(&tenant) {
         Some(found) => {
             caller.scope = Some(Arc::new(crate::tenancy::Scope {

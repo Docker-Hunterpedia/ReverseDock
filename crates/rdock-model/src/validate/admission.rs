@@ -8,6 +8,10 @@ use crate::route::Route;
 use crate::values::RateLimitKey;
 
 impl Validator<'_> {
+    #[allow(
+        clippy::too_many_lines,
+        reason = "one flat list of bounds, one per setting"
+    )]
     pub(super) fn check_admission(&mut self, path: &str, a: &AdmissionConfig) {
         self.check_not_zero(&format!("{path}.min"), a.min == 0);
         if a.max > AdmissionConfig::MAX_LIMIT {
@@ -57,8 +61,10 @@ impl Validator<'_> {
                     ("tolerance_percent", a.tolerance_percent.is_some()),
                     ("smoothing_percent", a.smoothing_percent.is_some()),
                     ("queue", a.queue.is_some()),
-                    ("window", a.window.is_some()),
+                    ("interval", a.interval.is_some()),
+                    ("jitter_percent", a.jitter_percent.is_some()),
                     ("probe", a.probe.is_some()),
+                    ("probe_timeout", a.probe_timeout.is_some()),
                 ],
                 "aimd",
             ),
@@ -92,8 +98,21 @@ impl Validator<'_> {
         if a.smoothing_percent.is_some_and(|s| !(1..=100).contains(&s)) {
             self.error(format!("{path}.smoothing_percent"), "use 1 to 100");
         }
-        if a.window.is_some_and(|w| !(10..=100_000).contains(&w)) {
-            self.error(format!("{path}.window"), "use 10 to 100000");
+        let secs = |d: crate::values::Duration| d.as_std();
+        if a.interval.is_some_and(|i| {
+            !(std::time::Duration::from_secs(1)..=std::time::Duration::from_secs(3600))
+                .contains(&secs(i))
+        }) {
+            self.error(format!("{path}.interval"), "use 1s to 1h");
+        }
+        if a.jitter_percent.is_some_and(|j| j > 100) {
+            self.error(format!("{path}.jitter_percent"), "use 0 to 100");
+        }
+        if a.probe_timeout.is_some_and(|t| {
+            !(std::time::Duration::from_millis(100)..=std::time::Duration::from_secs(60))
+                .contains(&secs(t))
+        }) {
+            self.error(format!("{path}.probe_timeout"), "use 100ms to 60s");
         }
         if a.probe.is_some_and(|p| !(5..=1000).contains(&p)) {
             self.error(format!("{path}.probe"), "use 5 to 1000");

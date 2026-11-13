@@ -60,16 +60,35 @@ operations per request, and takes no lock).
   `backoff_percent`; any other answer adds one while at least half of the limit is in use.
   Simple and predictable; you choose the latency you accept.
 - **`gradient`**: the gradient of Envoy's adaptive concurrency filter
-  ([docs](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/adaptive_concurrency_filter))
+  ([docs](https://www.envoyproxy.io/docs/envoy/latest/configuration/http/http_filters/adaptive_concurrency_filter),
+  [API reference](https://www.envoyproxy.io/docs/envoy/latest/api-v3/extensions/filters/http/adaptive_concurrency/v3/adaptive_concurrency.proto))
   with the smoothing of Netflix's `Gradient2Limit`: the limit follows
   `tolerance × no-load latency ÷ latency`, clamped to 0.5–1, plus `queue`, smoothed. The
-  no-load latency is measured, as in Envoy: at start and every `window` answers, the limit is
-  held at `min` until `probe` requests admitted at that concurrency have finished, and their
-  median becomes the reference. Requests above `min` get `503` meanwhile; Envoy documents the
-  same effect. Nothing to tune for a backend whose latency is unknown.
+  no-load latency is measured, as in Envoy: at start and then every `interval` plus a random
+  part of up to `jitter_percent` of it, the limit is held at `min` until `probe` requests
+  admitted at that concurrency have answered, and their median becomes the reference. A
+  measurement lasts at most `probe_timeout`: then the median of the answers it has is used,
+  or, without any, the previous reference stays. Requests above `min` get `503` during a
+  measurement; Envoy documents the same effect. Nothing to tune for a backend whose latency is
+  unknown. The interval is a time, never a count of answers, so a busy route measures as
+  rarely as a quiet one.
 
-Latency is measured from admission to the response headers. The limit starts at `initial` and
-starts again from there after a reload.
+**What the limit learns from.** Only requests that reached a backend: the latency from
+admission to the **backend's** response headers, and as signs of overload the backend's own
+`502`, `503` and `504`, a connection that failed or timed out, and a backend that did not
+answer in time. A client that goes away, an answer of rdock itself (another middleware's
+`401`, `429` or `503`, `maintenance`, a cache hit, an error page) and the `admission`
+middleware's own `503` teach it nothing, so nobody can push the limit down by disconnecting,
+or up with a flood of requests rdock refuses. (Netflix's library ignores cancelled requests,
+and Envoy's filter drops the sample of a request that ends before its response does.)
+
+**How long a request holds its place.** Until its response is complete, as in Envoy, so a
+long download or a server-sent event stream counts while it streams; put such routes on a
+middleware of their own, or none. An upgrade (`101 Switching Protocols`, WebSockets) gives its
+place back when the backend answers the upgrade: an upgraded connection is not a request the
+backend is still working on, and idle WebSockets never fill the limit.
+
+The limit starts at `initial` and starts again from there after a reload.
 
 | Setting | Default | Meaning |
 |---|---|---|
@@ -82,13 +101,15 @@ starts again from there after a reload.
 | `tolerance_percent` | `150` | `gradient`: how much slower than the no-load latency an answer may be, 100–1000 (Netflix's `rttTolerance`). |
 | `smoothing_percent` | `20` | `gradient`: weight of a new estimate, 1–100. |
 | `queue` | `4` | `gradient`: requests allowed above the estimate (Netflix's `queueSize`). |
-| `window` | `600` | `gradient`: answers between two measurements of the no-load latency, 10–100000. |
-| `probe` | `50` | `gradient`: answers that make one measurement, 5–1000 (Envoy's `request_count`). |
+| `interval` | `60s` | `gradient`: time between two measurements of the no-load latency, 1s–1h (the value of Envoy's documented example; Envoy documents no default). |
+| `jitter_percent` | `15` | `gradient`: a random part of `interval`, up to this percentage, added to each wait so instances do not measure together, 0–100 (Envoy's `jitter` default). |
+| `probe` | `50` | `gradient`: answers that make one measurement, 5–1000 (Envoy's `request_count` default). |
+| `probe_timeout` | `5s` | `gradient`: the longest a measurement holds the limit at `min`, 100ms–60s. |
 | `shares.normal` | `90` | Percent of the limit `normal` routes may fill. |
 | `shares.sheddable` | `75` | Percent of the limit `sheddable` routes may fill; at most `shares.normal`. |
 | `retry_after` | `1s` | `Retry-After` of a refused request. |
 
-A setting of the other algorithm is refused (`latency` with `mode: gradient`, `window` with
+A setting of the other algorithm is refused (`latency` with `mode: gradient`, `interval` with
 `mode: aimd`, …), as are `min` above `max`, an `initial` outside them and `sheddable` above
 `normal`.
 
@@ -101,10 +122,16 @@ unrelated to the route's `priority`, which only orders matching.
   `shares.sheddable` of the limit, a `normal` one below `shares.normal`, a `critical` one below
   the whole limit.
 - `critical` and `normal` requests also keep a **reserve** of their own: the part of the limit
-  between their share and the next lower one (with the defaults, 10 % and 15 %). When the
-  limit falls below what lower classes already hold, those requests drain first and the reserve
-  keeps critical requests going meanwhile. So the requests in flight stay below the limit once
-  it is steady, and below twice the limit at worst while it falls.
+  between their share and the next lower one (with the defaults, 10 % and 15 %), and **at least
+  two requests** whenever the limit has two places. When the limit falls below what lower
+  classes already hold, those requests drain first and the reserve keeps critical requests
+  going meanwhile. The floor of two lets a client that sends its next request as soon as it
+  has read a response (while the previous one still holds its place for a moment) go on at
+  low limits, where 10 % of the limit would be one place or none. So the requests in flight
+  stay below the limit plus the two reserve floors once it is steady, and below twice the
+  limit plus the floors at worst while it falls.
+- A [tenant](/docs/guides/tenants/) may mark its routes `critical` only on an `admission`
+  middleware of its own, unless its tenant definition sets `allow_critical`.
 
 A `priority_class` on a route without an `admission` middleware has no effect; validation
 warns.

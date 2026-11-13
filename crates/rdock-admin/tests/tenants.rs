@@ -25,6 +25,8 @@ use tokio::sync::watch;
 struct Fake {
     api: Mutex<(Value, u64)>,
     written: Mutex<Option<Value>>,
+    /// Tenants taken out of the configuration.
+    removed: Mutex<Vec<String>>,
 }
 
 impl Fake {
@@ -46,6 +48,7 @@ impl Fake {
                 1,
             )),
             written: Mutex::new(None),
+            removed: Mutex::new(Vec::new()),
         }
     }
 
@@ -190,6 +193,9 @@ impl Control for Fake {
                 ..Tenant::default()
             },
         );
+        for gone in self.removed.lock().unwrap().iter() {
+            tenants.remove(gone);
+        }
         tenants
     }
 }
@@ -665,5 +671,124 @@ async fn a_tenant_reads_and_writes_only_its_own_objects() {
             .iter()
             .all(|t| t["tenant"] == "acme")
     );
+    admin.stop().await;
+}
+
+/// Logs `name` in with a password; returns the session cookie and its CSRF token.
+async fn login(admin: &Admin, name: &str, password: &str) -> Option<(String, String)> {
+    let mut req = request(
+        "POST",
+        "127.0.0.1",
+        "/api/v1/auth/login",
+        json!({ "name": name, "password": password }).to_string(),
+    );
+    req.headers_mut()
+        .insert("content-type", "application/json".parse().unwrap());
+    let reply = client::http1(admin.address, req).await;
+    if reply.status != 200 {
+        return None;
+    }
+    let cookie = reply.header("set-cookie")?.split(';').next()?.to_owned();
+    let csrf = reply.json()["csrf_token"].as_str()?.to_owned();
+    Some((cookie, csrf))
+}
+
+async fn session_call(
+    admin: &Admin,
+    (cookie, csrf): &(String, String),
+    method: &str,
+    path: &str,
+    body: &Value,
+) -> client::Reply {
+    let mut req = request(method, "127.0.0.1", path, body.to_string());
+    for (name, value) in [
+        ("cookie", cookie.as_str()),
+        ("x-csrf-token", csrf.as_str()),
+        ("content-type", "application/json"),
+    ] {
+        req.headers_mut().insert(name, value.parse().unwrap());
+    }
+    client::http1(admin.address, req).await
+}
+
+/// L5 of the tenants review: a scoped *session* (not a token, which cannot mint tokens at
+/// all) asking for a token of another tenant is refused and audited. L3: removing a tenant
+/// retires its users and tokens for good; adding the name back does not revive them.
+#[tokio::test(flavor = "multi_thread")]
+async fn scoped_sessions_mint_only_their_tenants_tokens_and_removed_tenants_retire_principals() {
+    const PASSWORD: &str = "correct horse battery staple";
+    let admin = Admin::start();
+    let (status, body) = admin.socket(
+        "POST",
+        "/api/v1/users",
+        &json!({ "name": "acme-ops", "role": "operator", "password": PASSWORD, "tenant": "acme" }),
+    );
+    assert_eq!(status, 201, "{body}");
+    let session = login(&admin, "acme-ops", PASSWORD).await.expect("logs in");
+    let reply = session_call(
+        &admin,
+        &session,
+        "POST",
+        "/api/v1/tokens",
+        &json!({ "name": "steal", "role": "viewer", "tenant": "globex" }),
+    )
+    .await;
+    assert_eq!(reply.status, 403, "{}", reply.text());
+    let (_, records) = admin.socket("GET", "/api/v1/audit?limit=1000", &Value::Null);
+    assert!(
+        records
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|r| r["result"] == "denied"
+                && r["tenant"] == "acme"
+                && r["resource"] == "/api/v1/tokens"),
+        "{records}"
+    );
+    let reply = session_call(
+        &admin,
+        &session,
+        "POST",
+        "/api/v1/tokens",
+        &json!({ "name": "mine", "role": "viewer" }),
+    )
+    .await;
+    assert_eq!(reply.status, 201, "{}", reply.text());
+    let created = reply.json();
+    assert_eq!(created["tenant"], "acme");
+    let token = created["token"].as_str().unwrap().to_owned();
+    let reply = admin
+        .call(&token, "GET", "/api/v1/config/api", &[], "")
+        .await;
+    assert_eq!(reply.status, 200);
+
+    // The administrator removes `acme`; the next scoped request notices.
+    admin.fake.removed.lock().unwrap().push("acme".into());
+    let globex = admin.token("operator", Some("globex"));
+    let reply = admin
+        .call(&globex, "GET", "/api/v1/config/api", &[], "")
+        .await;
+    assert_eq!(reply.status, 200);
+    // `acme` comes back, perhaps for someone else: the old principals stay retired.
+    admin.fake.removed.lock().unwrap().clear();
+    let reply = admin
+        .call(&token, "GET", "/api/v1/config/api", &[], "")
+        .await;
+    assert_eq!(reply.status, 401, "the token was revoked: {}", reply.text());
+    let reply = session_call(&admin, &session, "GET", "/api/v1/config/api", &Value::Null).await;
+    assert_ne!(reply.status, 200, "the session ended");
+    assert!(
+        login(&admin, "acme-ops", PASSWORD).await.is_none(),
+        "the user is disabled"
+    );
+    let (_, users) = admin.socket("GET", "/api/v1/users", &Value::Null);
+    let user = users
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|u| u["name"] == "acme-ops")
+        .unwrap();
+    assert_eq!(user["disabled"], true);
+    assert_eq!(user["tenant"], "acme");
     admin.stop().await;
 }

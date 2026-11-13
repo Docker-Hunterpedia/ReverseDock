@@ -129,14 +129,14 @@ async fn totals(tasks: Vec<tokio::task::JoinHandle<(u64, u64, u64)>>) -> (u64, u
 async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
     let backend = slow_backend(50).await;
     let port = free_port();
-    // 4 slots × 50 ms: latency passes 200 ms above 16 requests in flight. The shares leave the
-    // critical class a reserve of at least two requests at the lowest limit: the one critical
-    // client sends its next request as soon as it has read an answer, which can be a moment
-    // before the proxy has released that request's place.
+    // 4 slots × 50 ms: latency passes 200 ms above 16 requests in flight. Default shares: the
+    // one critical client sends its next request as soon as it has read an answer, which can
+    // be a moment before the proxy has released that request's place; the critical reserve
+    // of at least two places covers that at every limit.
     let config = format!(
         "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\n\
          defaults: {{ listeners: [web], tls: off, errors: {{ format: problem }} }}\n\
-         middlewares:\n  adm: {{ type: admission, mode: aimd, min: 4, max: 64, initial: 8, latency: 200ms, shares: {{ normal: 60, sheddable: 50 }} }}\n\
+         middlewares:\n  adm: {{ type: admission, mode: aimd, min: 4, max: 64, initial: 8, latency: 200ms }}\n\
          routes:\n\
          \x20 checkout: {{ match: \"Host(`critical.test`)\", service: slow, middlewares: [adm], priority_class: critical }}\n\
          \x20 reports: {{ match: \"Host(`bulk.test`)\", service: slow, middlewares: [adm], priority_class: sheddable }}\n\
@@ -232,12 +232,11 @@ async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
         .any(|r| r["admission"] == "shed:sheddable" && r["status"] == 503);
     assert!(logged, "{}", rdock.log());
 
-    // Recovery: a fast backend lets the limit grow past its overloaded value. The load is on
-    // the critical route, the one class that may fill the whole limit (the limit only grows
-    // while the requests in flight come near it).
+    // Recovery: a fast backend lets the limit grow past its overloaded value, under sheddable
+    // load (the limit grows while at least half of it is in use).
     backend.service_ms.store(2, Ordering::Relaxed);
     let stop = Arc::new(AtomicBool::new(false));
-    let bulk = flood(proxy, "critical.test", 24, &stop);
+    let bulk = flood(proxy, "bulk.test", 24, &stop);
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut recovered = 0.0;
     while Instant::now() < deadline {
@@ -260,4 +259,71 @@ async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
         client::http1(proxy, get("bulk.test", "/")).await.status,
         200
     );
+}
+
+/// H4 of the tenants review: clients that hang up before the answer, and answers rdock gives
+/// itself (here `maintenance`'s 503 behind the admission middleware), never lower the limit.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn aborted_requests_and_rdock_answers_leave_the_limit_alone() {
+    let backend = slow_backend(300).await;
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\n\
+         defaults: {{ listeners: [web], tls: off }}\n\
+         middlewares:\n  adm: {{ type: admission, mode: aimd, min: 3, max: 64, initial: 20, latency: 5s }}\n\
+         \x20 down: {{ type: maintenance }}\n\
+         routes:\n\
+         \x20 app: {{ match: \"Host(`app.test`)\", service: slow, middlewares: [adm] }}\n\
+         \x20 closed: {{ match: \"Host(`closed.test`)\", service: slow, middlewares: [adm, down] }}\n\
+         services:\n  slow:\n    backends: [{{ address: \"{}\" }}]\n    timeouts: {{ read: 30s }}\n",
+        backend.addr
+    );
+    let rdock = Rdock::start(RDOCK, &config);
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    let limit = || {
+        let text = rdock.get_admin("/metrics").unwrap().1;
+        (
+            metric(&text, "rdock_admission_limit", "middleware=\"adm\""),
+            metric(&text, "rdock_admission_in_flight", "middleware=\"adm\""),
+        )
+    };
+    assert_eq!(limit().0, 20.0);
+    // Forty clients send a request and hang up at once, many times over.
+    for _ in 0..3 {
+        let aborts: Vec<_> = (0..40)
+            .map(|_| {
+                tokio::spawn(async move {
+                    let mut stream = tokio::net::TcpStream::connect(proxy).await.unwrap();
+                    stream
+                        .write_all(b"GET / HTTP/1.1\r\nHost: app.test\r\n\r\n")
+                        .await
+                        .unwrap();
+                    drop(stream);
+                })
+            })
+            .collect();
+        for abort in aborts {
+            abort.await.unwrap();
+        }
+    }
+    // And a flood of answers rdock gives itself.
+    for _ in 0..50 {
+        let reply = client::http1(proxy, get("closed.test", "/")).await;
+        assert_eq!(reply.status, 503);
+    }
+    // Once every aborted request has ended, the limit has not come down.
+    let deadline = Instant::now() + Duration::from_secs(60);
+    loop {
+        let (now, in_flight) = limit();
+        if in_flight == 0.0 {
+            assert!(now >= 20.0, "the limit fell to {now}\n{}", rdock.log());
+            break;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "requests never ended\n{}",
+            rdock.log()
+        );
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
 }

@@ -399,3 +399,224 @@ async fn tenants_stay_inside_their_prefix_and_claims() {
         Some("acme")
     );
 }
+
+/// H1 and H2 of the tenants review: a tenant's DNS name that resolves to loopback or to the
+/// cloud metadata address is never connected to, while the same name in an administrator's
+/// service works. Names are resolved from a test hosts file (`RDOCK_TEST_HOSTS`, debug builds
+/// only), which also shows the check runs on every resolution, not on the configured text.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn tenant_backends_never_reach_local_or_metadata_addresses() {
+    let backend = Backend::start("local").await;
+    let hosts_dir = tempfile::tempdir().unwrap();
+    let hosts = hosts_dir.path().join("hosts");
+    std::fs::write(
+        &hosts,
+        "127.0.0.1 loop.backends.test\n169.254.169.254 meta.backends.test\n",
+    )
+    .unwrap();
+    let port = free_port();
+    let config = format!(
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\n\
+         defaults: {{ listeners: [web], tls: off }}\n\
+         tenants:\n  acme:\n    hosts: [\"*.acme.test\"]\n"
+    );
+    let rdock = Rdock::try_start_with_env(
+        RDOCK,
+        &config,
+        &[("RDOCK_TEST_HOSTS", hosts.to_str().unwrap())],
+    )
+    .unwrap_or_else(|log| panic!("rdock did not start:\n{log}"));
+    let proxy = SocketAddr::from(([127, 0, 0, 1], port));
+    let api = Api { rdock: &rdock };
+    let acme = api.token("operator", Some("acme"));
+    let root = api.token("admin", None);
+
+    let backend_port = backend.addr.port();
+    let document = json!({
+        "routes": {
+            "acme-loop": { "match": "Host(`loop.acme.test`)", "service": "acme-loop" },
+            "acme-meta": { "match": "Host(`meta.acme.test`)", "service": "acme-meta" }
+        },
+        "services": {
+            "acme-loop": { "backends": [{ "address": format!("loop.backends.test:{backend_port}") }],
+                           "health": { "active": { "path": "/", "interval": "1s" } } },
+            "acme-meta": { "backends": [{ "address": "meta.backends.test:80" }] }
+        }
+    });
+    let reply = api.put(&acme, &document).await;
+    assert_eq!(
+        reply.status,
+        200,
+        "DNS names are accepted: {}\n{}",
+        reply.text(),
+        rdock.log()
+    );
+    // A numeric spelling of loopback is refused at validation.
+    let numeric = with_extra(
+        document.clone(),
+        "services",
+        "acme-num",
+        json!({ "backends": [{ "address": format!("127.1:{backend_port}") }] }),
+    );
+    let mut reply = api.put(&acme, &numeric).await;
+    while reply.status == 429 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        reply = api.put(&acme, &numeric).await;
+    }
+    assert!(
+        reply.status == 400 || reply.status == 422,
+        "{}",
+        reply.text()
+    );
+
+    // Both names resolve; every address is refused and logged, and requests get no backend.
+    for (host, address) in [
+        ("loop.acme.test", "127.0.0.1:"),
+        ("meta.acme.test", "169.254.169.254:80"),
+    ] {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let reply = client::http1(proxy, get(host, "/")).await;
+            assert!(
+                reply.status >= 500,
+                "{host}: {} {}",
+                reply.status,
+                reply.text()
+            );
+            let log = rdock.log();
+            if log
+                .lines()
+                .any(|l| l.contains("backend address refused") && l.contains(address))
+            {
+                break;
+            }
+            assert!(
+                std::time::Instant::now() < deadline,
+                "no refusal of {address} logged\n{log}"
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+    assert_eq!(
+        backend.requests(),
+        0,
+        "neither requests nor health checks reached it"
+    );
+    let metrics = api
+        .call(&root, "GET", "/metrics", None, &Value::Null)
+        .await
+        .text();
+    assert!(
+        metrics.contains("rdock_backend_addresses_refused_total{service=\"acme-loop@api\"}"),
+        "{metrics}"
+    );
+
+    // The same name in an administrator's service is not a tenant's: it is served.
+    let tag = api.tag(&root).await;
+    let mut everything = api
+        .call(&root, "GET", "/api/v1/config/api", None, &Value::Null)
+        .await
+        .json();
+    everything["routes"]["ops-loop"] =
+        json!({ "match": "Host(`ops.test`)", "service": "ops-loop" });
+    everything["services"]["ops-loop"] =
+        json!({ "backends": [{ "address": format!("loop.backends.test:{backend_port}") }] });
+    let reply = api
+        .call(&root, "PUT", "/api/v1/config/api", Some(&tag), &everything)
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    loop {
+        let reply = client::http1(proxy, get("ops.test", "/")).await;
+        if reply.status == 200 {
+            assert_eq!(reply.header("x-backend"), Some("local"));
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the administrator's service was never served: {}\n{}",
+            reply.status,
+            rdock.log()
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+    }
+    // And the tenant's still is not.
+    let reply = client::http1(proxy, get("loop.acme.test", "/")).await;
+    assert!(reply.status >= 500, "{}", reply.status);
+}
+
+/// M1 of the tenants review: one tenant's object that stopped working (its shared service
+/// went away) is left out with a warning its tenant sees, and never blocks another tenant's
+/// writes or shows up in that tenant's report.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_stale_object_of_one_tenant_does_not_block_another() {
+    let backend = Backend::start("shared").await;
+    let port = free_port();
+    let config = |with_shared: bool| {
+        let mut text = format!(
+            "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\n\
+             defaults: {{ listeners: [web], tls: off }}\n\
+             tenants:\n\
+             \x20 acme:\n    hosts: [\"*.acme.test\"]\n    backend_networks: [127.0.0.1/32]\n\
+             \x20 globex:\n    hosts: [\"*.globex.test\"]\n    shared: {{ services: [shared-svc] }}\n"
+        );
+        if with_shared {
+            text += "services:\n  shared-svc: { backends: [{ address: \"";
+            text += &backend.addr.to_string();
+            text += "\" }] }\n";
+        }
+        text
+    };
+    let rdock = Rdock::start(RDOCK, &config(true));
+    let api = Api { rdock: &rdock };
+    let acme = api.token("operator", Some("acme"));
+    let globex = api.token("operator", Some("globex"));
+    let globex_site = json!({
+        "routes": { "globex-web": { "match": "Host(`www.globex.test`)", "service": "shared-svc" } }
+    });
+    let reply = api.put(&globex, &globex_site).await;
+    assert_eq!(reply.status, 200, "{}\n{}", reply.text(), rdock.log());
+
+    // The administrator removes the shared service: globex's route is left out.
+    rdock.write_config(&config(false));
+    let (status, report) = rdock.reload();
+    assert_eq!(status, 200, "{report}");
+
+    // acme writes; the stale globex route is not acme's problem and not in acme's report.
+    let mut acme_site = site("acme", "shop.acme.test", backend.addr);
+    acme_site["routes"]["acme-web"]["middlewares"] = json!([]);
+    let reply = api.put(&acme, &acme_site).await;
+    assert_eq!(reply.status, 200, "{}\n{}", reply.text(), rdock.log());
+    assert!(!reply.text().contains("globex"), "{}", reply.text());
+    assert!(!reply.text().contains("withheld"), "{}", reply.text());
+    // globex sees why its route is out, as a warning on its own object.
+    let reply = api
+        .call(
+            &globex,
+            "POST",
+            "/api/v1/config/validate",
+            None,
+            &globex_site,
+        )
+        .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let checked = reply.json();
+    assert!(
+        checked["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d["path"].as_str().is_some_and(|p| p.contains("globex-web"))),
+        "{checked}"
+    );
+    // But globex cannot write it again while it is broken: the write is to blame for it.
+    let changed = json!({
+        "routes": { "globex-web": { "match": "Host(`api.globex.test`)", "service": "shared-svc" } }
+    });
+    let mut reply = api.put(&globex, &changed).await;
+    while reply.status == 429 {
+        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        reply = api.put(&globex, &changed).await;
+    }
+    assert_eq!(reply.status, 422, "{}", reply.text());
+}

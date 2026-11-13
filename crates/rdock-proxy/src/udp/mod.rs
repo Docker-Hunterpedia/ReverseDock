@@ -716,6 +716,7 @@ mod tests {
             timeouts: rdock_model::service::Timeouts::default(),
             tls: crate::runtime::UpstreamTls::default(),
             pass_host_header: false,
+            allowed: None,
             selection: crate::runtime::Selection::default(),
         };
         Arc::new(UdpRouteRuntime {

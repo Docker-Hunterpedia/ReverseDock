@@ -81,7 +81,7 @@ impl Quota {
             return (anonymous_key(cx.client_ip), self.limit);
         };
         if self.by_group
-            && let Some(primary) = consumer.groups.first()
+            && let Some(primary) = consumer.primary_group()
         {
             let limit = self
                 .overrides
@@ -91,7 +91,7 @@ impl Quota {
             return (rdock_limits::quota::group_key(primary), limit);
         }
         let limit = consumer
-            .groups
+            .counted_groups()
             .iter()
             .find_map(|g| {
                 self.overrides
@@ -293,10 +293,7 @@ mod tests {
         let quota = Quota::new("q", &config, &registry, None, None);
         let with = |name: &str, groups: &[&str]| {
             let mut c = crate::test_support::cx();
-            c.consumer = Some(crate::Consumer {
-                groups: groups.iter().map(|g| Arc::from(*g)).collect(),
-                ..crate::Consumer::named(name)
-            });
+            c.consumer = Some(crate::Consumer::configured(name, groups));
             quota.key_and_limit(&c)
         };
         assert_eq!(with("ann", &["acme", "gold"]), ("group:acme".to_owned(), 2));

@@ -437,13 +437,20 @@ Existing bans are never evicted to make room.
 
 ### `rdock_admission_in_flight`
 
-**Gauge.** Requests admitted by each `admission` middleware and not finished. Label:
-`middleware`.
+**Gauge.** Requests admitted by each `admission` middleware and not finished (an upgraded
+connection stops counting at its `101`). Label: `middleware`.
 
 ### `rdock_admission_shed_total`
 
 **Counter.** Requests an `admission` middleware answered `503`. Labels: `middleware` and
 `class`: the route's `priority_class` (`critical`, `normal` or `sheddable`).
+
+### `rdock_backend_addresses_refused_total`
+
+**Counter.** Addresses a [tenant's](/docs/guides/tenants/#backends) backend resolved to that
+its tenant may not reach (loopback, private, metadata, … or outside `backend_networks`); they
+are never connected to. Counted each time the service's member list is rebuilt from a new
+answer. Label: `service`.
 
 ### `rdock_geoip_build_timestamp_seconds`
 

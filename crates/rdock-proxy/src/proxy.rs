@@ -652,7 +652,11 @@ impl RdockProxy {
             std::mem::take(&mut ctx.authority),
         );
         cx.client_cert = client_identity(session);
-        cx.fingerprint = connection_fingerprint(session, self.listener(&ctx.runtime));
+        cx.fingerprint = connection_fingerprint(
+            session,
+            self.listener(&ctx.runtime),
+            &ctx.runtime.fingerprint_headers,
+        );
         cx.has_body = !session.is_body_empty() && !is_upgrade(session.req_header());
         cx.priority_class = route.priority_class;
         let chain = &route.middlewares;
@@ -1459,7 +1463,13 @@ impl ProxyHttp for RdockProxy {
         if !session.is_http2() {
             upstream_response.set_version(Version::HTTP_11);
         }
+        let stored = ctx.cache.is_some() && crate::cache::from_store(session);
         if let (Some(route), Some(cx)) = (&ctx.route, ctx.mw.as_mut()) {
+            // A cache hit is rdock's answer, not the backend's.
+            if !stored {
+                cx.backend =
+                    rdock_middleware::BackendOutcome::Responded(upstream_response.status.as_u16());
+            }
             let chain = &route.middlewares;
             chain.response(chain.len(), upstream_response, cx).await;
         }
@@ -1559,6 +1569,9 @@ impl ProxyHttp for RdockProxy {
             }
             self.report(service, ctx.member.as_ref(), false);
             Self::sample(service, ctx, false);
+            if let Some(cx) = ctx.mw.as_mut() {
+                cx.backend = rdock_middleware::BackendOutcome::Failed;
+            }
         }
         let mut e = e;
         let service = ctx.service.clone();
@@ -1598,6 +1611,9 @@ impl ProxyHttp for RdockProxy {
             && let Some(service) = &ctx.service
         {
             self.report(service, ctx.member.as_ref(), false);
+            if let Some(cx) = ctx.mw.as_mut() {
+                cx.backend = rdock_middleware::BackendOutcome::Failed;
+            }
             if !ctx.status_retry {
                 // A retried status was sampled when it arrived.
                 ctx.sample_at_end = false;
@@ -1868,12 +1884,17 @@ fn is_http3(session: &Session) -> bool {
     session.is_custom() && session.req_header().version == Version::HTTP_3
 }
 
-/// The TLS client fingerprints of the connection. The listener's fingerprint headers are
-/// removed from what the client sent and, when configured, set to the computed values.
+/// The TLS client fingerprints of the connection. Every listener's fingerprint headers are
+/// removed from what the client sent, on every listener; the listener's own are then set to
+/// the computed values when it computes them.
 fn connection_fingerprint(
     session: &mut Session,
     listener: Option<&ListenerRuntime>,
+    all_headers: &[String],
 ) -> Option<Arc<rdock_middleware::ClientFingerprint>> {
+    for name in all_headers {
+        session.req_header_mut().remove_header(name.as_str());
+    }
     let wanted = listener.and_then(|l| l.fingerprint.as_ref())?;
     let found = handshake(session).and_then(|h| h.fingerprint.get().cloned());
     let req = session.req_header_mut();

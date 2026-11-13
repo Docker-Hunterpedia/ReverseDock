@@ -280,6 +280,7 @@ impl CloudflareAccessConfig {
             forward_token: true,
             consumer_claim: None,
             groups_claim: None,
+            trusted_groups: Vec::new(),
             map_to_consumers: false,
             unverified_emails: false,
         })
@@ -423,6 +424,12 @@ pub struct JwtConfig {
     /// `consumer_claim`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub groups_claim: Option<String>,
+    /// Groups from `groups_claim` that count for `key: group` and for group `overrides` of
+    /// `rate_limit` and `quota`, as if configured. Other token groups are kept on the
+    /// consumer (metering, headers) but never share a configured group's budget or override,
+    /// and a consumer with only those is counted on its own.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub trusted_groups: Vec<String>,
     /// With `consumer_claim`: treat a name that `consumers` defines as that consumer, adding
     /// its groups and sharing its quota, rate-limit and cache identity with its API keys
     /// (other names stay keyed on the issuer). Off by default: a token's consumer is a
@@ -1109,16 +1116,25 @@ pub struct IpListConfig {
 /// middleware. The limit moves between `min` and `max`; a request is admitted while the
 /// requests in flight stay below the limit's share for the route's `priority_class`
 /// (`critical` 100 %, `normal` `shares.normal`, `sheddable` `shares.sheddable`), otherwise it
-/// gets `503` with `Retry-After`. There is no queue.
+/// gets `503` with `Retry-After`. There is no queue. `critical` and `normal` requests also
+/// keep a reserve of at least two places whenever the limit has them.
 ///
-/// `aimd` (Netflix concurrency-limits' `AIMDLimit`): a sample slower than `latency`, or
-/// answered `502`, `503` or `504`, multiplies the limit by `backoff_percent`; any other sample
-/// adds one while at least half the limit is in use. `gradient` (Envoy's adaptive concurrency
-/// filter with Netflix's `Gradient2Limit` smoothing): the limit follows `tolerance × no-load
-/// latency / sample latency`, clamped to 0.5–1, plus `queue`, smoothed by
-/// `smoothing_percent`. The no-load latency is measured at start and every `window` samples
-/// by pinning the limit to `min` until `probe` requests admitted at that concurrency have
-/// finished (their median); requests over `min` get `503` meanwhile, as Envoy warns too.
+/// Only requests that reached a backend teach the limit: the latency to the backend's
+/// response headers, and as drops the backend's `502`, `503` and `504`, a failed connect and
+/// an upstream timeout. Answers of rdock itself (another middleware's reply, a cache hit, an
+/// error page) and requests the client abandoned are not samples. A request holds its place
+/// until its response is complete, as in Envoy; an upgraded connection (`101`) gives it back
+/// when the upgrade is answered, so idle `WebSocket`s never fill the limit.
+///
+/// `aimd` (Netflix concurrency-limits' `AIMDLimit`): a slow sample or a drop multiplies the
+/// limit by `backoff_percent`; any other sample adds one while at least half the limit is in
+/// use. `gradient` (Envoy's adaptive concurrency filter with Netflix's `Gradient2Limit`
+/// smoothing): the limit follows `tolerance × no-load latency / sample latency`, clamped to
+/// 0.5–1, plus `queue`, smoothed by `smoothing_percent`. The no-load latency is measured at
+/// start and then every `interval` (± `jitter_percent`) by pinning the limit to `min` until
+/// `probe` requests admitted at that concurrency have answered (their median), or until
+/// `probe_timeout` has passed (the median of those that did, or the previous value when
+/// none did); requests over `min` get `503` meanwhile, as Envoy warns too.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[schemars(inline)]
 #[serde(deny_unknown_fields)]
@@ -1152,14 +1168,23 @@ pub struct AdmissionConfig {
     /// `queueSize`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub queue: Option<u32>,
-    /// `gradient` only: samples between two measurements of the no-load latency (default
-    /// 600; 10–100000).
+    /// `gradient` only: time between two measurements of the no-load latency (default 60s,
+    /// the `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub window: Option<u32>,
+    pub interval: Option<Duration>,
+    /// `gradient` only: a random part of `interval` added to it, in percent, so instances do
+    /// not measure at the same moment (default 15, Envoy's `jitter`; 0–100).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub jitter_percent: Option<u32>,
     /// `gradient` only: samples at `min` concurrency that make one measurement of the no-load
     /// latency (default 50, Envoy's `request_count`; 5–1000).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub probe: Option<u32>,
+    /// `gradient` only: the longest a measurement pins the limit to `min` (default 5s;
+    /// 100ms–60s). When it ends early, the median of the samples it has becomes the
+    /// reference; without any, the previous reference stays.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub probe_timeout: Option<Duration>,
     /// The share of the limit `normal` and `sheddable` routes may fill, in percent.
     #[serde(default)]
     pub shares: AdmissionShares,
@@ -1183,10 +1208,14 @@ impl AdmissionConfig {
     pub const SMOOTHING_PERCENT: u32 = 20;
     /// Default `queue`.
     pub const QUEUE: u32 = 4;
-    /// Default `window`.
-    pub const WINDOW: u32 = 600;
+    /// Default `interval`.
+    pub const INTERVAL: Duration = Duration::from_secs(60);
+    /// Default `jitter_percent`.
+    pub const JITTER_PERCENT: u32 = 15;
     /// Default `probe`.
     pub const PROBE: u32 = 50;
+    /// Default `probe_timeout`.
+    pub const PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 }
 
 const fn admission_min() -> u32 {
@@ -1203,7 +1232,7 @@ const fn admission_max() -> u32 {
 pub enum AdmissionMode {
     /// Additive increase, multiplicative decrease on slow or failed samples.
     Aimd,
-    /// The ratio of the long-term latency to each sample's (Gradient2).
+    /// The measured no-load latency against each sample's (Envoy's gradient).
     Gradient,
 }
 

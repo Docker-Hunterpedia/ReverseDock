@@ -1386,7 +1386,7 @@ impl rdock_admin::Control for Engine {
 
     async fn dry_run(&self, candidate: Value) -> Result<(bool, Value), String> {
         let fragment = api::parse(candidate)?;
-        let (ok, diagnostics) = self.api_dry_run(fragment);
+        let (ok, diagnostics) = self.api_dry_run(&fragment);
         Ok((ok, serde_json::to_value(diagnostics).unwrap_or(Value::Null)))
     }
 

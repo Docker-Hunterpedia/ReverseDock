@@ -23,7 +23,7 @@ use rdock_rules::{Expr, Matcher};
 use schemars::JsonSchema;
 use serde::{Deserialize, Serialize};
 
-use crate::values::IpNetwork;
+use crate::values::{ByteSize, IpNetwork};
 
 /// One tenant.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
@@ -41,11 +41,23 @@ pub struct Tenant {
     /// configuration file's, `name@provider` for a provider's).
     #[serde(skip_serializing_if = "TenantShared::is_empty")]
     pub shared: TenantShared,
-    /// Networks the tenant's backends must be in. Empty: any address except loopback,
-    /// link-local, unspecified and `localhost`; set: only IP literals inside these networks
-    /// (DNS names and SRV records are refused, since they can resolve anywhere).
+    /// Networks the tenant's backends may connect to. Empty: globally routable unicast
+    /// addresses only (no loopback, link-local, private, unique-local, shared, multicast,
+    /// documentation, reserved or cloud metadata address), checked on IP literals at
+    /// validation and on every address a DNS name or SRV record resolves to, each time it
+    /// resolves. Set: exactly these networks (a cloud metadata address only when listed on
+    /// its own), and backends must be IP literals.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub backend_networks: Vec<IpNetwork>,
+    /// Ceilings on what the tenant's objects may hold, so one tenant cannot use up what
+    /// tenants share (disk, the ACME account's rate limits).
+    #[serde(skip_serializing_if = "TenantLimits::is_default")]
+    pub limits: TenantLimits,
+    /// Let the tenant's routes use `priority_class: critical` with an `admission` middleware
+    /// it does not own (a shared one). Off: critical traffic on a shared limit is the
+    /// administrator's to define.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub allow_critical: bool,
     /// Planned: listeners the tenant owns.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub listeners: Vec<String>,
@@ -58,6 +70,48 @@ pub struct Tenant {
     /// Planned: a dashboard view limited to the tenant.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub dashboard: bool,
+}
+
+/// Ceilings on a tenant's objects. The defaults are small on purpose; an administrator raises
+/// them per tenant.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct TenantLimits {
+    /// The largest request body a tenant route accepts, and the most its `hold_body`,
+    /// `transform` and `validate` middlewares may hold (default 16MiB). A tenant route without
+    /// `max_body` gets this one, or `security.limits.max_body_bytes` when that is smaller.
+    pub max_body: ByteSize,
+    /// Routes the tenant may have (default 100).
+    pub max_routes: u32,
+    /// Services the tenant may have (default 100).
+    pub max_services: u32,
+    /// Middlewares the tenant may have (default 100).
+    pub max_middlewares: u32,
+    /// Distinct host names the tenant's routes may get automatic certificates for (default
+    /// 20): each one is an order on the ACME account every tenant shares, and Let's Encrypt
+    /// limits certificates per registered domain and orders per account.
+    pub max_tls_names: u32,
+}
+
+impl TenantLimits {
+    /// The highest value of any count.
+    pub const MAX_COUNT: u32 = 100_000;
+
+    fn is_default(&self) -> bool {
+        *self == Self::default()
+    }
+}
+
+impl Default for TenantLimits {
+    fn default() -> Self {
+        Self {
+            max_body: ByteSize::mib(16),
+            max_routes: 100,
+            max_services: 100,
+            max_middlewares: 100,
+            max_tls_names: 20,
+        }
+    }
 }
 
 /// Objects outside a tenant's prefix that its objects may reference.
@@ -229,10 +283,11 @@ pub const FORBIDDEN_FIELDS: [(&str, &str, &str); 6] = [
 /// Service fields a tenant's objects may not set: upstream TLS files.
 pub const FORBIDDEN_SERVICE_TLS_FIELDS: [&str; 3] = ["ca_file", "cert_file", "key_file"];
 
-/// Where a `${…}` reference would be taken literally (regular-expression replacements), so a
-/// tenant may write one there.
-fn verbatim(key: &str) -> bool {
-    key == "replacement"
+/// Where a `${…}` reference would be taken literally, so a tenant may write one there: a
+/// middleware's own `replacement` (its regular-expression replacement), exactly the place the
+/// configuration loader leaves uninterpolated (`middlewares.*.replacement`), nowhere deeper.
+fn verbatim(path: &str, key: &str) -> bool {
+    path.is_empty() && key == "replacement"
 }
 
 /// Paths (`a.b[2].c`, relative to the object) of strings holding a `${…}` reference, which
@@ -244,7 +299,7 @@ pub fn references(value: &serde_json::Value) -> Vec<String> {
             serde_json::Value::String(text) if text.contains("${") => out.push(path.to_owned()),
             serde_json::Value::Object(map) => {
                 for (key, child) in map {
-                    if verbatim(key) {
+                    if verbatim(path, key) {
                         continue;
                     }
                     let next = if path.is_empty() {
@@ -341,5 +396,13 @@ mod tests {
             "headers": { "x": "${env:SECRET}" }, "list": ["a", "${file:/etc/passwd}"]
         });
         assert_eq!(references(&value), vec!["headers.x", "list[1]"]);
+    }
+
+    #[test]
+    fn only_a_top_level_replacement_is_verbatim() {
+        let value = serde_json::json!({
+            "request": { "set": { "replacement": "${env:SECRET}" } }
+        });
+        assert_eq!(references(&value), vec!["request.set.replacement"]);
     }
 }

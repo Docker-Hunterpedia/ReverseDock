@@ -2703,8 +2703,9 @@ fn admission_refuses_meaningless_settings() {
         json!({
             "middlewares": {
                 "bad": { "type": "admission", "mode": "aimd", "min": 50, "max": 10,
-                         "window": 100, "shares": { "normal": 50, "sheddable": 80 } },
-                "grad": { "type": "admission", "mode": "gradient", "latency": "1s", "max": 200_000 },
+                         "interval": "10s", "shares": { "normal": 50, "sheddable": 80 } },
+                "grad": { "type": "admission", "mode": "gradient", "latency": "1s", "max": 200_000,
+                          "interval": "2h", "jitter_percent": 101, "probe_timeout": "10ms" },
                 "ok": { "type": "admission", "mode": "gradient" },
                 "slots": { "type": "in_flight", "amount": 10, "key": "route" }
             },
@@ -2717,7 +2718,19 @@ fn admission_refuses_meaningless_settings() {
         "{found:?}"
     );
     assert!(
-        has(&found, "middlewares.bad.window", "does not apply"),
+        has(&found, "middlewares.bad.interval", "does not apply"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.interval", "1s to 1h"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.jitter_percent", "0 to 100"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.grad.probe_timeout", "100ms to 60s"),
         "{found:?}"
     );
     assert!(
@@ -2766,11 +2779,12 @@ fn merged_errors(value: Value) -> Vec<(String, String)> {
 #[allow(clippy::too_many_lines)]
 fn tenant_objects_stay_inside_their_claims_and_prefix() {
     let backend = json!({ "backends": [{ "address": "10.0.0.1:80" }] });
+    let public = json!({ "backends": [{ "address": "app.example.net:80" }] });
     let config = json!({
         "tenants": {
             "acme": { "hosts": ["acme.example.com", "*.acme.example.com"],
                       "shared": { "middlewares": ["compress"] } },
-            "globex": { "hosts": ["globex.example.com"] }
+            "globex": { "hosts": ["globex.example.com"], "backend_networks": ["10.0.0.0/8"] }
         },
         "routes": {
             "acme-web@api": { "match": "Host(`shop.acme.example.com`) && PathPrefix(`/`)",
@@ -2784,11 +2798,11 @@ fn tenant_objects_stay_inside_their_claims_and_prefix() {
             "file-route": { "match": "Host(`globex.example.com`)", "service": "file-svc" }
         },
         "services": {
-            "acme-svc@api": backend.clone(),
+            "acme-svc@api": public,
             "acme-loop@api": { "backends": [{ "address": "127.0.0.1:9900" }] },
             "acme-meta@api": { "backends": [{ "address": "169.254.169.254:80" }] },
             "acme-sock@api": { "backends": [{ "address": "unix:///run/admin.sock" }] },
-            "acme-tls@api": { "backends": [{ "address": "10.0.0.2:443" }], "scheme": "https",
+            "acme-tls@api": { "backends": [{ "address": "app.example.net:443" }], "scheme": "https",
                               "tls": { "ca_file": "/etc/ssl/private/ca.pem" } },
             "globex-svc@api": backend.clone(),
             "file-svc": backend
@@ -2875,7 +2889,7 @@ fn tenant_objects_stay_inside_their_claims_and_prefix() {
                 "{}.backends[0].address",
                 crate::diagnostics::path_key("services", "acme-meta@api")
             ),
-            "link-local"
+            "cloud metadata"
         ),
         "{found:?}"
     );
@@ -2948,6 +2962,277 @@ fn tenant_objects_stay_inside_their_claims_and_prefix() {
             .any(|(p, _)| p.starts_with(&crate::diagnostics::path_key("routes", "file-route"))),
         "{found:?}"
     );
+}
+
+#[test]
+#[allow(clippy::too_many_lines)]
+fn tenant_backends_reach_only_global_addresses_by_default() {
+    let config = |networks: Value, addresses: &[&str]| {
+        let services: serde_json::Map<String, Value> = addresses
+            .iter()
+            .enumerate()
+            .map(|(i, a)| {
+                (
+                    format!("acme-s{i}@api"),
+                    json!({ "backends": [{ "address": a }] }),
+                )
+            })
+            .collect();
+        json!({
+            "tenants": { "acme": { "hosts": ["acme.example.com"], "backend_networks": networks } },
+            "services": services,
+        })
+    };
+    let refused = [
+        "127.0.0.1:80",
+        "127.0.0.2:80",
+        "0.0.0.0:80",
+        "10.0.0.1:80",
+        "172.17.0.1:2375",
+        "192.168.1.1:80",
+        "100.64.0.1:80",
+        "169.254.169.254:80",
+        "169.254.170.2:80",
+        "168.63.129.16:80",
+        "224.0.0.1:80",
+        "192.0.2.1:80",
+        "[::1]:80",
+        "[::]:80",
+        "[::ffff:127.0.0.1]:80",
+        "[::ffff:8.8.8.8]:80",
+        "[fe80::1]:80",
+        "[fd00:ec2::254]:80",
+        "[fd12::1]:80",
+        "[2001:db8::1]:80",
+        "localhost:80",
+        "localhost.localdomain:80",
+        "ip6-localhost:80",
+        "ip6-loopback:80",
+        "a.localhost:80",
+        "unix:///run/admin.sock",
+    ];
+    let found = merged_errors(config(json!([]), &refused));
+    for (i, address) in refused.iter().enumerate() {
+        let path = format!(
+            "{}.backends[0].address",
+            crate::diagnostics::path_key("services", &format!("acme-s{i}@api"))
+        );
+        assert!(
+            has(&found, &path, "cannot send traffic"),
+            "{address}: {found:?}"
+        );
+    }
+    let accepted = [
+        "8.8.8.8:53",
+        "[2001:4860:4860::8888]:53",
+        "app.example.net:80",
+        "srv://_http._tcp.example.net",
+    ];
+    let found = merged_errors(config(json!([]), &accepted));
+    assert!(found.is_empty(), "{found:?}");
+    // With networks: exactly those, IP literals only.
+    let listed = [
+        "10.1.2.3:80",
+        "[::ffff:10.1.2.3]:80",
+        "8.8.8.8:80",
+        "app.example.net:80",
+        "169.254.169.254:80",
+    ];
+    let found = merged_errors(config(json!(["10.0.0.0/8", "0.0.0.0/0"]), &listed));
+    let at = |i: usize| {
+        format!(
+            "{}.backends[0].address",
+            crate::diagnostics::path_key("services", &format!("acme-s{i}@api"))
+        )
+    };
+    assert!(!found.iter().any(|(p, _)| *p == at(0)), "{found:?}");
+    assert!(has(&found, &at(1), "IPv4-mapped"), "{found:?}");
+    assert!(
+        !found.iter().any(|(p, _)| *p == at(2)),
+        "inside 0.0.0.0/0: {found:?}"
+    );
+    assert!(has(&found, &at(3), "DNS name"), "{found:?}");
+    assert!(has(&found, &at(4), "metadata"), "{found:?}");
+    // Listing loopback or link-local is allowed, with a warning.
+    let config: Config =
+        serde_json::from_value(config(json!(["127.0.0.1", "169.254.0.0/16"]), &[])).unwrap();
+    let warned: Vec<_> = config
+        .validate_merged()
+        .into_iter()
+        .filter(|d| !d.is_error())
+        .map(|d| (d.path, d.message))
+        .collect();
+    assert!(
+        has(&warned, "tenants.acme.backend_networks[0]", "loopback"),
+        "{warned:?}"
+    );
+    assert!(
+        has(&warned, "tenants.acme.backend_networks[1]", "link-local"),
+        "{warned:?}"
+    );
+}
+
+#[test]
+fn numeric_host_spellings_are_never_dns_names() {
+    for address in [
+        "127.1:80",
+        "2130706433:80",
+        "2852039166:80",
+        "0:80",
+        "0.0:80",
+        "0x7f.0.0.1:80",
+        "0x7f000001:80",
+        "0177.0.0.1:80",
+        "127.0.0.1.:80",
+        "[fe80::1%eth0]:80",
+        "[::ffff:127.0.0.1%1]:80",
+    ] {
+        assert!(
+            address.parse::<crate::values::BackendAddress>().is_err(),
+            "{address}"
+        );
+    }
+    let message = "127.1:80"
+        .parse::<crate::values::BackendAddress>()
+        .unwrap_err()
+        .to_string();
+    assert!(message.contains("non-canonical IP address"), "{message}");
+    assert!("app-1:80".parse::<crate::values::BackendAddress>().is_ok());
+}
+
+#[test]
+fn tenant_limits_cap_bodies_objects_and_certificate_names() {
+    let route =
+        |host: &str| json!({ "match": format!("Host(`{host}`)"), "service": "acme-svc@api" });
+    let mut routes = serde_json::Map::new();
+    for i in 0..4 {
+        routes.insert(
+            format!("acme-r{i}@api"),
+            route(&format!("r{i}.acme.example.com")),
+        );
+    }
+    routes.insert(
+        "acme-big@api".into(),
+        json!({ "match": "Host(`big.acme.example.com`)", "service": "acme-svc@api", "max_body": "2MiB" }),
+    );
+    routes.insert(
+        "acme-crit@api".into(),
+        json!({ "match": "Host(`c.acme.example.com`)", "service": "acme-svc@api",
+                "priority_class": "critical", "middlewares": ["shared-adm"] }),
+    );
+    routes.insert(
+        "acme-crit-own@api".into(),
+        json!({ "match": "Host(`d.acme.example.com`)", "service": "acme-svc@api",
+                "priority_class": "critical", "middlewares": ["acme-adm@api"] }),
+    );
+    let found = merged_errors(json!({
+        "defaults": { "tls": "auto" },
+        "tenants": { "acme": {
+            "hosts": ["*.acme.example.com"],
+            "shared": { "middlewares": ["shared-adm"] },
+            "limits": { "max_body": "1MiB", "max_routes": 6, "max_tls_names": 3 }
+        } },
+        "routes": routes,
+        "services": { "acme-svc@api": { "backends": [{ "address": "app.example.net:80" }] } },
+        "middlewares": {
+            "shared-adm": { "type": "admission", "mode": "aimd" },
+            "acme-adm@api": { "type": "admission", "mode": "aimd" },
+            "acme-hold@api": { "type": "hold_body", "max": "4MiB" }
+        }
+    }));
+    let key = |section: &str, name: &str| crate::diagnostics::path_key(section, name);
+    assert!(
+        has(
+            &found,
+            &format!("{}.max_body", key("routes", "acme-big@api")),
+            "body limit"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            &format!("{}.max", key("middlewares", "acme-hold@api")),
+            "body limit"
+        ),
+        "{found:?}"
+    );
+    // Seven routes, six allowed: the last by name is refused.
+    assert!(
+        has(&found, &key("routes", "acme-r3@api"), "at most 6 routes"),
+        "{found:?}"
+    );
+    assert!(
+        found
+            .iter()
+            .filter(|(_, m)| m.contains("at most 6 routes"))
+            .count()
+            == 1,
+        "{found:?}"
+    );
+    // Three certificate names: the fourth name is refused.
+    assert!(
+        found
+            .iter()
+            .any(|(_, m)| m.contains("at most 3 host names")),
+        "{found:?}"
+    );
+    assert!(
+        has(
+            &found,
+            &format!("{}.priority_class", key("routes", "acme-crit@api")),
+            "cannot mark routes `critical`"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        !found
+            .iter()
+            .any(|(p, _)| p.starts_with(&key("routes", "acme-crit-own@api"))
+                && p.ends_with("priority_class")),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn tenant_diagnostics_do_not_list_other_objects() {
+    let found = merged_errors(json!({
+        "tenants": { "acme": { "hosts": ["acme.example.com"] } },
+        "routes": {
+            "acme-a@api": { "match": "Host(`acme.example.com`)", "service": "secret-backend" },
+            "acme-b@api": { "match": "Host(`acme.example.com`) && Path(`/b`)", "service": "nothing-here" },
+            "acme-c@api": { "match": "Host(`acme.example.com`) && Path(`/c`)", "service": "acme-missing@api" }
+        },
+        "services": {
+            "secret-backend": { "backends": [{ "address": "10.0.0.1:80" }] }
+        }
+    }));
+    let key = |name: &str| format!("{}.service", crate::diagnostics::path_key("routes", name));
+    // Existing and missing objects outside the tenant answer the same.
+    let a: Vec<_> = found
+        .iter()
+        .filter(|(p, _)| *p == key("acme-a@api"))
+        .map(|(_, m)| m.replace("secret-backend", "X"))
+        .collect();
+    let b: Vec<_> = found
+        .iter()
+        .filter(|(p, _)| *p == key("acme-b@api"))
+        .map(|(_, m)| m.replace("nothing-here", "X"))
+        .collect();
+    assert_eq!(a, b, "{found:?}");
+    assert!(
+        has(&found, &key("acme-c@api"), "does not exist"),
+        "{found:?}"
+    );
+    let config: Config = serde_json::from_value(json!({
+        "tenants": { "acme": { "hosts": ["acme.example.com"] } },
+        "routes": { "acme-c@api": { "match": "Host(`acme.example.com`)", "service": "acme-missing@api" } },
+        "services": { "secret-backend": { "backends": [{ "address": "10.0.0.1:80" }] } }
+    }))
+    .unwrap();
+    for d in config.validate_merged() {
+        assert!(!format!("{d:?}").contains("secret-backend"), "{d:?}");
+    }
 }
 
 #[test]
@@ -3054,4 +3339,84 @@ fn http3_owns_the_udp_port_of_its_address() {
     );
     assert_eq!(errors(defaults.clone()), Vec::<(String, String)>::new());
     assert_eq!(warnings(defaults), Vec::<(String, String)>::new());
+}
+
+#[test]
+fn basic_auth_hashes_have_a_bounded_cost() {
+    let salt = "c29tZXNhbHQxMjM0NTY3OA$AAAA";
+    let config = with(
+        app(),
+        json!({
+            "middlewares": {
+                "auth": { "type": "basic_auth", "users": [
+                    format!("ok:$argon2id$v=19$m=19456,t=2,p=1${salt}"),
+                    format!("mem:$argon2id$v=19$m=4194304,t=1,p=1${salt}"),
+                    "slow:$2b$20$abcdefghijklmnopqrstuuABCDEFGHIJKLMNOPQRSTUVWXYZ01234"
+                ] }
+            }
+        }),
+    );
+    let found = errors(config);
+    assert!(
+        !found.iter().any(|(p, _)| p == "middlewares.auth.users[0]"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.auth.users[1]", "the limit is 262144"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "middlewares.auth.users[2]", "the limit is 14"),
+        "{found:?}"
+    );
+}
+
+#[test]
+fn consumer_bans_need_the_consumer_first_and_fingerprint_bans_warn() {
+    let config = with(
+        app(),
+        json!({
+            "consumers": { "ann": { "keys": [] } },
+            "middlewares": {
+                "ban": { "type": "abuse", "key": "consumer", "events": ["404"] },
+                "keys": { "type": "api_key" },
+                "ja4ban": { "type": "abuse", "key": "ja4", "events": ["auth_failure"], "action": "deny" },
+                "ja4limit": { "type": "rate_limit", "key": "ja4", "average": 10 }
+            },
+            "routes": {
+                "app": { "middlewares": ["ban", "keys"] },
+                "after": { "match": "Host(`after.example.com`)", "service": "app", "middlewares": ["keys", "ban"] }
+            }
+        }),
+    );
+    let found = errors(config.clone());
+    assert!(
+        has(
+            &found,
+            "routes.app.middlewares[0]",
+            "no middleware before it sets one"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        !found.iter().any(|(p, _)| p.starts_with("routes.after")),
+        "{found:?}"
+    );
+    let warned = warnings(config);
+    assert!(
+        has(
+            &warned,
+            "middlewares.ja4ban.key",
+            "every client with the same TLS stack"
+        ),
+        "{warned:?}"
+    );
+    assert!(
+        has(
+            &warned,
+            "middlewares.ja4limit.key",
+            "every client with the same TLS stack"
+        ),
+        "{warned:?}"
+    );
 }

@@ -306,13 +306,13 @@ impl Scope {
     }
 
     /// A reload report as the tenant may see it: the outcome and the diagnostics about its
-    /// own objects; the origin and other objects' diagnostics are left out, with their count.
+    /// own objects. The origin and other objects' diagnostics are left out without a trace
+    /// (not even their number, which would show other tenants' activity).
     pub(crate) fn report(&self, report: &Value) -> Value {
         let all = report["diagnostics"]
             .as_array()
             .cloned()
             .unwrap_or_default();
-        let total = all.len();
         let mine: Vec<Value> = all
             .into_iter()
             .filter(|d| {
@@ -322,15 +322,11 @@ impl Scope {
                     .is_some_and(|(_, name)| self.owns_merged(&name) || self.owns_bare(&name))
             })
             .collect();
-        let withheld = total - mine.len();
         let mut out = json!({
             "result": report["result"],
             "generation": report["generation"],
             "diagnostics": mine,
         });
-        if withheld > 0 {
-            out["withheld"] = json!(withheld);
-        }
         if report.get("error").is_some_and(|e| !e.is_null()) {
             out["error"] = json!("the configuration was rejected");
         }
@@ -467,7 +463,7 @@ mod tests {
         });
         let out = scope().report(&report);
         assert_eq!(out["diagnostics"].as_array().unwrap().len(), 1);
-        assert_eq!(out["withheld"], 2);
+        assert!(out.get("withheld").is_none(), "not even their number");
         assert!(out.get("origin").is_none());
         assert!(!out.to_string().contains("globex"));
     }

@@ -260,6 +260,7 @@ impl Middleware for ClientCert {
                     if rules.consumer {
                         let domain = parse_spiffe_id(&id).map(|(d, _)| d).unwrap_or_default();
                         cx.consumer = Some(crate::Consumer {
+                            trusted_groups: 0,
                             name: id.clone(),
                             groups: Arc::from([]),
                             issuer: Some(Arc::from(format!("spiffe://{domain}"))),

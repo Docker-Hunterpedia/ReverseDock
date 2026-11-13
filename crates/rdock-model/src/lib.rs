@@ -1,6 +1,7 @@
 #![doc = include_str!("../README.md")]
 
 pub mod acme;
+pub mod addresses;
 pub mod cache;
 pub mod cluster;
 pub mod config;
@@ -10,6 +11,7 @@ pub mod interpolation;
 pub mod json_patch;
 pub mod middleware;
 pub mod oidc;
+pub mod password;
 pub mod providers;
 pub mod route;
 mod schema;

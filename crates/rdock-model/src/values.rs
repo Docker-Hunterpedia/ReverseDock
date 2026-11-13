@@ -589,6 +589,14 @@ impl FromStr for BackendAddress {
                 "invalid backend address `{s}`: use `host:port`, `10.0.0.5:8080`, `[::1]:8080` or `unix:///run/app.sock`"
             )));
         };
+        // `127.1`, `2130706433`, `0x7f.0.0.1`: not DNS names. The system resolver reads them
+        // as IP addresses (`inet_aton`), so they are refused for everyone rather than passed
+        // on as names that would reach an address nobody wrote down.
+        if host.parse::<std::net::IpAddr>().is_err() && crate::addresses::looks_numeric(&host) {
+            return Err(ValueError::new(format!(
+                "`{host}` in `{s}` is not a DNS name but a non-canonical IP address, which resolvers read in surprising ways: write the address in its usual form, such as `10.0.0.5:8080`"
+            )));
+        }
         match port.parse::<u16>() {
             Ok(port) if port > 0 => Ok(Self::Tcp { host, port }),
             _ => Err(ValueError::new(format!(
@@ -652,6 +660,18 @@ impl IpNetwork {
     #[must_use]
     pub fn contains(&self, ip: &IpAddr) -> bool {
         self.0.contains(ip)
+    }
+
+    /// Whether the network is exactly the one address `ip` (a /32 or /128).
+    #[must_use]
+    pub fn is_single(&self, ip: IpAddr) -> bool {
+        self.0.prefix_len() == self.0.max_prefix_len() && self.0.addr() == ip
+    }
+
+    /// Whether the network contains any address of `other`'s range or `other` any of its.
+    #[must_use]
+    pub fn overlaps(&self, other: &IpNet) -> bool {
+        self.0.contains(other) || other.contains(&self.0)
     }
 }
 

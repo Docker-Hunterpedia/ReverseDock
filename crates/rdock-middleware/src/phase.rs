@@ -223,6 +223,12 @@ pub struct Consumer {
     pub name: Arc<str>,
     /// Its groups.
     pub groups: Arc<[Arc<str>]>,
+    /// How many of `groups`, from the first, come from the configuration (a consumer of
+    /// `consumers`, a group a middleware assigns, a token group listed in the middleware's
+    /// `trusted_groups`). Only these count for `key: group` and for group `overrides`: a
+    /// group taken from a token's claim could otherwise share a configured group's budget, or
+    /// create a counter per value an identity provider lets its users choose.
+    pub trusted_groups: usize,
     /// Who asserted the name: `None` for a consumer defined in `consumers` (an API key, or a
     /// token middleware with `map_to_consumers`), otherwise the token's issuer. Two consumers
     /// with the same name but different issuers are different identities for the cache,
@@ -237,8 +243,32 @@ impl Consumer {
         Self {
             name: Arc::from(name),
             groups: Arc::from([]),
+            trusted_groups: 0,
             issuer: None,
         }
+    }
+
+    /// A consumer of `consumers` with `groups`, all from the configuration.
+    #[must_use]
+    pub fn configured(name: &str, groups: &[&str]) -> Self {
+        Self {
+            name: Arc::from(name),
+            groups: groups.iter().map(|g| Arc::from(*g)).collect(),
+            trusted_groups: groups.len(),
+            issuer: None,
+        }
+    }
+
+    /// The groups that count for group keys and overrides (see `trusted_groups`).
+    #[must_use]
+    pub fn counted_groups(&self) -> &[Arc<str>] {
+        &self.groups[..self.trusted_groups.min(self.groups.len())]
+    }
+
+    /// The primary group for `key: group`: the first counted group.
+    #[must_use]
+    pub fn primary_group(&self) -> Option<&Arc<str>> {
+        self.counted_groups().first()
     }
 
     /// The identity the cache key, quotas and rate limits count: the name for a consumer of

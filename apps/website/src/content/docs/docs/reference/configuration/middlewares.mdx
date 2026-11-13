@@ -655,6 +655,12 @@ A header; `Authorization` values must start with `Bearer `.
 
 A query parameter (tokens in URLs end up in logs; prefer a header).
 
+### `middlewares.<name>.trusted_groups`
+
+**Type:** list of `string`
+
+Groups from `groups_claim` that count for `key: group` and for group `overrides` of `rate_limit` and `quota`, as if configured. Other token groups are kept on the consumer (metering, headers) but never share a configured group's budget or override, and a consumer with only those is counted on its own.
+
 ### `middlewares.<name>.unverified_emails`
 
 **Type:** `boolean` · **Default:** `false`
@@ -1961,6 +1967,18 @@ An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests t
 
 The limit at start and after a reload (default 20, Netflix's, kept within `min`–`max`).
 
+### `middlewares.<name>.interval`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`gradient` only: time between two measurements of the no-load latency (default 60s, the `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).
+
+### `middlewares.<name>.jitter_percent`
+
+**Type:** `integer`
+
+`gradient` only: a random part of `interval` added to it, in percent, so instances do not measure at the same moment (default 15, Envoy's `jitter`; 0–100).
+
 ### `middlewares.<name>.latency`
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration)
@@ -1986,13 +2004,19 @@ The lowest limit (default 3, Envoy's `min_concurrency`).
 `aimd` or `gradient`.
 
 - `aimd`: Additive increase, multiplicative decrease on slow or failed samples.
-- `gradient`: The ratio of the long-term latency to each sample's (Gradient2).
+- `gradient`: The measured no-load latency against each sample's (Envoy's gradient).
 
 ### `middlewares.<name>.probe`
 
 **Type:** `integer`
 
 `gradient` only: samples at `min` concurrency that make one measurement of the no-load latency (default 50, Envoy's `request_count`; 5–1000).
+
+### `middlewares.<name>.probe_timeout`
+
+**Type:** [`Duration`](/docs/reference/configuration/#duration)
+
+`gradient` only: the longest a measurement pins the limit to `min` (default 5s; 100ms–60s). When it ends early, the median of the samples it has becomes the reference; without any, the previous reference stays.
 
 ### `middlewares.<name>.queue`
 
@@ -2035,9 +2059,3 @@ Routes with `priority_class: sheddable`, in percent of the limit (default 75; at
 **Type:** `integer`
 
 `gradient` only: how much slower than the no-load latency a sample may be before the limit shrinks, in percent (default 150, Netflix's `rttTolerance` 1.5; 100–1000).
-
-### `middlewares.<name>.window`
-
-**Type:** `integer`
-
-`gradient` only: samples between two measurements of the no-load latency (default 600; 10–100000).

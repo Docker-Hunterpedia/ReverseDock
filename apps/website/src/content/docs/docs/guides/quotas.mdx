@@ -19,8 +19,13 @@ Both need a middleware that sets the consumer **earlier in the route's list** (`
 [`oidc`](/docs/guides/oidc-login/), `cloudflare_access`, or `jwt` with
 [`consumer_claim`](/docs/guides/jwt/#consumers-from-tokens)); `rdock validate` refuses a route
 where none does. After an OIDC login the consumer is the user's verified `email` claim (or
-another `consumer_claim`), and its groups come from the token's `groups` claim, so group
-overrides work for logged-in users too. A consumer named by a token (`oidc`, `jwt`,
+another `consumer_claim`), and its groups come from the token's `groups` claim. Groups taken
+from a token **do not count** for `key: group` or for group `overrides`: an identity provider
+may let users choose them, and a token group `gold` must not spend the budget of your
+configured `gold` customers, nor create a counter per value. They are kept on the consumer
+(metering, headers). To count token groups, list them in the `jwt` middleware's
+`trusted_groups`, or use `map_to_consumers: true`, which gives the configured consumer's
+groups. A consumer named by a token (`oidc`, `jwt`,
 `cloudflare_access`) is counted apart from an API-key consumer of the same name and from a
 user of another issuer; with `map_to_consumers: true` on `oidc` or `jwt`, a name that
 `consumers` defines is that consumer, with its groups and its counters.

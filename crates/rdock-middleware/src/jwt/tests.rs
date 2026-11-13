@@ -429,8 +429,10 @@ async fn token_consumers_map_to_configured_ones_only_when_asked() {
     let mapped = mapping_jwt(&json!({ "map_to_consumers": true }));
     let consumer = run(mapped).await;
     let groups: Vec<&str> = consumer.groups.iter().map(|g| &**g).collect();
-    assert_eq!(groups, ["staff", "vip"]);
+    assert_eq!(groups, ["vip", "staff"], "the configured groups first");
     assert_eq!(consumer.key(), crate::Consumer::named("user-7").key());
+    let counted: Vec<&str> = consumer.counted_groups().iter().map(|g| &**g).collect();
+    assert_eq!(counted, ["vip"], "the token's `staff` does not count");
 
     // A name `consumers` does not define stays keyed on the issuer, mapping or not.
     let other = hs256(&json!({
@@ -447,4 +449,48 @@ async fn token_consumers_map_to_configured_ones_only_when_asked() {
     let consumer = cx.consumer.unwrap();
     assert_eq!(consumer.issuer.as_deref(), Some("https://idp.test"));
     assert!(consumer.key().starts_with('~'));
+}
+
+/// M4 of the tenants review: a group from a token's claim never shares a configured group's
+/// bucket or override, unless the middleware lists it in `trusted_groups`.
+#[tokio::test]
+async fn token_groups_count_for_group_keys_only_when_trusted() {
+    use crate::Middleware as _;
+    let token = hs256(&json!({
+        "iss": "https://idp.test", "aud": "api", "sub": "someone", "exp": now() + 300,
+        "roles": ["gold", "team-123"],
+    }));
+    let run = |jwt: super::Jwt| {
+        let token = token.clone();
+        async move {
+            let mut req = crate::test_support::request(
+                "GET",
+                "/",
+                &[("authorization", &format!("Bearer {token}"))],
+            );
+            let mut cx = crate::test_support::cx();
+            assert!(matches!(
+                jwt.request(&mut req, &mut cx).await,
+                crate::Flow::Next
+            ));
+            cx.consumer.unwrap()
+        }
+    };
+    let consumer = run(mapping_jwt(&json!({}))).await;
+    assert_eq!(consumer.groups.len(), 2, "kept for metering and headers");
+    assert!(consumer.primary_group().is_none(), "no group counts");
+    let mut with_consumer = crate::test_support::cx();
+    with_consumer.consumer = Some(consumer.clone());
+    let group_key = crate::limits::key_of(
+        &rdock_model::values::RateLimitKey::Group,
+        &crate::test_support::request("GET", "/", &[]),
+        &with_consumer,
+    );
+    assert!(
+        group_key.starts_with(b"c:"),
+        "counted on its own, never as `g:gold`"
+    );
+    let consumer = run(mapping_jwt(&json!({ "trusted_groups": ["gold"] }))).await;
+    let counted: Vec<&str> = consumer.counted_groups().iter().map(|g| &**g).collect();
+    assert_eq!(counted, ["gold"]);
 }

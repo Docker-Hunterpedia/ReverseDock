@@ -58,14 +58,19 @@ impl From<User> for UserView {
     }
 }
 
-/// Whether `tenant` is a tenant of the running configuration.
+/// Whether `tenant` is a tenant of the running configuration. Retires the principals of
+/// removed tenants first, so a name added again does not get them back.
 async fn known_tenant(state: &State, tenant: &str) -> bool {
     let control = state.control.clone();
-    state
+    let Ok(tenants) = state
         .main
         .spawn(async move { control.tenants().await })
         .await
-        .is_ok_and(|t| t.contains_key(tenant))
+    else {
+        return false;
+    };
+    crate::caller::retire_orphans(state, &tenants);
+    tenants.contains_key(tenant)
 }
 
 fn unknown_tenant() -> Response {

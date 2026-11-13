@@ -148,6 +148,15 @@ struct Validator<'a> {
     out: Vec<Diagnostic>,
 }
 
+/// Whether `route` gets automatic certificates (the compiler's rule).
+pub(crate) fn wants_auto_tls(config: &Config, route: &Route) -> bool {
+    match &route.tls {
+        None => config.defaults.tls == TlsMode::Auto,
+        Some(RouteTls::Mode(mode)) => *mode == TlsMode::Auto,
+        Some(RouteTls::Options(o)) => o.auto && o.certificate.is_none(),
+    }
+}
+
 impl Validator<'_> {
     fn push(&mut self, diagnostic: Diagnostic) {
         self.out.push(diagnostic);
@@ -217,6 +226,21 @@ impl Validator<'_> {
         if known.contains_key(reference_key(reference)) {
             return;
         }
+        // A tenant's object: whether anything outside the tenant exists is not its business.
+        // A reference outside the tenant is refused by the tenant rules whether it exists or
+        // not, and the hint never lists other objects.
+        if let Some(prefix) = self.tenant_prefix_of_path(path) {
+            let own = reference_key(reference)
+                .strip_suffix("@api")
+                .is_some_and(|bare| bare.starts_with(&prefix));
+            if own {
+                self.push(
+                    Diagnostic::error(path, format!("{kind} `{name}` does not exist"))
+                        .with_hint(format!("define it, with a name starting `{prefix}`")),
+                );
+            }
+            return;
+        }
         let hint = match closest_match(name, known.keys().map(String::as_str)) {
             Some(near) => format!("did you mean `{near}`?"),
             None if known.is_empty() => format!("no {kind}s are defined in this file"),
@@ -232,6 +256,21 @@ impl Validator<'_> {
         self.push(
             Diagnostic::error(path, format!("{kind} `{name}` does not exist")).with_hint(hint),
         );
+    }
+
+    /// The prefix of the tenant owning the object `path` lies under (an API object under a
+    /// tenant's prefix), if any.
+    fn tenant_prefix_of_path(&self, path: &str) -> Option<String> {
+        if !self.merged || self.config.tenants.is_empty() {
+            return None;
+        }
+        let rest = ["routes", "services", "middlewares"]
+            .iter()
+            .find_map(|section| path.strip_prefix(section))?;
+        let key = rest.strip_prefix("[\"")?;
+        let key = &key[..key.find("\"]")?];
+        let bare = key.strip_suffix("@api")?;
+        crate::tenant::owner(&self.config.tenants, bare).map(|(t, tenant)| tenant.prefix_of(t))
     }
 
     fn check_regex(&mut self, path: &str, pattern: &str) {
@@ -1346,7 +1385,14 @@ impl Validator<'_> {
             let entry_path = path_index(&format!("{path}.users"), i);
             match entry.split_once(':') {
                 Some((user, hash)) if !user.is_empty() => match hash_strength(hash) {
-                    Some(HashStrength::Strong) => {}
+                    Some(HashStrength::Strong) => {
+                        if let Some(problem) = crate::password::cost_problem(hash) {
+                            self.push(
+                                Diagnostic::error(&entry_path, format!("the password of `{user}`: {problem}"))
+                                    .with_hint("every request with a wrong password does this work; create a new hash with `rdock hash --user <name>` (the limits follow OWASP's Password Storage Cheat Sheet)"),
+                            );
+                        }
+                    }
                     Some(HashStrength::Weak) => self.push(
                         Diagnostic::warning(&entry_path, format!("the password of `{user}` uses a weak hash"))
                             .with_hint("MD5 and SHA-1 hashes are fast to brute-force; create an argon2id entry with `rdock hash --user <name>`"),
@@ -1379,6 +1425,9 @@ impl Validator<'_> {
     }
 
     fn check_rate_limit(&mut self, path: &str, limit: &RateLimitConfig) {
+        if limit.key == crate::values::RateLimitKey::Ja4 {
+            self.push(edge::fingerprint_warning(&format!("{path}.key"), "limit"));
+        }
         self.check_not_zero(&format!("{path}.average"), limit.average == 0);
         self.check_not_zero(&format!("{path}.burst"), limit.burst == Some(0));
         self.check_not_zero(&format!("{path}.period"), limit.period.is_zero());

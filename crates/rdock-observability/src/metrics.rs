@@ -215,6 +215,9 @@ pub struct Metrics {
     /// `rdock_admission_shed_total{middleware,class}`: requests answered `503` by an
     /// `admission` middleware, by the route's `priority_class`.
     pub admission_shed: IntCounterVec,
+    /// `rdock_backend_addresses_refused_total{service}`: resolved backend addresses of a
+    /// tenant's service that its tenant may not reach (ADR-0031), never connected to.
+    pub backend_addresses_refused: IntCounterVec,
 }
 
 /// Distinct consumers that get their own `rdock_consumer_requests_total` series; later ones
@@ -776,6 +779,12 @@ impl Metrics {
             "Requests shed with 503 by admission middlewares, by priority class.",
             &["middleware", "class"],
         )?;
+        let backend_addresses_refused = counters(
+            &registry,
+            "rdock_backend_addresses_refused_total",
+            "Resolved backend addresses of tenant services that the tenant may not reach; never connected to.",
+            &["service"],
+        )?;
         let oidc_refreshes = counters(
             &registry,
             "rdock_oidc_refreshes_total",
@@ -792,6 +801,7 @@ impl Metrics {
             admission_limit,
             admission_in_flight,
             admission_shed,
+            backend_addresses_refused,
             quota_overflows,
             oidc_logins,
             oidc_refreshes,

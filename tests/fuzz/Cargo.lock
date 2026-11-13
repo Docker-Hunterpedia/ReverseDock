@@ -3084,6 +3084,7 @@ dependencies = [
 name = "rdock-limits"
 version = "0.8.0-alpha.1"
 dependencies = [
+ "fastrand",
  "serde",
  "serde_json",
  "tokio",

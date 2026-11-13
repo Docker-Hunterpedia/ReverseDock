@@ -154,8 +154,11 @@ impl Validator<'_> {
                     format!("{path}.key"),
                     format!("the client chooses `{name}`: a ban by it is evaded by changing the header, and every new value takes a counter"),
                 )
-                .with_hint("count by `client_ip`, `consumer` or `ja4`, or use `action: tag`"),
+                .with_hint("count by `client_ip` or `consumer`, or use `action: tag`"),
             );
+        }
+        if abuse.key == AbuseKey::Ja4 && abuse.action != AbuseAction::Tag {
+            self.push(fingerprint_warning(&format!("{path}.key"), "ban"));
         }
     }
 
@@ -283,4 +286,14 @@ impl Validator<'_> {
             }
         }
     }
+}
+
+/// A ban or limit by a TLS fingerprint alone: one JA4 is shared by every user of a client
+/// build, and anyone can send it (`curl-impersonate`, uTLS).
+pub(super) fn fingerprint_warning(path: &str, what: &str) -> Diagnostic {
+    Diagnostic::warning(
+        path,
+        format!("a {what} by `ja4` alone hits every client with the same TLS stack (all users of one browser version share a JA4), and an attacker can copy a fingerprint to get it applied to them"),
+    )
+    .with_hint("count by `client_ip` or `consumer`, and use the fingerprint to tag (`action: tag`) or in a route rule together with the address")
 }

@@ -28,9 +28,9 @@ use crate::forwarded::{ClientIpPolicy, CloudflareRanges};
 use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
-    ActiveCheck, BackendRuntime, Endpoint, Failover, HashOn, HealthRuntime, HttpsRedirect,
-    ListenerRuntime, MirrorRuntime, PassiveCheck, PeakRuntime, RouteRuntime, Runtime, Selection,
-    ServiceRuntime, StickyRuntime, UpstreamTls,
+    ActiveCheck, AddressGuard, BackendRuntime, Endpoint, Failover, HashOn, HealthRuntime,
+    HttpsRedirect, ListenerRuntime, MirrorRuntime, PassiveCheck, PeakRuntime, RouteRuntime,
+    Runtime, Selection, ServiceRuntime, StickyRuntime, UpstreamTls,
 };
 use crate::upstream::{Dns, ServiceFetcher};
 
@@ -147,11 +147,27 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         metering,
         geoip,
         geoip_log: config.geoip.as_ref().map(|g| g.log).unwrap_or_default(),
+        fingerprint_headers: fingerprint_headers(config),
     });
     Compiled {
         runtime,
         diagnostics: out,
     }
+}
+
+/// The fingerprint header names of every listener, lower-case and once each.
+fn fingerprint_headers(config: &Config) -> Arc<[String]> {
+    let mut names: Vec<String> = config
+        .listeners
+        .values()
+        .filter_map(|l| l.tls.as_ref()?.fingerprint.as_ref())
+        .flat_map(|f| [f.header.as_ref(), f.ja3_header.as_ref()])
+        .flatten()
+        .map(|h| h.to_ascii_lowercase())
+        .collect();
+    names.sort();
+    names.dedup();
+    names.into()
 }
 
 /// The GeoIP databases of `geoip`, reusing the running ones whose files did not change. A
@@ -541,6 +557,22 @@ fn compile_service(
                 measure: service.load_balancer.measure.unwrap_or_default(),
             }),
         },
+        allowed: address_guard(name, config, env),
+    })
+}
+
+/// The address policy of `name` when a tenant owns it (an API object under its prefix):
+/// compiled once here, so the data plane checks resolved addresses without knowing tenants.
+fn address_guard(name: &str, config: &Config, env: &CompileEnv<'_>) -> Option<AddressGuard> {
+    let bare = name.strip_suffix("@api")?;
+    let (_, tenant) = rdock_model::tenant::owner(&config.tenants, bare)?;
+    Some(AddressGuard {
+        policy: Arc::new(rdock_model::addresses::BackendPolicy::of(
+            &tenant.backend_networks,
+        )),
+        refused: env
+            .metrics
+            .map(|m| m.backend_addresses_refused.with_label_values(&[name])),
     })
 }
 
@@ -889,19 +921,44 @@ const CATCH_ALL: [&str; 2] = ["PathPrefix(`/`)", "Host(`*`)"];
 
 /// Warns about routes that can never match because an earlier route on the same listener has
 /// the same rule or matches everything (M-RT-02).
-fn report_shadowed(listener: &str, routes: &[Arc<RouteRuntime>], out: &mut Vec<Diagnostic>) {
+///
+/// A tenant's route is told only that another route comes first: the name of a route outside
+/// the tenant, and the listener's, are not the tenant's to know.
+fn report_shadowed(
+    listener: &str,
+    routes: &[Arc<RouteRuntime>],
+    tenants: &rdock_model::tenant::Tenants,
+    out: &mut Vec<Diagnostic>,
+) {
+    let owner = |name: &str| {
+        name.strip_suffix("@api")
+            .and_then(|bare| rdock_model::tenant::owner(tenants, bare))
+            .map(|(t, _)| t)
+    };
     for (i, route) in routes.iter().enumerate() {
         let earlier = routes[..i]
             .iter()
             .find(|e| e.expr == route.expr || CATCH_ALL.contains(&e.expr.as_str()));
         if let Some(earlier) = earlier {
+            let tenant = owner(&route.name);
+            let message = if tenant.is_some() && owner(&earlier.name) != tenant {
+                "this route never matches: another route comes first and matches the same requests"
+                    .to_owned()
+            } else if tenant.is_some() {
+                format!(
+                    "this route never matches: route `{}` comes first and matches the same requests",
+                    earlier.name
+                )
+            } else {
+                format!(
+                    "this route never matches on listener `{listener}`: route `{}` comes first and matches the same requests",
+                    earlier.name
+                )
+            };
             out.push(
                 Diagnostic::warning(
                     format!("{}.match", path_key("routes", &route.name)),
-                    format!(
-                        "this route never matches on listener `{listener}`: route `{}` comes first and matches the same requests",
-                        earlier.name
-                    ),
+                    message,
                 )
                 .with_hint("give this route a higher `priority`, or make its rule more specific"),
             );
@@ -1001,6 +1058,17 @@ fn compile_listeners(
             caches,
             errors: config.defaults.errors.format,
             geoip,
+            tenant_max_body: name
+                .strip_suffix("@api")
+                .and_then(|bare| rdock_model::tenant::owner(&config.tenants, bare))
+                .map(|(_, tenant)| {
+                    let cap = tenant.limits.max_body;
+                    config
+                        .security
+                        .limits
+                        .max_body_bytes
+                        .map_or(cap, |global| global.min(cap))
+                }),
         };
         let Some(compiled) = compile_route(name, route, (&expr, length), &context, out) else {
             continue;
@@ -1034,7 +1102,7 @@ fn compile_listeners(
                 .cmp(&a.priority)
                 .then_with(|| a.name.cmp(&b.name))
         });
-        report_shadowed(&listener.name, &listener.routes, out);
+        report_shadowed(&listener.name, &listener.routes, &config.tenants, out);
         listener.route_index =
             crate::router::RouteIndex::build(listener.routes.iter().map(|r| &r.rule));
         if listener.protocol == ListenerProtocol::Http
@@ -1153,6 +1221,9 @@ struct RouteContext<'a> {
     errors: rdock_model::config::ErrorFormat,
     /// GeoIP databases for the rule's matchers.
     geoip: Option<&'a Arc<crate::geoip::GeoIp>>,
+    /// The body ceiling of the tenant owning the route (`tenants.<t>.limits.max_body`, or
+    /// `security.limits.max_body_bytes` when smaller), if a tenant owns it.
+    tenant_max_body: Option<rdock_model::values::ByteSize>,
 }
 
 /// The route's cache policy from its `cache` middleware, if it has one.
@@ -1269,7 +1340,12 @@ fn compile_route(
         rule,
         service,
         expr: expr.to_string(),
-        max_body: route.max_body,
+        // A tenant's route never accepts more than its tenant's ceiling (validation refuses a
+        // larger `max_body`; this fills in the default).
+        max_body: match (route.max_body, context.tenant_max_body) {
+            (Some(own), Some(cap)) => Some(own.min(cap)),
+            (own, cap) => own.or(cap),
+        },
         grpc_web: chain.translates_grpc_web(),
         middlewares: chain,
         timeouts: route.timeouts,

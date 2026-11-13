@@ -1,7 +1,19 @@
 //! `admission`: an adaptive concurrency limit shared by the routes using the middleware
 //! (H-LB-04, ADR-0031). Over the share of the limit that the route's `priority_class` may
-//! fill, requests get `503` (`overloaded`) with `Retry-After`. The limit learns from the
-//! latency until the response headers and from upstream errors (`502`, `503`, `504`).
+//! fill, requests get `503` (`overloaded`) with `Retry-After`.
+//!
+//! The limit learns only from requests that reached a backend (Netflix's concurrency-limits
+//! ignores cancelled requests, `onIgnore`; Envoy's filter cancels the sample of a stream
+//! destroyed before its response completed): the latency until the backend's response
+//! headers, with the backend's `502`, `503` and `504`, a failed or timed-out connect and an
+//! upstream timeout as drops. A client that goes away, an answer of another middleware or of
+//! rdock itself, and a cache hit are no sample, so nobody can push the limit down by
+//! disconnecting or by asking for something rdock refuses.
+//!
+//! A request keeps its place until the response is complete (Envoy samples at
+//! `encodeComplete`), so streaming responses count while they stream; an upgrade (`101`)
+//! gives the place back when its response headers pass, because an upgraded connection is no
+//! longer a request the backend is working on.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -14,7 +26,7 @@ use rdock_model::middleware::{AdmissionConfig, AdmissionMode};
 use rdock_model::route::PriorityClass;
 
 use crate::phase::{Capabilities, Phases};
-use crate::{Context, Flow, LogSummary, Middleware, ProblemKind, Reply};
+use crate::{BackendOutcome, Context, Flow, LogSummary, Middleware, ProblemKind, Reply};
 
 /// The metrics of one middleware, looked up once.
 #[derive(Debug, Clone)]
@@ -39,12 +51,14 @@ pub(crate) struct Admission {
 struct Ticket {
     permit: Option<Permit>,
     started: Instant,
-    first_byte: Option<Instant>,
+    /// The sample was taken (at the backend's response headers).
+    sampled: bool,
     in_flight: Option<rdock_observability::IntGauge>,
 }
 
-impl Drop for Ticket {
-    fn drop(&mut self) {
+impl Ticket {
+    /// Gives the place back.
+    fn release(&mut self) {
         if let Some(permit) = self.permit.take() {
             let limit = permit.limit().clone();
             drop(permit);
@@ -52,6 +66,12 @@ impl Drop for Ticket {
                 gauge.set(i64::from(limit.in_flight()));
             }
         }
+    }
+}
+
+impl Drop for Ticket {
+    fn drop(&mut self) {
+        self.release();
     }
 }
 
@@ -104,8 +124,20 @@ pub(crate) fn settings(config: &AdmissionConfig) -> Settings {
                     .unwrap_or(AdmissionConfig::SMOOTHING_PERCENT),
             ),
             queue: f64::from(config.queue.unwrap_or(AdmissionConfig::QUEUE)),
-            window: config.window.unwrap_or(AdmissionConfig::WINDOW),
+            interval: config
+                .interval
+                .unwrap_or(AdmissionConfig::INTERVAL)
+                .as_std(),
+            jitter: percent(
+                config
+                    .jitter_percent
+                    .unwrap_or(AdmissionConfig::JITTER_PERCENT),
+            ),
             probe: config.probe.unwrap_or(AdmissionConfig::PROBE),
+            probe_timeout: config
+                .probe_timeout
+                .unwrap_or(AdmissionConfig::PROBE_TIMEOUT)
+                .as_std(),
         },
     };
     Settings {
@@ -155,14 +187,15 @@ impl Middleware for Admission {
     }
 
     async fn request(&self, _req: &mut RequestHeader, cx: &mut Context) -> Flow {
-        if let Some(permit) = self.limit.try_acquire(class(cx.priority_class)) {
+        let now = Instant::now();
+        if let Some(permit) = self.limit.try_acquire(class(cx.priority_class), now) {
             if let Some(g) = &self.gauges {
                 g.in_flight.set(i64::from(self.limit.in_flight()));
             }
             cx.set_state(Ticket {
                 permit: Some(permit),
-                started: Instant::now(),
-                first_byte: None,
+                started: now,
+                sampled: false,
                 in_flight: self.gauges.as_ref().map(|g| g.in_flight.clone()),
             });
             return Flow::Next;
@@ -179,25 +212,56 @@ impl Middleware for Admission {
     }
 
     async fn response(&self, _resp: &mut ResponseHeader, cx: &mut Context) {
-        if let Some(ticket) = cx.state_mut::<Ticket>() {
-            ticket.first_byte.get_or_insert_with(Instant::now);
+        // Only the backend's own response headers are a sample.
+        let BackendOutcome::Responded(status) = cx.backend else {
+            return;
+        };
+        let Some(ticket) = cx.state_mut::<Ticket>() else {
+            return;
+        };
+        if ticket.sampled {
+            return;
+        }
+        ticket.sampled = true;
+        let now = Instant::now();
+        if let Some(permit) = &ticket.permit {
+            let dropped = matches!(status, 502..=504);
+            self.sample(
+                now.saturating_duration_since(ticket.started),
+                permit.in_flight_at_start(),
+                dropped,
+                now,
+            );
+        }
+        if status == 101 {
+            ticket.release();
         }
     }
 
-    fn log(&self, summary: &LogSummary, cx: &Context) {
+    fn log(&self, _summary: &LogSummary, cx: &Context) {
         let Some(ticket) = cx.state::<Ticket>() else {
             return;
         };
-        let Some(permit) = &ticket.permit else {
-            return;
-        };
-        let end = ticket.first_byte.unwrap_or_else(Instant::now);
-        // Upstream failures and timeouts are drops; nothing sent at all is one too.
-        let dropped = matches!(summary.status, 0 | 502 | 503 | 504);
-        let latency = end.saturating_duration_since(ticket.started);
-        if let Some(limit) = self
-            .limit
-            .record(latency, permit.in_flight_at_start(), dropped)
+        // A backend that failed before answering is a drop; anything else that did not reach
+        // a backend's response (a client that left, an answer of rdock's) is no sample.
+        if !ticket.sampled
+            && cx.backend == BackendOutcome::Failed
+            && let Some(permit) = &ticket.permit
+        {
+            let now = Instant::now();
+            self.sample(
+                now.saturating_duration_since(ticket.started),
+                permit.in_flight_at_start(),
+                true,
+                now,
+            );
+        }
+    }
+}
+
+impl Admission {
+    fn sample(&self, latency: std::time::Duration, in_flight: u32, dropped: bool, now: Instant) {
+        if let Some(limit) = self.limit.record(latency, in_flight, dropped, now)
             && let Some(g) = &self.gauges
         {
             g.limit.set(i64::from(limit));
@@ -248,23 +312,81 @@ mod tests {
         assert_eq!(mw.limit.in_flight(), 0, "contexts free their places");
     }
 
-    #[test]
-    fn a_slow_or_failed_answer_lowers_the_limit() {
-        let mw = Admission::new("adm", &config(2, 50), None);
-        let mut req = request("GET", "/", &[]);
-        let mut c = cx();
-        block_on(mw.request(&mut req, &mut c));
-        let summary = |status| LogSummary {
+    fn summary(status: u16) -> LogSummary {
+        LogSummary {
             status,
             bytes_in: 0,
             bytes_out: 0,
             duration: std::time::Duration::from_millis(1),
             upstream_duration: None,
             error: None,
-        };
-        mw.log(&summary(200), &c);
+        }
+    }
+
+    /// One request through the middleware's phases, the backend doing `backend`.
+    fn exchange(mw: &Admission, backend: BackendOutcome, status: u16) {
+        let mut req = request("GET", "/", &[]);
+        let mut c = cx();
+        assert_eq!(block_on(mw.request(&mut req, &mut c)), Flow::Next);
+        c.backend = backend;
+        if matches!(backend, BackendOutcome::Responded(_)) || status != 0 {
+            let mut resp = ResponseHeader::build(status.max(100), None).unwrap();
+            block_on(mw.response(&mut resp, &mut c));
+        }
+        mw.log(&summary(status), &c);
+    }
+
+    #[test]
+    fn a_slow_or_failed_answer_lowers_the_limit() {
+        let mw = Admission::new("adm", &config(2, 50), None);
+        exchange(&mw, BackendOutcome::Responded(200), 200);
         assert_eq!(mw.limit.limit(), 3, "grew by one at full use");
-        mw.log(&summary(504), &c);
+        exchange(&mw, BackendOutcome::Responded(504), 504);
         assert_eq!(mw.limit.limit(), 2, "backed off, not below min");
+        let mw = Admission::new("adm", &config(2, 50), None);
+        exchange(&mw, BackendOutcome::Responded(200), 200);
+        exchange(&mw, BackendOutcome::Failed, 502);
+        assert_eq!(mw.limit.limit(), 2, "a failed connect is a drop");
+    }
+
+    #[test]
+    fn aborts_and_rdock_answers_leave_the_limit_alone() {
+        let mw = Admission::new("adm", &config(3, 50), None);
+        let start = mw.limit.limit();
+        for _ in 0..50 {
+            // The client went away before any answer.
+            exchange(&mw, BackendOutcome::None, 0);
+            // A later middleware answered 503 (maintenance) or 401, or a cache hit: the
+            // response phase runs, but no backend responded.
+            exchange(&mw, BackendOutcome::None, 503);
+            exchange(&mw, BackendOutcome::None, 401);
+        }
+        assert_eq!(mw.limit.limit(), start);
+        assert_eq!(mw.limit.in_flight(), 0, "every place was given back");
+    }
+
+    #[test]
+    fn an_upgrade_gives_its_place_back_at_101() {
+        let mw = Admission::new("adm", &config(3, 3), None);
+        let mut req = request("GET", "/", &[]);
+        let mut sockets = Vec::new();
+        for _ in 0..3 {
+            let mut c = cx();
+            assert_eq!(block_on(mw.request(&mut req, &mut c)), Flow::Next);
+            c.backend = BackendOutcome::Responded(101);
+            let mut resp = ResponseHeader::build(101, None).unwrap();
+            block_on(mw.response(&mut resp, &mut c));
+            // The upgraded connection stays open: its context lives on.
+            sockets.push(c);
+        }
+        assert_eq!(mw.limit.in_flight(), 0);
+        let mut c = cx();
+        c.priority_class = PriorityClass::Sheddable;
+        assert_eq!(
+            block_on(mw.request(&mut req, &mut c)),
+            Flow::Next,
+            "idle WebSockets hold no place"
+        );
+        drop(sockets);
     }
 }

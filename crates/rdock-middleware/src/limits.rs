@@ -46,7 +46,7 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
         },
         // A consumer's primary group; a consumer without one on its own, no consumer per IP.
         RateLimitKey::Group => match &cx.consumer {
-            Some(consumer) => match consumer.groups.first() {
+            Some(consumer) => match consumer.primary_group() {
                 Some(group) => [b"g:", group.as_bytes()].concat(),
                 None => [b"c:", consumer.key().as_bytes()].concat(),
             },
@@ -195,10 +195,7 @@ mod tests {
         assert_eq!(key_of(&RateLimitKey::Ja4, &req, &c), b"ip:192.0.2.10");
         assert_eq!(key_of(&RateLimitKey::Group, &req, &c), b"ip:192.0.2.10");
         let mut grouped = cx();
-        grouped.consumer = Some(crate::Consumer {
-            groups: Arc::from([Arc::from("acme"), Arc::from("gold")]),
-            ..crate::Consumer::named("ann")
-        });
+        grouped.consumer = Some(crate::Consumer::configured("ann", &["acme", "gold"]));
         assert_eq!(key_of(&RateLimitKey::Group, &req, &grouped), b"g:acme");
         grouped.consumer = Some(crate::Consumer::named("solo"));
         assert_eq!(

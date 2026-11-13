@@ -94,8 +94,14 @@ have no fingerprint.
 
 `rate_limit`, `in_flight` and `bandwidth` take `key: ja4`, and so does
 [`abuse`](/docs/guides/abuse-protection/). Requests without a fingerprint count per client IP.
-A fingerprint is shared by every user of the same browser version, so limit by JA4 only for
-fingerprints you have seen misbehave, or with generous limits.
+**Do not ban or limit by a fingerprint alone.** A JA4 identifies a client *build*, not a
+client: every user of one browser version on one platform shares it, and anyone can send any
+fingerprint they like (`curl-impersonate`, uTLS). A ban by `ja4` therefore lets an attacker
+get a popular fingerprint banned for everyone who has it, by misbehaving with a copy of it.
+`rdock validate` warns about `abuse` with `key: ja4` (unless `action: tag`) and `rate_limit`
+with `key: ja4`. Count by `client_ip` or `consumer`, and use the fingerprint to tag requests,
+in the access log, or in a route rule together with the address
+(``ClientFingerprint(`…`) && ClientIP(`…`)``).
 
 ## Limits
 

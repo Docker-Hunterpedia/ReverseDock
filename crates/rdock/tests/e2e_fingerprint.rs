@@ -34,6 +34,7 @@ fn fingerprints(config: &Arc<rustls::ClientConfig>, server: &str) -> (String, St
 }
 
 #[tokio::test]
+#[allow(clippy::too_many_lines)]
 async fn fingerprints_reach_the_backend_route_and_log() {
     let ca = TestCa::new();
     let dir = tempfile::tempdir().unwrap();
@@ -46,6 +47,7 @@ async fn fingerprints_reach_the_backend_route_and_log() {
     let app = Backend::start("app").await;
     let known = Backend::start("known").await;
     let port = free_port();
+    let plain = free_port();
     let config = format!(
         r#"
 listeners:
@@ -53,10 +55,11 @@ listeners:
     address: "127.0.0.1:{port}"
     tls:
       fingerprint: {{ ja3: true, header: X-JA4, ja3_header: X-JA3 }}
+  web: {{ address: "127.0.0.1:{plain}" }}
 certificates:
   site: {{ cert_file: "{}", key_file: "{}" }}
 routes:
-  app: {{ match: "Host(`app.test`)", service: app, priority: 1 }}
+  app: {{ match: "Host(`app.test`)", service: app, priority: 1, listeners: [websecure, web] }}
   known:
     match: "Host(`app.test`) && ClientFingerprint(`{h2_ja4}`)"
     service: known
@@ -131,6 +134,23 @@ services:
         logged,
         "the access log carries ja4 and ja3: {:?}",
         rdock.access_log()
+    );
+
+    // L4 of the tenants review: on a listener that computes no fingerprint, a client's copy of
+    // another listener's fingerprint headers is removed too.
+    let mut forged = get("app.test", "/");
+    forged
+        .headers_mut()
+        .insert("x-ja4", "forged".parse().unwrap());
+    forged
+        .headers_mut()
+        .insert("x-ja3", "forged".parse().unwrap());
+    let reply = client::http1(addr(plain), forged).await;
+    assert_eq!(reply.status, 200);
+    let headers = &reply.json()["headers"];
+    assert!(
+        headers.get("x-ja4").is_none() && headers.get("x-ja3").is_none(),
+        "{headers}"
     );
 }
 

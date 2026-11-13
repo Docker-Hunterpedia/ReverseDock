@@ -96,6 +96,14 @@ limit it) lifts a ban and is recorded in the audit log as `abuse.unban`. Keys lo
   behind carrier-grade NAT). A ban by `client_ip` bans all of them. Keep thresholds high on
   routes everyone uses, ban for minutes rather than days, and prefer `key: consumer` behind
   authentication.
+- **`key: consumer` needs the consumer first.** The ban is checked when the request arrives, so
+  the middleware that sets the consumer (`api_key`, `oidc`, `cloudflare_access`, `jwt` with
+  `consumer_claim`) must come **before** `abuse` in the route's list; `rdock validate` refuses
+  a route where it does not (a ban would be recorded but never enforced).
+- **Not by fingerprint alone.** One JA4 is shared by every user of a browser version and can
+  be copied, so an attacker can get it banned for everyone; validation warns about `key: ja4`
+  with `deny` or `tarpit`. The same goes for `key: header:…`. See
+  [Client fingerprints](/docs/guides/client-fingerprints/#rate-limit-or-ban-by-fingerprint).
 - **Proxies in front.** Without the right `security.trusted_proxies`, every request seems to
   come from your load balancer or CDN, and one ban refuses everyone. The trusted networks are
   always exempt, so a proxy that is trusted but whose clients are not resolved never bans

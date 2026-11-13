@@ -126,7 +126,10 @@ impl RateLimit {
     /// with an override; with `key: group`, the primary group's override.
     fn limit(&self, cx: &Context) -> &Limit {
         if self.key == RateLimitKey::Group
-            && let Some(primary) = cx.consumer.as_ref().and_then(|c| c.groups.first())
+            && let Some(primary) = cx
+                .consumer
+                .as_ref()
+                .and_then(crate::Consumer::primary_group)
         {
             if let Some((_, limit)) = self.overrides.iter().find(|(g, _)| **g == **primary) {
                 return limit;
@@ -136,7 +139,7 @@ impl RateLimit {
         if self.key == RateLimitKey::Consumer
             && let Some(consumer) = &cx.consumer
         {
-            for group in consumer.groups.iter() {
+            for group in consumer.counted_groups() {
                 if let Some((_, limit)) = self.overrides.iter().find(|(g, _)| **g == **group) {
                     return limit;
                 }
@@ -339,10 +342,7 @@ mod tests {
 
     fn member(name: &str, groups: &[&str]) -> Context {
         let mut c = cx();
-        c.consumer = Some(crate::Consumer {
-            groups: groups.iter().map(|g| Arc::from(*g)).collect(),
-            ..crate::Consumer::named(name)
-        });
+        c.consumer = Some(crate::Consumer::configured(name, groups));
         c
     }
 

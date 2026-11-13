@@ -50,7 +50,9 @@ The API takes the same `tenant` field on `POST /api/v1/users`, `PATCH /api/v1/us
 | `prefix` | `<tenant>-` | The start of the names of the tenant's routes, services and middlewares in the API. No tenant's prefix may start another's (`a-` and `a-b-` are refused together). |
 | `hosts` | none | The host names the tenant's routes may match. |
 | `shared` | none | Objects outside the prefix the tenant may reference: `services`, `middlewares` and `caches`, written as references (`compress` for the file's, `name@provider` for a provider's). |
-| `backend_networks` | none | When set, the tenant's backends must be IP addresses inside these networks; DNS names and SRV records are refused, since they can resolve anywhere. |
+| `backend_networks` | none | The networks the tenant's backends may connect to. Unset: global unicast addresses only (see [Backends](#backends)). Set: exactly these networks, and backends must be IP addresses inside them; DNS names and SRV records are refused. |
+| `limits` | see [Limits](#limits) | Ceilings on the tenant's objects: body sizes, object counts, certificate names. |
+| `allow_critical` | `false` | Lets the tenant's routes use `priority_class: critical` on an [`admission`](/docs/guides/admission/) middleware it does not own. |
 
 **Host claims.** `shop.example.com` claims that one name. `*.shop.example.com` claims every
 name below it, at any depth (`a.shop.example.com`, `a.b.shop.example.com`), but not
@@ -66,6 +68,78 @@ claim: alone, in an `&&` with anything else, or in every branch of an `||`. A ro
 `Host` matcher, with `*`, a broader wildcard, `HostRegexp`, or a negation, is refused, because
 it could match another tenant's host. Certificate `domains` on the route must be claimed too.
 
+**Claims bind API objects only.** The configuration file, Docker labels and Kubernetes
+objects are written by people who already control the proxy, so their routes may still match
+a claimed host, and can win over the tenant's route by `priority`. `rdock validate` warns
+about every such route (`… is claimed by tenant …, but this route is not the tenant's`); keep
+them only when that is what you mean.
+
+## Backends
+
+A tenant must not reach the proxy's own machine, its private network or the cloud's metadata
+service through its routes (server-side request forgery). Without `backend_networks`, a
+tenant's backends may connect to **globally routable unicast addresses only**. Refused:
+
+| Range | Examples |
+|---|---|
+| Loopback, unspecified, "this network" | `127.0.0.0/8`, `::1`, `0.0.0.0/8`, `::` |
+| Link-local | `169.254.0.0/16`, `fe80::/10` |
+| Private and unique-local | `10.0.0.0/8`, `172.16.0.0/12`, `192.168.0.0/16`, `fc00::/7` |
+| Shared address space (carrier-grade NAT) | `100.64.0.0/10` |
+| Multicast, broadcast, reserved | `224.0.0.0/4`, `240.0.0.0/4`, `ff00::/8`, everything outside `2000::/3` |
+| Documentation, benchmarking, protocol assignments | `192.0.2.0/24`, `198.51.100.0/24`, `203.0.113.0/24`, `198.18.0.0/15`, `192.0.0.0/24`, `2001:db8::/32`, `3fff::/20`, `2001::/23`, `2002::/16` |
+| Cloud metadata services, explicitly | `169.254.169.254`, `169.254.170.2`, `169.254.170.23`, `fd00:ec2::254`, `fd00:ec2::23`, `100.100.100.200`, `168.63.129.16` |
+
+IPv4-mapped IPv6 addresses (`::ffff:127.0.0.1`) are judged as the IPv4 address they carry, and
+NAT64's `64:ff9b::/96` as the IPv4 address inside it.
+
+The rule is checked **twice**:
+
+1. **At validation**, on IP addresses written in the configuration. A tenant must write an
+   address in its usual form: an IPv4-mapped IPv6 address is refused, and so are names that
+   name the proxy's own machine (`localhost`, `*.localhost`, `localhost.localdomain`,
+   `localhost6`, `ip6-localhost`, `ip6-loopback`). Numeric spellings that resolvers read as
+   addresses (`127.1`, `2130706433`, `0x7f.0.0.1`, `0177.0.0.1`, `0`) are refused for
+   everyone, tenant or not: they are not DNS names.
+2. **At resolution**, on the data plane, for every address a DNS name or an SRV record of a
+   tenant's service resolves to, each time it resolves (so a name that is re-pointed, or that
+   rebinds to `127.0.0.1` after its first answer, is caught). An address outside the rule is
+   never connected to: requests, retries, mirrors and health checks all choose among the
+   addresses that passed. If none passes, the backend is unavailable (`503`). Each refused
+   address is logged (`backend address refused: the tenant may not reach it`) and counted in
+   `rdock_backend_addresses_refused_total{service}`. The rule is compiled into the service
+   when the configuration is applied; requests do no extra lookup and never ask the admin API.
+
+rdock never follows a backend's redirects; a `3xx` goes back to the client as it is.
+
+With `backend_networks`, exactly the listed networks are allowed, nothing else: `10.20.0.0/16`
+allows `10.20.1.5` and nothing global, private or local outside it. Listing loopback or
+link-local addresses is allowed but `rdock validate` warns, and a cloud metadata address is
+allowed only when it is listed on its own (`169.254.169.254/32`), not as part of a wider range.
+
+## Limits
+
+Tenants share disk, memory and the ACME account. `tenants.<name>.limits` caps what one tenant's
+objects can take; objects over a limit are refused with a diagnostic naming it. Objects are
+counted in name order, so the same ones are refused every time.
+
+| Setting | Default | Meaning |
+|---|---|---|
+| `max_body` | `16MiB` | The largest request body a tenant route accepts. A route's `max_body`, and the `max` of `hold_body` and the `max_body` of `transform` and `validate`, may not be larger. A tenant route without `max_body` gets this one (or `security.limits.max_body_bytes` when that is smaller). |
+| `max_routes` | `100` | Routes the tenant may have. |
+| `max_services` | `100` | Services. |
+| `max_middlewares` | `100` | Middlewares. |
+| `max_tls_names` | `20` | Distinct host names the tenant's routes may get automatic certificates for. Each is an order on the ACME account every tenant shares, and Let's Encrypt limits certificates per registered domain and orders per account. |
+
+Counts go up to 100000. Raise a limit for a tenant you trust:
+
+```yaml
+tenants:
+  acme:
+    hosts: ["*.acme.example.com"]
+    limits: { max_body: 100MiB, max_routes: 500 }
+```
+
 ## What a tenant's objects may not do
 
 A tenant's objects may not read files on the proxy's machine, call out to other services, or
@@ -75,9 +149,9 @@ run code. Refused with a diagnostic (`422`):
 |---|---|
 | Middleware types | `forward_auth`, `agent`, `plugin`, `wasm`, `static`, `oidc`, `cloudflare_access` |
 | Middleware fields | `jwt.jwks_url`, `jwt.jwks_file`, `basic_auth.users_file`, `errors.file`, `maintenance.file`, `validate.openapi` |
-| Anywhere | a `${env:…}`, `${file:…}`, `${vault:…}` or `${NAME}` reference (regular-expression `replacement`s, where `${1}` names a capture group, are allowed) |
-| Services | `tls.ca_file`, `tls.cert_file`, `tls.key_file`; a Unix-socket backend; a loopback, link-local or unspecified address or `localhost`; an address outside `backend_networks` when it is set |
-| Routes | `tls.certificate` (tenant-owned certificates are planned) |
+| Anywhere | a `${env:…}`, `${file:…}`, `${vault:…}` or `${NAME}` reference (a middleware's own regular-expression `replacement`, where `${1}` names a capture group, is allowed; a `replacement` key deeper in an object is not) |
+| Services | `tls.ca_file`, `tls.cert_file`, `tls.key_file`; a Unix-socket backend; an address the [backend rule](#backends) refuses |
+| Routes | `tls.certificate` (tenant-owned certificates are planned); `priority_class: critical` on a shared `admission` middleware, unless `allow_critical` is set |
 | References | a service, middleware or cache store outside the prefix that is not in `shared` |
 
 An administrator can define such a middleware outside the tenant and list it in `shared`.
@@ -86,6 +160,12 @@ These rules belong to the configuration, not to the caller: an object under a te
 obeys them **whoever writes it**, unscoped administrators included. When a reload narrows a
 tenant (fewer claims, a removed shared object), API objects that no longer fit are left out
 with a warning, like other provider objects.
+
+A write through the API refuses only what it is to blame for: objects it adds or changes, and
+objects that worked before it and that it breaks. An object it does not touch and that is
+already left out (another tenant's route whose shared service went away) stays a warning, so
+one tenant's stale object never blocks another tenant's writes. The warning is shown to that
+object's tenant and to unscoped administrators, never to other tenants.
 
 ## What a scoped caller may do
 
@@ -106,8 +186,19 @@ written to the [audit log](/docs/guides/config-api/) with the tenant.
 | Everything else | Refused: users, listeners, certificates, providers, status, reload, upgrade, consumers and keys, caches, the cluster, configuration history, rollback, export and import, `/routes/explain`, the log and event streams, `/metrics`. |
 
 Roles still apply on top: a scoped `viewer` reads its objects, a scoped `operator` also writes
-them. A token never leaves its creator's tenant. A user or token whose tenant is no longer in
-`tenants` is refused everything.
+them. A token never leaves its creator's tenant.
+
+Diagnostics a scoped caller sees never name another tenant's or the administrator's objects,
+nor tell whether one exists: a reference outside the tenant is refused the same way whether
+its target exists or not, a shadowed route is told that "another route comes first", and the
+number of diagnostics left out is not shown.
+
+**Removing a tenant retires its users and tokens for good.** The next time the admin API reads
+the tenants (any scoped request, any user or token change that names a tenant), the users of a
+tenant that is gone are disabled (their tenant stays recorded) and their sessions ended, and
+their tokens are revoked, each recorded in the audit log. Adding the tenant back, for the same
+team or someone else, does not revive them; an administrator enables a user again explicitly.
+A tenant removed and added back with no admin API request in between keeps its principals.
 
 Consumers and API keys are shared by all tenants and stay with unscoped administrators. To give
 a tenant one shared limit, put its consumers in a group and use

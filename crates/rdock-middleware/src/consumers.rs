@@ -4,7 +4,6 @@
 
 use std::collections::{BTreeMap, HashMap};
 use std::path::Path;
-use std::sync::Arc;
 
 use rdock_model::gateway::{Consumer as ConsumerConfig, parse_rfc3339};
 
@@ -39,15 +38,8 @@ impl ConsumerIndex {
         let mut index = Self::default();
         let mut issues = Vec::new();
         for (name, config) in consumers {
-            let consumer = Consumer {
-                name: Arc::from(name.as_str()),
-                groups: config
-                    .groups()
-                    .iter()
-                    .map(|g| Arc::from(g.as_str()))
-                    .collect(),
-                issuer: None,
-            };
+            let groups: Vec<&str> = config.groups().iter().map(String::as_str).collect();
+            let consumer = Consumer::configured(name, &groups);
             index.consumers.insert(name.clone(), consumer.clone());
             let base = rdock_model::path_key("consumers", name);
             let mut add = |id: &str, hash: &str, expires: Option<i64>, at: String| {

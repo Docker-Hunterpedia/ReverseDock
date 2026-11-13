@@ -57,6 +57,10 @@ pub struct Runtime {
     pub geoip: Option<Arc<crate::geoip::GeoIp>>,
     /// Which GeoIP fields the access log carries (`geoip.log`).
     pub geoip_log: rdock_model::settings::GeoIpLog,
+    /// Every fingerprint header any listener sets (`tls.fingerprint.header`, `ja3_header`),
+    /// lower-case: removed from every client request on every listener, so a backend that
+    /// trusts one never sees a client's copy.
+    pub fingerprint_headers: Arc<[String]>,
 }
 
 impl Runtime {
@@ -85,6 +89,7 @@ impl Runtime {
             metering: None,
             geoip: None,
             geoip_log: rdock_model::settings::GeoIpLog::default(),
+            fingerprint_headers: Arc::from([]),
         }
     }
 }
@@ -265,6 +270,36 @@ pub struct ServiceRuntime {
     pub pass_host_header: bool,
     /// Tiers, locality and Peak-EWMA settings (ADR-0031).
     pub selection: Selection,
+    /// For a tenant's service: the addresses it may reach. Every resolved address outside it
+    /// is left out of the members, so it is never connected to (requests, retries, mirrors and
+    /// health checks all pick from the members). `None`: any address.
+    pub allowed: Option<AddressGuard>,
+}
+
+/// The address policy of a tenant's service, compiled into it (the data plane does not know
+/// tenants, only this).
+#[derive(Debug, Clone)]
+pub struct AddressGuard {
+    /// What may be reached.
+    pub policy: Arc<rdock_model::addresses::BackendPolicy>,
+    /// `rdock_backend_addresses_refused_total{service}`, when metrics are on.
+    pub refused: Option<rdock_observability::IntCounter>,
+}
+
+impl AddressGuard {
+    /// Whether the service may connect to `addr`; a refusal is logged and counted.
+    fn admits(&self, service: &str, host: &str, addr: SocketAddr) -> bool {
+        match self.policy.refusal(addr.ip()) {
+            None => true,
+            Some(reason) => {
+                tracing::warn!(service, host, %addr, %reason, "backend address refused: the tenant may not reach it");
+                if let Some(counter) = &self.refused {
+                    counter.inc();
+                }
+                false
+            }
+        }
+    }
 }
 
 /// How a backend is chosen beyond the balancing policy: priority tiers, the preferred zone and
@@ -546,7 +581,7 @@ impl ServiceRuntime {
         let mut list = Vec::new();
         for (backend, source) in self.backends.iter().zip(sources) {
             // (candidate, weight, priority)
-            let candidates: Vec<(Candidate, u32, u8)> = match (&backend.endpoint, source) {
+            let mut candidates: Vec<(Candidate, u32, u8)> = match (&backend.endpoint, source) {
                 (Endpoint::Tcp { host, .. }, Source::Addrs(addrs)) => addrs
                     .iter()
                     .map(|addr| {
@@ -583,6 +618,13 @@ impl ServiceRuntime {
                 }
                 _ => Vec::new(),
             };
+            if let Some(guard) = &self.allowed {
+                candidates.retain(|(candidate, _, _)| match candidate {
+                    Candidate::Tcp { host, addr } => guard.admits(&self.name, host, *addr),
+                    // Refused at validation; never reached through a tenant's service.
+                    Candidate::Unix(_) => false,
+                });
+            }
             let local = self
                 .selection
                 .zone

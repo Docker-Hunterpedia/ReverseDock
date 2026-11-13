@@ -176,6 +176,9 @@ impl Validator<'_> {
                 Middleware::InFlight(f) => f.key.needs_consumer(),
                 Middleware::Bandwidth(b) => b.key.needs_consumer(),
                 Middleware::Quota(_) => true,
+                // Checked in `request` before the consumer is known, a consumer ban would be
+                // recorded but never enforced.
+                Middleware::Abuse(a) => a.key == crate::values::AbuseKey::Consumer,
                 _ => false,
             };
             if by_consumer && !identified {

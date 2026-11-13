@@ -3344,6 +3344,13 @@ export type RdockMiddleware = {
      * Where the token is read from; `Authorization: Bearer` when empty.
      */
     token?: RdockTokenSource;
+    /**
+     * Groups from `groups_claim` that count for `key: group` and for group `overrides` of
+     * `rate_limit` and `quota`, as if configured. Other token groups are kept on the
+     * consumer (metering, headers) but never share a configured group's budget or override,
+     * and a consumer with only those is counted on its own.
+     */
+    trusted_groups?: Array<string>;
     type: 'jwt';
     /**
      * With `consumer_claim: email`: accept an `email` claim that comes without
@@ -3354,7 +3361,7 @@ export type RdockMiddleware = {
     unverified_emails?: boolean;
     [key: string]: unknown | Array<RdockJwtAlgorithm> | Array<string> | {
         [key: string]: string;
-    } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | 'jwt' | undefined;
+    } | string | null | boolean | string | null | string | null | string | string | null | RdockHttpUrl | null | RdockDuration | RdockTokenSource | Array<string> | 'jwt' | undefined;
 } | {
     /**
      * Names a certificate must have one of: its common name or a DNS, URI or email SAN.
@@ -4182,6 +4189,16 @@ export type RdockMiddleware = {
      */
     initial?: number | null;
     /**
+     * `gradient` only: time between two measurements of the no-load latency (default 60s,
+     * the `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h).
+     */
+    interval?: RdockDuration | null;
+    /**
+     * `gradient` only: a random part of `interval` added to it, in percent, so instances do
+     * not measure at the same moment (default 15, Envoy's `jitter`; 0–100).
+     */
+    jitter_percent?: number | null;
+    /**
      * `aimd` only: a sample slower than this counts as a drop (default 5s, Netflix's
      * `timeout`). Measured from admission to the response headers.
      */
@@ -4203,6 +4220,12 @@ export type RdockMiddleware = {
      * latency (default 50, Envoy's `request_count`; 5–1000).
      */
     probe?: number | null;
+    /**
+     * `gradient` only: the longest a measurement pins the limit to `min` (default 5s;
+     * 100ms–60s). When it ends early, the median of the samples it has becomes the
+     * reference; without any, the previous reference stays.
+     */
+    probe_timeout?: RdockDuration | null;
     /**
      * `gradient` only: requests allowed above the estimate (default 4, Netflix's
      * `queueSize`).
@@ -4226,11 +4249,6 @@ export type RdockMiddleware = {
      */
     tolerance_percent?: number | null;
     type: 'admission';
-    /**
-     * `gradient` only: samples between two measurements of the no-load latency (default
-     * 600; 10–100000).
-     */
-    window?: number | null;
 };
 
 /**
@@ -5497,9 +5515,18 @@ export type RdockTcpTimeouts = {
  */
 export type RdockTenant = {
     /**
-     * Networks the tenant's backends must be in. Empty: any address except loopback,
-     * link-local, unspecified and `localhost`; set: only IP literals inside these networks
-     * (DNS names and SRV records are refused, since they can resolve anywhere).
+     * Let the tenant's routes use `priority_class: critical` with an `admission` middleware
+     * it does not own (a shared one). Off: critical traffic on a shared limit is the
+     * administrator's to define.
+     */
+    allow_critical?: boolean;
+    /**
+     * Networks the tenant's backends may connect to. Empty: globally routable unicast
+     * addresses only (no loopback, link-local, private, unique-local, shared, multicast,
+     * documentation, reserved or cloud metadata address), checked on IP literals at
+     * validation and on every address a DNS name or SRV record resolves to, each time it
+     * resolves. Set: exactly these networks (a cloud metadata address only when listed on
+     * its own), and backends must be IP literals.
      */
     backend_networks?: Array<RdockIpNetwork>;
     /**
@@ -5516,6 +5543,11 @@ export type RdockTenant = {
      * may not overlap.
      */
     hosts?: Array<string>;
+    /**
+     * Ceilings on what the tenant's objects may hold, so one tenant cannot use up what
+     * tenants share (disk, the ACME account's rate limits).
+     */
+    limits?: RdockTenantLimits;
     /**
      * Planned: listeners the tenant owns.
      */
@@ -5534,6 +5566,37 @@ export type RdockTenant = {
      * configuration file's, `name@provider` for a provider's).
      */
     shared?: RdockTenantShared;
+};
+
+/**
+ * Ceilings on a tenant's objects. The defaults are small on purpose; an administrator raises
+ * them per tenant.
+ */
+export type RdockTenantLimits = {
+    /**
+     * The largest request body a tenant route accepts, and the most its `hold_body`,
+     * `transform` and `validate` middlewares may hold (default 16MiB). A tenant route without
+     * `max_body` gets this one, or `security.limits.max_body_bytes` when that is smaller.
+     */
+    max_body?: RdockByteSize;
+    /**
+     * Middlewares the tenant may have (default 100).
+     */
+    max_middlewares?: number;
+    /**
+     * Routes the tenant may have (default 100).
+     */
+    max_routes?: number;
+    /**
+     * Services the tenant may have (default 100).
+     */
+    max_services?: number;
+    /**
+     * Distinct host names the tenant's routes may get automatic certificates for (default
+     * 20): each one is an order on the ACME account every tenant shares, and Let's Encrypt
+     * limits certificates per registered domain and orders per account.
+     */
+    max_tls_names?: number;
 };
 
 /**

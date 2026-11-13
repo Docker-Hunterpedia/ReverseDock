@@ -120,6 +120,12 @@ middlewares:
       globex: { average: 1000 }
 ```
 
+Only **configured** groups count: those of `consumers`, a group a token middleware assigns
+itself, and groups of a token's `groups_claim` that the `jwt` middleware lists in
+`trusted_groups`. Other groups from a token are ignored here (the consumer is counted on its
+own, without its group's override), so a token can never join a configured group's bucket or
+create a bucket per value its identity provider lets users pick.
+
 `in_flight` and `bandwidth` accept `key: group` with the same meaning. To give each
 [tenant](/docs/guides/tenants/) one shared limit, put its consumers in a group named after it.
 

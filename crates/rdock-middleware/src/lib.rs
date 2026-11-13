@@ -120,6 +120,11 @@ pub struct Context {
     pub priority_class: rdock_model::route::PriorityClass,
     /// What an `admission` middleware did with this request (`shed`), for the access log.
     pub admission: Option<&'static str>,
+    /// What the backend did with this request, set by the proxy: nothing yet (no backend was
+    /// reached, or rdock answered itself), answered with response headers, or failed (a
+    /// connect that failed or timed out, an upstream timeout or reset). `admission` learns
+    /// only from requests that reached a backend.
+    pub backend: BackendOutcome,
     /// Response byte limit set by `bandwidth`.
     pub throttle: Option<Throttle>,
     /// The consumer the request is attributed to, set by an authenticating middleware.
@@ -140,6 +145,20 @@ pub struct Context {
     encoding: Option<rdock_model::middleware::CompressAlgorithm>,
     head_request: bool,
     cors_origin: Option<HeaderValue>,
+}
+
+/// What the backend did with a request (see [`Context::backend`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum BackendOutcome {
+    /// No backend answered: none was tried yet, rdock answered itself (a middleware's
+    /// reply, a cache hit), or the client went away first.
+    #[default]
+    None,
+    /// The backend sent response headers with this status.
+    Responded(u16),
+    /// The backend failed: the connect failed or timed out, or the response did not come in
+    /// time or the connection broke before it.
+    Failed,
 }
 
 impl Context {
@@ -168,6 +187,7 @@ impl Context {
             abuse: None,
             priority_class: rdock_model::route::PriorityClass::Normal,
             admission: None,
+            backend: BackendOutcome::None,
             spiffe_id: None,
             admitted: Vec::new(),
             throttle: None,

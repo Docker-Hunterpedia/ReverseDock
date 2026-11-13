@@ -1728,7 +1728,7 @@
           },
           {
             "const": "gradient",
-            "description": "The ratio of the long-term latency to each sample's (Gradient2).",
+            "description": "The measured no-load latency against each sample's (Envoy's gradient).",
             "type": "string"
           }
         ]
@@ -6585,6 +6585,13 @@
                 },
                 "description": "Where the token is read from; `Authorization: Bearer` when empty."
               },
+              "trusted_groups": {
+                "description": "Groups from `groups_claim` that count for `key: group` and for group `overrides` of\n`rate_limit` and `quota`, as if configured. Other token groups are kept on the\nconsumer (metering, headers) but never share a configured group's budget or override,\nand a consumer with only those is counted on its own.",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
               "type": {
                 "const": "jwt",
                 "type": "string"
@@ -7831,6 +7838,26 @@
                   "null"
                 ]
               },
+              "interval": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.Duration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "`gradient` only: time between two measurements of the no-load latency (default 60s,\nthe `min_rtt_calc_params.interval` of Envoy's documented example; 1s–1h)."
+              },
+              "jitter_percent": {
+                "description": "`gradient` only: a random part of `interval` added to it, in percent, so instances do\nnot measure at the same moment (default 15, Envoy's `jitter`; 0–100).",
+                "format": "uint32",
+                "minimum": 0,
+                "type": [
+                  "integer",
+                  "null"
+                ]
+              },
               "latency": {
                 "anyOf": [
                   {
@@ -7868,6 +7895,17 @@
                   "integer",
                   "null"
                 ]
+              },
+              "probe_timeout": {
+                "anyOf": [
+                  {
+                    "$ref": "#/components/schemas/rdock.Duration"
+                  },
+                  {
+                    "type": "null"
+                  }
+                ],
+                "description": "`gradient` only: the longest a measurement pins the limit to `min` (default 5s;\n100ms–60s). When it ends early, the median of the samples it has becomes the\nreference; without any, the previous reference stays."
               },
               "queue": {
                 "description": "`gradient` only: requests allowed above the estimate (default 4, Netflix's\n`queueSize`).",
@@ -7912,15 +7950,6 @@
               "type": {
                 "const": "admission",
                 "type": "string"
-              },
-              "window": {
-                "description": "`gradient` only: samples between two measurements of the no-load latency (default\n600; 10–100000).",
-                "format": "uint32",
-                "minimum": 0,
-                "type": [
-                  "integer",
-                  "null"
-                ]
               }
             },
             "required": [
@@ -10283,8 +10312,12 @@
         "additionalProperties": false,
         "description": "One tenant.",
         "properties": {
+          "allow_critical": {
+            "description": "Let the tenant's routes use `priority_class: critical` with an `admission` middleware\nit does not own (a shared one). Off: critical traffic on a shared limit is the\nadministrator's to define.",
+            "type": "boolean"
+          },
           "backend_networks": {
-            "description": "Networks the tenant's backends must be in. Empty: any address except loopback,\nlink-local, unspecified and `localhost`; set: only IP literals inside these networks\n(DNS names and SRV records are refused, since they can resolve anywhere).",
+            "description": "Networks the tenant's backends may connect to. Empty: globally routable unicast\naddresses only (no loopback, link-local, private, unique-local, shared, multicast,\ndocumentation, reserved or cloud metadata address), checked on IP literals at\nvalidation and on every address a DNS name or SRV record resolves to, each time it\nresolves. Set: exactly these networks (a cloud metadata address only when listed on\nits own), and backends must be IP literals.",
             "items": {
               "$ref": "#/components/schemas/rdock.IpNetwork"
             },
@@ -10309,6 +10342,10 @@
             },
             "type": "array"
           },
+          "limits": {
+            "$ref": "#/components/schemas/rdock.TenantLimits",
+            "description": "Ceilings on what the tenant's objects may hold, so one tenant cannot use up what\ntenants share (disk, the ACME account's rate limits)."
+          },
           "listeners": {
             "description": "Planned: listeners the tenant owns.",
             "items": {
@@ -10330,6 +10367,46 @@
           "shared": {
             "$ref": "#/components/schemas/rdock.TenantShared",
             "description": "Objects outside the prefix that the tenant's objects may reference (`name` for the\nconfiguration file's, `name@provider` for a provider's)."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.TenantLimits": {
+        "additionalProperties": false,
+        "description": "Ceilings on a tenant's objects. The defaults are small on purpose; an administrator raises\nthem per tenant.",
+        "properties": {
+          "max_body": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "16MiB",
+            "description": "The largest request body a tenant route accepts, and the most its `hold_body`,\n`transform` and `validate` middlewares may hold (default 16MiB). A tenant route without\n`max_body` gets this one, or `security.limits.max_body_bytes` when that is smaller."
+          },
+          "max_middlewares": {
+            "default": 100,
+            "description": "Middlewares the tenant may have (default 100).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_routes": {
+            "default": 100,
+            "description": "Routes the tenant may have (default 100).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_services": {
+            "default": 100,
+            "description": "Services the tenant may have (default 100).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "max_tls_names": {
+            "default": 20,
+            "description": "Distinct host names the tenant's routes may get automatic certificates for (default\n20): each one is an order on the ACME account every tenant shares, and Let's Encrypt\nlimits certificates per registered domain and orders per account.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
           }
         },
         "type": "object"

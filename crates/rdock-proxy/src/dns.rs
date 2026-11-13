@@ -168,6 +168,9 @@ impl Dns {
 
     /// Addresses of `host` and how long they are valid.
     async fn lookup_host(&self, host: &str, port: u16) -> Option<(Vec<SocketAddr>, Duration)> {
+        if let Some(found) = test_hosts(host, port).await {
+            return Some(found);
+        }
         if let Some(resolver) = self.resolver()
             && let Ok(Ok(answer)) =
                 tokio::time::timeout(DNS_TIMEOUT, resolver.lookup_ip(host)).await
@@ -227,6 +230,32 @@ impl Dns {
         targets.sort();
         (!targets.is_empty()).then_some((targets, valid))
     }
+}
+
+/// For tests only, never in a release build: `RDOCK_TEST_HOSTS` names a file in `/etc/hosts`
+/// format that is read before DNS on every lookup, so a test can make a name resolve to any
+/// address and change the answer later (re-resolution, rebinding). Answers from it last one
+/// second.
+async fn test_hosts(host: &str, port: u16) -> Option<(Vec<SocketAddr>, Duration)> {
+    if !cfg!(debug_assertions) {
+        return None;
+    }
+    let path = std::env::var_os("RDOCK_TEST_HOSTS")?;
+    let text = tokio::fs::read_to_string(path).await.ok()?;
+    let mut addrs: Vec<SocketAddr> = text
+        .lines()
+        .filter_map(|line| {
+            let line = line.split('#').next().unwrap_or_default();
+            let mut fields = line.split_whitespace();
+            let ip = fields.next()?.parse::<std::net::IpAddr>().ok()?;
+            fields
+                .any(|name| name.eq_ignore_ascii_case(host))
+                .then_some(SocketAddr::new(ip, port))
+        })
+        .collect();
+    addrs.sort();
+    addrs.dedup();
+    (!addrs.is_empty()).then_some((addrs, MIN_TTL))
 }
 
 fn ttl(valid_until: Instant) -> Duration {
