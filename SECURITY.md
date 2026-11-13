@@ -6,8 +6,7 @@ ReverseDock sits in front of other people's infrastructure, so we treat security
 
 | Version | Supported |
 |---|---|
-| No release yet (design phase) | Report design-level issues in the plan the same way as code issues |
-| `0.x` (once released) | Latest minor release only |
+| `0.x` (alpha pre-releases, currently `0.8.0-alpha.1`) | Latest release only |
 | `1.x` and later | The two most recent minor releases |
 
 ## Reporting a vulnerability

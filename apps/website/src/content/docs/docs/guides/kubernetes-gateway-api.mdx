@@ -7,10 +7,10 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock is a Gateway API controller <Status planned="v0.7" />. It reads the Gateway API objects in your cluster, turns them into its own routes, services and listeners, serves the traffic itself, and writes the result back to the objects' `status`. The controller and the proxy are the same process; there is nothing else to deploy ([install](/docs/install/kubernetes/)).
+ReverseDock is a Gateway API controller <Status since="v0.7" />. It reads the Gateway API objects in your cluster, turns them into its own routes, services and listeners, serves the traffic itself, and writes the result back to the objects' `status`. The controller and the proxy are the same process; there is nothing else to deploy ([install](/docs/install/kubernetes/)).
 
 :::caution[Status]
-The controller is **not in a release yet**. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP`: all core tests and every claimed extended feature; 2026-11-11, commit `19e88cc`); no report has been submitted upstream yet. "Every claimed extended feature" means the features in the [supported list](#what-is-supported); it does not mean every extended feature of the Gateway API is supported.
+The controller is part of 0.8.0-alpha.1, a pre-release. It passes the upstream Gateway API v1.7.0 conformance suite in CI on kind for all five profiles (`GATEWAY-HTTP`, `GATEWAY-GRPC`, `GATEWAY-TLS` and `GATEWAY-TCP` on 2026-11-11, commit `19e88cc`; `GATEWAY-UDP` on 2026-11-12, commit `43d81de`: all core tests and every claimed extended feature); no report has been submitted upstream yet. "Every claimed extended feature" means the features in the [supported list](#what-is-supported); it does not mean every extended feature of the Gateway API is supported.
 :::
 
 It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The controller name is `reversedock.dev/gateway-controller` and the chart creates a GatewayClass named `reversedock` for it. The Gateway API's own documentation is at [gateway-api.sigs.k8s.io](https://gateway-api.sigs.k8s.io/); this page describes only what ReverseDock does with it.
@@ -26,7 +26,7 @@ It targets Gateway API **v1.7.0**, Standard channel, `v1` kinds only. The contro
 | ReferenceGrant | Yes, for every reference across namespaces. |
 | BackendTLSPolicy | Applied to HTTPRoute and GRPCRoute backends, but not claimed as a supported feature. |
 | ListenerSet | Yes, when the parent Gateway allows it ([below](#listenersets)). |
-| UDPRoute | Yes, on `UDP` listeners <Status planned="v0.8" />. |
+| UDPRoute | Yes, on `UDP` listeners <Status since="v0.8" />. |
 
 ## How the pieces map
 
@@ -168,7 +168,7 @@ spec:
 
 The model has no weighted split for TCP, so the backends of a rule are pooled: each endpoint gets its reference's weight divided by the number of endpoints of that Service, so each Service receives about its share whatever its size. A reference that cannot be resolved contributes nothing, and a route with no usable endpoint accepts no connection. See [TCP routes](/docs/guides/tcp-routes/) for what the proxy does with them.
 
-**UDPRoute** <Status planned="v0.8" /> relays the datagrams of a `UDP` listener to its backends: each client address gets a session on one backend, as described in [UDP routes](/docs/guides/udp-routes/) (sessions end after 60 s without traffic, and every listener caps its sessions). A `UDP` listener may share its port number with a `TCP`, `HTTP`, `HTTPS` or `TLS` listener, because it is another transport; two `UDP` listeners on one port conflict. When several UDPRoutes attach to one listener, all are accepted and counted, and the oldest receives the datagrams. Weights pool the endpoints as for TCPRoute. For UDP there is nothing to refuse with, so a route with no usable endpoint drops its datagrams, and an invalid reference's share is left out of the pool instead of dropping that share of the datagrams as the specification asks (no conformance test checks this).
+**UDPRoute** <Status since="v0.8" /> relays the datagrams of a `UDP` listener to its backends: each client address gets a session on one backend, as described in [UDP routes](/docs/guides/udp-routes/) (sessions end after 60 s without traffic, and every listener caps its sessions). A `UDP` listener may share its port number with a `TCP`, `HTTP`, `HTTPS` or `TLS` listener, because it is another transport; two `UDP` listeners on one port conflict. When several UDPRoutes attach to one listener, all are accepted and counted, and the oldest receives the datagrams. Weights pool the endpoints as for TCPRoute. For UDP there is nothing to refuse with, so a route with no usable endpoint drops its datagrams, and an invalid reference's share is left out of the pool instead of dropping that share of the datagrams as the specification asks (no conformance test checks this).
 
 ```yaml title="udproute.yaml"
 apiVersion: gateway.networking.k8s.io/v1

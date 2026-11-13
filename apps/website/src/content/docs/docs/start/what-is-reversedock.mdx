@@ -21,10 +21,13 @@ The goal is one proxy for a laptop, a VPS, a Docker Swarm or a Kubernetes cluste
 
 Every feature is designed so that the first group never pays in complexity for the last.
 
-## What works in 0.6.0-alpha.1
+## What works in 0.8.0-alpha.1
 
-The current release is a pre-release of milestone v0.6, "Swarm, L4, static". It replaces NGINX for host and path routing <Status since="v0.1" />, Traefik on a Docker host using your existing labels <Status since="v0.2" />, and Caddy's automatic HTTPS, with certificates from Let's Encrypt or any ACME CA, wildcards through DNS-01 and a local CA for private names <Status since="v0.3" />. It runs busy APIs with health checks, retries, more balancing policies, limits, mTLS, JWT and tracing <Status since="v0.4" />.
+The current release is a pre-release that carries two milestones, v0.7, "Kubernetes", and v0.8, "Cache and extensibility". It replaces NGINX for host and path routing <Status since="v0.1" />, Traefik on a Docker host using your existing labels <Status since="v0.2" />, and Caddy's automatic HTTPS, with certificates from Let's Encrypt or any ACME CA, wildcards through DNS-01 and a local CA for private names <Status since="v0.3" />. It runs busy APIs with health checks, retries, more balancing policies, limits, mTLS, JWT and tracing <Status since="v0.4" />. It runs in Kubernetes as a Gateway API controller <Status since="v0.7" />, and caches, runs plugins and works as an API gateway <Status since="v0.8" />.
 
+- **Kubernetes:** a Gateway API v1.7.0 controller in the same binary (GatewayClass, Gateway, HTTPRoute, GRPCRoute, TLSRoute, TCPRoute, UDPRoute, ReferenceGrant, ListenerSet), Ingress translation for clusters leaving ingress-nginx, a Helm chart and raw manifests. It passes the upstream conformance suite in CI on kind for all five profiles. See [Install on Kubernetes](/docs/install/kubernetes/) and [Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/).
+- **Cache and extensibility:** an RFC 9111 HTTP cache in memory or on disk with purge by URL or tag, native Rust plugins compiled into your own binary, out-of-process agents such as a WAF, UDP routes and directory listings. See [Caching](/docs/guides/caching/), [Native plugins](/docs/guides/plugins/) and [Agents](/docs/guides/agents/). WASM plugins are experimental and only in builds made with `--features wasm`, not in the release binaries or images; see [WASM plugins](/docs/guides/wasm-plugins/).
+- **API gateway:** consumers and API keys, per-consumer rate limits and quotas, usage metering, OIDC login, request validation against JSON Schema or OpenAPI, request and response transformation, RFC 9457 problem details, Cloudflare Access and secrets from Vault or OpenBao. See [API keys](/docs/guides/api-keys/), [Quotas](/docs/guides/quotas/) and [OIDC login](/docs/guides/oidc-login/).
 - **Reliability:** least-requests, power-of-two-choices and consistent-hash balancing, signed sticky sessions, active (HTTP, TCP, gRPC) and passive health checks with fail-open, backups, slow start, retries with a retry budget, weighted splits and mirroring. See [Backends and load balancing](/docs/guides/backends/).
 - **Security and limits:** client certificates (mTLS) and Cloudflare Authenticated Origin Pulls, JWT validation, requests in flight, load shedding and bandwidth limits. See [Client certificates](/docs/guides/client-certificates/) and [JWT authentication](/docs/guides/jwt/).
 - **Observability:** OpenTelemetry traces, per-backend metrics, sampled access logs. See [Logs and metrics](/docs/guides/logs-and-metrics/).
@@ -45,7 +48,7 @@ The current release is a pre-release of milestone v0.6, "Swarm, L4, static". It 
 
 ## What is planned
 
-Settings for these features are already part of the configuration model. `rdock validate` reports them as "planned for vX.Y" and `rdock run` refuses a configuration that uses them, so nothing is silently ignored.
+Where a planned feature already has settings in the configuration model, `rdock validate` reports them as "planned for …" and `rdock run` refuses a configuration that uses them, so nothing is silently ignored.
 
 | Feature | Status |
 |---|---|
@@ -55,10 +58,13 @@ Settings for these features are already part of the configuration model. `rdock 
 | Docker Swarm services and `deploy.labels` | <Status since="v0.6" /> |
 | TCP routing with SNI passthrough and TLS termination, PROXY protocol | <Status since="v0.6" /> |
 | Static files | <Status since="v0.6" /> |
-| UDP routing, directory listings | <Status planned="v0.8" /> implemented, not released |
-| HTTP cache, native plugins, agents, API keys, quotas, OIDC login, request validation and transformation, Vault references | <Status planned="v0.8" /> implemented, not released ([roadmap](/docs/project/roadmap/)) |
-| WASM plugins | <Status planned="v0.8" /> implemented, experimental, behind the cargo feature `wasm` (not in default builds) |
-| Kubernetes Gateway API controller, Ingress translation, Helm chart | <Status planned="v0.7" /> implemented, not released; passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (2026-11-11) ([install](/docs/install/kubernetes/)) |
+| UDP routing, directory listings | <Status since="v0.8" /> |
+| HTTP cache, native plugins, agents, API keys, quotas, OIDC login, request validation and transformation, Vault references | <Status since="v0.8" /> |
+| WASM plugins | <Status since="v0.8" /> experimental: only in builds made with `--features wasm`, not in the release binaries or images |
+| Kubernetes Gateway API controller, Ingress translation, Helm chart | <Status since="v0.7" /> ([install](/docs/install/kubernetes/)) |
+| Background refresh for `stale-while-revalidate`, gRPC and SPOP agents, PROXY protocol on UDP | <Status planned="a later version" /> |
+| Multi-instance control plane, shared certificate storage, distributed rate limits, zero-downtime upgrades and listener changes | <Status planned="v0.9" /> |
+| HTTP/3 (experimental) | <Status planned="v0.9" /> |
 
 Until automatic HTTPS ships, every HTTPS route needs a certificate under `certificates` or a `defaults.certificate`. The full plan is on the [roadmap](/docs/project/roadmap/).
 

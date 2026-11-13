@@ -33,6 +33,10 @@ updates:
       # Stays on the version pingora-core builds (see Cargo.toml), so the binary has one brotli.
       - dependency-name: brotli
         update-types: ["version-update:semver-major"]
+      # Stays on an LTS line of wasmtime (36 today; ADR-0030). Releases between LTS lines lose
+      # support after a few months; the next LTS (48) needs Rust 1.95, above our MSRV.
+      - dependency-name: wasmtime
+        update-types: ["version-update:semver-major"]
   - package-ecosystem: cargo
     directory: /tests/fuzz
     schedule:

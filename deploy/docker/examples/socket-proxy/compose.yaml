@@ -17,7 +17,7 @@ services:
     networks: [docker-api]
 
   rdock:
-    image: ghcr.io/docker-hunterpedia/rdock:0.6.0-alpha.1
+    image: ghcr.io/docker-hunterpedia/rdock:0.8.0-alpha.1
     restart: unless-stopped
     depends_on: [socket-proxy]
     ports: ["80:80"]

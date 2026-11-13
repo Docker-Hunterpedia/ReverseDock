@@ -3,8 +3,8 @@
 # workspace member (CI checks it); outside, replace the two path dependencies with git ones
 # (the crates are not published on crates.io), pinned to the same tag:
 #
-#   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
-#   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+#   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
+#   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
 #
 # and copy the repository's `rust-toolchain.toml`. Building needs a C compiler and CMake. Keep
 # the release profile unwinding (no `panic = "abort"`): that is what lets the proxy catch a

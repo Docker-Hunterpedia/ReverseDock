@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The `agent` middleware <Status planned="v0.8" /> asks a service running in its own process or
+The `agent` middleware <Status since="v0.8" /> asks a service running in its own process or
 container whether a request may continue, before the request reaches your backend. The agent
 sees the request line, an allow-list of headers and the body up to a limit; it answers "allow"
 (optionally with headers for the backend) or gives the response to send. Use it for a web

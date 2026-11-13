@@ -2,7 +2,7 @@
 
 Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard channel), against ReverseDock on a kind cluster, and judges the report. The design is in [ADR-0029](../../../docs/decisions/0029-kubernetes-gateway-api.md) ("Packaging and CI"); the suite's facts are in [the v0.7 research](../../../docs/research/v0.7-kubernetes.md) §2.2 and §5.
 
-> **Status: passes in CI; not released; no report submitted upstream.** On 2026-11-11, on commit `19e88cc` ([run](https://github.com/Docker-Hunterpedia/ReverseDock/actions/runs/43046671411)), the `gateway-conformance` job of [`.github/workflows/kubernetes.yml`](../../../.github/workflows/kubernetes.yml) ran the suite v1.7.0 (Standard channel CRDs) on kind (kind v0.33.0, node image v1.37.0, addresses from cloud-provider-kind) against the chart-installed controller, with the features inferred from `GatewayClass.status.supportedFeatures`, and reported, with no test skipped and none failed:
+> **Status: passes in CI; released in 0.8.0-alpha.1; no report committed or submitted upstream yet.** On 2026-11-11, on commit `19e88cc` ([run](https://github.com/Docker-Hunterpedia/ReverseDock/actions/runs/43046671411)), the `gateway-conformance` job of [`.github/workflows/kubernetes.yml`](../../../.github/workflows/kubernetes.yml) ran the suite v1.7.0 (Standard channel CRDs) on kind (kind v0.33.0, node image v1.37.0, addresses from cloud-provider-kind) against the chart-installed controller, with the features inferred from `GatewayClass.status.supportedFeatures`, and reported, with no test skipped and none failed:
 >
 > | Profile | Core | Extended |
 > |---|---|---|
@@ -14,7 +14,7 @@ Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard ch
 >
 > `GATEWAY-UDP` (core features only: `Gateway`, `ReferenceGrant`, `UDPRoute`) joined `options.yaml` with UDP routes (v0.8, [ADR-0030](../../../docs/decisions/0030-v0-8-cache-extensibility-gateway.md)); its nine tests are transcribed against the translator in `crates/providers/rdock-provider-kubernetes/tests/gateway_udp.rs` and pass there, and the profile passed in the same job on kind on 2026-11-12, on commit `43d81de` (the `GATEWAY-UDP` row above; the other four rows are from the 2026-11-11 run), which also proves that cloud-provider-kind forwards the per-Gateway Service's UDP ports. All five profiles of `options.yaml` pass.
 >
-> "Extended success" means every test for the extended features this implementation claims ([`features.rs`](../../../crates/providers/rdock-provider-kubernetes/src/features.rs)) passed; it does not mean every extended feature of the Gateway API is supported. The same core results were obtained on two earlier commits the same day, before ListenerSet support was added. The job now fails the workflow (no `--allow-partial`); adding it to the repository ruleset's required checks is a maintainer action. No report has been submitted to the upstream Gateway API repository, because reports require a released version (see "Reports"), and the software is not released.
+> "Extended success" means every test for the extended features this implementation claims ([`features.rs`](../../../crates/providers/rdock-provider-kubernetes/src/features.rs)) passed; it does not mean every extended feature of the Gateway API is supported. The same core results were obtained on two earlier commits the same day, before ListenerSet support was added. The job now fails the workflow (no `--allow-partial`); adding it to the repository ruleset's required checks is a maintainer action. No report has been committed here or submitted to the upstream Gateway API repository yet: the controller is released in 0.8.0-alpha.1, and its report must come from a run of the job on the release tag (see "Reports"), which the release PR could not make.
 
 ## Files
 
@@ -29,7 +29,7 @@ Runs the upstream Gateway API conformance suite, version **v1.7.0** (Standard ch
 | `install-gateway-crds.sh` | The Gateway API v1.7.0 Standard CRDs, checksum-verified, applied server-side. The chart never installs CRDs. |
 | `check-report.py` | Prints a table per profile (core and extended result, counts, skipped and failed test names) to stdout and `$GITHUB_STEP_SUMMARY`; fails on the conditions below. |
 | `test_check_report.py` | Offline tests of `check-report.py` (`python3 -I tests/conformance/gateway-api/test_check_report.py`). |
-| `reports/v1.7.0/` | Committed report YAML. Empty: **reports are added by release PRs**, never by a pull request that changes code. |
+| `reports/v1.7.0/` | Committed report YAML. Empty: **reports are added by release PRs**, or by a follow-up PR with the report of a run on the release tag, never by a pull request that changes code. |
 
 ## Run it locally
 

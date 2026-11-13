@@ -102,4 +102,4 @@ controller made (`kubectl -n reversedock-system get service`).
 kubectl delete -f examples/kubernetes/httproute.yaml -f examples/kubernetes/gateway.yaml
 ```
 
-The controller passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (2026-11-11, commit `19e88cc`; nothing is released yet and no report has been submitted upstream). The `helm-k3s` job applies `gateway.yaml` and `httproute.yaml` from this directory on k3s and checks that the Gateway answers over HTTP and HTTPS; it does not test `ingress.yaml`, `cert-manager.yaml` or the other examples.
+The controller passes the upstream Gateway API v1.7.0 conformance suite in CI on kind (2026-11-11, commit `19e88cc`; released in 0.8.0-alpha.1; no report has been submitted upstream yet). The `helm-k3s` job applies `gateway.yaml` and `httproute.yaml` from this directory on k3s and checks that the Gateway answers over HTTP and HTTPS; it does not test `ingress.yaml`, `cert-manager.yaml` or the other examples.

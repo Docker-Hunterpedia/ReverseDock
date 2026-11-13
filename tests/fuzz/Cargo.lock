@@ -2835,7 +2835,7 @@ checksum = "63b8176103e19a2643978565ca18b50549f6101881c443590420e4dc998a3c69"
 
 [[package]]
 name = "rdock-cache"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2855,7 +2855,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-config"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "rdock-model",
  "serde",
@@ -2867,7 +2867,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-credentials"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "crc32fast",
  "ring",
@@ -2896,7 +2896,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-limits"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -2906,7 +2906,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-middleware"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "arc-swap",
  "argon2",
@@ -2952,7 +2952,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-model"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "ipnet",
  "rdock-credentials",
@@ -2967,7 +2967,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-observability"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "async-trait",
  "base64 0.23.1",
@@ -3012,7 +3012,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-rules"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "ipnet",
  "regex",
@@ -3021,7 +3021,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-tls"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "arc-swap",
  "pkcs8",
@@ -3035,7 +3035,7 @@ dependencies = [
 
 [[package]]
 name = "rdock-wasm"
-version = "0.6.0-alpha.1"
+version = "0.8.0-alpha.1"
 dependencies = [
  "base64 0.23.1",
  "blake2 0.11.0",

@@ -9,7 +9,7 @@ publish = false
 
 # Outside this repository the same manifest uses git dependencies (the crates are not
 # published on crates.io), pinned to one tag for all of them:
-#   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0" }
+#   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
 #   header-rewrite = { path = "../header-rewrite" }   # or your own plugin crates
 [dependencies]
 header-rewrite = { path = "../header-rewrite" }

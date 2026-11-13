@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-<Status planned="v0.8" /> UDP routes relay datagrams: DNS, syslog, NTP, RADIUS, WireGuard, QUIC to a backend that terminates it, game servers. A `udp` listener receives each datagram, finds the client's **session** or opens one, and relays the datagram to a backend of a UDP service; the backend's answers go back to that client and to no one else.
+<Status since="v0.8" /> UDP routes relay datagrams: DNS, syslog, NTP, RADIUS, WireGuard, QUIC to a backend that terminates it, game servers. A `udp` listener receives each datagram, finds the client's **session** or opens one, and relays the datagram to a backend of a UDP service; the backend's answers go back to that client and to no one else.
 
 ## What you need
 

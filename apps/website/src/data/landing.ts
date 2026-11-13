@@ -6,7 +6,7 @@ const image = `${release.image}:${release.version}`;
 const archive = `rdock-${release.version}-x86_64-unknown-linux-musl`;
 
 /** The line next to the version in the hero. */
-export const announce = 'Health checks, retries, mTLS and JWT are here.';
+export const announce = 'Kubernetes, the HTTP cache and plugins are here.';
 
 export const pillars: { eyebrow: string; badge: string; kind: Kind; title: string; body: string }[] = [
   { eyebrow: 'Engine', badge: 'shipped', kind: 'shipped', title: 'Rust on Pingora', body: 'The HTTP engine Cloudflare runs at its edge, with our own listeners on top. HTTP/1.1, HTTP/2, h2c, WebSocket, SSE and gRPC.' },
@@ -34,8 +34,9 @@ export const features: { title: string; status: string; kind: Kind; body: string
   { title: 'Automatic HTTPS', status: 'v0.3', kind: 'shipped', body: 'ACME HTTP-01, TLS-ALPN-01 and DNS-01, with ARI renewals.' },
   { title: 'Health checks and retries', status: 'v0.4', kind: 'shipped', body: 'Active and passive checks, consistent hashing, sticky sessions, retry budgets.' },
   { title: 'mTLS, JWT and tracing', status: 'v0.4', kind: 'shipped', body: 'Client certificates, Cloudflare origin pulls, JWT on ring, OpenTelemetry spans.' },
-  { title: 'Dashboard', status: 'v0.5', kind: 'next', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
-  { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'next', body: 'A Gateway API controller and Helm chart, implemented; passes the upstream conformance suite in CI on kind (2026-11-11); not released.' },
+  { title: 'Dashboard', status: 'v0.5', kind: 'shipped', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
+  { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'shipped', body: 'A Gateway API controller, Ingress translation and a Helm chart; passes the upstream conformance suite in CI on kind.' },
+  { title: 'HTTP cache and plugins', status: 'v0.8', kind: 'shipped', body: 'An RFC 9111 cache in memory or on disk, native Rust plugins, agents, API keys, quotas and OIDC login.' },
 ];
 
 export const compare = [

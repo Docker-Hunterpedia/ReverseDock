@@ -26,7 +26,7 @@ docker network create --driver overlay --attachable proxy
 ```yaml title="stack.yaml"
 services:
   rdock:
-    image: ghcr.io/docker-hunterpedia/rdock:0.6.0-alpha.1
+    image: ghcr.io/docker-hunterpedia/rdock:0.8.0-alpha.1
     ports:
       - { target: 80, published: 80, mode: host }
     volumes:
