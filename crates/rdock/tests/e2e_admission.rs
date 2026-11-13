@@ -129,11 +129,14 @@ async fn totals(tasks: Vec<tokio::task::JoinHandle<(u64, u64, u64)>>) -> (u64, u
 async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
     let backend = slow_backend(50).await;
     let port = free_port();
-    // 4 slots × 50 ms: latency passes 200 ms above 16 requests in flight.
+    // 4 slots × 50 ms: latency passes 200 ms above 16 requests in flight. The shares leave the
+    // critical class a reserve of at least two requests at the lowest limit: the one critical
+    // client sends its next request as soon as it has read an answer, which can be a moment
+    // before the proxy has released that request's place.
     let config = format!(
         "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\n\
          defaults: {{ listeners: [web], tls: off, errors: {{ format: problem }} }}\n\
-         middlewares:\n  adm: {{ type: admission, mode: aimd, min: 4, max: 64, initial: 8, latency: 200ms }}\n\
+         middlewares:\n  adm: {{ type: admission, mode: aimd, min: 4, max: 64, initial: 8, latency: 200ms, shares: {{ normal: 60, sheddable: 50 }} }}\n\
          routes:\n\
          \x20 checkout: {{ match: \"Host(`critical.test`)\", service: slow, middlewares: [adm], priority_class: critical }}\n\
          \x20 reports: {{ match: \"Host(`bulk.test`)\", service: slow, middlewares: [adm], priority_class: sheddable }}\n\
@@ -229,10 +232,12 @@ async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
         .any(|r| r["admission"] == "shed:sheddable" && r["status"] == 503);
     assert!(logged, "{}", rdock.log());
 
-    // Recovery: a fast backend lets the limit grow past its overloaded value.
+    // Recovery: a fast backend lets the limit grow past its overloaded value. The load is on
+    // the critical route, the one class that may fill the whole limit (the limit only grows
+    // while the requests in flight come near it).
     backend.service_ms.store(2, Ordering::Relaxed);
     let stop = Arc::new(AtomicBool::new(false));
-    let bulk = flood(proxy, "bulk.test", 24, &stop);
+    let bulk = flood(proxy, "critical.test", 24, &stop);
     let deadline = Instant::now() + Duration::from_secs(60);
     let mut recovered = 0.0;
     while Instant::now() < deadline {
