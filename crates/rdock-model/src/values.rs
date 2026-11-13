@@ -184,6 +184,122 @@ schema!(Duration, "Duration", {
 });
 
 // ---------------------------------------------------------------------------------------------
+// Factor
+
+/// A non-negative decimal number with up to three decimals, such as `1.4` or `1.9`, kept
+/// exactly (in thousandths) so that configurations compare equal. Written as a number, or as a
+/// string of one (labels are strings).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
+pub struct Factor(u32);
+
+impl Factor {
+    /// The largest value accepted.
+    pub const MAX: f64 = 1_000_000.0;
+
+    /// `thousandths / 1000`.
+    #[must_use]
+    pub const fn from_thousandths(thousandths: u32) -> Self {
+        Self(thousandths)
+    }
+
+    /// The value in thousandths.
+    #[must_use]
+    pub const fn thousandths(self) -> u32 {
+        self.0
+    }
+
+    /// The value.
+    #[must_use]
+    pub fn get(self) -> f64 {
+        f64::from(self.0) / 1000.0
+    }
+
+    fn parse(value: f64) -> Result<Self, ValueError> {
+        if !value.is_finite() || !(0.0..=Self::MAX).contains(&value) {
+            return Err(ValueError::new(format!(
+                "`{value}` is not a number from 0 to {}",
+                Self::MAX
+            )));
+        }
+        let thousandths = (value * 1000.0).round();
+        if (thousandths - value * 1000.0).abs() > 1e-6 {
+            return Err(ValueError::new(format!(
+                "`{value}` has more than three decimals"
+            )));
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        Ok(Self(thousandths as u32))
+    }
+}
+
+impl FromStr for Factor {
+    type Err = ValueError;
+
+    fn from_str(s: &str) -> Result<Self, ValueError> {
+        let value: f64 = s
+            .trim()
+            .parse()
+            .map_err(|_| ValueError::new(format!("`{s}` is not a number such as `1.4`")))?;
+        Self::parse(value)
+    }
+}
+
+impl fmt::Display for Factor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let (whole, part) = (self.0 / 1000, self.0 % 1000);
+        if part == 0 {
+            return write!(f, "{whole}");
+        }
+        let decimals = format!("{part:03}");
+        write!(f, "{whole}.{}", decimals.trim_end_matches('0'))
+    }
+}
+
+impl Serialize for Factor {
+    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        if self.0.is_multiple_of(1000) {
+            serializer.serialize_u32(self.0 / 1000)
+        } else {
+            serializer.serialize_f64(self.get())
+        }
+    }
+}
+
+impl<'de> Deserialize<'de> for Factor {
+    fn deserialize<D: Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        struct FactorVisitor;
+        impl Visitor<'_> for FactorVisitor {
+            type Value = Factor;
+            fn expecting(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+                f.write_str("a number such as `1.4`")
+            }
+            fn visit_f64<E: de::Error>(self, value: f64) -> Result<Factor, E> {
+                Factor::parse(value).map_err(E::custom)
+            }
+            fn visit_u64<E: de::Error>(self, value: u64) -> Result<Factor, E> {
+                #[allow(clippy::cast_precision_loss)]
+                Factor::parse(value as f64).map_err(E::custom)
+            }
+            fn visit_i64<E: de::Error>(self, value: i64) -> Result<Factor, E> {
+                #[allow(clippy::cast_precision_loss)]
+                Factor::parse(value as f64).map_err(E::custom)
+            }
+            fn visit_str<E: de::Error>(self, value: &str) -> Result<Factor, E> {
+                value.parse().map_err(E::custom)
+            }
+        }
+        deserializer.deserialize_any(FactorVisitor)
+    }
+}
+
+schema!(Factor, "Factor", {
+    "type": "number",
+    "minimum": 0,
+    "description": "A number with up to three decimals, such as 1.4.",
+    "examples": [1.4]
+});
+
+// ---------------------------------------------------------------------------------------------
 // ByteSize
 
 /// A size in bytes: a plain number or a number with a unit (`32KiB`, `100MiB`, `10MB`).
@@ -778,6 +894,30 @@ schema!(RateLimitKey, "RateLimitKey", {
 
 #[cfg(test)]
 mod tests {
+    use super::Factor;
+
+    #[test]
+    fn factors_are_exact_thousandths() {
+        let parse = |v: serde_json::Value| serde_json::from_value::<Factor>(v);
+        assert_eq!(parse(serde_json::json!(1.4)).unwrap().thousandths(), 1_400);
+        assert_eq!(parse(serde_json::json!(2)).unwrap().thousandths(), 2_000);
+        assert_eq!(
+            parse(serde_json::json!("1.9")).unwrap().thousandths(),
+            1_900
+        );
+        assert!(parse(serde_json::json!(1.2345)).is_err(), "four decimals");
+        assert!(parse(serde_json::json!(-1)).is_err());
+        assert_eq!(Factor::from_thousandths(1_400).to_string(), "1.4");
+        assert_eq!(Factor::from_thousandths(2_000).to_string(), "2");
+        assert_eq!(
+            serde_json::to_value(Factor::from_thousandths(1_900)).unwrap(),
+            serde_json::json!(1.9)
+        );
+        assert_eq!(
+            serde_json::to_value(Factor::from_thousandths(1_000)).unwrap(),
+            serde_json::json!(1)
+        );
+    }
     use super::*;
 
     #[test]

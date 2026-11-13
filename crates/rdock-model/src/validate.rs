@@ -79,6 +79,7 @@ impl Config {
         v.check_admin();
         v.check_observability();
         v.check_providers();
+        v.check_locality();
         v.out
     }
 }
@@ -762,6 +763,7 @@ impl Validator<'_> {
         }
         self.check_service_health(path, service);
         self.check_service_retries(path, service);
+        self.check_service_balancing(path, service);
         let t = &service.timeouts;
         for (field, zero) in [
             ("connect", t.connect.is_zero()),
@@ -840,12 +842,6 @@ impl Validator<'_> {
                     );
                 }
             }
-        }
-        if !service.backends.is_empty() && service.backends.iter().all(|b| b.backup) {
-            self.error(
-                format!("{path}.backends"),
-                "every backend is a backup; at least one must be a primary",
-            );
         }
         if service.max_requests == Some(0) {
             self.error(format!("{path}.max_requests"), "must be at least 1");
@@ -2541,6 +2537,7 @@ fn public_ip(host: &str) -> Option<IpAddr> {
     (!local).then_some(ip)
 }
 
+mod balancing;
 mod cache;
 mod extensions;
 mod gateway;

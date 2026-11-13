@@ -154,12 +154,12 @@ Tracked as W-SWM-01…03 below.
 - [ ] H-HA-02 Config rollout with ACK/NACK, versioning, rollback; data planes survive control-plane outage from last-known-good
 - [ ] H-HA-03 Shared certificate storage/coordination (no duplicate issuance; lock per name)
 - [ ] H-HA-04 Distributed rate limiting (Redis-compatible or built-in gossip counters)
-- [ ] H-HA-05 Locality/zone-aware routing, regional preferences, progressive draining
+- [ ] H-HA-05 Locality/zone-aware routing, regional preferences, progressive draining. *In progress (v0.9 step 3, ADR-0031, unreleased):* `zone` and `for_zones` on backends, `locality { zone, mode: prefer | off }` (zone also from `RDOCK_ZONE`), off by default; the Kubernetes provider keeps EndpointSlice zones and `hints.forZones` with kube-proxy's safeguard. Open: progressive draining (`drain.duration`), zones from Docker/Swarm labels, the pod's zone from the Helm chart.
 
 ### H-LB · Advanced balancing (P3)
-- [ ] H-LB-01 Peak-EWMA latency-aware selection; adaptive weights from observed health
-- [ ] H-LB-02 Outlier detection with ejection and slow-start
-- [ ] H-LB-03 Priority tiers / disaster-recovery pools; hedged requests under strict safety rules
+- [ ] H-LB-01 Peak-EWMA latency-aware selection; adaptive weights from observed health. *In progress (v0.9 step 3, ADR-0031, unreleased):* `policy: peak_ewma` (P2C over `latency × (in_flight + 1) / weight`, `decay`, `measure: first_byte | last_byte`). "Adaptive weights" is read as Peak-EWMA plus the outlier detectors of H-LB-02; a continuous success-rate weight is not planned.
+- [ ] H-LB-02 Outlier detection with ejection and slow-start. *In progress (v0.9 step 3, ADR-0031, unreleased):* `passive.outlier.success_rate` and `.failure_percentage` with Envoy's defaults, `ejection_jitter`, slow start long form with `on: [recovery, join]`, refused with hash policies.
+- [ ] H-LB-03 Priority tiers / disaster-recovery pools; hedged requests under strict safety rules. *In progress (v0.9 step 3, ADR-0031, unreleased):* `priority: 0..7` with `failover: strict | spill` and `overprovisioning`; `retries.per_try_timeout`. Hedging is refused as planned: Pingora 0.9 cannot race two upstream attempts of a request.
 - [ ] H-LB-04 Per-tenant quotas, admission control
 
 ### H-SEC · Security at scale

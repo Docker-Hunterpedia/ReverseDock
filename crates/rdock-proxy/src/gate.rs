@@ -89,6 +89,18 @@ pub fn check(config: &Config, mode: Mode, out: &mut Vec<Diagnostic>) {
             );
         }
     }
+    for (name, service) in &config.services {
+        // Pingora 0.9's `ProxyHttp` runs one upstream attempt at a time: no hook starts a
+        // second exchange while the first is open (ADR-0031). `retries.per_try_timeout`
+        // abandons a stalled attempt instead.
+        if service.hedge.is_some() {
+            gate.unsupported(
+                format!("{}.hedge", path_key("services", name)),
+                "hedged requests (`hedge`): Pingora 0.9 cannot race two upstream attempts of one request; `retries.per_try_timeout` retries a stalled attempt on another backend instead",
+                "a later version",
+            );
+        }
+    }
     for (name, listener) in config.effective_listeners().iter() {
         let path = path_key("listeners", name);
         // The handshake bound covers `https` listeners; a `tcp` listener that terminates TLS
@@ -129,6 +141,26 @@ mod tests {
         let mut out = Vec::new();
         check(&config, mode, &mut out);
         out
+    }
+
+    #[test]
+    fn hedging_is_planned_and_says_why() {
+        let yaml = r"
+routes:
+  app: { match: 'Host(`a`)', service: app }
+services:
+  app:
+    backends: [{ address: '127.0.0.1:1' }]
+    hedge: { delay: 50ms }
+";
+        let run = diagnostics(yaml, Mode::Run);
+        assert_eq!(run.len(), 1, "{run:?}");
+        assert!(run[0].is_error());
+        assert_eq!(run[0].path, "services.app.hedge");
+        assert!(run[0].message.contains("cannot race two upstream attempts"));
+        assert!(run[0].message.ends_with("(planned for a later version)"));
+        let validate = diagnostics(yaml, Mode::Validate);
+        assert!(!validate[0].is_error());
     }
 
     #[test]

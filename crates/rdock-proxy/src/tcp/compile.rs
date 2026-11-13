@@ -33,7 +33,12 @@ pub(crate) fn compile_tcp(
     let services: HashMap<&str, Arc<TcpServiceRuntime>> = config
         .tcp_services
         .iter()
-        .map(|(name, service)| (name.as_str(), Arc::new(compile_service(name, service, env))))
+        .map(|(name, service)| {
+            (
+                name.as_str(),
+                Arc::new(compile_service(name, service, config, env)),
+            )
+        })
         .collect();
     let mut attached: BTreeMap<&str, Vec<Arc<TcpRouteRuntime>>> = BTreeMap::new();
     for (name, route) in &config.tcp_routes {
@@ -74,7 +79,12 @@ pub(crate) fn compile_tcp(
     }
 }
 
-fn compile_service(name: &str, service: &TcpService, env: &CompileEnv<'_>) -> TcpServiceRuntime {
+fn compile_service(
+    name: &str,
+    service: &TcpService,
+    config: &Config,
+    env: &CompileEnv<'_>,
+) -> TcpServiceRuntime {
     let pool = ServiceRuntime {
         name: Arc::from(name),
         scheme: rdock_model::service::Scheme::default(),
@@ -99,6 +109,10 @@ fn compile_service(name: &str, service: &TcpService, env: &CompileEnv<'_>) -> Tc
         timeouts: rdock_model::service::Timeouts::default(),
         tls: UpstreamTls::default(),
         pass_host_header: false,
+        selection: crate::runtime::Selection {
+            zone: crate::compile::preferred_zone(config, None),
+            ..crate::runtime::Selection::default()
+        },
     };
     TcpServiceRuntime {
         name: Arc::from(name),

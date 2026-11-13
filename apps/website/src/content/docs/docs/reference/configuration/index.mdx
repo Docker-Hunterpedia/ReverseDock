@@ -24,6 +24,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`defaults`](/docs/reference/configuration/defaults/): Defaults applied to routes that do not set a value.
 - [`lifecycle`](/docs/reference/configuration/lifecycle/): Start-up and shutdown behaviour.
 - [`listeners`](/docs/reference/configuration/listeners/): Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)
+- [`locality`](/docs/reference/configuration/locality/): The proxy's own zone and whether services prefer backends in it (H-HA-05).
 - [`middlewares`](/docs/reference/configuration/middlewares/): Reusable request and response policies.
 - [`observability`](/docs/reference/configuration/observability/): Logs, metrics and traces.
 - [`providers`](/docs/reference/configuration/providers/): Dynamic configuration sources (file, Docker, Swarm, Kubernetes).
@@ -81,6 +82,12 @@ Examples: `10s`, `250ms`, `1h30m`
 
 Examples: `unix:///var/run/docker.sock`, `tcp://socket-proxy:2375`
 
+### Factor
+
+A number with up to three decimals, such as 1.4.
+
+Examples: `1.4`
+
 ### FloodLimit
 
 A number, or `unlimited` to remove the limit.
@@ -120,6 +127,10 @@ TLS of a route.
 ### SessionLimit
 
 A number of sessions (at least 1), or `unlimited`.
+
+### SlowStart
+
+Time to full weight, such as `30s`, or every setting.
 
 ### TrustedProxy
 

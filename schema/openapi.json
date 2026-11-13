@@ -1865,8 +1865,25 @@
           },
           "backup": {
             "default": false,
-            "description": "Only used when no primary backend is available.",
+            "description": "Only used when no primary backend is available: the same as `priority: 1`.",
             "type": "boolean"
+          },
+          "for_zones": {
+            "description": "Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead\nof its own `zone` (Kubernetes topology hints, `hints.forZones`).",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "priority": {
+            "description": "Priority tier from 0 (the default, used first) to 7. See the service's `failover`.\nNot together with `backup`.",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
           },
           "weight": {
             "default": 1,
@@ -1874,6 +1891,13 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "zone": {
+            "description": "The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.",
+            "type": [
+              "string",
+              "null"
+            ]
           }
         },
         "required": [
@@ -2274,6 +2298,17 @@
             "default": {},
             "description": "Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)\nare used.",
             "type": "object"
+          },
+          "locality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Locality"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "The proxy's own zone and whether services prefer backends in it (H-HA-05)."
           },
           "middlewares": {
             "additionalProperties": {
@@ -2972,6 +3007,65 @@
         ],
         "type": "object"
       },
+      "rdock.Factor": {
+        "description": "A number with up to three decimals, such as 1.4.",
+        "examples": [
+          1.4
+        ],
+        "minimum": 0,
+        "type": "number"
+      },
+      "rdock.Failover": {
+        "description": "How traffic moves between backend priority tiers.",
+        "oneOf": [
+          {
+            "const": "strict",
+            "description": "The next tier only when every tier above has no available backend.",
+            "type": "string"
+          },
+          {
+            "const": "spill",
+            "description": "Tiers share traffic by their health and the overprovisioning factor.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.FailurePercentageDetector": {
+        "additionalProperties": false,
+        "description": "The failure-percentage detector, with Envoy's defaults.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "enabled": {
+            "default": false,
+            "description": "Turns the detector on. Default `false`.",
+            "type": "boolean"
+          },
+          "minimum_hosts": {
+            "default": 5,
+            "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_volume": {
+            "default": 50,
+            "description": "Requests in the interval for a backend to count. Default 50.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "threshold": {
+            "default": 85,
+            "description": "Failure share that ejects, in percent. Default 85.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "type": "object"
+      },
       "rdock.FileProvider": {
         "additionalProperties": false,
         "description": "File provider.",
@@ -3126,14 +3220,14 @@
           "slow_start": {
             "anyOf": [
               {
-                "$ref": "#/components/schemas/rdock.Duration"
+                "$ref": "#/components/schemas/rdock.SlowStart"
               },
               {
                 "type": "null"
               }
             ],
             "default": null,
-            "description": "A backend that becomes healthy ramps up its weight over this time."
+            "description": "A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or\n`{ window, aggression, min_weight_percent, on }`. Not with hash policies."
           },
           "when_all_down": {
             "$ref": "#/components/schemas/rdock.WhenAllDown",
@@ -3177,6 +3271,36 @@
             "type": "string"
           }
         ]
+      },
+      "rdock.Hedge": {
+        "additionalProperties": false,
+        "description": "Hedged requests (planned).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "delay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Time without a response after which the hedge would be sent."
+          },
+          "max_attempts": {
+            "description": "Attempts in flight at most, the first included.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
       },
       "rdock.HetznerProvider": {
         "additionalProperties": false,
@@ -3588,6 +3712,21 @@
           }
         ]
       },
+      "rdock.LatencyMeasure": {
+        "description": "What a `peak_ewma` latency sample measures.",
+        "oneOf": [
+          {
+            "const": "first_byte",
+            "description": "Time to the response headers (NGINX `least_time header`): a long download or a slow\nclient does not make a backend look slow.",
+            "type": "string"
+          },
+          {
+            "const": "last_byte",
+            "description": "Time to the end of the response (NGINX `last_byte`). Upgraded connections (WebSocket)\ngive no sample.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.LatencyRule": {
         "additionalProperties": false,
         "description": "A p99 latency threshold.",
@@ -3655,6 +3794,11 @@
           {
             "const": "cookie_hash",
             "description": "Consistent hash of a cookie (`hash_on`).",
+            "type": "string"
+          },
+          {
+            "const": "peak_ewma",
+            "description": "Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a\nlatency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).",
             "type": "string"
           }
         ]
@@ -4190,6 +4334,17 @@
           "^x-": {}
         },
         "properties": {
+          "decay": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`peak_ewma`: time constant of the latency average. Default 10s (Finagle's and\nLinkerd's `decay`)."
+          },
           "hash_on": {
             "default": null,
             "description": "Header or cookie name for `header_hash` and `cookie_hash`.",
@@ -4198,6 +4353,17 @@
               "null"
             ]
           },
+          "measure": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.LatencyMeasure"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "`peak_ewma`: what a latency sample measures. Default `first_byte`."
+          },
           "policy": {
             "$ref": "#/components/schemas/rdock.LbPolicy",
             "default": "round_robin",
@@ -4205,6 +4371,43 @@
           }
         },
         "type": "object"
+      },
+      "rdock.Locality": {
+        "additionalProperties": false,
+        "description": "The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/rdock.LocalityMode",
+            "default": "off",
+            "description": "`prefer`: services use only backends of this zone while at least one of them is\navailable, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the\ndefault, as Kubernetes distributes traffic evenly by default) ignores zones. A\nservice's own `locality.mode` overrides this."
+          },
+          "zone": {
+            "description": "The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`\nenvironment variable gives it; with neither, `prefer` has no effect.",
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        },
+        "type": "object"
+      },
+      "rdock.LocalityMode": {
+        "description": "Whether backends in the proxy's zone are preferred.",
+        "oneOf": [
+          {
+            "const": "off",
+            "description": "Every available backend, whatever its zone.",
+            "type": "string"
+          },
+          {
+            "const": "prefer",
+            "description": "Only backends in the proxy's zone while at least one of them is available; all\notherwise (Kubernetes `PreferSameZone`).",
+            "type": "string"
+          }
+        ]
       },
       "rdock.LogFormat": {
         "description": "Access log formats.",
@@ -6569,6 +6772,43 @@
           }
         ]
       },
+      "rdock.OutlierDetection": {
+        "additionalProperties": false,
+        "description": "Outlier detectors (Envoy's outlier detection). Failures are those of passive health:\nconnection errors, resets, timeouts and `statuses`.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "failure_percentage": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.FailurePercentageDetector"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ejects a backend whose failures reach `threshold` percent of its requests."
+          },
+          "interval": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "10s",
+            "description": "How often the detectors look at the counts of the last interval. Default 10s (Envoy)."
+          },
+          "success_rate": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.SuccessRateDetector"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others."
+          }
+        },
+        "type": "object"
+      },
       "rdock.PassiveHealth": {
         "additionalProperties": false,
         "description": "Ejection of backends that keep failing.",
@@ -6580,6 +6820,11 @@
             "$ref": "#/components/schemas/rdock.Duration",
             "default": "30s",
             "description": "How long an ejected backend stays out before one request tries it again; doubled for\neach ejection in a row, up to 5 minutes."
+          },
+          "ejection_jitter": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "0s",
+            "description": "Up to this much is added at random to each ejection time, so backends ejected by many\ninstances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s."
           },
           "failures": {
             "default": 5,
@@ -6594,6 +6839,17 @@
             "format": "uint32",
             "minimum": 0,
             "type": "integer"
+          },
+          "outlier": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.OutlierDetection"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Statistical detectors that compare backends with each other once per interval and eject\nthe outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,\ntrial request)."
           },
           "statuses": {
             "default": [
@@ -7090,6 +7346,17 @@
               "$ref": "#/components/schemas/rdock.RetryOn"
             },
             "type": "array"
+          },
+          "per_try_timeout": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Duration"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Abandons an attempt that has not finished a read for this long and retries it on\nanother backend, within the budget and only where a retry is allowed (`on` must list\n`timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for\nthe response headers and each pause of the response body; the last attempt and\nrequests that cannot be retried wait `timeouts.read`."
           },
           "retry_non_idempotent": {
             "default": false,
@@ -7595,6 +7862,11 @@
             },
             "type": "array"
           },
+          "failover": {
+            "$ref": "#/components/schemas/rdock.Failover",
+            "default": "strict",
+            "description": "How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets\ntraffic only when every tier above it has no available backend. `spill`: a tier keeps\n`healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes\nto the next tier, as Envoy's priority levels do."
+          },
           "health": {
             "anyOf": [
               {
@@ -7607,6 +7879,17 @@
             "default": null,
             "description": "Active and passive health checks."
           },
+          "hedge": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Hedge"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Hedged requests: a second attempt while the first is still waiting. Planned, not\nsupported: Pingora 0.9 cannot race two upstream attempts of one request. Use\n`retries.per_try_timeout` for stalled attempts."
+          },
           "load_balancer": {
             "$ref": "#/components/schemas/rdock.LoadBalancer",
             "default": {
@@ -7614,6 +7897,17 @@
               "policy": "round_robin"
             },
             "description": "How a backend is chosen for each request."
+          },
+          "locality": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.ServiceLocality"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).\nOmitted, the top-level `locality.mode` applies."
           },
           "max_connections_per_backend": {
             "default": null,
@@ -7634,6 +7928,17 @@
               "integer",
               "null"
             ]
+          },
+          "overprovisioning": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/rdock.Factor"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "description": "With `failover: spill`: how much more than its share each tier can carry. Default 1.4\n(Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about\n71 % of its backends are available."
           },
           "pass_host_header": {
             "default": true,
@@ -7714,6 +8019,23 @@
         },
         "type": "object"
       },
+      "rdock.ServiceLocality": {
+        "additionalProperties": false,
+        "description": "The locality preference of one service.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "mode": {
+            "$ref": "#/components/schemas/rdock.LocalityMode",
+            "description": "`prefer` or `off`."
+          }
+        },
+        "required": [
+          "mode"
+        ],
+        "type": "object"
+      },
       "rdock.SessionLimit": {
         "description": "A number of sessions (at least 1), or `unlimited`.",
         "oneOf": [
@@ -7741,6 +8063,69 @@
           {
             "const": "strip",
             "description": "Store them without `Set-Cookie`.",
+            "type": "string"
+          }
+        ]
+      },
+      "rdock.SlowStart": {
+        "anyOf": [
+          {
+            "$ref": "#/components/schemas/rdock.Duration"
+          },
+          {
+            "$ref": "#/components/schemas/rdock.SlowStartConfig"
+          }
+        ],
+        "description": "Time to full weight, such as `30s`, or every setting."
+      },
+      "rdock.SlowStartConfig": {
+        "additionalProperties": false,
+        "description": "Slow start, every setting (Envoy's `SlowStartConfig`): the weight is\n`weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "aggression": {
+            "$ref": "#/components/schemas/rdock.Factor",
+            "default": 1,
+            "description": "Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first."
+          },
+          "min_weight_percent": {
+            "default": 10,
+            "description": "The weight starts at this share, in percent. Default 10 (Envoy).",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "on": {
+            "default": [
+              "recovery"
+            ],
+            "description": "When a backend ramps: `recovery` (after failed probes or an ejection; the default) and\n`join` (a backend that newly appears in a pool that already had a backend at full\nweight; never at start-up or into an empty pool).",
+            "items": {
+              "$ref": "#/components/schemas/rdock.SlowStartOn"
+            },
+            "type": "array"
+          },
+          "window": {
+            "$ref": "#/components/schemas/rdock.Duration",
+            "default": "30s",
+            "description": "Time to full weight."
+          }
+        },
+        "type": "object"
+      },
+      "rdock.SlowStartOn": {
+        "description": "When a backend's weight ramps up.",
+        "oneOf": [
+          {
+            "const": "recovery",
+            "description": "After recovering from failed probes or an ejection.",
+            "type": "string"
+          },
+          {
+            "const": "join",
+            "description": "When it newly appears in a pool that already had a backend at full weight.",
             "type": "string"
           }
         ]
@@ -7965,6 +8350,40 @@
             "default": {},
             "description": "Query parameter → exact value; all must match.",
             "type": "object"
+          }
+        },
+        "type": "object"
+      },
+      "rdock.SuccessRateDetector": {
+        "additionalProperties": false,
+        "description": "The success-rate detector, with Envoy's defaults.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "enabled": {
+            "default": false,
+            "description": "Turns the detector on. Default `false`.",
+            "type": "boolean"
+          },
+          "minimum_hosts": {
+            "default": 5,
+            "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "request_volume": {
+            "default": 100,
+            "description": "Requests in the interval for a backend to count. Default 100.",
+            "format": "uint32",
+            "minimum": 0,
+            "type": "integer"
+          },
+          "stdev_factor": {
+            "$ref": "#/components/schemas/rdock.Factor",
+            "default": 1.9,
+            "description": "Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000)."
           }
         },
         "type": "object"

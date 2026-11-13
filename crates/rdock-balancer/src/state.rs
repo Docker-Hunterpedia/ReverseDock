@@ -7,7 +7,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock, Weak};
 use std::time::{Duration, Instant};
 
-use crate::health::{Availability, BreakerState, EjectPolicy, Health, ProbePolicy};
+use crate::ewma::Latency;
+use crate::health::{Availability, BreakerState, EjectPolicy, Health, ProbePolicy, SlowStart};
+use crate::outlier::{Detector, Outlier, outliers};
 
 /// What is known about one backend address.
 #[derive(Debug, Default)]
@@ -17,6 +19,11 @@ pub struct BackendState {
     health: Mutex<Health>,
     /// Taken out of rotation by an operator: no new requests, open ones finish.
     drained: AtomicBool,
+    /// Latency estimate for `peak_ewma`.
+    latency: Latency,
+    /// Attempts and failed attempts since the outlier detectors last looked.
+    attempts: AtomicU32,
+    failed: AtomicU32,
 }
 
 /// What a recorded failure did.
@@ -78,9 +85,35 @@ impl BackendState {
         self.health().pause(until);
     }
 
-    /// `weight`, reduced while the backend ramps up after recovering.
-    pub fn weight(&self, weight: u32, slow_start: Option<Duration>, now: Instant) -> u32 {
-        self.health().weight(weight, slow_start, now)
+    /// The share of its weight the backend has now while it ramps up after recovering or
+    /// joining; `None` at full weight.
+    pub fn ramp(&self, slow_start: Option<&SlowStart>, now: Instant) -> Option<f64> {
+        self.health().ramp(slow_start, now)
+    }
+
+    /// Marks the backend as new in its pool (slow start `on: [join]`).
+    pub fn join(&self, now: Instant) {
+        self.health().join(now);
+    }
+
+    /// The latency estimate used by `peak_ewma`.
+    pub fn latency(&self) -> &Latency {
+        &self.latency
+    }
+
+    /// Counts an attempt for the outlier detectors.
+    pub fn record_outcome(&self, ok: bool) {
+        self.attempts.fetch_add(1, Ordering::Relaxed);
+        if !ok {
+            self.failed.fetch_add(1, Ordering::Relaxed);
+        }
+    }
+
+    /// The `(attempts, failures)` since the last call; the counters start again from zero.
+    pub fn take_outcomes(&self) -> (u32, u32) {
+        let failed = self.failed.swap(0, Ordering::Relaxed);
+        let attempts = self.attempts.swap(0, Ordering::Relaxed);
+        (attempts, failed.min(attempts))
     }
 
     fn is_ejected(&self) -> bool {
@@ -94,12 +127,6 @@ impl BackendState {
             return Some("drained by an operator".to_owned());
         }
         self.health().exclusion(now)
-    }
-
-    /// Whether the backend ramps up after recovering, and its share of the weight now.
-    pub fn ramping(&self, weight: u32, slow_start: Option<Duration>, now: Instant) -> Option<u32> {
-        let current = self.weight(weight, slow_start, now);
-        (current < weight).then_some(current)
     }
 
     /// Whether an operator drained the backend.
@@ -158,25 +185,49 @@ impl Pool {
 
     /// The state of backend `id`, created on first use.
     pub fn state(&self, id: &str) -> Arc<BackendState> {
+        self.state_created(id).0
+    }
+
+    /// The state of backend `id`, and whether this call created it.
+    pub fn state_created(&self, id: &str) -> (Arc<BackendState>, bool) {
         if let Some(state) = self
             .backends
             .read()
             .unwrap_or_else(PoisonError::into_inner)
             .get(id)
         {
-            return state.clone();
+            return (state.clone(), false);
         }
-        self.backends
+        let mut created = false;
+        let state = self
+            .backends
             .write()
             .unwrap_or_else(PoisonError::into_inner)
             .entry(id.to_owned())
             .or_insert_with(|| {
+                created = true;
                 Arc::new(BackendState {
                     pool_in_flight: self.in_flight.clone(),
                     ..BackendState::default()
                 })
             })
-            .clone()
+            .clone();
+        (state, created)
+    }
+
+    /// Whether some backend of the pool takes traffic at full weight now: a backend that joins
+    /// such a pool ramps up (slow start `on: [join]`); one that joins an empty or recovering
+    /// pool does not (the rule of AWS ALB target groups).
+    pub fn has_settled_backend(&self, slow_start: Option<&SlowStart>, now: Instant) -> bool {
+        self.backends
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .values()
+            .any(|b| {
+                !b.is_drained()
+                    && b.availability(now) == Availability::Up
+                    && b.ramp(slow_start, now).is_none()
+            })
     }
 
     /// Requests in flight to any backend of the pool.
@@ -237,6 +288,59 @@ impl Pool {
             return Ejection::Refused;
         }
         Ejection::Ejected(state.health().eject(policy, now))
+    }
+
+    /// Ejects `state` now, found by an outlier detector, unless it is already ejected or the
+    /// pool has `max_percent` of its backends ejected. The ejection time and its back-off are
+    /// those of a failure ejection.
+    pub fn eject_outlier(
+        &self,
+        state: &BackendState,
+        policy: EjectPolicy,
+        max_percent: u32,
+        now: Instant,
+    ) -> Ejection {
+        if state.is_ejected() {
+            return Ejection::None;
+        }
+        if !self.room_to_eject(max_percent) {
+            return Ejection::Refused;
+        }
+        Ejection::Ejected(state.health().eject(policy, now))
+    }
+
+    fn room_to_eject(&self, max_percent: u32) -> bool {
+        let backends = self.backends.read().unwrap_or_else(PoisonError::into_inner);
+        let ejected = backends.values().filter(|b| b.is_ejected()).count();
+        (ejected + 1) * 100 <= backends.len() * max_percent as usize
+    }
+
+    /// Runs the outlier detectors over the counts since the last run (which start again) and
+    /// ejects what they find, within `max_percent`. Returns each backend found, the detector
+    /// and what happened, in no particular order.
+    pub fn detect_outliers(
+        &self,
+        detectors: &Outlier,
+        policy: EjectPolicy,
+        max_percent: u32,
+        now: Instant,
+    ) -> Vec<(String, Detector, Ejection)> {
+        let backends: Vec<(String, Arc<BackendState>)> = self
+            .backends
+            .read()
+            .unwrap_or_else(PoisonError::into_inner)
+            .iter()
+            .map(|(id, state)| (id.clone(), state.clone()))
+            .collect();
+        let counts: Vec<(u32, u32)> = backends.iter().map(|(_, s)| s.take_outcomes()).collect();
+        outliers(&counts, detectors)
+            .into_iter()
+            .filter_map(|(i, detector)| {
+                let (id, state) = backends.get(i)?;
+                let result = self.eject_outlier(state, policy, max_percent, now);
+                Some((id.clone(), detector, result))
+            })
+            .collect()
     }
 }
 
@@ -342,6 +446,7 @@ mod tests {
             failures: 1,
             window: Duration::from_secs(10),
             ejection: Duration::from_secs(30),
+            jitter: Duration::ZERO,
         };
         let now = Instant::now();
         assert_eq!(
@@ -354,5 +459,102 @@ mod tests {
             "two of three would be more than half"
         );
         assert_eq!(b.availability(now), Availability::Up);
+    }
+
+    fn detectors() -> Outlier {
+        Outlier {
+            success_rate: Some(crate::SuccessRate {
+                stdev_factor: 1.9,
+                minimum_hosts: 5,
+                request_volume: 10,
+            }),
+            failure_percentage: None,
+        }
+    }
+
+    const POLICY: EjectPolicy = EjectPolicy {
+        failures: 5,
+        window: Duration::from_secs(30),
+        ejection: Duration::from_secs(30),
+        jitter: Duration::ZERO,
+    };
+
+    #[test]
+    fn outliers_are_ejected_through_the_ordinary_machinery() {
+        let pool = Pool::default();
+        let states: Vec<_> = (0..5).map(|i| pool.state(&format!("b{i}"))).collect();
+        for (i, state) in states.iter().enumerate() {
+            for n in 0..10 {
+                state.record_outcome(!(i == 4 && n % 5 < 2));
+            }
+        }
+        let now = Instant::now();
+        let found = pool.detect_outliers(&detectors(), POLICY, 50, now);
+        assert_eq!(
+            found,
+            vec![(
+                "b4".to_owned(),
+                Detector::SuccessRate,
+                Ejection::Ejected(Duration::from_secs(30))
+            )]
+        );
+        assert_eq!(states[4].availability(now), Availability::Down);
+        assert_eq!(
+            states[0].take_outcomes(),
+            (0, 0),
+            "the counters start again"
+        );
+        // The back-off of a failure ejection applies: after a failed trial, twice as long.
+        let later = now + Duration::from_secs(31);
+        states[4].start_trial(later);
+        assert_eq!(
+            pool.failure(&states[4], POLICY, 50, later),
+            Ejection::Ejected(Duration::from_secs(60))
+        );
+    }
+
+    #[test]
+    fn outlier_ejections_respect_the_cap() {
+        let pool = Pool::default();
+        let states: Vec<_> = (0..5).map(|i| pool.state(&format!("b{i}"))).collect();
+        let now = Instant::now();
+        assert!(matches!(
+            pool.eject_outlier(&states[0], POLICY, 20, now),
+            Ejection::Ejected(_)
+        ));
+        assert_eq!(
+            pool.eject_outlier(&states[1], POLICY, 20, now),
+            Ejection::Refused,
+            "one of five is 20 %"
+        );
+        assert_eq!(
+            pool.eject_outlier(&states[0], POLICY, 100, now),
+            Ejection::None,
+            "already ejected"
+        );
+    }
+
+    #[test]
+    fn joining_needs_a_settled_pool() {
+        let slow = SlowStart {
+            window: Duration::from_secs(60),
+            aggression: 1.0,
+            min_weight_percent: 10,
+            on_recovery: true,
+            on_join: true,
+        };
+        let pool = Pool::default();
+        let now = Instant::now();
+        assert!(!pool.has_settled_backend(Some(&slow), now), "empty");
+        let (a, created) = pool.state_created("a");
+        assert!(created);
+        assert!(!pool.state_created("a").1);
+        assert!(pool.has_settled_backend(Some(&slow), now));
+        a.join(now);
+        assert!(
+            !pool.has_settled_backend(Some(&slow), now),
+            "a ramping backend is not settled"
+        );
+        assert_eq!(a.ramp(Some(&slow), now), Some(0.1));
     }
 }

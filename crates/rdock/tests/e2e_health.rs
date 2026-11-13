@@ -226,3 +226,57 @@ services:
     let routed = client::http1(addr(port), get("app.test", "/other")).await;
     assert_eq!(routed.status, 502, "other paths are routed as usual");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Outlier detection (H-LB-02, ADR-0031)
+
+/// `n` backends, the last failing 40 % of its requests, behind the success-rate detector.
+/// Returns the backends, the proxy and its port after about 2.5 s of traffic.
+async fn outlier_pool(n: usize) -> (Vec<Backend>, Rdock, u16) {
+    let mut backends = Vec::new();
+    for i in 0..n {
+        backends.push(Backend::start(&format!("b{i}")).await);
+    }
+    backends[n - 1].fail_pattern(2, 5);
+    let port = free_port();
+    // The windowed failure ejection is set out of reach, so only the detector ejects.
+    let health = "    health:\n      passive:\n        failures: 100000\n        outlier:\n          interval: 1s\n          success_rate: { enabled: true, request_volume: 20, minimum_hosts: 5 }\n    retries: { attempts: 0 }";
+    let refs: Vec<&Backend> = backends.iter().collect();
+    let rdock = Rdock::start(RDOCK, &config(port, "http", &list(&refs), health));
+    let deadline = Instant::now() + Duration::from_millis(2_500);
+    while Instant::now() < deadline {
+        client::http1(addr(port), get("a", "/")).await;
+    }
+    (backends, rdock, port)
+}
+
+#[tokio::test]
+async fn the_success_rate_detector_ejects_a_backend_failing_40_percent() {
+    let (backends, rdock, port) = outlier_pool(5).await;
+    let failing = &backends[4];
+    let (_, metrics) = rdock.get_admin("/metrics").unwrap_or_default();
+    assert!(
+        metrics.contains(&format!(
+            "rdock_backend_outlier_ejections_total{{backend=\"{}\",detector=\"success_rate\",service=\"app\"}} 1",
+            failing.addr
+        )),
+        "{metrics}"
+    );
+    let before = failing.traffic();
+    let seen = backends_hit(port, 20).await;
+    assert!(!seen.contains(&"b4".to_owned()), "{seen:?}");
+    assert_eq!(failing.traffic(), before, "an ejected backend gets nothing");
+}
+
+#[tokio::test]
+async fn a_pool_of_four_is_not_evaluated() {
+    let (backends, rdock, port) = outlier_pool(4).await;
+    let (_, metrics) = rdock.get_admin("/metrics").unwrap_or_default();
+    assert!(
+        !metrics.contains("rdock_backend_outlier_ejections_total{"),
+        "{metrics}"
+    );
+    let before = backends[3].traffic();
+    backends_hit(port, 20).await;
+    assert!(backends[3].traffic() > before, "still in the pool");
+}

@@ -141,6 +141,7 @@ rdock_config_reloads_total{result="applied"} 1
 | `rdock_backend_requests_total` | counter | `service`, `backend`, `status_class` |
 | `rdock_upstream_duration_seconds` | histogram | `service` |
 | `rdock_backend_up`, `rdock_backend_ejections_total` | gauge, counter | `service`, `backend` |
+| `rdock_backend_outlier_ejections_total` <Status planned="v0.9" /> | counter | `service`, `backend`, `detector` |
 | `rdock_retries_total`, `rdock_retry_budget_exhausted_total` | counter | `service` (and `reason`) |
 | `rdock_build_info` | gauge | `version`, `commit` |
 

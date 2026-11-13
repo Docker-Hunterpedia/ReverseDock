@@ -185,7 +185,15 @@ it out. Labels: `service`, `backend`.
 
 ### `rdock_backend_ejections_total`
 
-**Counter.** Ejections by passive health. Labels: `service`, `backend`.
+**Counter.** Ejections by passive health: repeated failures or an outlier detector. Labels:
+`service`, `backend`.
+
+### `rdock_backend_outlier_ejections_total`
+
+<Status planned="v0.9" /> **Counter.** Ejections by an outlier detector
+([outlier detection](/docs/guides/backends/#outlier-detection)), also counted in
+`rdock_backend_ejections_total`. Labels: `service`, `backend`, `detector` (`success_rate` or
+`failure_percentage`).
 
 ### `rdock_retries_total`
 

@@ -112,6 +112,7 @@ Each backend has a `weight`, `1` by default. In the `app` service above, `10.0.0
 - **`random`**: weighted random choice.
 - **`least_requests`** <Status since="v0.4" />: the backend with the fewest requests in flight relative to its weight (`weight / (in_flight + 1)`). Good for requests of very different durations. `least_conn` is the same policy: an HTTP/1.1 request holds one connection.
 - **`p2c`** <Status since="v0.4" />: two weighted random picks, the less busy one wins. Close to `least_requests` with less coordination; Traefik's `p2c`.
+- **`peak_ewma`** <Status planned="v0.9" />: latency-aware. Two distinct backends are drawn at random and the one with the lower `latency × (in_flight + 1) / weight` wins. The latency is a moving average that jumps up at once when a request is slower than the average and decays over `decay` (default `10s`) otherwise, and that also decays while a backend is idle, so a backend that was slow is tried again. A slow or overloaded backend gets less traffic before it fails outright. This is Finagle's and Linkerd's Peak-EWMA ([Finagle](https://github.com/twitter/finagle/blob/develop/doc/src/sphinx/Clients.rst), [Linkerd](https://github.com/linkerd/linkerd2/blob/main/policy-controller/grpc/src/outbound.rs), checked 2026-11-13). Details below.
 - **`ip_hash`**, **`header_hash`**, **`cookie_hash`** <Status since="v0.4" />: consistent hashing of the client IP, of a header or of a cookie (`hash_on` names it), so the same key reaches the same backend. When a backend is added or removed, only the keys on its share of the ring move. A request without the header or cookie uses round-robin. Every instance maps a key the same way. Weights above 100 count as 100 here.
 
 ```yaml title="rdock.yaml (excerpt)"
@@ -120,6 +121,26 @@ services:
     load_balancer: { policy: header_hash, hash_on: x-tenant }
     backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }]
 ```
+
+### Latency-aware balancing: `peak_ewma`
+
+<Status planned="v0.9" />
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  api:
+    load_balancer:
+      policy: peak_ewma
+      decay: 10s            # time constant of the average (default)
+      measure: first_byte   # or last_byte
+    backends: [{ address: "10.0.0.5:3000" }, { address: "10.0.0.6:3000" }, { address: "10.0.0.7:3000" }]
+```
+
+- **What is measured:** with `measure: first_byte` (default), the time from sending the request to the backend until its response headers arrive, as NGINX's `least_time header`. A large download or a slow client does not make a backend look slow, and WebSocket or SSE lifetimes never count. `last_byte` measures to the end of the response (NGINX's `last_byte`); upgraded connections give no sample.
+- **Failures** (a refused or timed-out connection, a reset before the headers, or an answer that passive health counts as a failure, `502`–`504` by default) count as a sample of at least one second, so a backend that fails fast does not look fast.
+- **A new backend** starts from the mean latency of the others (at least 1 ms), or 30 ms when nothing has been measured yet (Linkerd's defaults), so it neither floods nor starves.
+- **Weights** divide the cost: a backend of weight 3 is chosen over one of weight 1 until it has about three times the requests in flight. Health checks, ejection, drain, `max_connections_per_backend`, priority tiers and zones remove backends before the choice; a sticky cookie wins over it; slow start lowers the weight of a ramping backend.
+- The average reacts to the requests rdock sends, so it suits pools of three or more similar backends. With two, one slow request can keep a backend out for a few `decay` periods. `round_robin` stays the default.
 
 ## Sticky sessions
 
@@ -176,11 +197,98 @@ services:
 
 **Passive checks** count failures of real requests: connection errors, resets and timeouts before the response headers, and the answers in `statuses` (default `[502, 503, 504]`). `failures` of them within `window` eject the backend for `ejection`. When that time is over, one request tries it: success brings it back, failure ejects it again for twice as long. `max_ejection_percent` (default 50) stops passive checks from ejecting more than that share of the pool, as Envoy's outlier detection does ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/outlier_detection.proto), checked 2026-10-29).
 
+`ejection_jitter` <Status planned="v0.9" /> (default `0s`) adds up to that much at random to each ejection time, so that a backend ejected by many instances at once does not get all their traffic back at the same moment (Envoy's `max_ejection_time_jitter`).
+
+### Outlier detection
+
+<Status planned="v0.9" /> Counting failures in a window misses a backend that fails, say, 30 % of its requests: at low traffic it never reaches 5 failures in 30 seconds, at high traffic its neighbours' errors look the same. The two detectors of Envoy's outlier detection compare the backends of a pool with each other instead, once per `interval`, over the requests of that interval:
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    health:
+      passive:
+        outlier:
+          interval: 10s
+          success_rate:
+            enabled: true
+            stdev_factor: 1.9      # eject below mean − 1.9 σ
+            minimum_hosts: 5       # backends with enough requests, or nothing is judged
+            request_volume: 100    # requests in the interval for a backend to count
+          failure_percentage:
+            enabled: true
+            threshold: 85          # eject at 85 % failures or more
+            minimum_hosts: 5
+            request_volume: 50
+```
+
+- **`success_rate`** computes each backend's success rate, then the mean and standard deviation σ over the backends with at least `request_volume` requests, and ejects those below `mean − stdev_factor × σ`. A backend failing 40 % in a pool of five healthy ones is ejected (60 % against a threshold of about 62 %).
+- **`failure_percentage`** ejects a backend whose failures reach `threshold` percent of its requests.
+- Both are off until `enabled: true`, and do nothing while fewer than `minimum_hosts` backends have enough requests; `minimum_hosts` below 3 is refused, because with so few backends a statistical test ejects healthy ones. The defaults are Envoy's ([outlier_detection.proto](https://github.com/envoyproxy/envoy/blob/main/api/envoy/config/cluster/v3/outlier_detection.proto), checked 2026-11-13).
+- Failures are the same as for `failures`: connection errors, resets and timeouts before the headers, and `statuses`. An outlier goes through the same ejection: `ejection` doubled for each ejection in a row (Envoy multiplies instead), `max_ejection_percent`, then one trial request.
+- `rdock_backend_outlier_ejections_total{service, backend, detector}` counts these ejections; they are also counted in `rdock_backend_ejections_total`.
+
 **When every backend is down**, `when_all_down: fail_open` (default) sends requests to all of them anyway: a broken health check, for example a wrong `path`, must not take your service offline. Envoy's panic mode and NGINX's rule for single-server upstreams do the same. `fail_closed` answers `503` with `Retry-After` instead.
 
-**Slow start:** with `slow_start: 30s`, a backend that comes back gets a growing share of its weight over 30 seconds, so a cold cache or JIT is not hit with full traffic at once.
+**Slow start:** with `slow_start: 30s`, a backend that comes back gets a growing share of its weight over 30 seconds, so a cold cache or JIT is not hit with full traffic at once. The long form <Status planned="v0.9" /> sets the shape and when it applies (Envoy's `SlowStartConfig`, [cluster.proto](https://github.com/envoyproxy/envoy/blob/main/api/envoy/config/cluster/v3/cluster.proto), checked 2026-11-13):
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    health:
+      slow_start:
+        window: 30s
+        aggression: 1.0            # 1 is linear; above 1 ramps faster at first
+        min_weight_percent: 10     # never less than this share of the weight
+        on: [recovery, join]       # default [recovery]
+```
+
+The weight is `weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`. `recovery` ramps a backend that comes back after failed probes or an ejection; `join` also ramps a backend that newly appears (a reload, a DNS answer, a new container or pod), but only when the pool already has a backend at full weight, so a start-up or an empty pool never ramps (as AWS target groups do). `slow_start: 30s` is the long form with these defaults. Since v0.9 the ramp works for backends of weight 1 too: weights are computed in thousandths while slow start is set. Slow start is refused with `ip_hash`, `header_hash` and `cookie_hash`: every change of a weight would move keys between backends.
+
+### Priority tiers and failover
 
 **Backups:** `backup: true` on a backend keeps it idle until no primary backend is available.
+
+<Status planned="v0.9" /> `priority` generalises this to eight tiers, `0` (the default, used first) to `7`; `backup: true` is the same as `priority: 1`, and setting both is refused. `failover` on the service decides how traffic moves between tiers:
+
+- **`strict`** (default): a tier gets traffic only when every tier above it has no available backend; it hands traffic back as soon as one returns.
+- **`spill`**: as Envoy's priority levels, a tier keeps `healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes to the next tier. With the default `overprovisioning: 1.4`, tier 0 keeps everything until fewer than about 71 % of its backends are available; at 50 % it keeps 70 % and 30 % goes to tier 1; at 25 %, 35 % and 65 % ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/priority), checked 2026-11-13). When all tiers are degraded, their shares are scaled up to add up to 100 %.
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    failover: spill
+    overprovisioning: 1.4
+    backends:
+      - address: "10.0.0.5:3000"
+      - address: "10.0.0.6:3000"
+      - address: "10.1.0.5:3000"     # the other site
+        priority: 1
+```
+
+`when_all_down: fail_open` sends to every backend of the first tier when no backend of any tier is available. SRV targets of a higher SRV priority are one tier below their backend.
+
+### Zones
+
+<Status planned="v0.9" /> A backend can name its `zone`. With `locality: { mode: prefer }`, services use only backends in the proxy's own zone while at least one of them is available, and every backend otherwise, which is Kubernetes' `PreferSameZone` ([Virtual IPs and Service Proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/#traffic-distribution), checked 2026-11-13). Cross-zone traffic often costs money and latency; a zone that loses its backends falls back at once.
+
+```yaml title="rdock.yaml (excerpt)"
+locality:
+  zone: eu-west-1a        # or the RDOCK_ZONE environment variable
+  mode: prefer            # default off
+services:
+  app:
+    locality: { mode: prefer }   # optional: overrides the top-level mode for this service
+    backends:
+      - { address: "10.0.0.5:3000", zone: eu-west-1a }
+      - { address: "10.0.1.5:3000", zone: eu-west-1b }
+```
+
+- The proxy's zone is `locality.zone`, else `RDOCK_ZONE`; with neither, `prefer` has no effect and a warning says so.
+- Zones apply within the priority tier in use. A retry may leave the zone when the backends in it were tried already.
+- `for_zones` lists the zones whose proxies should use a backend instead of its own `zone`. The Kubernetes provider fills `zone` and `for_zones` from EndpointSlices (`zone`, `hints.forZones`), so `prefer` follows Kubernetes Topology Aware Routing; when only some endpoints carry hints, Kubernetes is changing over and nothing is filtered, as kube-proxy does ([Topology Aware Routing](https://kubernetes.io/docs/concepts/services-networking/topology-aware-routing/), checked 2026-11-13).
+- The default is `off`: Kubernetes also spreads traffic over all zones by default, and preferring one zone can overload it when its share of backends is small.
+- Docker and Swarm labels have no zone setting yet: Docker runs on one host, and a Swarm service is one virtual IP. Zones for those are planned.
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
@@ -220,6 +328,22 @@ Except for `connect`, only idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `
 **A backend that does not answer** <Status since="v0.6" />: when a failed connection would be retried on another backend, an attempt gives up after `timeouts.connect_attempt` (default `1s`) instead of the full `timeouts.connect` (default `5s`); the last attempt, or a service with one backend, still waits `connect`. A stopped container is the usual case: its address no longer answers, and the kernel needs about 6 seconds of ARP probes to give up ([arp(7)](https://man7.org/linux/man-pages/man7/arp.7.html), checked 2026-11-06), so without this budget one request per stop would wait the whole connect timeout. Set `connect_attempt` equal to `connect` to keep the old behaviour, or raise it for backends that are slow to accept connections.
 
 **The retry budget** keeps retries from piling onto a pool that is already failing: retries in flight may be at most `budget_percent` of the service's requests in flight, with 3 always allowed. These are Envoy's defaults ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto), checked 2026-10-29). Retries wait a random 0–25 ms before the first retry, doubling up to 250 ms.
+
+**A backend that stalls** <Status planned="v0.9" />: `per_try_timeout` abandons an attempt that has waited that long for data and sends the request to another backend, within the budget and the rules above (only when `on` lists `timeout`, which is required, an idempotent method or `retry_non_idempotent`, a replayable body, and another backend to try):
+
+```yaml title="rdock.yaml (excerpt)"
+services:
+  app:
+    retries:
+      attempts: 2
+      on: [connect, timeout]
+      per_try_timeout: 500ms
+    timeouts: { read: 60s }
+```
+
+Pingora, which rdock is built on, gives an attempt one read timeout for all its reads, so `per_try_timeout` replaces `timeouts.read` for every read of such an attempt: the wait for the response headers **and** each pause in the response body. Set it above the longest pause of streamed responses on that service (SSE, long polling), or leave it off there. The last attempt, and requests that cannot be retried (a `POST`, a WebSocket upgrade), wait `timeouts.read`. A stalled request whose retry the budget refuses answers `504`.
+
+**Hedged requests** (a second attempt while the first is still running, as in "The Tail at Scale" or gRPC's `hedgingPolicy`) are refused <Status planned="a later version" />: Pingora 0.9 runs one upstream attempt of a request at a time, and has no hook to race two. `hedge` is accepted by `rdock validate` with a warning and refused by `rdock run`; use `per_try_timeout`.
 
 **`Retry-After`:** a backend that answers `503` with `Retry-After` gets no requests for that long (at most 60 seconds) while other backends are available. `429` is passed to the client, because it usually limits one client, not the backend.
 

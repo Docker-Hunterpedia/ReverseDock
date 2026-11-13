@@ -12,12 +12,12 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use pingora::http::RequestHeader;
 use pingora::upstreams::peer::HttpPeer;
-use rdock_balancer::{Availability, Choice};
+use rdock_balancer::{Availability, Choice, SlowStart};
 use rdock_middleware::{FetchError, Fetched, HttpClient, ServiceClient};
 use rdock_model::route::RouteTimeouts;
 use rdock_model::service::{RetryOn, Scheme};
 
-use crate::runtime::{Candidate, HashOn, Member, ServiceRuntime, StickyRuntime};
+use crate::runtime::{Candidate, Failover, HashOn, Member, ServiceRuntime, StickyRuntime};
 
 pub use crate::dns::{Dns, SrvTarget};
 
@@ -58,6 +58,7 @@ pub fn resolve(service: &Arc<ServiceRuntime>) -> Arc<ServiceRuntime> {
                 id: &target.name,
                 weight: *weight,
                 in_flight: 0,
+                latency: None,
             })
             .collect();
         let Some(index) = current.split_balancer.pick(&choices) else {
@@ -71,16 +72,29 @@ pub fn resolve(service: &Arc<ServiceRuntime>) -> Arc<ServiceRuntime> {
 
 /// Picks a backend of `service` for a request.
 ///
-/// Backends that are unhealthy, ejected, paused or at `max_connections_per_backend` are left
-/// out. Backups are used only when no primary is left. With `when_all_down: fail_open`, an
-/// empty pool falls back to every backend (ADR-0022).
+/// Backends that are unhealthy, ejected, paused, drained or at `max_connections_per_backend`
+/// are left out. Of the rest, the priority tier in use is taken (`failover: strict`: the first
+/// tier with an available backend; `spill`: a tier drawn by the tiers' health, Envoy's
+/// priority levels), then backends this request has not tried yet, then backends in the
+/// preferred zone when one of them is left (`locality: prefer`). With `when_all_down:
+/// fail_open`, an empty result falls back to every backend of the first tier (ADR-0022).
+/// A sticky cookie naming one of those wins over the policy.
 #[must_use]
 pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected> {
     let members = service.members();
     let now = Instant::now();
-    let mut pool = eligible(service, &members, now);
+    let draw =
+        matches!(service.selection.failover, Failover::Spill(_)).then(|| fastrand::f64() * 100.0);
+    let mut pool = eligible(service, &members, now, draw);
+    if draw.is_some() && pool.iter().all(|m| key.tried.contains(&m.id)) {
+        // The drawn tier was tried already: any tier that gets traffic will do.
+        pool = eligible(service, &members, now, None);
+    }
     if pool.iter().any(|m| !key.tried.contains(&m.id)) {
         pool.retain(|m| !key.tried.contains(&m.id));
+    }
+    if service.selection.zone.is_some() && pool.iter().any(|m| m.local) {
+        pool.retain(|m| m.local);
     }
     if let (Some(sticky), Some(request)) = (&service.sticky, key.request)
         && let Some(found) = sticky_member(sticky, &pool, request)
@@ -88,12 +102,15 @@ pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected>
         claim_trial(&found.member, now);
         return Some(found);
     }
+    let slow = service.health.slow_start.as_ref();
+    let peak = service.selection.peak.is_some();
     let choices: Vec<Choice<'_>> = pool
         .iter()
         .map(|m| Choice {
             id: &m.id,
-            weight: m.state.weight(m.weight, service.health.slow_start, now),
+            weight: weight(m, slow, now),
             in_flight: m.state.in_flight(),
+            latency: peak.then(|| m.state.latency()),
         })
         .collect();
     let hash = hash_input(&service.hash_on, key);
@@ -109,42 +126,96 @@ pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected>
     Some(Selected { member, set_cookie })
 }
 
-/// The backends a request may go to now.
-fn eligible(service: &ServiceRuntime, members: &[Arc<Member>], now: Instant) -> Vec<Arc<Member>> {
+/// The weight a backend competes with: its configured weight, or with slow start configured,
+/// that weight in thousandths reduced by the ramp, so that weight 1 ramps too.
+fn weight(member: &Member, slow: Option<&SlowStart>, now: Instant) -> u32 {
+    match slow {
+        None => member.weight,
+        Some(_) => SlowStart::scaled(member.weight, member.state.ramp(slow, now).unwrap_or(1.0)),
+    }
+}
+
+/// The backends of the tier in use. `draw` (0 to 100) picks the tier under `failover:
+/// spill`; `None` returns every tier that gets traffic.
+fn eligible(
+    service: &ServiceRuntime,
+    members: &[Arc<Member>],
+    now: Instant,
+    draw: Option<f64>,
+) -> Vec<Arc<Member>> {
     let has_room = |m: &Member| {
         service
             .max_per_backend
             .is_none_or(|max| m.state.in_flight() < max)
     };
     // Drained backends are out even when failing open: draining is an operator's decision.
-    let candidates = members
-        .iter()
-        .filter(|m| m.weight > 0 && has_room(m) && !m.state.is_drained());
-    // One pass over the backends that are up: primaries, and backups in case no primary is.
-    let mut primaries: Vec<Arc<Member>> = Vec::new();
-    let mut backups: Vec<Arc<Member>> = Vec::new();
-    for member in candidates
-        .clone()
-        .filter(|m| m.state.availability(now) != Availability::Down)
-    {
-        if member.backup {
-            backups.push(member.clone());
-        } else {
-            primaries.push(member.clone());
+    let candidates = || {
+        members
+            .iter()
+            .filter(|m| m.weight > 0 && !m.state.is_drained())
+    };
+    // Per tier, in priority order: the available backends and how many there are in all.
+    let mut tiers: Vec<(u8, Vec<Arc<Member>>, usize)> = Vec::new();
+    for member in candidates() {
+        let index = match tiers.binary_search_by_key(&member.priority, |t| t.0) {
+            Ok(i) => i,
+            Err(i) => {
+                tiers.insert(i, (member.priority, Vec::new(), 0));
+                i
+            }
+        };
+        tiers[index].2 += 1;
+        if has_room(member) && member.state.availability(now) != Availability::Down {
+            tiers[index].1.push(member.clone());
         }
     }
-    if !primaries.is_empty() {
-        return primaries;
+    let chosen: Vec<Arc<Member>> = match service.selection.failover {
+        Failover::Strict => tiers
+            .iter()
+            .find(|t| !t.1.is_empty())
+            .map(|t| t.1.clone())
+            .unwrap_or_default(),
+        Failover::Spill(factor) => {
+            let counts: Vec<(usize, usize)> = tiers.iter().map(|t| (t.1.len(), t.2)).collect();
+            let loads = rdock_balancer::tier_loads(&counts, factor);
+            match draw {
+                None => tiers
+                    .iter()
+                    .zip(&loads)
+                    .filter(|(_, load)| **load > 0.0)
+                    .flat_map(|(t, _)| t.1.iter().cloned())
+                    .collect(),
+                Some(point) => {
+                    let mut left = point;
+                    tiers
+                        .iter()
+                        .zip(&loads)
+                        .filter(|(t, load)| **load > 0.0 && !t.1.is_empty())
+                        .find(|(_, load)| {
+                            left -= **load;
+                            left < 0.0
+                        })
+                        .or_else(|| {
+                            tiers
+                                .iter()
+                                .zip(&loads)
+                                .rfind(|(t, load)| **load > 0.0 && !t.1.is_empty())
+                        })
+                        .map(|(t, _)| t.1.clone())
+                        .unwrap_or_default()
+                }
+            }
+        }
+    };
+    if !chosen.is_empty() || !service.health.fail_open {
+        return chosen;
     }
-    if !backups.is_empty() || !service.health.fail_open {
-        return backups;
-    }
-    let all: Vec<Arc<Member>> = candidates.clone().filter(|m| !m.backup).cloned().collect();
-    if all.is_empty() {
-        candidates.cloned().collect()
-    } else {
-        all
-    }
+    // Fail open: every backend of the first tier, whatever its health.
+    let first = candidates().map(|m| m.priority).min();
+    candidates()
+        .filter(|m| Some(m.priority) == first)
+        .cloned()
+        .collect()
 }
 
 /// A request sent to a half-open backend is its trial.
@@ -280,7 +351,7 @@ pub fn connect_budget(
 /// Whether a backend this request has not tried yet would be eligible now.
 pub(crate) fn has_untried(service: &ServiceRuntime, tried: &[String]) -> bool {
     let members = service.members();
-    eligible(service, &members, Instant::now())
+    eligible(service, &members, Instant::now(), None)
         .iter()
         .any(|m| !tried.contains(&m.id))
 }

@@ -85,6 +85,8 @@ pub struct Metrics {
     pub backend_up: IntGaugeVec,
     /// Backend ejections by passive health, by service and address.
     pub backend_ejections: IntCounterVec,
+    /// Backend ejections by an outlier detector, by service, address and detector.
+    pub outlier_ejections: IntCounterVec,
     /// Retries by service and reason (`connect`, `reset`, `timeout`, `502` …).
     pub retries: IntCounterVec,
     /// Retries not made because the service's retry budget was used up.
@@ -375,8 +377,14 @@ impl Metrics {
         let backend_ejections = counters(
             &registry,
             "rdock_backend_ejections_total",
-            "Backends ejected after repeated failures.",
+            "Backends ejected by passive health: repeated failures or an outlier detector.",
             &["service", "backend"],
+        )?;
+        let outlier_ejections = counters(
+            &registry,
+            "rdock_backend_outlier_ejections_total",
+            "Backends ejected by an outlier detector (success_rate or failure_percentage); also counted in rdock_backend_ejections_total.",
+            &["service", "backend", "detector"],
         )?;
         let retries = counters(
             &registry,
@@ -618,6 +626,7 @@ impl Metrics {
             acme_orders,
             backend_up,
             backend_ejections,
+            outlier_ejections,
             retries,
             retry_budget_exhausted,
             backend_requests,

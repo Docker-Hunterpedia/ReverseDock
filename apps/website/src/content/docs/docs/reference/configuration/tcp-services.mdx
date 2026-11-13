@@ -2,7 +2,7 @@
 title: tcp_services
 description: "TCP backend pools."
 sidebar:
-  order: 18
+  order: 19
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -27,13 +27,31 @@ Backend servers.
 
 **Type:** `boolean` · **Default:** `false`
 
-Only used when no primary backend is available.
+Only used when no primary backend is available: the same as `priority: 1`.
+
+### `tcp_services.<name>.backends[].for_zones`
+
+**Type:** list of `string`
+
+Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead of its own `zone` (Kubernetes topology hints, `hints.forZones`).
+
+### `tcp_services.<name>.backends[].priority`
+
+**Type:** `integer`
+
+Priority tier from 0 (the default, used first) to 7. See the service's `failover`. Not together with `backup`.
 
 ### `tcp_services.<name>.backends[].weight`
 
 **Type:** `integer` · **Default:** `1`
 
 Relative share of traffic.
+
+### `tcp_services.<name>.backends[].zone`
+
+**Type:** `string`
+
+The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
 
 ## `tcp_services.<name>.proxy_protocol`
 

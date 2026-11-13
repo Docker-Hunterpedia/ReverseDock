@@ -9,14 +9,15 @@ use std::sync::Arc;
 
 use arc_swap::{ArcSwap, ArcSwapOption};
 use rdock_balancer::{
-    Balancer, EjectPolicy, HashRing, ProbePolicy, Registry, RoundRobin, StickyKeys,
+    Balancer, EjectPolicy, HashRing, PeakEwma, ProbePolicy, Registry, RoundRobin, StickyKeys,
 };
 use rdock_middleware::{BuildEnv, HttpClient, Middleware, ServiceClient};
 use rdock_model::config::{Config, Listener, ListenerProtocol};
 use rdock_model::diagnostics::{Diagnostic, path_key};
 use rdock_model::route::{MatchSpec, Route, RouteTls, TlsMode};
 use rdock_model::service::{
-    Backend, Health, HealthMethod, LbPolicy, SameSite, Service, Sticky, WhenAllDown,
+    Backend, Health, HealthMethod, LbPolicy, LocalityMode, SameSite, Service, SlowStartOn, Sticky,
+    WhenAllDown,
 };
 use rdock_model::values::{BackendAddress, TrustedProxy};
 use rdock_observability::AccessLog;
@@ -27,8 +28,9 @@ use crate::forwarded::{ClientIpPolicy, CloudflareRanges};
 use crate::gate::{self, Mode};
 use crate::router::{HostSet, Rule};
 use crate::runtime::{
-    ActiveCheck, BackendRuntime, Endpoint, HashOn, HealthRuntime, HttpsRedirect, ListenerRuntime,
-    MirrorRuntime, PassiveCheck, RouteRuntime, Runtime, ServiceRuntime, StickyRuntime, UpstreamTls,
+    ActiveCheck, BackendRuntime, Endpoint, Failover, HashOn, HealthRuntime, HttpsRedirect,
+    ListenerRuntime, MirrorRuntime, PassiveCheck, PeakRuntime, RouteRuntime, Runtime, Selection,
+    ServiceRuntime, StickyRuntime, UpstreamTls,
 };
 use crate::upstream::{Dns, ServiceFetcher};
 
@@ -306,12 +308,13 @@ fn compile_services(
     let mut services = HashMap::new();
     let mut depth: HashMap<String, usize> = HashMap::new();
     let mut pending: Vec<(&String, &Service)> = Vec::new();
+    check_zone(config, out);
     for (name, service) in &config.services {
         if !service.split.is_empty() {
             pending.push((name, service));
             continue;
         }
-        match compile_service(name, service, Vec::new(), env) {
+        match compile_service(name, service, Vec::new(), config, env) {
             Ok(runtime) => {
                 services.insert(name.clone(), Arc::new(runtime));
                 depth.insert(name.clone(), 0);
@@ -344,7 +347,7 @@ fn compile_services(
                     format!("splits are nested more than {MAX_SPLIT_DEPTH} levels deep"),
                 ));
             } else {
-                match compile_service(name, service, targets, env) {
+                match compile_service(name, service, targets, config, env) {
                     Ok(runtime) => {
                         services.insert((*name).clone(), Arc::new(runtime));
                         depth.insert((*name).clone(), level);
@@ -367,10 +370,52 @@ fn compile_services(
     services
 }
 
+/// The proxy's own zone: `locality.zone`, else the `RDOCK_ZONE` environment variable.
+pub(crate) fn own_zone(config: &Config) -> Option<Arc<str>> {
+    config
+        .locality
+        .as_ref()
+        .and_then(|l| l.zone.clone())
+        .or_else(|| std::env::var("RDOCK_ZONE").ok())
+        .map(|z| z.trim().to_owned())
+        .filter(|z| !z.is_empty())
+        .map(Arc::from)
+}
+
+/// The zone whose backends a service prefers: the own zone when the service's mode (or else
+/// the top-level mode) is `prefer`.
+pub(crate) fn preferred_zone(config: &Config, mode: Option<LocalityMode>) -> Option<Arc<str>> {
+    let mode = mode.unwrap_or_else(|| config.locality.as_ref().map(|l| l.mode).unwrap_or_default());
+    (mode == LocalityMode::Prefer)
+        .then(|| own_zone(config))
+        .flatten()
+}
+
+/// `prefer` without a zone is a warning: it has no effect.
+fn check_zone(config: &Config, out: &mut Vec<Diagnostic>) {
+    let global = config.locality.as_ref().map(|l| l.mode).unwrap_or_default();
+    let any_prefer = global == LocalityMode::Prefer
+        || config.services.values().any(|s| {
+            s.locality
+                .as_ref()
+                .is_some_and(|l| l.mode == LocalityMode::Prefer)
+        });
+    if any_prefer && own_zone(config).is_none() {
+        out.push(
+            Diagnostic::warning(
+                "locality.zone",
+                "`locality: prefer` needs the proxy's zone, and none is known; zones are ignored",
+            )
+            .with_hint("set `locality.zone` or the RDOCK_ZONE environment variable"),
+        );
+    }
+}
+
 fn compile_service(
     name: &str,
     service: &Service,
     split: Vec<(Arc<ServiceRuntime>, u32)>,
+    config: &Config,
     env: &CompileEnv<'_>,
 ) -> Result<ServiceRuntime, String> {
     let backends = compile_backends(&service.backends, env.dns);
@@ -397,7 +442,7 @@ fn compile_service(
         name: Arc::from(name),
         scheme: service.scheme,
         backends,
-        balancer: balancer(service.load_balancer.policy),
+        balancer: balancer(service),
         hash_on: hash_on(service),
         sticky: match &service.sticky {
             Some(sticky) => Some(compile_sticky(sticky, env.sticky_key)?),
@@ -423,7 +468,30 @@ fn compile_service(
             group_key: hasher.finish(),
         },
         pass_host_header: service.pass_host_header,
+        selection: Selection {
+            failover: match service.failover {
+                rdock_model::service::Failover::Strict => Failover::Strict,
+                rdock_model::service::Failover::Spill => {
+                    Failover::Spill(service.overprovisioning.map_or(
+                        rdock_balancer::DEFAULT_OVERPROVISIONING,
+                        rdock_model::values::Factor::get,
+                    ))
+                }
+            },
+            zone: preferred_zone(config, service.locality.as_ref().map(|l| l.mode)),
+            peak: (service.load_balancer.policy == LbPolicy::PeakEwma).then(|| PeakRuntime {
+                decay: peak_decay(service),
+                measure: service.load_balancer.measure.unwrap_or_default(),
+            }),
+        },
     })
+}
+
+fn peak_decay(service: &Service) -> std::time::Duration {
+    service.load_balancer.decay.map_or(
+        PeakEwma::default().decay,
+        rdock_model::values::Duration::as_std,
+    )
 }
 
 /// Backends as configured, with name resolution cells for DNS names.
@@ -456,13 +524,21 @@ pub(crate) fn compile_backends(backends: &[Backend], dns: &Dns) -> Vec<BackendRu
                 },
             },
             weight: b.weight,
-            backup: b.backup,
+            priority: b.tier().min(crate::runtime::MAX_TIER),
+            zones: if b.for_zones.is_empty() {
+                b.zone.iter().map(|z| Arc::from(z.as_str())).collect()
+            } else {
+                b.for_zones.iter().map(|z| Arc::from(z.as_str())).collect()
+            },
         })
         .collect()
 }
 
-fn balancer(policy: LbPolicy) -> Balancer {
-    match policy {
+fn balancer(service: &Service) -> Balancer {
+    match service.load_balancer.policy {
+        LbPolicy::PeakEwma => Balancer::PeakEwma(PeakEwma {
+            decay: peak_decay(service),
+        }),
         LbPolicy::RoundRobin => Balancer::RoundRobin(RoundRobin::default()),
         LbPolicy::Random => Balancer::Random,
         LbPolicy::LeastConn | LbPolicy::LeastRequests => Balancer::LeastRequests,
@@ -521,15 +597,46 @@ fn compile_health(health: Option<&Health>) -> Result<HealthRuntime, String> {
             failures: p.failures,
             window: p.window.as_std(),
             ejection: p.ejection.as_std(),
+            jitter: p.ejection_jitter.as_std(),
         },
         statuses: p.statuses.clone(),
         max_percent: p.max_ejection_percent,
+        outlier: p.outlier.as_ref().and_then(|o| {
+            let detectors =
+                rdock_balancer::Outlier {
+                    success_rate: o.success_rate.as_ref().filter(|d| d.enabled).map(|d| {
+                        rdock_balancer::SuccessRate {
+                            stdev_factor: d.stdev_factor.get(),
+                            minimum_hosts: d.minimum_hosts,
+                            request_volume: d.request_volume,
+                        }
+                    }),
+                    failure_percentage: o.failure_percentage.as_ref().filter(|d| d.enabled).map(
+                        |d| rdock_balancer::FailurePercentage {
+                            threshold: d.threshold,
+                            minimum_hosts: d.minimum_hosts,
+                            request_volume: d.request_volume,
+                        },
+                    ),
+                };
+            let any = detectors.success_rate.is_some() || detectors.failure_percentage.is_some();
+            any.then(|| (detectors, o.interval.as_std()))
+        }),
     });
     Ok(HealthRuntime {
         active,
         passive,
         fail_open: health.when_all_down == WhenAllDown::FailOpen,
-        slow_start: health.slow_start.map(rdock_model::values::Duration::as_std),
+        slow_start: health.slow_start.as_ref().map(|s| {
+            let c = s.config();
+            rdock_balancer::SlowStart {
+                window: c.window.as_std(),
+                aggression: c.aggression.get(),
+                min_weight_percent: c.min_weight_percent,
+                on_recovery: c.on.contains(&SlowStartOn::Recovery),
+                on_join: c.on.contains(&SlowStartOn::Join),
+            }
+        }),
     })
 }
 

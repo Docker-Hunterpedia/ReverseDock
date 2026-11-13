@@ -33,5 +33,12 @@
     "what": "Agents over HAProxy's SPOP (protocol: spop)",
     "value": true,
     "fixture": "middlewares:\n  waf: { type: agent, address: \"http://127.0.0.1:9000\", protocol: spop }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app, middlewares: [waf] }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+  },
+  {
+    "path": "services.<name>.hedge",
+    "planned": "a later version",
+    "what": "Hedged requests (a second upstream attempt while the first runs)",
+    "value": true,
+    "fixture": "routes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n    hedge: { delay: 50ms }\n"
   }
 ]

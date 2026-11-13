@@ -244,3 +244,96 @@ async fn the_retry_budget_prevents_amplification_in_an_outage() {
         "budget: {with_budget} backend requests for {sent}"
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Per-try timeout (H-LB-03, ADR-0031)
+
+const PER_TRY: &str = "    retries: { attempts: 1, on: [connect, timeout], per_try_timeout: 300ms }\n    timeouts: { read: 3s }";
+
+#[tokio::test]
+async fn a_stalled_attempt_is_answered_by_another_backend_within_the_per_try_timeout() {
+    let stalled = Backend::start("stalled").await;
+    let good = Backend::start("good").await;
+    stalled.set_delay(Duration::from_secs(10));
+    let port = free_port();
+    let backends = [stalled.addr.to_string(), good.addr.to_string()];
+    let rdock = Rdock::start(RDOCK, &config(port, &backends, PER_TRY));
+    for _ in 0..4 {
+        let started = Instant::now();
+        let reply = client::http1(addr(port), get("a", "/")).await;
+        assert_eq!(reply.status, 200);
+        assert_eq!(reply.header("x-backend"), Some("good"));
+        assert!(
+            started.elapsed() < Duration::from_millis(1_500),
+            "took {:?}: the stalled attempt should end after 300 ms, not timeouts.read",
+            started.elapsed()
+        );
+    }
+    assert!(
+        stalled.traffic() >= 1,
+        "round-robin met the stalled backend"
+    );
+    let (_, metrics) = rdock.get_admin("/metrics").unwrap_or_default();
+    assert!(
+        metrics.contains("rdock_retries_total{reason=\"timeout\",service=\"app\"}"),
+        "{metrics}"
+    );
+}
+
+#[tokio::test]
+async fn a_stalled_post_is_not_retried_and_waits_the_read_timeout() {
+    let stalled = Backend::start("stalled").await;
+    let good = Backend::start("good").await;
+    stalled.set_delay(Duration::from_secs(10));
+    let port = free_port();
+    let backends = [stalled.addr.to_string(), good.addr.to_string()];
+    let extra = "    retries: { attempts: 1, on: [connect, timeout], per_try_timeout: 300ms }\n    timeouts: { read: 1s }";
+    let _rdock = Rdock::start(RDOCK, &config(port, &backends, extra));
+    let mut statuses = Vec::new();
+    for _ in 0..2 {
+        let started = Instant::now();
+        let reply = client::http1(addr(port), request("POST", "a", "/", "order")).await;
+        if reply.status == 504 {
+            assert!(
+                started.elapsed() >= Duration::from_millis(900),
+                "a POST is not bounded by per_try_timeout: {:?}",
+                started.elapsed()
+            );
+        }
+        statuses.push(reply.status);
+    }
+    assert_eq!(
+        statuses.iter().filter(|s| **s == 504).count(),
+        1,
+        "{statuses:?}"
+    );
+    assert_eq!(stalled.traffic(), 1);
+    assert_eq!(good.traffic(), 1, "the stalled POST was not sent again");
+}
+
+#[tokio::test]
+async fn an_exhausted_retry_budget_answers_504() {
+    let stalled = Backend::start("stalled").await;
+    let good = Backend::start("good").await;
+    stalled.set_delay(Duration::from_secs(10));
+    // Retries hold their permit while the retried attempt runs.
+    good.set_delay(Duration::from_millis(200));
+    let port = free_port();
+    let backends = [stalled.addr.to_string(), good.addr.to_string()];
+    let extra = "    retries: { attempts: 1, on: [timeout], per_try_timeout: 300ms, budget_percent: 0 }\n    timeouts: { read: 3s }";
+    let _rdock = Rdock::start(RDOCK, &config(port, &backends, extra));
+    let tasks: Vec<_> = (0..10)
+        .map(|_| tokio::spawn(client::http1(addr(port), get("a", "/"))))
+        .collect();
+    let mut statuses = Vec::new();
+    for task in tasks {
+        statuses.push(task.await.unwrap().status);
+    }
+    let timeouts = statuses.iter().filter(|s| **s == 504).count();
+    let ok = statuses.iter().filter(|s| **s == 200).count();
+    // About five requests meet the stalled backend at once; three retries are always allowed
+    // (MIN_RETRIES), the rest answer 504 at the per-try timeout.
+    assert!(timeouts >= 1, "{statuses:?}");
+    assert!(ok >= 7, "{statuses:?}");
+    assert_eq!(ok + timeouts, 10, "{statuses:?}");
+}

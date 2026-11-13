@@ -1,5 +1,5 @@
 //! Health of one backend: the verdict of active probes, passive ejection with a half-open
-//! trial, a pause asked for by `Retry-After`, and slow start (ADR-0022).
+//! trial, a pause asked for by `Retry-After`, and slow start (ADR-0022, ADR-0031).
 
 use std::collections::VecDeque;
 use std::time::{Duration, Instant};
@@ -27,6 +27,61 @@ pub struct EjectPolicy {
     pub window: Duration,
     /// First ejection time.
     pub ejection: Duration,
+    /// Up to this much is added at random to each ejection time (Envoy's
+    /// `max_ejection_time_jitter`), so ejected backends of many instances do not return at once.
+    pub jitter: Duration,
+}
+
+/// Weights are multiplied by this while slow start is configured, so that a ramp is smooth even
+/// for a backend of weight 1.
+pub const WEIGHT_SCALE: u32 = 1_000;
+
+/// How a backend's weight ramps up after it recovers or joins (Envoy's `SlowStartConfig`):
+/// `weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct SlowStart {
+    /// Time to full weight.
+    pub window: Duration,
+    /// Shape: 1.0 is linear; larger values ramp faster at first.
+    pub aggression: f64,
+    /// The weight never starts below this share, in percent.
+    pub min_weight_percent: u32,
+    /// Ramp after recovering from failed probes or an ejection.
+    pub on_recovery: bool,
+    /// Ramp a backend that newly appears in a pool that already had a backend at full weight.
+    pub on_join: bool,
+}
+
+impl SlowStart {
+    /// The share of its weight a backend has `elapsed` after the ramp started, from
+    /// `min_weight_percent` to 1.
+    #[must_use]
+    pub fn factor(&self, elapsed: Duration) -> f64 {
+        if self.window.is_zero() || elapsed >= self.window {
+            return 1.0;
+        }
+        let time = elapsed.as_secs_f64() / self.window.as_secs_f64();
+        let shaped = if self.aggression > 0.0 {
+            time.powf(1.0 / self.aggression)
+        } else {
+            time
+        };
+        shaped
+            .max(f64::from(self.min_weight_percent.min(100)) / 100.0)
+            .clamp(0.0, 1.0)
+    }
+
+    /// `weight` scaled by [`WEIGHT_SCALE`] and by `factor`, at least 1.
+    #[must_use]
+    pub fn scaled(weight: u32, factor: f64) -> u32 {
+        let full = f64::from(weight.min(u32::MAX / WEIGHT_SCALE) * WEIGHT_SCALE);
+        if weight == 0 {
+            return 0;
+        }
+        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+        let ramped = (full * factor.clamp(0.0, 1.0)).ceil() as u32;
+        ramped.max(1)
+    }
 }
 
 /// Whether a backend may receive a request now.
@@ -75,6 +130,7 @@ pub(crate) struct Health {
     trial_since: Option<Instant>,
     paused_until: Option<Instant>,
     up_since: Option<Instant>,
+    joined_at: Option<Instant>,
 }
 
 impl Health {
@@ -149,7 +205,10 @@ impl Health {
 
     pub(crate) fn eject(&mut self, policy: EjectPolicy, now: Instant) -> Duration {
         let factor = 1u32 << self.ejections.min(16);
-        let time = policy.ejection.saturating_mul(factor).min(MAX_EJECTION);
+        let mut time = policy.ejection.saturating_mul(factor).min(MAX_EJECTION);
+        if !policy.jitter.is_zero() {
+            time += policy.jitter.mul_f64(fastrand::f64());
+        }
         self.ejections = self.ejections.saturating_add(1);
         self.ejected_until = Some(now + time);
         self.failures.clear();
@@ -203,20 +262,23 @@ impl Health {
         self.ejected_until.is_some()
     }
 
-    /// `weight` reduced while the backend ramps up after becoming healthy.
-    pub(crate) fn weight(&self, weight: u32, slow_start: Option<Duration>, now: Instant) -> u32 {
-        let (Some(ramp), Some(since)) = (slow_start, self.up_since) else {
-            return weight;
-        };
-        let elapsed = now.duration_since(since);
-        if elapsed >= ramp || ramp.is_zero() {
-            return weight;
-        }
-        let share = elapsed.as_secs_f64() / ramp.as_secs_f64();
-        // At least 1, so a ramping backend still gets a little traffic and can prove itself.
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let ramped = (f64::from(weight) * share).ceil() as u32;
-        ramped.clamp(1, weight.max(1))
+    /// Marks the backend as having just joined its pool.
+    pub(crate) fn join(&mut self, now: Instant) {
+        self.joined_at = Some(now);
+    }
+
+    /// The share of its weight the backend has now under `slow_start`; `None` at full weight.
+    pub(crate) fn ramp(&self, slow_start: Option<&SlowStart>, now: Instant) -> Option<f64> {
+        let slow = slow_start?;
+        let since = [
+            self.up_since.filter(|_| slow.on_recovery),
+            self.joined_at.filter(|_| slow.on_join),
+        ]
+        .into_iter()
+        .flatten()
+        .max()?;
+        let factor = slow.factor(now.saturating_duration_since(since));
+        (factor < 1.0).then_some(factor)
     }
 }
 
@@ -232,7 +294,18 @@ mod tests {
         failures: 3,
         window: Duration::from_secs(10),
         ejection: Duration::from_secs(30),
+        jitter: Duration::ZERO,
     };
+
+    fn slow(on_recovery: bool, on_join: bool) -> SlowStart {
+        SlowStart {
+            window: Duration::from_secs(100),
+            aggression: 1.0,
+            min_weight_percent: 10,
+            on_recovery,
+            on_join,
+        }
+    }
 
     #[test]
     fn probes_need_streaks_both_ways() {
@@ -323,12 +396,76 @@ mod tests {
             h.availability(now + Duration::from_secs(5)),
             Availability::Up
         );
-        let ramp = Some(Duration::from_secs(100));
-        assert_eq!(h.weight(10, ramp, now), 10, "never down: full weight");
+        let ramp = slow(true, false);
+        assert_eq!(h.ramp(Some(&ramp), now), None, "never down: full weight");
         h.up_since = Some(now);
-        assert_eq!(h.weight(10, ramp, now), 1);
-        assert_eq!(h.weight(10, ramp, now + Duration::from_secs(50)), 5);
-        assert_eq!(h.weight(10, ramp, now + Duration::from_secs(100)), 10);
-        assert_eq!(h.weight(10, None, now), 10);
+        let at = |secs| h.ramp(Some(&ramp), now + Duration::from_secs(secs));
+        assert_eq!(at(0), Some(0.1), "the floor");
+        assert_eq!(at(50), Some(0.5));
+        assert_eq!(at(100), None);
+        assert_eq!(h.ramp(None, now), None);
+        assert_eq!(
+            h.ramp(Some(&slow(false, true)), now),
+            None,
+            "recovery not ramped"
+        );
+    }
+
+    #[test]
+    fn slow_start_follows_envoys_formula() {
+        let mut s = slow(true, true);
+        let t = |secs| Duration::from_secs(secs);
+        assert!((s.factor(t(25)) - 0.25).abs() < 1e-12, "linear");
+        assert!((s.factor(t(5)) - 0.10).abs() < 1e-12, "min_weight_percent");
+        s.aggression = 2.0;
+        assert!(
+            (s.factor(t(25)) - 0.5).abs() < 1e-12,
+            "square root at aggression 2"
+        );
+        s.min_weight_percent = 0;
+        s.aggression = 1.0;
+        assert!(s.factor(t(0)).abs() < 1e-12);
+        assert!((s.factor(t(100)) - 1.0).abs() < 1e-12);
+        assert_eq!(SlowStart::scaled(1, 0.1), 100, "weight 1 ramps too");
+        assert_eq!(SlowStart::scaled(3, 1.0), 3_000);
+        assert_eq!(SlowStart::scaled(1, 0.0), 1, "never zero");
+        assert_eq!(SlowStart::scaled(0, 1.0), 0);
+    }
+
+    #[test]
+    fn joining_and_recovering_take_the_later_start() {
+        let now = Instant::now();
+        let mut h = Health::default();
+        h.join(now);
+        let both = slow(true, true);
+        assert_eq!(
+            h.ramp(Some(&both), now + Duration::from_secs(50)),
+            Some(0.5)
+        );
+        assert_eq!(
+            h.ramp(Some(&slow(true, false)), now),
+            None,
+            "join not ramped"
+        );
+        h.up_since = Some(now + Duration::from_secs(50));
+        assert_eq!(
+            h.ramp(Some(&both), now + Duration::from_secs(60)),
+            Some(0.1),
+            "a recovery restarts the ramp"
+        );
+    }
+
+    #[test]
+    fn jitter_lengthens_an_ejection_by_at_most_its_bound() {
+        let now = Instant::now();
+        let policy = EjectPolicy {
+            jitter: Duration::from_secs(5),
+            ..EJECT
+        };
+        for _ in 0..20 {
+            let mut h = Health::default();
+            let time = h.eject(policy, now);
+            assert!(time >= EJECT.ejection && time <= EJECT.ejection + policy.jitter);
+        }
     }
 }

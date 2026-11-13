@@ -77,6 +77,9 @@ pub struct Config {
     /// External secret stores that secret fields can reference (`${vault:…}`).
     #[serde(skip_serializing_if = "crate::secrets::Secrets::is_empty")]
     pub secrets: crate::secrets::Secrets,
+    /// The proxy's own zone and whether services prefer backends in it (H-HA-05).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub locality: Option<crate::settings::Locality>,
 }
 
 impl Config {

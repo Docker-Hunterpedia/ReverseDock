@@ -920,14 +920,28 @@ export type RdockBackend = {
      */
     address: RdockBackendAddress;
     /**
-     * Only used when no primary backend is available.
+     * Only used when no primary backend is available: the same as `priority: 1`.
      */
     backup?: boolean;
+    /**
+     * Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead
+     * of its own `zone` (Kubernetes topology hints, `hints.forZones`).
+     */
+    for_zones?: Array<string>;
+    /**
+     * Priority tier from 0 (the default, used first) to 7. See the service's `failover`.
+     * Not together with `backup`.
+     */
+    priority?: number | null;
     /**
      * Relative share of traffic.
      */
     weight?: number;
-    [key: string]: unknown | RdockBackendAddress | boolean | number | undefined;
+    /**
+     * The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
+     */
+    zone?: string | null;
+    [key: string]: unknown | RdockBackendAddress | boolean | Array<string> | number | null | number | string | null | undefined;
 };
 
 /**
@@ -1109,6 +1123,10 @@ export type RdockConfig = {
         [key: string]: RdockListener;
     };
     /**
+     * The proxy's own zone and whether services prefer backends in it (H-HA-05).
+     */
+    locality?: RdockLocality | null;
+    /**
      * Reusable request and response policies.
      */
     middlewares?: {
@@ -1187,7 +1205,7 @@ export type RdockConfig = {
         [key: string]: RdockConsumer;
     } | RdockDefaults | RdockLifecycle | {
         [key: string]: RdockListener;
-    } | {
+    } | RdockLocality | null | {
         [key: string]: RdockMiddleware;
     } | RdockObservability | RdockProviders | {
         [key: string]: RdockRoute;
@@ -1444,6 +1462,40 @@ export type RdockExternalAccountBinding = {
 };
 
 /**
+ * A number with up to three decimals, such as 1.4.
+ */
+export type RdockFactor = number;
+
+/**
+ * How traffic moves between backend priority tiers.
+ */
+export type RdockFailover = 'strict' | 'spill';
+
+/**
+ * The failure-percentage detector, with Envoy's defaults.
+ */
+export type RdockFailurePercentageDetector = {
+    /**
+     * Turns the detector on. Default `false`.
+     */
+    enabled?: boolean;
+    /**
+     * Backends with enough requests needed before anything is evaluated. Default 5; at
+     * least 3.
+     */
+    minimum_hosts?: number;
+    /**
+     * Requests in the interval for a backend to count. Default 50.
+     */
+    request_volume?: number;
+    /**
+     * Failure share that ejects, in percent. Default 85.
+     */
+    threshold?: number;
+    [key: string]: unknown | boolean | number | undefined;
+};
+
+/**
  * File provider.
  */
 export type RdockFileProvider = {
@@ -1529,14 +1581,15 @@ export type RdockHealth = {
      */
     passive?: RdockPassiveHealth | null;
     /**
-     * A backend that becomes healthy ramps up its weight over this time.
+     * A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or
+     * `{ window, aggression, min_weight_percent, on }`. Not with hash policies.
      */
-    slow_start?: RdockDuration | null;
+    slow_start?: RdockSlowStart | null;
     /**
      * What happens when no backend is healthy.
      */
     when_all_down?: RdockWhenAllDown;
-    [key: string]: unknown | RdockActiveHealth | null | RdockPassiveHealth | null | RdockDuration | null | RdockWhenAllDown | undefined;
+    [key: string]: unknown | RdockActiveHealth | null | RdockPassiveHealth | null | RdockSlowStart | null | RdockWhenAllDown | undefined;
 };
 
 /**
@@ -1548,6 +1601,21 @@ export type RdockHealthMethod = 'GET' | 'HEAD';
  * How a probe checks a backend.
  */
 export type RdockHealthMode = 'http' | 'tcp' | 'grpc';
+
+/**
+ * Hedged requests (planned).
+ */
+export type RdockHedge = {
+    /**
+     * Time without a response after which the hedge would be sent.
+     */
+    delay?: RdockDuration | null;
+    /**
+     * Attempts in flight at most, the first included.
+     */
+    max_attempts?: number | null;
+    [key: string]: unknown | RdockDuration | null | number | null | undefined;
+};
 
 /**
  * Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).
@@ -1772,6 +1840,11 @@ export type RdockKubernetesProvider = {
 export type RdockKubernetesServiceType = 'load_balancer' | 'cluster_ip' | 'node_port';
 
 /**
+ * What a `peak_ewma` latency sample measures.
+ */
+export type RdockLatencyMeasure = 'first_byte' | 'last_byte';
+
+/**
  * A p99 latency threshold.
  */
 export type RdockLatencyRule = {
@@ -1792,7 +1865,7 @@ export type RdockLatencyRule = {
 /**
  * Backend selection policies.
  */
-export type RdockLbPolicy = 'round_robin' | 'random' | 'least_conn' | 'least_requests' | 'p2c' | 'ip_hash' | 'header_hash' | 'cookie_hash';
+export type RdockLbPolicy = 'round_robin' | 'random' | 'least_conn' | 'least_requests' | 'p2c' | 'ip_hash' | 'header_hash' | 'cookie_hash' | 'peak_ewma';
 
 /**
  * Start-up and shutdown behaviour.
@@ -2077,15 +2150,48 @@ export type RdockListenerTls = {
  */
 export type RdockLoadBalancer = {
     /**
+     * `peak_ewma`: time constant of the latency average. Default 10s (Finagle's and
+     * Linkerd's `decay`).
+     */
+    decay?: RdockDuration | null;
+    /**
      * Header or cookie name for `header_hash` and `cookie_hash`.
      */
     hash_on?: string | null;
     /**
+     * `peak_ewma`: what a latency sample measures. Default `first_byte`.
+     */
+    measure?: RdockLatencyMeasure | null;
+    /**
      * Selection policy.
      */
     policy?: RdockLbPolicy;
-    [key: string]: unknown | string | null | RdockLbPolicy | undefined;
+    [key: string]: unknown | RdockDuration | null | string | null | RdockLatencyMeasure | null | RdockLbPolicy | undefined;
 };
+
+/**
+ * The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).
+ */
+export type RdockLocality = {
+    /**
+     * `prefer`: services use only backends of this zone while at least one of them is
+     * available, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the
+     * default, as Kubernetes distributes traffic evenly by default) ignores zones. A
+     * service's own `locality.mode` overrides this.
+     */
+    mode?: RdockLocalityMode;
+    /**
+     * The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`
+     * environment variable gives it; with neither, `prefer` has no effect.
+     */
+    zone?: string | null;
+    [key: string]: unknown | RdockLocalityMode | string | null | undefined;
+};
+
+/**
+ * Whether backends in the proxy's zone are preferred.
+ */
+export type RdockLocalityMode = 'off' | 'prefer';
 
 /**
  * Access log formats.
@@ -3440,6 +3546,26 @@ export type RdockOnNonJson = 'pass' | 'reject';
 export type RdockOnPatchError = 'reject' | 'pass';
 
 /**
+ * Outlier detectors (Envoy's outlier detection). Failures are those of passive health:
+ * connection errors, resets, timeouts and `statuses`.
+ */
+export type RdockOutlierDetection = {
+    /**
+     * Ejects a backend whose failures reach `threshold` percent of its requests.
+     */
+    failure_percentage?: RdockFailurePercentageDetector | null;
+    /**
+     * How often the detectors look at the counts of the last interval. Default 10s (Envoy).
+     */
+    interval?: RdockDuration;
+    /**
+     * Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others.
+     */
+    success_rate?: RdockSuccessRateDetector | null;
+    [key: string]: unknown | RdockFailurePercentageDetector | null | RdockDuration | RdockSuccessRateDetector | null | undefined;
+};
+
+/**
  * Ejection of backends that keep failing.
  */
 export type RdockPassiveHealth = {
@@ -3449,6 +3575,11 @@ export type RdockPassiveHealth = {
      */
     ejection?: RdockDuration;
     /**
+     * Up to this much is added at random to each ejection time, so backends ejected by many
+     * instances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s.
+     */
+    ejection_jitter?: RdockDuration;
+    /**
      * Failures within `window` that eject a backend.
      */
     failures?: number;
@@ -3457,6 +3588,12 @@ export type RdockPassiveHealth = {
      */
     max_ejection_percent?: number;
     /**
+     * Statistical detectors that compare backends with each other once per interval and eject
+     * the outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,
+     * trial request).
+     */
+    outlier?: RdockOutlierDetection | null;
+    /**
      * Answers that count as failures, besides connection errors, resets and timeouts.
      */
     statuses?: Array<number>;
@@ -3464,7 +3601,7 @@ export type RdockPassiveHealth = {
      * Sliding window for counting failures.
      */
     window?: RdockDuration;
-    [key: string]: unknown | RdockDuration | number | Array<number> | undefined;
+    [key: string]: unknown | RdockDuration | number | RdockOutlierDetection | null | Array<number> | undefined;
 };
 
 /**
@@ -3680,10 +3817,18 @@ export type RdockRetries = {
      */
     on?: Array<RdockRetryOn>;
     /**
+     * Abandons an attempt that has not finished a read for this long and retries it on
+     * another backend, within the budget and only where a retry is allowed (`on` must list
+     * `timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for
+     * the response headers and each pause of the response body; the last attempt and
+     * requests that cannot be retried wait `timeouts.read`.
+     */
+    per_try_timeout?: RdockDuration | null;
+    /**
      * Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.
      */
     retry_non_idempotent?: boolean;
-    [key: string]: unknown | number | Array<RdockRetryOn> | boolean | undefined;
+    [key: string]: unknown | number | Array<RdockRetryOn> | RdockDuration | null | boolean | undefined;
 };
 
 /**
@@ -3931,13 +4076,31 @@ export type RdockService = {
      */
     backends?: Array<RdockBackend>;
     /**
+     * How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets
+     * traffic only when every tier above it has no available backend. `spill`: a tier keeps
+     * `healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes
+     * to the next tier, as Envoy's priority levels do.
+     */
+    failover?: RdockFailover;
+    /**
      * Active and passive health checks.
      */
     health?: RdockHealth | null;
     /**
+     * Hedged requests: a second attempt while the first is still waiting. Planned, not
+     * supported: Pingora 0.9 cannot race two upstream attempts of one request. Use
+     * `retries.per_try_timeout` for stalled attempts.
+     */
+    hedge?: RdockHedge | null;
+    /**
      * How a backend is chosen for each request.
      */
     load_balancer?: RdockLoadBalancer;
+    /**
+     * Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).
+     * Omitted, the top-level `locality.mode` applies.
+     */
+    locality?: RdockServiceLocality | null;
     /**
      * Requests in flight to one backend; a backend at the limit gets no more until one ends.
      */
@@ -3946,6 +4109,12 @@ export type RdockService = {
      * Requests in flight across the pool; more are answered `503` (circuit breaker).
      */
     max_requests?: number | null;
+    /**
+     * With `failover: spill`: how much more than its share each tier can carry. Default 1.4
+     * (Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about
+     * 71 % of its backends are available.
+     */
+    overprovisioning?: RdockFactor | null;
     /**
      * Forward the client's `Host` header (otherwise the backend address is used).
      */
@@ -3982,7 +4151,18 @@ export type RdockService = {
      * TLS to the backends when `scheme` is `https`.
      */
     tls?: RdockUpstreamTls | null;
-    [key: string]: unknown | Array<RdockBackend> | RdockHealth | null | RdockLoadBalancer | number | null | number | null | boolean | RdockRespond | null | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
+    [key: string]: unknown | Array<RdockBackend> | RdockFailover | RdockHealth | null | RdockHedge | null | RdockLoadBalancer | RdockServiceLocality | null | number | null | number | null | RdockFactor | null | boolean | RdockRespond | null | RdockRetries | null | RdockScheme | Array<RdockSplitTarget> | RdockSticky | null | RdockTimeouts | RdockUpstreamTls | null | undefined;
+};
+
+/**
+ * The locality preference of one service.
+ */
+export type RdockServiceLocality = {
+    /**
+     * `prefer` or `off`.
+     */
+    mode: RdockLocalityMode;
+    [key: string]: unknown | RdockLocalityMode;
 };
 
 /**
@@ -3994,6 +4174,42 @@ export type RdockSessionLimit = number | 'unlimited';
  * What to do with responses that set a cookie.
  */
 export type RdockSetCookie = 'refuse' | 'strip';
+
+/**
+ * Time to full weight, such as `30s`, or every setting.
+ */
+export type RdockSlowStart = RdockDuration | RdockSlowStartConfig;
+
+/**
+ * Slow start, every setting (Envoy's `SlowStartConfig`): the weight is
+ * `weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.
+ */
+export type RdockSlowStartConfig = {
+    /**
+     * Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first.
+     */
+    aggression?: RdockFactor;
+    /**
+     * The weight starts at this share, in percent. Default 10 (Envoy).
+     */
+    min_weight_percent?: number;
+    /**
+     * When a backend ramps: `recovery` (after failed probes or an ejection; the default) and
+     * `join` (a backend that newly appears in a pool that already had a backend at full
+     * weight; never at start-up or into an empty pool).
+     */
+    on?: Array<RdockSlowStartOn>;
+    /**
+     * Time to full weight.
+     */
+    window?: RdockDuration;
+    [key: string]: unknown | RdockFactor | number | Array<RdockSlowStartOn> | RdockDuration | undefined;
+};
+
+/**
+ * When a backend's weight ramps up.
+ */
+export type RdockSlowStartOn = 'recovery' | 'join';
 
 /**
  * How the SMTP connection is protected.
@@ -4128,6 +4344,30 @@ export type RdockStructuredMatch = {
     } | Array<string> | Array<string> | string | null | string | null | string | null | {
         [key: string]: string;
     } | undefined;
+};
+
+/**
+ * The success-rate detector, with Envoy's defaults.
+ */
+export type RdockSuccessRateDetector = {
+    /**
+     * Turns the detector on. Default `false`.
+     */
+    enabled?: boolean;
+    /**
+     * Backends with enough requests needed before anything is evaluated. Default 5; at
+     * least 3.
+     */
+    minimum_hosts?: number;
+    /**
+     * Requests in the interval for a backend to count. Default 100.
+     */
+    request_volume?: number;
+    /**
+     * Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000).
+     */
+    stdev_factor?: RdockFactor;
+    [key: string]: unknown | boolean | number | RdockFactor | undefined;
 };
 
 /**

@@ -23,7 +23,7 @@ use rdock_middleware::{
     Answered, Body, BodyHolder, Chain, Context as MwContext, HoldError, LogSummary, Released,
     Reply, Upstream,
 };
-use rdock_model::service::RetryOn;
+use rdock_model::service::{LatencyMeasure, RetryOn};
 use rdock_observability::{AccessRecord, Metrics, rfc3339};
 
 use crate::errorpage;
@@ -125,6 +125,9 @@ impl RdockProxy {
         let (Some(passive), Some(member)) = (&service.health.passive, member) else {
             return;
         };
+        if passive.outlier.is_some() {
+            member.state.record_outcome(ok);
+        }
         let now = Instant::now();
         let metrics = &self.shared.metrics;
         if ok {
@@ -178,6 +181,34 @@ impl RdockProxy {
                 "backend keeps failing, but max_ejection_percent of the pool is already ejected"
             ),
             Ejection::None => {}
+        }
+    }
+
+    /// Feeds `peak_ewma` the latency of the current attempt: its time so far, or for a failed
+    /// attempt at least [`rdock_balancer::FAILURE_PENALTY`], so that a backend that fails fast
+    /// does not look fast.
+    fn sample(service: &ServiceRuntime, ctx: &RequestCtx, ok: bool) {
+        let (Some(peak), Some(member), Some(started)) =
+            (service.selection.peak, &ctx.member, ctx.attempt_started)
+        else {
+            return;
+        };
+        let now = Instant::now();
+        let latency = member.state.latency();
+        if ok {
+            latency.observe(now.saturating_duration_since(started), peak.decay, now);
+        } else {
+            latency.observe_failure(now.saturating_duration_since(started), peak.decay, now);
+        }
+    }
+
+    /// `measure: last_byte`: the sample of an attempt that answered, when its response ends; a
+    /// response cut short is a failure.
+    fn sample_at_end(ctx: &mut RequestCtx, ok: bool) {
+        if std::mem::take(&mut ctx.sample_at_end)
+            && let Some(service) = &ctx.service
+        {
+            Self::sample(service, ctx, ok);
         }
     }
 
@@ -347,6 +378,9 @@ pub struct RequestCtx {
     retry_permit: Option<RetryPermit>,
     /// `upstream_response_filter` turned a status into a retry already counted.
     status_retry: bool,
+    /// `peak_ewma` with `measure: last_byte`: the attempt answered and its sample is taken
+    /// when the response ends.
+    sample_at_end: bool,
     set_cookie: Option<String>,
     body_bytes: u64,
     sent_replacement: bool,
@@ -828,6 +862,7 @@ impl ProxyHttp for RdockProxy {
             tried: Vec::new(),
             retry_permit: None,
             status_retry: false,
+            sample_at_end: false,
             set_cookie: None,
             body_bytes: 0,
             sent_replacement: false,
@@ -1193,6 +1228,11 @@ impl ProxyHttp for RdockProxy {
                 &ctx.tried,
             ));
         }
+        if let Some(per_try) = per_try_timeout(session, ctx, &service) {
+            let read = peer.options.read_timeout.unwrap_or(per_try);
+            peer.options.read_timeout = Some(read.min(per_try));
+        }
+        ctx.sample_at_end = false;
         ctx.in_flight = Some(selected.member.state.begin());
         ctx.upstream = Some(selected.member.candidate.clone());
         ctx.member = Some(selected.member);
@@ -1293,6 +1333,16 @@ impl ProxyHttp for RdockProxy {
             .as_ref()
             .is_some_and(|p| p.statuses.contains(&status));
         self.report(&service, ctx.member.as_ref(), !failed);
+        if let Some(peak) = service.selection.peak {
+            // Without passive health, the statuses it would count are 502, 503 and 504.
+            let bad = failed || (service.health.passive.is_none() && matches!(status, 502..=504));
+            let at_end = peak.measure == LatencyMeasure::LastByte;
+            if bad || !at_end {
+                Self::sample(&service, ctx, !bad);
+            }
+            // An upgraded connection's lifetime is not a latency.
+            ctx.sample_at_end = at_end && !bad && status != 101;
+        }
         if let Some(retries) = &service.retries
             && let Some(kind) = retries
                 .on
@@ -1434,6 +1484,7 @@ impl ProxyHttp for RdockProxy {
                 trace.failed(kind);
             }
             self.report(service, ctx.member.as_ref(), false);
+            Self::sample(service, ctx, false);
         }
         let mut e = e;
         let service = ctx.service.clone();
@@ -1473,6 +1524,11 @@ impl ProxyHttp for RdockProxy {
             && let Some(service) = &ctx.service
         {
             self.report(service, ctx.member.as_ref(), false);
+            if !ctx.status_retry {
+                // A retried status was sampled when it arrived.
+                ctx.sample_at_end = false;
+                Self::sample(service, ctx, false);
+            }
         }
         if let Some(trace) = ctx.trace.as_mut() {
             trace.failed(e.etype().as_str());
@@ -1594,6 +1650,7 @@ impl ProxyHttp for RdockProxy {
     }
 
     async fn logging(&self, session: &mut Session, e: Option<&Error>, ctx: &mut RequestCtx) {
+        Self::sample_at_end(ctx, e.is_none());
         ctx.in_flight = None;
         // Frees a held body now; a spool file has no name and goes with its descriptor.
         ctx.hold = None;
@@ -1900,6 +1957,86 @@ impl MirrorCopy {
     fn body(self) -> Option<Bytes> {
         (!self.too_large).then(|| self.body.freeze())
     }
+}
+
+/// Reports what an outlier detector did with `backend` of `service`: logs, events, alerts and
+/// metrics, as a failure ejection does.
+pub(crate) fn outlier_ejected(
+    service: &ServiceRuntime,
+    backend: &str,
+    detector: rdock_balancer::Detector,
+    result: Ejection,
+    metrics: &rdock_observability::Metrics,
+) {
+    let reason = match detector {
+        rdock_balancer::Detector::SuccessRate => "ejected as an outlier by success rate",
+        rdock_balancer::Detector::FailurePercentage => {
+            "ejected as an outlier by failure percentage"
+        }
+    };
+    match result {
+        Ejection::Ejected(time) => {
+            tracing::warn!(
+                service = %service.name,
+                backend = %backend,
+                detector = detector.as_str(),
+                seconds = time.as_secs(),
+                "backend ejected as an outlier"
+            );
+            metrics.feeds.events.send(serde_json::json!({
+                "type": "backend", "service": &*service.name, "backend": backend, "state": "down",
+                "reason": reason, "seconds": time.as_secs(),
+            }));
+            if let Some(member) = service.members().iter().find(|m| m.id == backend) {
+                crate::alerting::backend_down(metrics, service, member, reason);
+            }
+            metrics
+                .backend_ejections
+                .with_label_values(&[&*service.name, backend])
+                .inc();
+            metrics
+                .outlier_ejections
+                .with_label_values(&[&*service.name, backend, detector.as_str()])
+                .inc();
+            metrics
+                .backend_up
+                .with_label_values(&[&*service.name, backend])
+                .set(0);
+        }
+        Ejection::Refused => tracing::warn!(
+            service = %service.name,
+            backend = %backend,
+            detector = detector.as_str(),
+            "backend is an outlier, but max_ejection_percent of the pool is already ejected"
+        ),
+        Ejection::None => {}
+    }
+}
+
+/// `retries.per_try_timeout` when it applies to the attempt about to start (ADR-0031): the
+/// request may be retried on a timeout (attempts left, an idempotent method or
+/// `retry_non_idempotent`, not an upgrade, a body Pingora can still replay) and a backend it
+/// has not tried is available. Otherwise the attempt is the last one and waits
+/// `timeouts.read`.
+///
+/// Pingora 0.9 sets the read timeout of an attempt once, from the peer, and applies it to every
+/// read: the response headers and each read of the body (`proxy_h1.rs`, `proxy_h2.rs`). No hook
+/// reaches the upstream session after the headers, so the bound also covers pauses in the body
+/// of such an attempt.
+fn per_try_timeout(
+    session: &Session,
+    ctx: &RequestCtx,
+    service: &ServiceRuntime,
+) -> Option<Duration> {
+    let retries = service.retries.as_ref()?;
+    let per_try = retries.per_try_timeout?.as_std();
+    let req = session.req_header();
+    let retryable = retries.on.contains(&RetryOn::Timeout)
+        && ctx.retries < retries.attempts
+        && (retries.retry_non_idempotent || req.method.is_idempotent())
+        && !is_upgrade(req)
+        && !session.as_ref().retry_buffer_truncated();
+    (retryable && upstream::has_untried(service, &ctx.tried)).then_some(per_try)
 }
 
 fn is_upgrade(req: &RequestHeader) -> bool {

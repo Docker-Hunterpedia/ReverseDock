@@ -2,7 +2,7 @@
 title: udp_services
 description: "UDP backend pools."
 sidebar:
-  order: 20
+  order: 21
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -27,13 +27,31 @@ Backend servers (`host:port`; Unix sockets are not supported). `weight` sets eac
 
 **Type:** `boolean` · **Default:** `false`
 
-Only used when no primary backend is available.
+Only used when no primary backend is available: the same as `priority: 1`.
+
+### `udp_services.<name>.backends[].for_zones`
+
+**Type:** list of `string`
+
+Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead of its own `zone` (Kubernetes topology hints, `hints.forZones`).
+
+### `udp_services.<name>.backends[].priority`
+
+**Type:** `integer`
+
+Priority tier from 0 (the default, used first) to 7. See the service's `failover`. Not together with `backup`.
 
 ### `udp_services.<name>.backends[].weight`
 
 **Type:** `integer` · **Default:** `1`
 
 Relative share of traffic.
+
+### `udp_services.<name>.backends[].zone`
+
+**Type:** `string`
+
+The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
 
 ## `udp_services.<name>.health`
 

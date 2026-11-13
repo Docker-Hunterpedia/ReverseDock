@@ -142,11 +142,24 @@ fn route_outcome(route: &RouteRuntime, now: Instant) -> Value {
         .iter()
         .map(|m| {
             let exclusion = m.state.exclusion(now);
-            let ramp = m.state.ramping(m.weight, service.health.slow_start, now);
+            // The weight while ramping, to two decimals.
+            let ramp = m
+                .state
+                .ramp(service.health.slow_start.as_ref(), now)
+                .map(|f| (f64::from(m.weight) * f * 100.0).round() / 100.0);
+            let latency = service.selection.peak.and_then(|p| {
+                m.state
+                    .latency()
+                    .peek(p.decay, now)
+                    .map(|d| (d.as_secs_f64() * 1e6).round() / 1e3)
+            });
             json!({
                 "address": m.id,
                 "weight": m.weight,
                 "backup": m.backup,
+                "priority": m.priority,
+                "local": service.selection.zone.is_some().then_some(m.local),
+                "latency_ms": latency,
                 "considered": exclusion.is_none() && m.weight > 0,
                 "reason": exclusion
                     .or_else(|| (m.weight == 0).then(|| "weight 0".to_owned()))

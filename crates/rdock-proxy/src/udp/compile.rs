@@ -27,7 +27,12 @@ pub(crate) fn compile_udp(
     let services: HashMap<&str, Arc<UdpServiceRuntime>> = config
         .udp_services
         .iter()
-        .map(|(name, service)| (name.as_str(), Arc::new(compile_service(name, service, env))))
+        .map(|(name, service)| {
+            (
+                name.as_str(),
+                Arc::new(compile_service(name, service, config, env)),
+            )
+        })
         .collect();
     let mut attached: BTreeMap<&str, Vec<Arc<UdpRouteRuntime>>> = BTreeMap::new();
     for (name, route) in config.udp_routes.iter().filter(|(_, r)| r.enabled) {
@@ -63,7 +68,12 @@ pub(crate) fn compile_udp(
         .collect()
 }
 
-fn compile_service(name: &str, service: &UdpService, env: &CompileEnv<'_>) -> UdpServiceRuntime {
+fn compile_service(
+    name: &str,
+    service: &UdpService,
+    config: &Config,
+    env: &CompileEnv<'_>,
+) -> UdpServiceRuntime {
     let (balancer, hash_on) = match service.load_balancer.policy {
         UdpLbPolicy::RoundRobin => (Balancer::RoundRobin(RoundRobin::default()), HashOn::Nothing),
         UdpLbPolicy::Random => (Balancer::Random, HashOn::Nothing),
@@ -114,6 +124,10 @@ fn compile_service(name: &str, service: &UdpService, env: &CompileEnv<'_>) -> Ud
         timeouts: rdock_model::service::Timeouts::default(),
         tls: crate::runtime::UpstreamTls::default(),
         pass_host_header: false,
+        selection: crate::runtime::Selection {
+            zone: crate::compile::preferred_zone(config, None),
+            ..crate::runtime::Selection::default()
+        },
     };
     let passive = health.passive;
     UdpServiceRuntime {
@@ -127,6 +141,7 @@ fn compile_service(name: &str, service: &UdpService, env: &CompileEnv<'_>) -> Ud
                 failures: passive.failures,
                 window: passive.window.as_std(),
                 ejection: passive.ejection.as_std(),
+                jitter: std::time::Duration::ZERO,
             },
             passive.max_ejection_percent,
         )),

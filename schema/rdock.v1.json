@@ -114,6 +114,17 @@
       },
       "default": {}
     },
+    "locality": {
+      "description": "The proxy's own zone and whether services prefer backends in it (H-HA-05).",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Locality"
+        },
+        {
+          "type": "null"
+        }
+      ]
+    },
     "middlewares": {
       "description": "Reusable request and response policies.",
       "type": "object",
@@ -1440,9 +1451,26 @@
           "$ref": "#/$defs/BackendAddress"
         },
         "backup": {
-          "description": "Only used when no primary backend is available.",
+          "description": "Only used when no primary backend is available: the same as `priority: 1`.",
           "type": "boolean",
           "default": false
+        },
+        "for_zones": {
+          "description": "Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead\nof its own `zone` (Kubernetes topology hints, `hints.forZones`).",
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "priority": {
+          "description": "Priority tier from 0 (the default, used first) to 7. See the service's `failover`.\nNot together with `backup`.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint8",
+          "maximum": 255,
+          "minimum": 0
         },
         "weight": {
           "description": "Relative share of traffic.",
@@ -1450,6 +1478,13 @@
           "format": "uint32",
           "default": 1,
           "minimum": 0
+        },
+        "zone": {
+          "description": "The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.",
+          "type": [
+            "string",
+            "null"
+          ]
         }
       },
       "additionalProperties": false,
@@ -2283,6 +2318,65 @@
         "hmac_key"
       ]
     },
+    "Factor": {
+      "description": "A number with up to three decimals, such as 1.4.",
+      "type": "number",
+      "examples": [
+        1.4
+      ],
+      "minimum": 0
+    },
+    "Failover": {
+      "description": "How traffic moves between backend priority tiers.",
+      "oneOf": [
+        {
+          "description": "The next tier only when every tier above has no available backend.",
+          "type": "string",
+          "const": "strict"
+        },
+        {
+          "description": "Tiers share traffic by their health and the overprovisioning factor.",
+          "type": "string",
+          "const": "spill"
+        }
+      ]
+    },
+    "FailurePercentageDetector": {
+      "description": "The failure-percentage detector, with Envoy's defaults.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Turns the detector on. Default `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "minimum_hosts": {
+          "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "request_volume": {
+          "description": "Requests in the interval for a backend to count. Default 50.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 50,
+          "minimum": 0
+        },
+        "threshold": {
+          "description": "Failure share that ejects, in percent. Default 85.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 85,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "FileProvider": {
       "description": "File provider.",
       "type": "object",
@@ -2432,10 +2526,10 @@
           "default": null
         },
         "slow_start": {
-          "description": "A backend that becomes healthy ramps up its weight over this time.",
+          "description": "A backend that becomes healthy again ramps up its weight: a duration such as `30s`, or\n`{ window, aggression, min_weight_percent, on }`. Not with hash policies.",
           "anyOf": [
             {
-              "$ref": "#/$defs/Duration"
+              "$ref": "#/$defs/SlowStart"
             },
             {
               "type": "null"
@@ -2488,6 +2582,36 @@
           "const": "grpc"
         }
       ]
+    },
+    "Hedge": {
+      "description": "Hedged requests (planned).",
+      "type": "object",
+      "properties": {
+        "delay": {
+          "description": "Time without a response after which the hedge would be sent.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "max_attempts": {
+          "description": "Attempts in flight at most, the first included.",
+          "type": [
+            "integer",
+            "null"
+          ],
+          "format": "uint32",
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
     },
     "HetznerProvider": {
       "description": "Hetzner DNS through the Hetzner Cloud API (`type: hetzner`).",
@@ -2899,6 +3023,21 @@
         }
       ]
     },
+    "LatencyMeasure": {
+      "description": "What a `peak_ewma` latency sample measures.",
+      "oneOf": [
+        {
+          "description": "Time to the response headers (NGINX `least_time header`): a long download or a slow\nclient does not make a backend look slow.",
+          "type": "string",
+          "const": "first_byte"
+        },
+        {
+          "description": "Time to the end of the response (NGINX `last_byte`). Upgraded connections (WebSocket)\ngive no sample.",
+          "type": "string",
+          "const": "last_byte"
+        }
+      ]
+    },
     "LatencyRule": {
       "description": "A p99 latency threshold.",
       "type": "object",
@@ -2967,6 +3106,11 @@
           "description": "Consistent hash of a cookie (`hash_on`).",
           "type": "string",
           "const": "cookie_hash"
+        },
+        {
+          "description": "Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a\nlatency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).",
+          "type": "string",
+          "const": "peak_ewma"
         }
       ]
     },
@@ -3498,6 +3642,17 @@
       "description": "Backend selection.",
       "type": "object",
       "properties": {
+        "decay": {
+          "description": "`peak_ewma`: time constant of the latency average. Default 10s (Finagle's and\nLinkerd's `decay`).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "hash_on": {
           "description": "Header or cookie name for `header_hash` and `cookie_hash`.",
           "type": [
@@ -3505,6 +3660,17 @@
             "null"
           ],
           "default": null
+        },
+        "measure": {
+          "description": "`peak_ewma`: what a latency sample measures. Default `first_byte`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/LatencyMeasure"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "policy": {
           "description": "Selection policy.",
@@ -3516,6 +3682,43 @@
       "patternProperties": {
         "^x-": {}
       }
+    },
+    "Locality": {
+      "description": "The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "`prefer`: services use only backends of this zone while at least one of them is\navailable, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the\ndefault, as Kubernetes distributes traffic evenly by default) ignores zones. A\nservice's own `locality.mode` overrides this.",
+          "$ref": "#/$defs/LocalityMode",
+          "default": "off"
+        },
+        "zone": {
+          "description": "The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`\nenvironment variable gives it; with neither, `prefer` has no effect.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "LocalityMode": {
+      "description": "Whether backends in the proxy's zone are preferred.",
+      "oneOf": [
+        {
+          "description": "Every available backend, whatever its zone.",
+          "type": "string",
+          "const": "off"
+        },
+        {
+          "description": "Only backends in the proxy's zone while at least one of them is available; all\notherwise (Kubernetes `PreferSameZone`).",
+          "type": "string",
+          "const": "prefer"
+        }
+      ]
     },
     "LogFormat": {
       "description": "Access log formats.",
@@ -5880,6 +6083,43 @@
         }
       ]
     },
+    "OutlierDetection": {
+      "description": "Outlier detectors (Envoy's outlier detection). Failures are those of passive health:\nconnection errors, resets, timeouts and `statuses`.",
+      "type": "object",
+      "properties": {
+        "failure_percentage": {
+          "description": "Ejects a backend whose failures reach `threshold` percent of its requests.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/FailurePercentageDetector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "interval": {
+          "description": "How often the detectors look at the counts of the last interval. Default 10s (Envoy).",
+          "$ref": "#/$defs/Duration",
+          "default": "10s"
+        },
+        "success_rate": {
+          "description": "Ejects a backend whose success rate is below `mean − stdev_factor × σ` of the others.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/SuccessRateDetector"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "PassiveHealth": {
       "description": "Ejection of backends that keep failing.",
       "type": "object",
@@ -5888,6 +6128,11 @@
           "description": "How long an ejected backend stays out before one request tries it again; doubled for\neach ejection in a row, up to 5 minutes.",
           "$ref": "#/$defs/Duration",
           "default": "30s"
+        },
+        "ejection_jitter": {
+          "description": "Up to this much is added at random to each ejection time, so backends ejected by many\ninstances do not all return at once (Envoy's `max_ejection_time_jitter`). Default 0s.",
+          "$ref": "#/$defs/Duration",
+          "default": "0s"
         },
         "failures": {
           "description": "Failures within `window` that eject a backend.",
@@ -5902,6 +6147,17 @@
           "format": "uint32",
           "default": 50,
           "minimum": 0
+        },
+        "outlier": {
+          "description": "Statistical detectors that compare backends with each other once per interval and eject\nthe outliers through the same ejection as `failures` (back-off, `max_ejection_percent`,\ntrial request).",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/OutlierDetection"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "statuses": {
           "description": "Answers that count as failures, besides connection errors, resets and timeouts.",
@@ -6398,6 +6654,17 @@
           "items": {
             "$ref": "#/$defs/RetryOn"
           }
+        },
+        "per_try_timeout": {
+          "description": "Abandons an attempt that has not finished a read for this long and retries it on\nanother backend, within the budget and only where a retry is allowed (`on` must list\n`timeout`). It replaces `timeouts.read` for every read of such an attempt, the wait for\nthe response headers and each pause of the response body; the last attempt and\nrequests that cannot be retried wait `timeouts.read`.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Duration"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "retry_non_idempotent": {
           "description": "Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.",
@@ -6903,6 +7170,11 @@
             "$ref": "#/$defs/Backend"
           }
         },
+        "failover": {
+          "description": "How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets\ntraffic only when every tier above it has no available backend. `spill`: a tier keeps\n`healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes\nto the next tier, as Envoy's priority levels do.",
+          "$ref": "#/$defs/Failover",
+          "default": "strict"
+        },
         "health": {
           "description": "Active and passive health checks.",
           "anyOf": [
@@ -6915,6 +7187,17 @@
           ],
           "default": null
         },
+        "hedge": {
+          "description": "Hedged requests: a second attempt while the first is still waiting. Planned, not\nsupported: Pingora 0.9 cannot race two upstream attempts of one request. Use\n`retries.per_try_timeout` for stalled attempts.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Hedge"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
         "load_balancer": {
           "description": "How a backend is chosen for each request.",
           "$ref": "#/$defs/LoadBalancer",
@@ -6922,6 +7205,17 @@
             "hash_on": null,
             "policy": "round_robin"
           }
+        },
+        "locality": {
+          "description": "Prefer backends in the proxy's own zone (`locality` at the top level sets the zone).\nOmitted, the top-level `locality.mode` applies.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/ServiceLocality"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "max_connections_per_backend": {
           "description": "Requests in flight to one backend; a backend at the limit gets no more until one ends.",
@@ -6942,6 +7236,17 @@
           "format": "uint32",
           "default": null,
           "minimum": 0
+        },
+        "overprovisioning": {
+          "description": "With `failover: spill`: how much more than its share each tier can carry. Default 1.4\n(Envoy's `overprovisioning_factor`): a tier keeps all traffic until fewer than about\n71 % of its backends are available.",
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Factor"
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "pass_host_header": {
           "description": "Forward the client's `Host` header (otherwise the backend address is used).",
@@ -7025,6 +7330,23 @@
         "^x-": {}
       }
     },
+    "ServiceLocality": {
+      "description": "The locality preference of one service.",
+      "type": "object",
+      "properties": {
+        "mode": {
+          "description": "`prefer` or `off`.",
+          "$ref": "#/$defs/LocalityMode"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      },
+      "required": [
+        "mode"
+      ]
+    },
     "SessionLimit": {
       "description": "A number of sessions (at least 1), or `unlimited`.",
       "oneOf": [
@@ -7053,6 +7375,69 @@
           "description": "Store them without `Set-Cookie`.",
           "type": "string",
           "const": "strip"
+        }
+      ]
+    },
+    "SlowStart": {
+      "description": "Time to full weight, such as `30s`, or every setting.",
+      "anyOf": [
+        {
+          "$ref": "#/$defs/Duration"
+        },
+        {
+          "$ref": "#/$defs/SlowStartConfig"
+        }
+      ]
+    },
+    "SlowStartConfig": {
+      "description": "Slow start, every setting (Envoy's `SlowStartConfig`): the weight is\n`weight × max(min_weight_percent / 100, (elapsed / window)^(1 / aggression))`.",
+      "type": "object",
+      "properties": {
+        "aggression": {
+          "description": "Shape of the ramp: 1.0 (the default) is linear; above 1 ramps faster at first.",
+          "$ref": "#/$defs/Factor",
+          "default": 1
+        },
+        "min_weight_percent": {
+          "description": "The weight starts at this share, in percent. Default 10 (Envoy).",
+          "type": "integer",
+          "format": "uint32",
+          "default": 10,
+          "minimum": 0
+        },
+        "on": {
+          "description": "When a backend ramps: `recovery` (after failed probes or an ejection; the default) and\n`join` (a backend that newly appears in a pool that already had a backend at full\nweight; never at start-up or into an empty pool).",
+          "type": "array",
+          "default": [
+            "recovery"
+          ],
+          "items": {
+            "$ref": "#/$defs/SlowStartOn"
+          }
+        },
+        "window": {
+          "description": "Time to full weight.",
+          "$ref": "#/$defs/Duration",
+          "default": "30s"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "SlowStartOn": {
+      "description": "When a backend's weight ramps up.",
+      "oneOf": [
+        {
+          "description": "After recovering from failed probes or an ejection.",
+          "type": "string",
+          "const": "recovery"
+        },
+        {
+          "description": "When it newly appears in a pool that already had a backend at full weight.",
+          "type": "string",
+          "const": "join"
         }
       ]
     },
@@ -7273,6 +7658,40 @@
             "type": "string"
           },
           "default": {}
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
+    "SuccessRateDetector": {
+      "description": "The success-rate detector, with Envoy's defaults.",
+      "type": "object",
+      "properties": {
+        "enabled": {
+          "description": "Turns the detector on. Default `false`.",
+          "type": "boolean",
+          "default": false
+        },
+        "minimum_hosts": {
+          "description": "Backends with enough requests needed before anything is evaluated. Default 5; at\nleast 3.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 5,
+          "minimum": 0
+        },
+        "request_volume": {
+          "description": "Requests in the interval for a backend to count. Default 100.",
+          "type": "integer",
+          "format": "uint32",
+          "default": 100,
+          "minimum": 0
+        },
+        "stdev_factor": {
+          "description": "Multiplier of the standard deviation. Default 1.9 (Envoy's 1900 / 1000).",
+          "$ref": "#/$defs/Factor",
+          "default": 1.9
         }
       },
       "additionalProperties": false,

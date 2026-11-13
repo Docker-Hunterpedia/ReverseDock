@@ -654,6 +654,21 @@ impl Default for Upgrade {
     }
 }
 
+/// The proxy's zone and the default locality preference of services (H-HA-05, ADR-0031).
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct Locality {
+    /// The zone this proxy runs in, e.g. `eu-west-1a`. When omitted, the `RDOCK_ZONE`
+    /// environment variable gives it; with neither, `prefer` has no effect.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub zone: Option<String>,
+    /// `prefer`: services use only backends of this zone while at least one of them is
+    /// available, and every backend otherwise (Kubernetes `PreferSameZone`). `off` (the
+    /// default, as Kubernetes distributes traffic evenly by default) ignores zones. A
+    /// service's own `locality.mode` overrides this.
+    pub mode: crate::service::LocalityMode,
+}
+
 /// A drain bound: a duration, or `unlimited`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DrainLimit {

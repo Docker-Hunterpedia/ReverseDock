@@ -2153,3 +2153,210 @@ fn upgrade_settings_are_checked() {
         crate::settings::DrainLimit::Within(crate::values::Duration::from_secs(5))
     );
 }
+
+// ---------------------------------------------------------------------------------------------
+// Balancing (H-LB-01…03, H-HA-05, ADR-0031)
+
+fn service(patch: Value) -> Value {
+    let mut base = app();
+    merge(&mut base, json!({ "services": { "app": Value::Null } }));
+    if let Some(services) = base.get_mut("services") {
+        services["app"] = patch;
+    }
+    base
+}
+
+#[test]
+fn priorities_are_bounded_and_exclusive_with_backup() {
+    let found = errors(service(json!({ "backends": [
+        { "address": "a:1" },
+        { "address": "b:1", "priority": 8 },
+        { "address": "c:1", "priority": 2, "backup": true }
+    ]})));
+    assert!(
+        has(
+            &found,
+            "services.app.backends[1].priority",
+            "from 0 (first) to 7"
+        ),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "services.app.backends[2].backup", "not both"),
+        "{found:?}"
+    );
+    let found = errors(service(json!({ "backends": [
+        { "address": "a:1", "priority": 1 }, { "address": "b:1", "backup": true }
+    ]})));
+    assert!(
+        has(
+            &found,
+            "services.app.backends",
+            "no backend is in priority 0"
+        ),
+        "{found:?}"
+    );
+    let ok = service(json!({ "backends": [
+        { "address": "a:1", "priority": 0, "zone": "eu-1a" },
+        { "address": "b:1", "priority": 7, "for_zones": ["eu-1b"] }
+    ], "failover": "spill", "overprovisioning": 1.5 }));
+    assert_eq!(errors(ok), Vec::new());
+}
+
+#[test]
+fn spill_settings_and_zones_are_checked() {
+    let found = errors(service(json!({
+        "backends": [{ "address": "a:1", "zone": "" }, { "address": "b:1", "priority": 1 }],
+        "failover": "spill", "overprovisioning": 0.5
+    })));
+    assert!(
+        has(&found, "services.app.overprovisioning", "at least 1"),
+        "{found:?}"
+    );
+    assert!(
+        has(&found, "services.app.backends[0].zone", "non-empty"),
+        "{found:?}"
+    );
+    let found = warnings(service(json!({
+        "backends": [{ "address": "a:1" }], "overprovisioning": 1.4,
+        "locality": { "mode": "prefer" }
+    })));
+    assert!(has(
+        &found,
+        "services.app.overprovisioning",
+        "only used with `failover: spill`"
+    ));
+    assert!(has(
+        &found,
+        "services.app.locality",
+        "no backend has a `zone`"
+    ));
+    let found = errors(with(
+        app(),
+        json!({ "locality": { "zone": "a b", "mode": "prefer" } }),
+    ));
+    assert!(has(&found, "locality.zone", "without spaces"), "{found:?}");
+}
+
+#[test]
+fn peak_ewma_settings_belong_to_their_policy() {
+    let found = warnings(service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "decay": "5s", "measure": "last_byte" } })));
+    assert!(has(
+        &found,
+        "services.app.load_balancer.decay",
+        "only used by the peak_ewma"
+    ));
+    assert!(has(
+        &found,
+        "services.app.load_balancer.measure",
+        "only used by the peak_ewma"
+    ));
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "policy": "peak_ewma", "decay": "0s" } })));
+    assert!(has(
+        &found,
+        "services.app.load_balancer.decay",
+        "must not be zero"
+    ));
+    let ok = service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "policy": "peak_ewma", "decay": "10s", "measure": "first_byte" } }));
+    assert_eq!(validate(ok), Vec::new());
+}
+
+#[test]
+fn slow_start_has_two_forms_and_is_refused_with_hash_policies() {
+    let short = service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "slow_start": "30s" } }));
+    assert_eq!(errors(short), Vec::new());
+    let long = service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "slow_start": { "window": "1m", "aggression": 2, "min_weight_percent": 5,
+            "on": ["recovery", "join"] } } }));
+    assert_eq!(errors(long), Vec::new());
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "load_balancer": { "policy": "ip_hash" },
+        "health": { "slow_start": { "window": "0s", "aggression": 0,
+            "min_weight_percent": 101, "on": [] } } })));
+    for (path, fragment) in [
+        ("services.app.health.slow_start", "hash policies"),
+        ("services.app.health.slow_start.window", "zero"),
+        ("services.app.health.slow_start.aggression", "above 0"),
+        (
+            "services.app.health.slow_start.min_weight_percent",
+            "at most 100",
+        ),
+        ("services.app.health.slow_start.on", "recovery"),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+}
+
+#[test]
+fn outlier_detectors_need_three_hosts_and_say_when_they_are_off() {
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "passive": { "outlier": {
+            "interval": "0s",
+            "success_rate": { "enabled": true, "minimum_hosts": 2, "request_volume": 0,
+                "stdev_factor": 0 },
+            "failure_percentage": { "enabled": true, "minimum_hosts": 1, "threshold": 101 }
+        } } } })));
+    for (path, fragment) in [
+        ("services.app.health.passive.outlier.interval", "zero"),
+        (
+            "services.app.health.passive.outlier.success_rate.minimum_hosts",
+            "at least 3",
+        ),
+        (
+            "services.app.health.passive.outlier.success_rate.request_volume",
+            "zero",
+        ),
+        (
+            "services.app.health.passive.outlier.success_rate.stdev_factor",
+            "above 0",
+        ),
+        (
+            "services.app.health.passive.outlier.failure_percentage.minimum_hosts",
+            "at least 3",
+        ),
+        (
+            "services.app.health.passive.outlier.failure_percentage.threshold",
+            "1 to 100",
+        ),
+    ] {
+        assert!(has(&found, path, fragment), "{path}: {found:?}");
+    }
+    let found = warnings(service(json!({ "backends": [{ "address": "a:1" }],
+        "health": { "passive": { "outlier": { "success_rate": {} } } } })));
+    assert!(has(
+        &found,
+        "services.app.health.passive.outlier.success_rate",
+        "the detector is off"
+    ));
+}
+
+#[test]
+fn per_try_timeout_needs_timeout_retries() {
+    let found = errors(service(json!({ "backends": [{ "address": "a:1" }],
+        "retries": { "per_try_timeout": "500ms" } })));
+    assert!(has(
+        &found,
+        "services.app.retries.per_try_timeout",
+        "does not list `timeout`"
+    ));
+    let found = warnings(service(json!({ "backends": [{ "address": "a:1" }],
+        "timeouts": { "read": "1s" },
+        "retries": { "per_try_timeout": "2s", "on": ["timeout"], "attempts": 0 } })));
+    assert!(has(
+        &found,
+        "services.app.retries.per_try_timeout",
+        "not shorter than"
+    ));
+    assert!(has(
+        &found,
+        "services.app.retries.per_try_timeout",
+        "attempts: 0"
+    ));
+    let ok = service(json!({ "backends": [{ "address": "a:1" }],
+        "retries": { "per_try_timeout": "500ms", "on": ["connect", "timeout"] } }));
+    assert_eq!(validate(ok), Vec::new());
+}
