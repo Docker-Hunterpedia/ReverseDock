@@ -196,13 +196,24 @@ impl Rdock {
         headers: &[(&str, &str)],
         body: &str,
     ) -> Option<(u16, String, String)> {
+        self.admin_send_within(Duration::from_secs(20), method, path, headers, body)
+    }
+
+    /// [`Self::admin_send`] for a call that answers only when a long operation ends (an
+    /// upgrade waits for the new process): waits up to `wait` for the answer.
+    pub fn admin_send_within(
+        &self,
+        wait: Duration,
+        method: &str,
+        path: &str,
+        headers: &[(&str, &str)],
+        body: &str,
+    ) -> Option<(u16, String, String)> {
         use std::fmt::Write as _;
         use std::io::Write;
         let mut stream =
             std::os::unix::net::UnixStream::connect(self.data_dir().join("admin.sock")).ok()?;
-        stream
-            .set_read_timeout(Some(Duration::from_secs(20)))
-            .ok()?;
+        stream.set_read_timeout(Some(wait)).ok()?;
         let mut head = format!("{method} {path} HTTP/1.1\r\nHost: localhost\r\n");
         for (name, value) in headers {
             let _ = write!(head, "{name}: {value}\r\n");

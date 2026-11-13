@@ -162,14 +162,18 @@ fn upgrade(rdock: &Rdock, binary: Option<&Path>) -> (u16, serde_json::Value) {
         || "{}".to_owned(),
         |b| serde_json::json!({ "binary": b }).to_string(),
     );
-    let (status, _, text) = rdock
-        .admin_send(
-            "POST",
-            "/api/v1/upgrade",
-            &[("Content-Type", "application/json")],
-            &body,
-        )
-        .expect("an answer over the admin socket");
+    // The answer comes when the attempt ends: after `rdock validate` with the new binary, its
+    // start and, for a child that stalls, `upgrade.start_timeout`. On a loaded machine that is
+    // far more than the helper's usual wait.
+    let Some((status, _, text)) = rdock.admin_send_within(
+        Duration::from_secs(180),
+        "POST",
+        "/api/v1/upgrade",
+        &[("Content-Type", "application/json")],
+        &body,
+    ) else {
+        panic!("no answer over the admin socket:\n{}", rdock.log());
+    };
     (status, serde_json::from_str(&text).unwrap_or_default())
 }
 
