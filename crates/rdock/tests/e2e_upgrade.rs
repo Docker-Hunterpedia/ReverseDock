@@ -178,7 +178,11 @@ fn upgrade(rdock: &Rdock, binary: Option<&Path>) -> (u16, serde_json::Value) {
 }
 
 fn status_pid(rdock: &Rdock) -> Option<u32> {
-    let (status, body) = rdock.get_admin("/api/v1/status")?;
+    // During the handover a connection waits in the shared backlog until the new process
+    // accepts, which takes as long as that process needs to start: over 20 seconds on a
+    // loaded CI runner. Waiting is not a failure; a refused or lost request is.
+    let (status, _, body) =
+        rdock.admin_send_within(Duration::from_secs(180), "GET", "/api/v1/status", &[], "")?;
     if status != 200 {
         return None;
     }
