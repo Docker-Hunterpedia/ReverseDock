@@ -125,6 +125,15 @@ def coverage_gate(labels, coverage, allowlist):
 # --- Labels and rules ----------------------------------------------------------------------
 
 
+def is_traefik_image(image):
+    """Whether a Compose image is the Traefik proxy itself: the repository's last component is
+    `traefik` (`traefik:v3.7`, `docker.io/library/traefik@sha256:…`). `traefik/whoami`, the
+    backend of the corpus, is not."""
+    name = str(image or "").split("@", 1)[0]
+    last = name.rsplit("/", 1)[-1]
+    return last.split(":", 1)[0] == "traefik"
+
+
 def labels_of(service):
     """A Compose service's labels (from `docker compose config --format json`) as a dict."""
     raw = service.get("labels") or {}
@@ -418,7 +427,7 @@ def run_case(case, rdock_image, out, allowlist, coverage):
     if meta.get("args", {}).get("env_file"):
         command += ["--env-file", str(directory / meta["args"]["env_file"])]
     compose = json.loads(docker(*command, "config", "--format", "json", capture=True).stdout)
-    services = {n: s for n, s in compose.get("services", {}).items() if "traefik" not in str(s.get("image", ""))}
+    services = {n: s for n, s in compose.get("services", {}).items() if not is_traefik_image(s.get("image"))}
     labels = {k: v for s in services.values() for k, v in labels_of(s).items()}
     gate = coverage_gate(labels, coverage, allowlist)
     if gate:
@@ -437,6 +446,8 @@ def run_case(case, rdock_image, out, allowlist, coverage):
     gid = os.stat("/var/run/docker.sock").st_gid
     (workdir / "project.json").write_text(json.dumps(project(case, compose, rdock_image, workdir, gid), indent=2))
     requests = matrix(services)
+    if not requests:
+        return {"case": case, "errors": ["the case has no router to send a request to"], "requests": []}
     request_headers, response_headers = named_headers(services)
     results = {"case": case, "errors": [], "requests": []}
     try:

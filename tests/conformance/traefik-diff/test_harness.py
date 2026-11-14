@@ -192,6 +192,18 @@ class Project(unittest.TestCase):
         self.assertIn("/work/certs:/certs:ro", services["rdock"]["volumes"])
         self.assertIn("/work/certs:/certs:ro", services["traefik"]["volumes"])
 
+    def test_the_proxy_image_is_told_from_the_backend_image(self):
+        for image in ["traefik", "traefik:v3.7.19", "docker.io/library/traefik:v3.7", "traefik@sha256:aa94"]:
+            self.assertTrue(harness.is_traefik_image(image), image)
+        for image in ["traefik/whoami:v1.12.0", "traefik/whoami@sha256:c471", "nginx:1.30", None, ""]:
+            self.assertFalse(harness.is_traefik_image(image), image)
+
+    def test_every_diff_case_has_a_request_to_send(self):
+        # The backends are `traefik/whoami`: a filter on the word "traefik" once dropped them all.
+        for case in harness.diff_cases():
+            text = (harness.CORPUS / case / json.loads((harness.CORPUS / case / "case.json").read_text())["input"]).read_text()
+            self.assertIn("traefik/whoami", text, case)
+
 
 if __name__ == "__main__":
     unittest.main()
