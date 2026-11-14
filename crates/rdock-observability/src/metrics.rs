@@ -93,6 +93,15 @@ pub struct Metrics {
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
     pub config_reloads: IntCounterVec,
+    /// Writes to the data directory that failed, by what was written (`config`, `history`,
+    /// `lkg`, `snapshot`, `bundle`, `audit`, `quota`, `bans`, `cache`, `certificate`):
+    /// a full disk degrades persistence, never request handling (ADR-0033).
+    pub state_write_failures: IntCounterVec,
+    /// Bytes the file system of the data directory still offers rdock (capped by the
+    /// file-size limit), refreshed every 15 seconds.
+    pub data_dir_available: IntGauge,
+    /// Size of the file system of the data directory.
+    pub data_dir_size: IntGauge,
     /// 1 for each experimental feature the applied configuration uses, 0 for the others
     /// (ADR-0033).
     pub experimental_in_use: IntGaugeVec,
@@ -551,6 +560,19 @@ impl Metrics {
             "Configuration reload attempts.",
             &["result"],
         )?;
+        let state_write_failures = b.counters(
+            "rdock_state_write_failures_total",
+            "Writes to the data directory that failed, by what was written.",
+            &["what"],
+        )?;
+        let data_dir_available = b.gauge(
+            "rdock_data_dir_available_bytes",
+            "Bytes the file system of the data directory still offers rdock.",
+        )?;
+        let data_dir_size = b.gauge(
+            "rdock_data_dir_size_bytes",
+            "Size of the file system of the data directory.",
+        )?;
         let experimental_in_use = b.gauges(
             "rdock_experimental_feature_in_use",
             "1 when the applied configuration uses this experimental feature, else 0.",
@@ -889,6 +911,9 @@ impl Metrics {
             udp_session_ends,
             config_generation,
             config_reloads,
+            state_write_failures,
+            data_dir_available,
+            data_dir_size,
             experimental_in_use,
             deprecated_in_use,
             cert_expiry,

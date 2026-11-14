@@ -176,6 +176,7 @@ Tracked as W-SWM-01…03 below.
 - [x] H-ENG-02 Soak tests (24h+), fault injection (toxiproxy), backend failure/recovery, reload under load
 - [ ] H-ENG-03 Memory-leak and resource-exhaustion tests; HTTP parsing fuzzing (differential)
 - [x] H-ENG-04 Rule: control plane and dashboard are never on the request path
+- [ ] H-ENG-05 Chaos suite for the 1.0 criterion ([ADR-0033](decisions/0033-v1-0-stable.md)): control plane down, Docker socket down (also at boot and hanging), CA down, disk full, backend flapping, config rollback under load, each under steady load with zero failed requests, a stated recovery bound, an intact data directory and audit chain; a rootless variant of every scenario in the required checks. With it, the disk-full rules: a configuration write that cannot be stored is refused, a mutating admin call whose audit record cannot be written fails, certificate orders check free space first. *Implemented in v1.0 step 7 (`crates/rdock/tests/chaos_*.rs`, CI job `chaos`); open until the `chaos` job's Docker-based and tmpfs variants have passed on a runner.*
 
 ---
 

@@ -150,7 +150,16 @@ fn open_users(state_dir: &std::path::Path) -> std::io::Result<(Users, Bootstrap)
     if users.has_admin() {
         return Ok((users, Bootstrap::inactive(state_dir)?));
     }
-    let bootstrap = Bootstrap::issue(state_dir)?;
+    let bootstrap = match Bootstrap::issue(state_dir) {
+        Ok(bootstrap) => bootstrap,
+        // A full disk must not keep rdock from starting on the state it has (ADR-0033): the
+        // first admin can still be created over the Unix socket, which needs no token.
+        Err(err) if rdock_config::disk::is_out_of_space(&err) => {
+            tracing::warn!(error = %err, "cannot write a bootstrap token (the disk is full); create the first admin over the Unix socket, or restart once there is room");
+            return Ok((users, Bootstrap::inactive(state_dir)?));
+        }
+        Err(err) => return Err(err),
+    };
     tracing::warn!(
         file = %bootstrap.file().display(),
         "no admin user yet: create one with the single-use bootstrap token in this file (valid 24 hours)"

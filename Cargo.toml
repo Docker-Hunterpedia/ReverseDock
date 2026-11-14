@@ -207,6 +207,11 @@ tikv-jemallocator = { version = "0.7.0", default-features = false }
 stats_alloc = "0.1.10"
 # Raises the open-file limit at start (nix 0.31.3 released 2026-05-11; pingora-core builds it already).
 nix = { version = "0.31.3", default-features = false, features = ["resource"] }
+# Free space (`statvfs`), space reservation (`fallocate`) and the file-size limit, safely: the
+# disk-full rules of ADR-0033. Already in the tree (tempfile, cap-std, the binary upgrade); 1.1.6
+# fixes RUSTSEC-2026-0486 (xattr functions, not used here). Apache-2.0 WITH LLVM-exception OR
+# Apache-2.0 OR MIT (checked 2026-11-13).
+rustix = { version = "1.1.6", default-features = false, features = ["std", "fs", "process"] }
 tracing = "0.1.44"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["ansi", "env-filter", "fmt", "json", "smallvec", "std", "tracing-log"] }
 

@@ -128,6 +128,8 @@ fn changed(
 pub(crate) enum Write {
     Applied(super::Report),
     Rejected(super::Report),
+    /// Refused because the history entry or the API snapshot could not be stored.
+    NotStored(String),
     Stale,
 }
 
@@ -196,10 +198,11 @@ impl Engine {
             diagnostics: Vec::new(),
             revision: None,
         });
-        let report = self.reload("api").await;
+        let report = self.reload_with("api", super::Store::Required).await;
         if report.applied() {
             return Write::Applied(report);
         }
+        let not_stored = report.not_stored.clone();
         let mut snapshots = self
             .snapshots
             .lock()
@@ -208,7 +211,10 @@ impl Engine {
             Some(snapshot) => snapshots.insert(PROVIDER.to_owned(), snapshot),
             None => snapshots.remove(PROVIDER),
         };
-        Write::Rejected(report)
+        match not_stored {
+            Some(error) => Write::NotStored(error),
+            None => Write::Rejected(report),
+        }
     }
 
     /// Validates and compiles the configuration as it would be with `candidate` as the API

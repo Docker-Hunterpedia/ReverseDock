@@ -102,6 +102,15 @@ impl CertState {
         self.last_error = Some(error);
     }
 
+    /// Waits at least until `at` before the next attempt (the CA's `Retry-After`).
+    pub fn not_before(&mut self, at: SystemTime) {
+        let wait = at.duration_since(SystemTime::now()).unwrap_or_default();
+        let at = Instant::now() + wait;
+        if self.retry_at.is_none_or(|current| current < at) {
+            self.retry_at = Some(at);
+        }
+    }
+
     /// When the certificate should be renewed (Unix seconds).
     pub fn renew_at(&self) -> Option<i64> {
         let cert = self.cert.as_ref()?;
@@ -181,10 +190,24 @@ impl CertState {
     }
 }
 
+/// The first backoff. For tests only, never in a release build: `RDOCK_TEST_ACME_RETRY`
+/// (seconds, at least 1) replaces the minute, so the chaos suite (ADR-0033) can watch several
+/// retries in seconds; the doubling and the cap stay.
+fn first_retry() -> Duration {
+    if cfg!(debug_assertions)
+        && let Some(seconds) = std::env::var("RDOCK_TEST_ACME_RETRY")
+            .ok()
+            .and_then(|v| v.parse::<u64>().ok())
+    {
+        return Duration::from_secs(seconds.max(1));
+    }
+    FIRST_RETRY
+}
+
 /// Exponential backoff with up to 10 % jitter: 1 minute, 2, 4, … at most 24 hours.
 pub(crate) fn backoff(failures: u32) -> Duration {
     let exponent = failures.saturating_sub(1).min(16);
-    let base = FIRST_RETRY.saturating_mul(1 << exponent).min(MAX_RETRY);
+    let base = first_retry().saturating_mul(1 << exponent).min(MAX_RETRY);
     base + base / 1000 * u32::from(spread_percent())
 }
 

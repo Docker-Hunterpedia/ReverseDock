@@ -9,7 +9,7 @@ sidebar:
 
 ## [Unreleased]
 
-Steps 1 to 6 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md), [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md)).
+Steps 1 to 7 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md), [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md)).
 
 ### Added
 
@@ -33,6 +33,9 @@ Steps 1 to 6 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/
 - 45 new finding codes (`caddy.*`, `nginx.*`) in `schema/migrate-report.v1.json` and the website's "Migration report" page; the report's source items gain the kind `directive`.
 - Website: a new guide "Migrate from Caddy", and "Migrate from NGINX" gains the tool, the location precedence it reproduces, the four `proxy_pass` cases and the defaults that change.
 - **A warning for containers Traefik would route and ReverseDock does not**: a container with Traefik router labels and no `traefik.enable`/`rdock.enable` gets a diagnostic (logs, `rdock status`) saying that containers are not exposed by default and how to get Traefik's behaviour (`traefik.enable=true`, or `providers.docker.expose_by_default: true`).
+- **The chaos suite** (ADR-0033, step 7; H-ENG-05): `crates/rdock/tests/chaos_*.rs`, one file per scenario of the 1.0 criterion (control plane down, Docker socket down, CA down, disk full, backend flapping, config rollback under load), each under steady open-model load with zero failed requests, a stated recovery bound, a consistent data directory and `rdock audit verify` passing. The rootless variant runs in the required `rust` job; the non-required `chaos` job runs it with a real tmpfs filled until `ENOSPC` beside the Toxiproxy, Docker and Pebble tests (`just chaos`). Testkit additions: an open-model load generator, a full disk (tmpfs or file-size limit), a fake Docker Engine API with outage modes, a resetting/blackholing TCP proxy, and fault modes and refused orders in the fake ACME CA.
+- **Free space of the data directory** (ADR-0033): gauges `rdock_data_dir_available_bytes` and `rdock_data_dir_size_bytes`, `data_dir` in `GET /api/v1/status` and `rdock status`, and the alert rule `disk` (on by default) with `observability.alerts.rules.disk: { free_percent: 5, free_bytes: 256MiB }`; the counter `rdock_state_write_failures_total{what}` for writes to the data directory that failed. The admin API documents `507` on every gated operation.
+- Website: a new page "Failure behaviour" (Operations): what rdock does when the control plane, Docker, the CA, the disk or a backend fails, the recovery bounds the chaos suite proves, and the metrics and alerts to watch.
 - **`docs/10-stability.md`** and the website's "Stability and support" page: the stability promise per surface, what is not promised, deprecation rules, the security exception, the support policy (F-OSS-05: the two newest minors; the previous major's last minor for six months; one maintainer, no SLA), MSRV and schema versioning, and the maturity levels with their promotion rules.
 
 ### Changed
@@ -43,6 +46,21 @@ Steps 1 to 6 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/
 - **Upgrade note: WASM plugins and HTTP/3 need the opt-in.** A configuration with `type: wasm` or `http3.enabled: true` must now list the feature under `experimental` (`experimental: [wasm]`, `experimental: [http3]`), or `rdock validate` and `rdock run` refuse it. Both still need their cargo feature as before; every other configuration works unchanged.
 - The "EXPERIMENTAL" wording in the schema's descriptions of `type: wasm` and `http3` gives way to the registry's `x-rdock-maturity` annotation; `rdock version` takes its "(experimental)" from the registry.
 - `docs/06-repo-layout.md` named an `rdock config migrate` command that never existed; `rdock migrate config` takes its place.
+- **Upgrade note: mutating admin calls now fail when the audit log cannot be written** (ADR-0033, step 7). Every admin call with an unsafe method (except logout, the MFA and re-authentication steps of a login, ending one's own sessions, `POST /api/v1/config/validate` and `POST /api/v1/routes/explain`), and creating the first admin, first reserves 16 KiB past the end of the audit log; without room it is answered `507 Insufficient Storage` with `{"error": …}` and changes nothing. Before, the change was made and the lost record only logged and counted. Logins and every read-only call keep working on a full disk. Scripts that change things through the API should treat `507` as "free space, then retry". New counter `rdock_admin_audit_refusals_total`.
+- **Upgrade note: a configuration API write or rollback that cannot be stored is refused** with `507` (before: applied in memory, the history and API snapshot write only logged). The history entry and the API snapshot are written before the data plane takes the change and moved into place after it, so a refused write changes nothing in memory or on disk. A file reload still applies when its history or last-known-good copy cannot be written (the file is its stored copy). The control plane answers `507` to a revision it cannot store; user and token changes that cannot be stored answer `507` instead of `500`.
+- **Upgrade note: no ACME order without room to store it**: an order is not placed (not even its lease taken) while the storage directory has less than 1 MiB free or the file-size limit is lower; the attempt fails with "not ordering: …", the current certificate keeps serving and the backoff applies.
+- **ACME requests have a 30-second deadline** each (answer and body), and a `Retry-After` on a `429` or `503` delays the next attempt at least that long.
+- **The data plane keeps serving on a full disk**: a disk cache store that cannot write serves the response uncached (`rdock_cache_dropped_total{reason="write_error"}`) instead of failing it; a held request body that cannot be spooled stays in memory up to 1 MiB; quota counters and ban lists that cannot be written are logged once a minute per file instead of every second. Temporary files of failed writes are removed (configuration state, ACME storage, cluster directory store, quota counters, ban lists, the Cloudflare range cache).
+- A restart on a full disk starts on what is stored: the lock file's pid and the bootstrap token are skipped (with a warning) when they cannot be written; the first admin can then be created over the Unix socket.
+- `rdock status` lists a provider that never reached its source (rdock started while Docker was down) as `degraded`, and shows the data directory's free space.
+- SIGXFSZ is caught: a file-size limit (`RLIMIT_FSIZE`) fails the write (`EFBIG`), handled like a full disk, instead of ending the process.
+
+### Fixed
+
+- A full disk holding standard error (logs redirected to a file) made rdock panic: the log subscriber reported its failed write with `eprintln!`, which panics when standard error cannot be written. Found by the chaos suite.
+- A configuration rollback to a history entry with API objects always failed with `422` (`tcp_routes: unknown field`): the entry kept the whole fragment and the rollback sent it back as a client document. Found by the chaos suite.
+- A CA that accepted connections and never answered stalled every certificate's issuance and renewal for good (no request deadline).
+- A restart on a full disk failed while no admin user existed (the bootstrap token could not be written).
 
 ### Deprecated
 

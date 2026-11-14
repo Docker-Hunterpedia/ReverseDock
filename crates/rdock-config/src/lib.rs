@@ -6,6 +6,7 @@ use rdock_model::interpolation::{FieldKind, field_kind};
 use rdock_model::{Config, Diagnostic, closest_match, path_index, path_key};
 use serde_json::Value;
 
+pub mod disk;
 pub mod includes;
 pub mod interpolate;
 pub mod merge;

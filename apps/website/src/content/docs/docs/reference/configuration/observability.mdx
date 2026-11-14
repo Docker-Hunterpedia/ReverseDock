@@ -63,7 +63,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -85,7 +85,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -107,7 +107,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -129,7 +129,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -181,7 +181,7 @@ Port: 587 for STARTTLS, 465 for implicit TLS.
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -215,15 +215,33 @@ The same alert is sent again at most this often while it keeps firing.
 
 ### `observability.alerts.rules`
 
-**Type:** object · **Default:** `{"disabled":[],"error_rate":null,"latency":null}`
+**Type:** object · **Default:** see the fields below
 
 What raises an alert.
 
 #### `observability.alerts.rules.disabled`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Rules that are off.
+
+#### `observability.alerts.rules.disk`
+
+**Type:** object · **Default:** `{"free_bytes":"256MiB","free_percent":5}`
+
+When free space in the data directory raises the `disk` alert.
+
+#### `observability.alerts.rules.disk.free_bytes`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `256MiB`
+
+Alert when fewer bytes than this are free (0 turns this threshold off).
+
+#### `observability.alerts.rules.disk.free_percent`
+
+**Type:** `integer` · **Default:** `5`
+
+Alert when less than this share of the file system is free, in percent (0–50; 0 turns this threshold off).
 
 #### `observability.alerts.rules.error_rate`
 

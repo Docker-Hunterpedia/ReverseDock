@@ -2160,6 +2160,12 @@ impl Validator<'_> {
         let window_ok = |w: crate::values::Duration| {
             (minute..=std::time::Duration::from_secs(900)).contains(&w.as_std())
         };
+        if alerts.rules.disk.free_percent > 50 {
+            self.error(
+                "observability.alerts.rules.disk.free_percent",
+                "must be between 0 and 50",
+            );
+        }
         if let Some(rule) = alerts.rules.error_rate {
             if !(1..=100).contains(&rule.percent) {
                 self.error(

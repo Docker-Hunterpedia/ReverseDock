@@ -2,6 +2,7 @@
 
 mod account;
 mod alerts;
+mod client;
 mod cluster;
 pub mod directory;
 pub mod dns;

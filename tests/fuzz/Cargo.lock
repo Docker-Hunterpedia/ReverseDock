@@ -3039,6 +3039,7 @@ name = "rdock-config"
 version = "0.9.0-alpha.1"
 dependencies = [
  "rdock-model",
+ "rustix",
  "serde",
  "serde-saphyr",
  "serde_json",

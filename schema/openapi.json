@@ -1,6 +1,16 @@
 {
   "components": {
     "responses": {
+      "AuditUnavailable": {
+        "content": {
+          "application/json": {
+            "schema": {
+              "$ref": "#/components/schemas/ErrorBody"
+            }
+          }
+        },
+        "description": "The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written."
+      },
       "ConfigBusy": {
         "content": {
           "application/json": {
@@ -2095,12 +2105,17 @@
             "const": "security",
             "description": "Admin security events: login lockouts, user and second-factor changes, tokens used\nfrom a new address.",
             "type": "string"
+          },
+          {
+            "const": "disk",
+            "description": "The data directory is running out of space (`rules.disk`).",
+            "type": "string"
           }
         ]
       },
       "rdock.AlertRules": {
         "additionalProperties": false,
-        "description": "What raises alerts. Certificates, backends, config and security are on; the thresholds are\noff until set.",
+        "description": "What raises alerts. Certificates, backends, config, security and disk are on; the error-rate\nand latency thresholds are off until set.",
         "properties": {
           "disabled": {
             "default": [],
@@ -2109,6 +2124,14 @@
               "$ref": "#/components/schemas/rdock.AlertRule"
             },
             "type": "array"
+          },
+          "disk": {
+            "$ref": "#/components/schemas/rdock.DiskRule",
+            "default": {
+              "free_bytes": "256MiB",
+              "free_percent": 5
+            },
+            "description": "When free space in the data directory raises the `disk` alert."
           },
           "error_rate": {
             "anyOf": [
@@ -2161,6 +2184,10 @@
             "$ref": "#/components/schemas/rdock.AlertRules",
             "default": {
               "disabled": [],
+              "disk": {
+                "free_bytes": "256MiB",
+                "free_percent": 5
+              },
               "error_rate": null,
               "latency": null
             },
@@ -3163,6 +3190,10 @@
                 "min_interval": "15m",
                 "rules": {
                   "disabled": [],
+                  "disk": {
+                    "free_bytes": "256MiB",
+                    "free_percent": 5
+                  },
                   "error_rate": null,
                   "latency": null
                 },
@@ -3517,6 +3548,26 @@
         "required": [
           "api_token"
         ],
+        "type": "object"
+      },
+      "rdock.DiskRule": {
+        "additionalProperties": false,
+        "description": "Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the\nspace left drops below either. A full disk never stops request handling, but the\nconfiguration API, mutating admin calls and certificate orders are refused until there is\nroom. Defaults: 5 %, the warning level of the Prometheus node exporter's\n`NodeFilesystemAlmostOutOfSpace` alert (node-mixin `config.libsonnet`, checked\n2026-11-14), and 256 MiB, enough for several hundred certificate orders and configuration\nwrites.",
+        "properties": {
+          "free_bytes": {
+            "$ref": "#/components/schemas/rdock.ByteSize",
+            "default": "256MiB",
+            "description": "Alert when fewer bytes than this are free (0 turns this threshold off)."
+          },
+          "free_percent": {
+            "default": 5,
+            "description": "Alert when less than this share of the file system is free, in percent (0–50; 0 turns\nthis threshold off).",
+            "format": "uint8",
+            "maximum": 255,
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "rdock.DnsProvider": {
@@ -8219,6 +8270,10 @@
               "min_interval": "15m",
               "rules": {
                 "disabled": [],
+                "disk": {
+                  "free_bytes": "256MiB",
+                  "free_percent": 5
+                },
                 "error_rate": null,
                 "latency": null
               },
@@ -11714,6 +11769,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12053,6 +12111,9 @@
               }
             },
             "description": "Too many password hashes at once"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12155,6 +12216,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12328,6 +12392,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12372,6 +12439,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12435,6 +12505,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12533,6 +12606,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12592,6 +12668,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12724,6 +12803,9 @@
               }
             },
             "description": "The store failed"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12826,6 +12908,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -12938,6 +13023,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13070,6 +13158,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13184,6 +13275,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13246,6 +13340,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13318,6 +13415,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13531,6 +13631,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13627,6 +13730,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13806,6 +13912,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13865,6 +13974,9 @@
               }
             },
             "description": "Shutting down"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -13973,6 +14085,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -14153,6 +14268,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -14311,6 +14429,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -14413,6 +14534,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -14511,6 +14635,9 @@
           },
           "429": {
             "$ref": "#/components/responses/ConfigBusy"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -14982,6 +15109,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15195,6 +15325,9 @@
               }
             },
             "description": "Too many attempts; see `Retry-After`"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "summary": "Creates the first admin",
@@ -15335,6 +15468,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15388,6 +15524,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15465,6 +15604,9 @@
               }
             },
             "description": "Failed and rolled back; this process serves on"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15587,6 +15729,9 @@
               }
             },
             "description": "Too many password hashes at once"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15650,6 +15795,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15738,6 +15886,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -15908,6 +16059,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [
@@ -16090,6 +16244,9 @@
           },
           "429": {
             "$ref": "#/components/responses/RateLimited"
+          },
+          "507": {
+            "$ref": "#/components/responses/AuditUnavailable"
           }
         },
         "security": [

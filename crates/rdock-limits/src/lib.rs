@@ -4,11 +4,13 @@ pub mod abuse;
 pub mod admission;
 mod bandwidth;
 mod concurrency;
+mod persist;
 pub mod quota;
 pub mod shared;
 
 pub use bandwidth::ByteLimiter;
 pub use concurrency::{Admitted, ConcurrencyLimiter, Refused};
+pub use persist::Persistence;
 
 use std::collections::HashMap;
 use std::hash::{BuildHasher, Hash, RandomState};

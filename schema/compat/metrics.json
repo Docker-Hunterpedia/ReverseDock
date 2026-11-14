@@ -41,6 +41,14 @@
       "type": "counter",
       "unit": ""
     },
+    "rdock_admin_audit_refusals_total": {
+      "feature": "admin-api",
+      "help": "Mutating admin calls refused because their audit record could not be written.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
     "rdock_admin_audit_write_failures_total": {
       "feature": "admin-api",
       "help": "Audit records that could not be written.",
@@ -477,6 +485,22 @@
       "type": "gauge",
       "unit": ""
     },
+    "rdock_data_dir_available_bytes": {
+      "feature": "observability",
+      "help": "Bytes the file system of the data directory still offers rdock.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": "bytes"
+    },
+    "rdock_data_dir_size_bytes": {
+      "feature": "observability",
+      "help": "Size of the file system of the data directory.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": "bytes"
+    },
     "rdock_deprecated_config_in_use": {
       "feature": "observability",
       "help": "1 when the applied configuration uses this deprecated element.",
@@ -747,6 +771,16 @@
       ],
       "maturity": "beta",
       "type": "gauge",
+      "unit": ""
+    },
+    "rdock_state_write_failures_total": {
+      "feature": "observability",
+      "help": "Writes to the data directory that failed, by what was written.",
+      "labels": [
+        "what"
+      ],
+      "maturity": "stable",
+      "type": "counter",
       "unit": ""
     },
     "rdock_tcp_bytes_total": {

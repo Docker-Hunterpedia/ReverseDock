@@ -28,6 +28,8 @@ pub enum ClusterPublish {
     Refused(Value),
     /// Not a valid request (an unknown revision to roll back to).
     Invalid(String),
+    /// The revision could not be stored (a full disk); nothing was published (ADR-0033).
+    NotStored(String),
 }
 
 /// `POST /api/v1/cluster/tokens`.
@@ -431,6 +433,14 @@ pub(crate) async fn publish(
             (StatusCode::UNPROCESSABLE_ENTITY, axum::Json(value)).into_response()
         }
         Some(ClusterPublish::Invalid(message)) => error(StatusCode::BAD_REQUEST, &message),
+        Some(ClusterPublish::NotStored(message)) => {
+            state.audit.record(Event {
+                outcome: Outcome::Failed,
+                reason: Some("the revision could not be stored".to_owned()),
+                ..caller.event(action)
+            });
+            error(StatusCode::INSUFFICIENT_STORAGE, &message)
+        }
     }
 }
 

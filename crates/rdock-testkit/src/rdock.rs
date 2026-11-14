@@ -15,6 +15,8 @@ pub struct Rdock {
     pub admin: SocketAddr,
     binary: PathBuf,
     env: Vec<(String, String)>,
+    /// A data directory elsewhere than `dir/data` (a size-limited file system).
+    data: Option<PathBuf>,
 }
 
 impl Drop for Rdock {
@@ -57,6 +59,7 @@ impl Rdock {
                 .iter()
                 .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
                 .collect(),
+            data: None,
         };
         rdock.write_config(config);
         rdock.spawn();
@@ -79,6 +82,7 @@ impl Rdock {
             admin: format!("127.0.0.1:{admin_port}").parse().unwrap(),
             binary: PathBuf::from(binary),
             env: Vec::new(),
+            data: None,
         };
         std::fs::create_dir_all(rdock.data_dir()).unwrap();
         prepare(&rdock.data_dir());
@@ -93,7 +97,37 @@ impl Rdock {
     }
 
     pub fn data_dir(&self) -> PathBuf {
-        self.dir.path().join("data")
+        self.data
+            .clone()
+            .unwrap_or_else(|| self.dir.path().join("data"))
+    }
+
+    /// Like [`Self::try_start_with_env`], with the data directory at `data_dir` (for example
+    /// on a tmpfs the test mounted) and up to `ready` to become ready.
+    pub fn try_start_in(
+        binary: &str,
+        config: &str,
+        env: &[(&str, &str)],
+        data_dir: Option<&Path>,
+        ready: Duration,
+    ) -> Result<Self, String> {
+        let dir = tempfile::tempdir().unwrap();
+        let admin_port = crate::free_port();
+        let mut rdock = Self {
+            child: None,
+            dir,
+            admin: format!("127.0.0.1:{admin_port}").parse().unwrap(),
+            binary: PathBuf::from(binary),
+            env: env
+                .iter()
+                .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+                .collect(),
+            data: data_dir.map(Path::to_owned),
+        };
+        rdock.write_config(config);
+        rdock.spawn();
+        rdock.wait_ready(ready)?;
+        Ok(rdock)
     }
 
     /// Replaces the configuration file (the admin section is added again). A configuration

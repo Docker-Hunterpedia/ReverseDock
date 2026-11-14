@@ -130,9 +130,14 @@ impl Engine {
     }
 
     /// A reload in cluster mode: the local file `local` with the bundle in use.
-    pub(super) async fn reload_with_bundle(&self, local: Loaded, trigger: &str) -> Report {
+    pub(super) async fn reload_with_bundle(
+        &self,
+        local: Loaded,
+        trigger: &str,
+        store: super::Store,
+    ) -> Report {
         let Some(control) = &self.control else {
-            return self.apply(local, trigger, Origin::File).await;
+            return Box::pin(self.apply(local, trigger, Origin::File, store)).await;
         };
         let _turn = control.turn.lock().await;
         let Some(bundle) = control.bundle() else {
@@ -150,7 +155,7 @@ impl Engine {
                 .await;
         };
         match Self::compose(&local.source, &bundle) {
-            Ok(loaded) => self.apply(loaded, trigger, Origin::Control).await,
+            Ok(loaded) => Box::pin(self.apply(loaded, trigger, Origin::Control, store)).await,
             Err((error, diagnostics)) => self.rejected(trigger, Some(error), diagnostics).await,
         }
     }
@@ -185,7 +190,8 @@ impl Engine {
             ]);
         }
         let trigger = format!("control plane revision {}", bundle.revision);
-        let report = self.apply(loaded, &trigger, Origin::Control).await;
+        let report =
+            Box::pin(self.apply(loaded, &trigger, Origin::Control, super::Store::BestEffort)).await;
         if !report.applied() {
             let _ = std::fs::remove_file(&next);
             let mut diagnostics = report.diagnostics.clone();
@@ -264,6 +270,7 @@ impl Engine {
                     origin: Origin::Control,
                     error: Some("no report".to_owned()),
                     diagnostics: Vec::new(),
+                    not_stored: None,
                 })
             })
     }

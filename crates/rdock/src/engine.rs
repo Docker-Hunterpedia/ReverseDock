@@ -72,6 +72,23 @@ pub(crate) struct Report {
     pub error: Option<String>,
     /// Diagnostics of the attempt (warnings included).
     pub diagnostics: Vec<Diagnostic>,
+    /// Set when the configuration was refused because its stored copy could not be written
+    /// (a full disk, ADR-0033): why. Such a write is answered `507`, not `422`.
+    #[serde(skip)]
+    pub not_stored: Option<String>,
+}
+
+/// Whether an apply must store its copy before the data plane takes it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Store {
+    /// The source is stored elsewhere (the configuration file the operator wrote, a bundle
+    /// stored before it is applied): history, last-known-good and snapshots are written after
+    /// the apply, and a failure is logged and counted, never fatal.
+    BestEffort,
+    /// rdock holds the only copy (a configuration API write or rollback): the history entry
+    /// and the API snapshot are written before the data plane takes the change, and a write
+    /// that fails refuses the change (ADR-0033).
+    Required,
 }
 
 impl Report {
@@ -125,9 +142,33 @@ pub(crate) type Unbound = BTreeMap<
     ),
 >;
 
+/// Why [`Engine::compile_and_apply`] applied nothing.
+enum Refused {
+    /// The configuration is wrong, or the data plane refused it (a listener cannot bind).
+    Config(String),
+    /// Its stored copy could not be written.
+    NotStored(String),
+}
+
+/// The error of a stored copy that could not be written.
+fn not_stored(err: &std::io::Error) -> String {
+    if rdock_config::disk::is_out_of_space(err) {
+        format!("cannot store the configuration, the disk is full: {err}; nothing was changed")
+    } else {
+        format!("cannot store the configuration: {err}; nothing was changed")
+    }
+}
+
+/// Writes the stored copies of a configuration (generation, merged configuration) before the
+/// data plane takes it; see [`Store::Required`].
+type StageFn<'a> =
+    dyn Fn(u64, &Config) -> Result<Vec<rdock_config::state::Staged>, String> + Sync + 'a;
+
 /// What [`Engine::compile_and_apply`] applied.
 struct Done {
     config: Config,
+    /// The stored copies written before the apply, renamed into place now that it succeeded.
+    staged: Vec<rdock_config::state::Staged>,
     generation: u64,
     acme_plan: rdock_acme::Plan,
     local_names: Vec<String>,
@@ -139,6 +180,11 @@ struct Done {
 pub(crate) struct Engine {
     source: Source,
     state: StateDir,
+    /// The data directory, for its free space (ADR-0033).
+    data_dir: PathBuf,
+    /// The last free-space reading of the data directory and whether it is below the `disk`
+    /// rule, for `rdock status`.
+    disk: Mutex<Option<(rdock_config::disk::Space, bool)>>,
     plane: Arc<DataPlane>,
     /// Issues and renews automatic certificates (ADR-0020).
     acme: rdock_acme::Manager,
@@ -247,6 +293,8 @@ impl Engine {
         Self {
             source,
             state: StateDir::new(data_dir),
+            data_dir: data_dir.to_owned(),
+            disk: Mutex::new(None),
             acme: rdock_acme::Manager::spawn(rdock_acme::Services {
                 default_storage: data_dir.join("acme"),
                 resolver: plane.resolver(),
@@ -567,7 +615,9 @@ impl Engine {
         }
         match load_value(lkg, &System) {
             Ok(loaded) if !loaded.has_errors() => {
-                let lkg_report = Box::pin(self.apply(loaded, "start", Origin::LastKnownGood)).await;
+                let lkg_report =
+                    Box::pin(self.apply(loaded, "start", Origin::LastKnownGood, Store::BestEffort))
+                        .await;
                 if lkg_report.applied() {
                     Ok(lkg_report)
                 } else {
@@ -596,6 +646,11 @@ impl Engine {
     /// Loads the configuration file and applies it; on any problem the running configuration
     /// stays in place.
     pub(crate) async fn reload(&self, trigger: &str) -> Report {
+        self.reload_with(trigger, Store::BestEffort).await
+    }
+
+    /// [`Self::reload`], storing the result as `store` says.
+    pub(crate) async fn reload_with(&self, trigger: &str, store: Store) -> Report {
         let loaded = match &self.source {
             Source::File(path) => load_file_with_includes(path).map(|(loaded, included)| {
                 *self.included.lock().unwrap_or_else(PoisonError::into_inner) = included;
@@ -621,10 +676,10 @@ impl Engine {
                 .await;
         }
         if self.control.is_some() {
-            return Box::pin(self.reload_with_bundle(loaded, trigger)).await;
+            return Box::pin(self.reload_with_bundle(loaded, trigger, store)).await;
         }
         // Boxed: the configuration grew past what a reload future may hold on the stack.
-        Box::pin(self.apply(loaded, trigger, Origin::File)).await
+        Box::pin(self.apply(loaded, trigger, Origin::File, store)).await
     }
 
     /// Hands the applied configuration to the tasks that work beside the data plane.
@@ -666,6 +721,61 @@ impl Engine {
         let rules = &config.observability.alerts.rules;
         let thresholds = rules.error_rate.is_some() || rules.latency.is_some();
         self.plane.live().set_recording(admin, admin || thresholds);
+    }
+
+    /// Reads the free space of the data directory every 15 seconds: the gauges
+    /// `rdock_data_dir_available_bytes` and `rdock_data_dir_size_bytes`, `rdock status`, and
+    /// the `disk` alert while the space is below `observability.alerts.rules.disk`
+    /// (ADR-0033); runs until the process ends.
+    pub(crate) async fn watch_disk(self: Arc<Self>) {
+        use rdock_model::settings::AlertRule;
+        use rdock_observability::alerts::Alert;
+        let mut firing = false;
+        let mut tick = tokio::time::interval(Duration::from_secs(15));
+        loop {
+            tick.tick().await;
+            let dir = self.data_dir.clone();
+            let Ok(Ok(space)) =
+                tokio::task::spawn_blocking(move || rdock_config::disk::space(&dir)).await
+            else {
+                continue;
+            };
+            let metrics = self.plane.metrics();
+            metrics
+                .data_dir_available
+                .set(i64::try_from(space.available).unwrap_or(i64::MAX));
+            metrics
+                .data_dir_size
+                .set(i64::try_from(space.total).unwrap_or(i64::MAX));
+            let rule = self.alerts.borrow().rules.disk;
+            let low = low_space(&space, rule);
+            *self.disk.lock().unwrap_or_else(PoisonError::into_inner) = Some((space, low));
+            let sink = &metrics.feeds.alerts;
+            let dir = self.data_dir.display().to_string();
+            if low {
+                if !firing {
+                    tracing::warn!(data_dir = %dir, available = space.available, "the data directory is running out of space; configuration writes, mutating admin calls and certificate orders are refused when it is full");
+                }
+                firing = true;
+                sink.raise(Alert::firing(
+                    AlertRule::Disk,
+                    "disk".to_owned(),
+                    format!(
+                        "The data directory {dir} has {} MiB free ({:.1} %)",
+                        space.available >> 20,
+                        space.free_percent()
+                    ),
+                    serde_json::json!({ "event": "disk_low", "data_dir": dir, "available_bytes": space.available, "size_bytes": space.total }),
+                ));
+            } else if firing {
+                firing = false;
+                sink.raise(Alert::resolved(
+                    AlertRule::Disk,
+                    "disk".to_owned(),
+                    format!("The data directory {dir} has room again"),
+                ));
+            }
+        }
     }
 
     /// Checks error-rate and latency thresholds every 30 seconds against the live rings and
@@ -740,7 +850,8 @@ impl Engine {
         }
     }
 
-    async fn apply(&self, loaded: Loaded, trigger: &str, origin: Origin) -> Report {
+    #[allow(clippy::too_many_lines)] // load, stage, apply, store, report: one step after the other
+    async fn apply(&self, loaded: Loaded, trigger: &str, origin: Origin, store: Store) -> Report {
         let mut applied = self.applied.lock().await;
         let Loaded {
             config: file,
@@ -755,22 +866,77 @@ impl Engine {
         for snapshot in &snapshots {
             diagnostics.extend(snapshot.diagnostics.iter().cloned());
         }
+        let api = snapshots
+            .iter()
+            .find(|s| s.provider == api::PROVIDER)
+            .and_then(|s| serde_json::to_value(&s.fragment).ok());
+        let history_due = applied.source.as_ref() != Some(&source) || applied.api != api;
+        // The stored copies of a required store, written before the data plane takes the
+        // change (ADR-0033): the history entry and the API snapshot.
+        let stage = |generation: u64,
+                     config: &Config|
+         -> Result<Vec<rdock_config::state::Staged>, String> {
+            if store == Store::BestEffort {
+                return Ok(Vec::new());
+            }
+            let mut staged = Vec::new();
+            if history_due {
+                let entry = HistoryEntry {
+                    applied_at_ms: unix_ms(),
+                    generation,
+                    summary: summarize(applied.config.as_ref(), config),
+                    source: source.clone(),
+                    api: api.clone(),
+                };
+                staged.push(
+                    self.state
+                        .stage_history(&entry)
+                        .map_err(|e| not_stored(&e))?,
+                );
+            }
+            if let Some(snapshot) = snapshots.iter().find(|s| s.provider == api::PROVIDER) {
+                staged.push(
+                    self.state
+                        .stage_snapshot(snapshot)
+                        .map_err(|e| not_stored(&e))?,
+                );
+            }
+            Ok(staged)
+        };
         let Done {
             config,
+            staged,
             generation,
             acme_plan,
             local_names,
             unbound,
         } = match self
-            .compile_and_apply(&file, &snapshots, &mut diagnostics)
+            .compile_and_apply(&file, &snapshots, &mut diagnostics, &stage)
             .await
         {
             Ok(done) => done,
-            Err(error) => {
+            Err(Refused::Config(error)) => {
                 drop(applied);
                 return self.rejected(trigger, Some(error), diagnostics).await;
             }
+            Err(Refused::NotStored(error)) => {
+                drop(applied);
+                self.count_store_failure("config");
+                let mut report = self
+                    .rejected(trigger, Some(error.clone()), diagnostics)
+                    .await;
+                report.not_stored = Some(error);
+                return report;
+            }
         };
+        let stored = !staged.is_empty();
+        for file in staged {
+            let path = file.path().display().to_string();
+            if let Err(err) = file.commit() {
+                self.count_store_failure("config");
+                tracing::error!(file = %path, error = %err, "cannot move a stored configuration copy into place");
+            }
+        }
         self.update_background(&config, acme_plan, local_names);
         diagnostics.extend(self.restart_only(&config).await);
         self.unbound.send_if_modified(|current| {
@@ -787,20 +953,25 @@ impl Engine {
                 !(*received && snapshots.iter().any(|s| &s.provider == provider))
             });
         let summary = summarize(applied.config.as_ref(), &config);
-        let api = snapshots
-            .iter()
-            .find(|s| s.provider == api::PROVIDER)
-            .and_then(|s| serde_json::to_value(&s.fragment).ok());
-        if applied.source.as_ref() != Some(&source) || applied.api != api {
+        if store == Store::Required {
+            if stored && let Err(err) = self.state.prune_history(HISTORY_LIMIT) {
+                tracing::warn!(error = %err, "cannot remove old configuration history entries");
+            }
+        } else if history_due {
             self.record_history(generation, &summary, &source, api.as_ref());
         }
         if origin == Origin::File
             && let Err(err) = self.state.save_lkg(&source)
         {
+            self.count_store_failure("lkg");
             tracing::warn!(error = %err, "cannot write the last-known-good configuration");
         }
         for snapshot in &snapshots {
+            if store == Store::Required && snapshot.provider == api::PROVIDER {
+                continue;
+            }
             if let Err(err) = self.state.save_snapshot(snapshot) {
+                self.count_store_failure("snapshot");
                 tracing::warn!(provider = %snapshot.provider, error = %err, "cannot store the provider snapshot");
             }
         }
@@ -824,6 +995,7 @@ impl Engine {
             origin,
             error: None,
             diagnostics,
+            not_stored: None,
         };
         *self.last.lock().unwrap_or_else(PoisonError::into_inner) = Some(report.clone());
         self.plane.metrics().feeds.events.send(serde_json::json!({
@@ -861,7 +1033,8 @@ impl Engine {
         file: &Config,
         snapshots: &[Snapshot],
         diagnostics: &mut Vec<Diagnostic>,
-    ) -> Result<Done, String> {
+        stage: &StageFn<'_>,
+    ) -> Result<Done, Refused> {
         let mut unbindable: BTreeSet<ObjectKey> = BTreeSet::new();
         let mut unbound = Unbound::new();
         let mut left_out: Vec<Diagnostic> = Vec::new();
@@ -873,10 +1046,18 @@ impl Engine {
                 Err(error) => {
                     attempt.extend(left_out);
                     *diagnostics = attempt;
-                    return Err(error);
+                    return Err(Refused::Config(error));
                 }
             };
             let generation = runtime.generation;
+            let staged = match stage(generation, &config) {
+                Ok(staged) => staged,
+                Err(error) => {
+                    attempt.extend(left_out);
+                    *diagnostics = attempt;
+                    return Err(Refused::NotStored(error));
+                }
+            };
             let drain = config.lifecycle.drain_timeout.as_std();
             let acme_plan = acme_plan(&config, &runtime);
             let local_names = runtime.local_cert_names.clone();
@@ -886,6 +1067,7 @@ impl Engine {
                     *diagnostics = attempt;
                     return Ok(Done {
                         config,
+                        staged,
                         generation,
                         acme_plan,
                         local_names,
@@ -913,7 +1095,7 @@ impl Engine {
                 Err(err) => {
                     attempt.extend(left_out);
                     *diagnostics = attempt;
-                    return Err(err.to_string());
+                    return Err(Refused::Config(err.to_string()));
                 }
             }
         }
@@ -1005,6 +1187,15 @@ impl Engine {
         metrics.config_reloads.with_label_values(&["applied"]).inc();
     }
 
+    /// Counts a stored copy that could not be written (`rdock_state_write_failures_total`).
+    fn count_store_failure(&self, what: &str) {
+        self.plane
+            .metrics()
+            .state_write_failures
+            .with_label_values(&[what])
+            .inc();
+    }
+
     /// Adds an entry to the on-disk history; a failure is logged, never fatal.
     fn record_history(&self, generation: u64, summary: &str, source: &Value, api: Option<&Value>) {
         let entry = HistoryEntry {
@@ -1015,6 +1206,7 @@ impl Engine {
             api: api.cloned(),
         };
         if let Err(err) = self.state.record(&entry, HISTORY_LIMIT) {
+            self.count_store_failure("history");
             tracing::warn!(error = %err, "cannot write the configuration history");
         }
     }
@@ -1086,6 +1278,7 @@ impl Engine {
             origin,
             error,
             diagnostics,
+            not_stored: None,
         };
         self.plane.metrics().feeds.alerts.raise(rdock_observability::alerts::Alert::firing(
             rdock_model::settings::AlertRule::Config,
@@ -1300,6 +1493,19 @@ impl Engine {
                     }),
                 )
             })
+            // A provider that never reached its source (rdock started while Docker was down)
+            // has no snapshot yet, and is listed all the same (found by the chaos suite).
+            .chain(
+                degraded
+                    .iter()
+                    .filter(|(name, _)| !snapshots.contains_key(*name))
+                    .map(|(name, error)| {
+                        (
+                            name.clone(),
+                            serde_json::json!({ "state": "degraded", "error": error, "routes": 0, "diagnostics": [] }),
+                        )
+                    }),
+            )
             .collect::<serde_json::Map<_, _>>()
             .into()
     }
@@ -1359,6 +1565,8 @@ impl rdock_admin::Control for Engine {
                 "beta": signals.beta,
             },
             "deprecations_in_use": signals.deprecated,
+            // ADR-0033: the free space of the data directory, read every 15 seconds.
+            "data_dir": self.disk_status(),
         })
     }
 
@@ -1434,6 +1642,7 @@ impl rdock_admin::Control for Engine {
                 etag: self.api_etag(),
             },
             api::Write::Rejected(r) => rdock_admin::ApiWrite::Rejected { report: report(&r) },
+            api::Write::NotStored(error) => rdock_admin::ApiWrite::NotStored(error),
             api::Write::Stale => rdock_admin::ApiWrite::Stale {
                 etag: self.api_etag(),
             },
@@ -1464,7 +1673,17 @@ impl rdock_admin::Control for Engine {
     async fn history_api(&self, id: u64) -> Option<Value> {
         let entries = self.state.history().ok()?;
         let entry = entries.iter().find(|e| e.applied_at_ms == id)?;
-        Some(entry.api.clone().unwrap_or_else(|| serde_json::json!({})))
+        // The entry keeps the whole fragment; a rollback sends back what a client may write
+        // (found by the chaos suite: the empty TCP and UDP sections made every rollback to an
+        // entry with API objects fail with 422).
+        Some(match &entry.api {
+            Some(api) => match serde_json::from_value::<rdock_config::merge::Fragment>(api.clone())
+            {
+                Ok(fragment) => api::document(&fragment),
+                Err(_) => api.clone(),
+            },
+            None => serde_json::json!({}),
+        })
     }
 
     async fn backends(&self) -> Value {
@@ -1750,6 +1969,30 @@ impl rdock_admin::Control for Engine {
             "services": by_name(&services),
         })
     }
+}
+
+impl Engine {
+    /// The data directory's path, free space and whether it is below the `disk` rule.
+    fn disk_status(&self) -> Value {
+        let reading = *self.disk.lock().unwrap_or_else(PoisonError::into_inner);
+        let reading = reading.or_else(|| {
+            let space = rdock_config::disk::space(&self.data_dir).ok()?;
+            Some((space, low_space(&space, self.alerts.borrow().rules.disk)))
+        });
+        serde_json::json!({
+            "path": self.data_dir.display().to_string(),
+            "available_bytes": reading.map(|(s, _)| s.available),
+            "size_bytes": reading.map(|(s, _)| s.total),
+            "low": reading.is_some_and(|(_, low)| low),
+        })
+    }
+}
+
+/// Whether `space` is below either threshold of `rule` (a threshold of 0 is off).
+fn low_space(space: &rdock_config::disk::Space, rule: rdock_model::settings::DiskRule) -> bool {
+    let bytes = rule.free_bytes.as_u64();
+    (bytes > 0 && space.available < bytes)
+        || (rule.free_percent > 0 && space.free_percent() < f64::from(rule.free_percent))
 }
 
 /// `part` as a percentage of `total`; request counts stay far below 2^52, so `f64` is exact.

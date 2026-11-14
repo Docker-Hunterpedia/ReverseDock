@@ -1,6 +1,6 @@
 ---
 title: Get alerts
-description: Send alerts about certificates, backends, error rates, latency, rejected configurations and admin security events to Slack, Discord, Mattermost, signed webhooks or e-mail.
+description: Send alerts about certificates, backends, error rates, latency, rejected configurations, admin security events and a full disk to Slack, Discord, Mattermost, signed webhooks or e-mail.
 sidebar:
   order: 13
 ---
@@ -17,6 +17,7 @@ rdock raises an alert when something needs a person <Status since="v0.5" />, sen
 | `latency` | a service's p99 over the window is above the threshold (off until set) | it drops below |
 | `config` | a configuration is rejected (the previous one keeps running) | a configuration is applied |
 | `security` | repeated failed admin logins, admin users created, changed or deleted, two-step verification turned off, an API token used from a new address | |
+| `disk` | the data directory has less than `rules.disk.free_percent` (5 %) or `free_bytes` (256 MiB) free | there is room again |
 
 A firing alert is sent once and again at most every `min_interval` (15 minutes) while it lasts. Delivery runs beside the proxy, never on a request: from a bounded queue, with up to three attempts about 1 s and 3 s apart, 5 seconds per attempt, and no redirects followed.
 

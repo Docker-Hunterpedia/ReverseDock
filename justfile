@@ -27,6 +27,11 @@ test:
     cargo nextest run --workspace --locked
     cargo test --workspace --doc --locked
 
+# The chaos suite (ADR-0033): every scenario, rootless unless RDOCK_CHAOS_DISK=tmpfs and the
+# RDOCK_*_TESTS variables ask for the heavier variants (the `chaos` CI job sets them)
+chaos:
+    cargo nextest run --locked -p rdock -E 'binary(/^chaos/) | binary(e2e_docker) | binary(e2e_acme) | binary(e2e_cluster)' --no-fail-fast
+
 # Build the API docs with warnings as errors
 doc:
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --locked

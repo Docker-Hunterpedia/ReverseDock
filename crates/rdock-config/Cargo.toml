@@ -12,6 +12,7 @@ publish.workspace = true
 
 [dependencies]
 rdock-model.workspace = true
+rustix.workspace = true
 serde.workspace = true
 serde-saphyr.workspace = true
 serde_json.workspace = true

@@ -680,6 +680,9 @@ type UserView struct {
 	Tenant *string `json:"tenant,omitempty"`
 }
 
+// AuditUnavailable A refusal or failure.
+type AuditUnavailable = ErrorBody
+
 // ConfigBusy A refusal or failure.
 type ConfigBusy = ErrorBody
 
@@ -7670,6 +7673,8 @@ type RemoveBanResponse struct {
 	JSON404 *map[string]interface{}
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *RemoveBanResponse429Headers
 }
@@ -7697,6 +7702,11 @@ func (r RemoveBanResponse) GetJSON404() *map[string]interface{} {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r RemoveBanResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r RemoveBanResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8088,6 +8098,8 @@ type ChangePasswordResponse struct {
 	JSON429 *ErrorBody
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *ErrorBody
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 }
 
 // GetJSON401 returns the response for an HTTP 401 `application/json` response
@@ -8118,6 +8130,11 @@ func (r ChangePasswordResponse) GetJSON429() *ErrorBody {
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
 func (r ChangePasswordResponse) GetJSON503() *ErrorBody {
 	return r.JSON503
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ChangePasswordResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8229,6 +8246,8 @@ type NewRecoveryCodesResponse struct {
 	JSON409 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *NewRecoveryCodesResponse429Headers
 }
@@ -8256,6 +8275,11 @@ func (r NewRecoveryCodesResponse) GetJSON409() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r NewRecoveryCodesResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r NewRecoveryCodesResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8533,6 +8557,8 @@ type UnenrolResponse struct {
 	JSON409 *WrongStage
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *UnenrolResponse429Headers
 }
@@ -8560,6 +8586,11 @@ func (r UnenrolResponse) GetJSON409() *WrongStage {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r UnenrolResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r UnenrolResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8609,6 +8640,8 @@ type EnrolResponse struct {
 	JSON409 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *EnrolResponse429Headers
 }
@@ -8636,6 +8669,11 @@ func (r EnrolResponse) GetJSON409() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r EnrolResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r EnrolResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8685,6 +8723,8 @@ type ConfirmResponse struct {
 	JSON409 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ConfirmResponse429Headers
 }
@@ -8712,6 +8752,11 @@ func (r ConfirmResponse) GetJSON409() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r ConfirmResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ConfirmResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8830,6 +8875,8 @@ type DrainResponse struct {
 	JSON404 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *DrainResponse429Headers
 }
@@ -8857,6 +8904,11 @@ func (r DrainResponse) GetJSON404() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r DrainResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r DrainResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -8906,6 +8958,8 @@ type UndrainResponse struct {
 	JSON404 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *UndrainResponse429Headers
 }
@@ -8933,6 +8987,11 @@ func (r UndrainResponse) GetJSON404() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r UndrainResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r UndrainResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9055,6 +9114,8 @@ type PurgeCacheResponse struct {
 	JSON429 *ConfigBusy
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *ErrorBody
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PurgeCacheResponse429Headers
 }
@@ -9092,6 +9153,11 @@ func (r PurgeCacheResponse) GetJSON429() *ConfigBusy {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r PurgeCacheResponse) GetJSON500() *ErrorBody {
 	return r.JSON500
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r PurgeCacheResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9210,6 +9276,8 @@ type RenewResponse struct {
 	JSON404 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *RenewResponse429Headers
 }
@@ -9237,6 +9305,11 @@ func (r RenewResponse) GetJSON404() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r RenewResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r RenewResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9362,6 +9435,8 @@ type RevokeClusterInstanceResponse struct {
 	JSON404 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *RevokeClusterInstanceResponse429Headers
 }
@@ -9389,6 +9464,11 @@ func (r RevokeClusterInstanceResponse) GetJSON404() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r RevokeClusterInstanceResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r RevokeClusterInstanceResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9518,6 +9598,8 @@ type PublishClusterRevisionResponse struct {
 	JSON422 *map[string]interface{}
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PublishClusterRevisionResponse429Headers
 }
@@ -9555,6 +9637,11 @@ func (r PublishClusterRevisionResponse) GetJSON422() *map[string]interface{} {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PublishClusterRevisionResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r PublishClusterRevisionResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9682,6 +9769,8 @@ type AbandonClusterRolloutResponse struct {
 	JSON409 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *AbandonClusterRolloutResponse429Headers
 }
@@ -9714,6 +9803,11 @@ func (r AbandonClusterRolloutResponse) GetJSON409() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r AbandonClusterRolloutResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r AbandonClusterRolloutResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9765,6 +9859,8 @@ type ResumeClusterRolloutResponse struct {
 	JSON409 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ResumeClusterRolloutResponse429Headers
 }
@@ -9797,6 +9893,11 @@ func (r ResumeClusterRolloutResponse) GetJSON409() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r ResumeClusterRolloutResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ResumeClusterRolloutResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -9848,6 +9949,8 @@ type CreateJoinTokenResponse struct {
 	JSON404 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *CreateJoinTokenResponse429Headers
 }
@@ -9880,6 +9983,11 @@ func (r CreateJoinTokenResponse) GetJSON404() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r CreateJoinTokenResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r CreateJoinTokenResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -10087,6 +10195,8 @@ type PatchApiResponse struct {
 	JSON428 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *PatchApiResponse200Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
@@ -10136,6 +10246,11 @@ func (r PatchApiResponse) GetJSON428() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PatchApiResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r PatchApiResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -10194,6 +10309,8 @@ type PutApiResponse struct {
 	JSON428 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *PutApiResponse200Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
@@ -10233,6 +10350,11 @@ func (r PutApiResponse) GetJSON428() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PutApiResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r PutApiResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -10429,6 +10551,8 @@ type ImportResponse struct {
 	JSON428 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *ImportResponse200Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
@@ -10468,6 +10592,11 @@ func (r ImportResponse) GetJSON428() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r ImportResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ImportResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -10519,6 +10648,8 @@ type ReloadResponse struct {
 	JSON429 *RateLimited
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *ErrorBody
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ReloadResponse429Headers
 }
@@ -10551,6 +10682,11 @@ func (r ReloadResponse) GetJSON429() *RateLimited {
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
 func (r ReloadResponse) GetJSON503() *ErrorBody {
 	return r.JSON503
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ReloadResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -10611,6 +10747,8 @@ type RollbackResponse struct {
 	JSON428 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers200 the parsed response headers for an HTTP 200 response
 	Headers200 *RollbackResponse200Headers
 	// Headers429 the parsed response headers for an HTTP 429 response
@@ -10655,6 +10793,11 @@ func (r RollbackResponse) GetJSON428() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r RollbackResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r RollbackResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -10851,6 +10994,8 @@ type DeleteConsumerResponse struct {
 	JSON412 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *DeleteConsumerResponse429Headers
 }
@@ -10883,6 +11028,11 @@ func (r DeleteConsumerResponse) GetJSON412() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r DeleteConsumerResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r DeleteConsumerResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -11010,6 +11160,8 @@ type PutConsumerResponse struct {
 	JSON422 *map[string]interface{}
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PutConsumerResponse429Headers
 }
@@ -11042,6 +11194,11 @@ func (r PutConsumerResponse) GetJSON422() *map[string]interface{} {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PutConsumerResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r PutConsumerResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -11095,6 +11252,8 @@ type CreateConsumerKeyResponse struct {
 	JSON422 *map[string]interface{}
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *CreateConsumerKeyResponse429Headers
 }
@@ -11132,6 +11291,11 @@ func (r CreateConsumerKeyResponse) GetJSON422() *map[string]interface{} {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r CreateConsumerKeyResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r CreateConsumerKeyResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -11183,6 +11347,8 @@ type RevokeConsumerKeyResponse struct {
 	JSON412 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ConfigBusy
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *RevokeConsumerKeyResponse429Headers
 }
@@ -11215,6 +11381,11 @@ func (r RevokeConsumerKeyResponse) GetJSON412() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r RevokeConsumerKeyResponse) GetJSON429() *ConfigBusy {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r RevokeConsumerKeyResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -11648,6 +11819,8 @@ type ResetQuotaResponse struct {
 	JSON403 *Forbidden
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ResetQuotaResponse429Headers
 }
@@ -11670,6 +11843,11 @@ func (r ResetQuotaResponse) GetJSON403() *Forbidden {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r ResetQuotaResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ResetQuotaResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -11900,6 +12078,8 @@ type SetupResponse struct {
 	JSON422 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *ErrorBody
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 }
 
 // GetJSON201 returns the response for an HTTP 201 `application/json` response
@@ -11925,6 +12105,11 @@ func (r SetupResponse) GetJSON422() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r SetupResponse) GetJSON429() *ErrorBody {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r SetupResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12119,6 +12304,8 @@ type CreateTokenResponse struct {
 	JSON422 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *CreateTokenResponse429Headers
 }
@@ -12146,6 +12333,11 @@ func (r CreateTokenResponse) GetJSON422() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r CreateTokenResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r CreateTokenResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12193,6 +12385,8 @@ type RevokeTokenResponse struct {
 	JSON404 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *RevokeTokenResponse429Headers
 }
@@ -12215,6 +12409,11 @@ func (r RevokeTokenResponse) GetJSON404() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r RevokeTokenResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r RevokeTokenResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12266,6 +12465,8 @@ type UpgradeResponse struct {
 	JSON429 *RateLimited
 	// JSON500 the response for an HTTP 500 `application/json` response
 	JSON500 *map[string]interface{}
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *UpgradeResponse429Headers
 }
@@ -12298,6 +12499,11 @@ func (r UpgradeResponse) GetJSON429() *RateLimited {
 // GetJSON500 returns the response for an HTTP 500 `application/json` response
 func (r UpgradeResponse) GetJSON500() *map[string]interface{} {
 	return r.JSON500
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r UpgradeResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12420,6 +12626,8 @@ type CreateUserResponse struct {
 	JSON429 *RateLimited
 	// JSON503 the response for an HTTP 503 `application/json` response
 	JSON503 *ErrorBody
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *CreateUserResponse429Headers
 }
@@ -12457,6 +12665,11 @@ func (r CreateUserResponse) GetJSON429() *RateLimited {
 // GetJSON503 returns the response for an HTTP 503 `application/json` response
 func (r CreateUserResponse) GetJSON503() *ErrorBody {
 	return r.JSON503
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r CreateUserResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12506,6 +12719,8 @@ type DeleteUserResponse struct {
 	JSON409 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *DeleteUserResponse429Headers
 }
@@ -12533,6 +12748,11 @@ func (r DeleteUserResponse) GetJSON409() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r DeleteUserResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r DeleteUserResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12586,6 +12806,8 @@ type ChangeUserResponse struct {
 	JSON422 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *ChangeUserResponse429Headers
 }
@@ -12623,6 +12845,11 @@ func (r ChangeUserResponse) GetJSON422() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r ChangeUserResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r ChangeUserResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12750,6 +12977,8 @@ type DeleteObjectResponse struct {
 	JSON412 *ErrorBody
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *DeleteObjectResponse429Headers
 }
@@ -12782,6 +13011,11 @@ func (r DeleteObjectResponse) GetJSON412() *ErrorBody {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r DeleteObjectResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r DeleteObjectResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -12909,6 +13143,8 @@ type PutObjectResponse struct {
 	JSON422 *map[string]interface{}
 	// JSON429 the response for an HTTP 429 `application/json` response
 	JSON429 *RateLimited
+	// JSON507 the response for an HTTP 507 `application/json` response
+	JSON507 *AuditUnavailable
 	// Headers429 the parsed response headers for an HTTP 429 response
 	Headers429 *PutObjectResponse429Headers
 }
@@ -12941,6 +13177,11 @@ func (r PutObjectResponse) GetJSON422() *map[string]interface{} {
 // GetJSON429 returns the response for an HTTP 429 `application/json` response
 func (r PutObjectResponse) GetJSON429() *RateLimited {
 	return r.JSON429
+}
+
+// GetJSON507 returns the response for an HTTP 507 `application/json` response
+func (r PutObjectResponse) GetJSON507() *AuditUnavailable {
+	return r.JSON507
 }
 
 // GetBody returns the raw response body bytes
@@ -14778,6 +15019,13 @@ func ParseRemoveBanResponse(rsp *http.Response) (*RemoveBanResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -15152,6 +15400,13 @@ func ParseChangePasswordResponse(rsp *http.Response) (*ChangePasswordResponse, e
 		}
 		response.JSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	return response, nil
@@ -15255,6 +15510,13 @@ func ParseNewRecoveryCodesResponse(rsp *http.Response) (*NewRecoveryCodesRespons
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -15527,6 +15789,13 @@ func ParseUnenrolResponse(rsp *http.Response) (*UnenrolResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -15594,6 +15863,13 @@ func ParseEnrolResponse(rsp *http.Response) (*EnrolResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -15660,6 +15936,13 @@ func ParseConfirmResponse(rsp *http.Response) (*ConfirmResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -15788,6 +16071,13 @@ func ParseDrainResponse(rsp *http.Response) (*DrainResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -15854,6 +16144,13 @@ func ParseUndrainResponse(rsp *http.Response) (*UndrainResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -15996,6 +16293,13 @@ func ParsePurgeCacheResponse(rsp *http.Response) (*PurgeCacheResponse, error) {
 		}
 		response.JSON500 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -16122,6 +16426,13 @@ func ParseRenewResponse(rsp *http.Response) (*RenewResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -16256,6 +16567,13 @@ func ParseRevokeClusterInstanceResponse(rsp *http.Response) (*RevokeClusterInsta
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -16405,6 +16723,13 @@ func ParsePublishClusterRevisionResponse(rsp *http.Response) (*PublishClusterRev
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -16546,6 +16871,13 @@ func ParseAbandonClusterRolloutResponse(rsp *http.Response) (*AbandonClusterRoll
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -16620,6 +16952,13 @@ func ParseResumeClusterRolloutResponse(rsp *http.Response) (*ResumeClusterRollou
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -16693,6 +17032,13 @@ func ParseCreateJoinTokenResponse(rsp *http.Response) (*CreateJoinTokenResponse,
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -16919,6 +17265,13 @@ func ParsePatchApiResponse(rsp *http.Response) (*PatchApiResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -17009,6 +17362,13 @@ func ParsePutApiResponse(rsp *http.Response) (*PutApiResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -17221,6 +17581,13 @@ func ParseImportResponse(rsp *http.Response) (*ImportResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -17304,6 +17671,13 @@ func ParseReloadResponse(rsp *http.Response) (*ReloadResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -17392,6 +17766,13 @@ func ParseRollbackResponse(rsp *http.Response) (*RollbackResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -17604,6 +17985,13 @@ func ParseDeleteConsumerResponse(rsp *http.Response) (*DeleteConsumerResponse, e
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -17745,6 +18133,13 @@ func ParsePutConsumerResponse(rsp *http.Response) (*PutConsumerResponse, error) 
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -17826,6 +18221,13 @@ func ParseCreateConsumerKeyResponse(rsp *http.Response) (*CreateConsumerKeyRespo
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -17899,6 +18301,13 @@ func ParseRevokeConsumerKeyResponse(rsp *http.Response) (*RevokeConsumerKeyRespo
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -18286,6 +18695,13 @@ func ParseResetQuotaResponse(rsp *http.Response) (*ResetQuotaResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -18506,6 +18922,13 @@ func ParseSetupResponse(rsp *http.Response) (*SetupResponse, error) {
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	return response, nil
@@ -18687,6 +19110,13 @@ func ParseCreateTokenResponse(rsp *http.Response) (*CreateTokenResponse, error) 
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -18749,6 +19179,13 @@ func ParseRevokeTokenResponse(rsp *http.Response) (*RevokeTokenResponse, error) 
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -18823,6 +19260,13 @@ func ParseUpgradeResponse(rsp *http.Response) (*UpgradeResponse, error) {
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -18965,6 +19409,13 @@ func ParseCreateUserResponse(rsp *http.Response) (*CreateUserResponse, error) {
 		}
 		response.JSON503 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -19034,6 +19485,13 @@ func ParseDeleteUserResponse(rsp *http.Response) (*DeleteUserResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -19115,6 +19573,13 @@ func ParseChangeUserResponse(rsp *http.Response) (*ChangeUserResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 
@@ -19257,6 +19722,13 @@ func ParseDeleteObjectResponse(rsp *http.Response) (*DeleteObjectResponse, error
 		}
 		response.JSON429 = &dest
 
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
+
 	}
 
 	switch {
@@ -19397,6 +19869,13 @@ func ParsePutObjectResponse(rsp *http.Response) (*PutObjectResponse, error) {
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 507:
+		var dest AuditUnavailable
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON507 = &dest
 
 	}
 

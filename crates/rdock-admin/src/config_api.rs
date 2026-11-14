@@ -354,7 +354,25 @@ pub(crate) async fn write_as(
             &etag,
         ),
         ApiWrite::Invalid(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        ApiWrite::NotStored(message) => not_stored(state, caller, action, resource, &message),
     }
+}
+
+/// The answer to a write whose stored copy could not be written: `507`, audited as failed.
+fn not_stored(
+    state: &State,
+    caller: &Caller,
+    action: &'static str,
+    resource: Option<String>,
+    message: &str,
+) -> Response {
+    state.audit.record(Event {
+        outcome: Outcome::Failed,
+        reason: Some("the configuration could not be stored".into()),
+        resource,
+        ..caller.event(action)
+    });
+    error(StatusCode::INSUFFICIENT_STORAGE, message)
 }
 
 pub(crate) async fn api_config(state: &State) -> Option<(Value, String)> {
@@ -534,6 +552,9 @@ pub(crate) async fn write_scoped(
             }
             // Another write came in between; try again on the new objects.
             ApiWrite::Stale { .. } => {}
+            ApiWrite::NotStored(message) => {
+                return not_stored(state, caller, action, resource, &message);
+            }
             ApiWrite::Invalid(message) => {
                 state.audit.record(Event {
                     outcome: Outcome::Failed,

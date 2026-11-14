@@ -199,6 +199,42 @@ jobs:
           cargo build --locked -p rdock --features http3
           scripts/http3-curl.sh
 
+  # The chaos suite's heavier variants (ADR-0033, docs/10-stability.md): not required. The
+  # rootless variant of every scenario runs in `rust` (the disk is made full with the process's
+  # file-size limit, EFBIG); here the same tests run with a real tmpfs filled until ENOSPC
+  # (hosted runners have passwordless sudo), next to the Docker-based ones: Toxiproxy between
+  # rdock and its backends (chaos.rs), a real Docker daemon whose socket is cut (e2e_docker.rs)
+  # and Pebble stopped mid-renewal (e2e_acme.rs). The development sandbox cannot pull images, so
+  # those three are unverified until this job has run.
+  chaos:
+    name: chaos
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: chaos
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: just,cargo-nextest
+      - name: Passwordless sudo mounts a tmpfs
+        run: |
+          dir="$(mktemp -d)"
+          sudo -n mount -t tmpfs -o size=1m tmpfs "$dir"
+          sudo -n umount "$dir"
+      - name: The chaos suite with a real full disk and the Docker-based variants
+        run: just chaos
+        env:
+          RDOCK_CHAOS_DISK: tmpfs
+          RDOCK_CHAOS_TESTS: "1"
+          RDOCK_DOCKER_TESTS: "1"
+          RDOCK_ACME_TESTS: "1"
+
   deny:
     name: deny
     runs-on: ubuntu-24.04

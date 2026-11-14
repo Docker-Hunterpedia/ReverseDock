@@ -111,7 +111,11 @@ impl DataDirLock {
             file,
             path: path.clone(),
         };
-        lock.write_pid().map_err(io)?;
+        // The pid is only for the message a second process prints: a full disk must not
+        // keep rdock from starting on the data it already has (ADR-0033).
+        if let Err(err) = lock.write_pid() {
+            tracing::warn!(file = %path.display(), error = %err, "cannot write the pid into the lock file; the lock is held all the same");
+        }
         Ok(lock)
     }
 

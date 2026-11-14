@@ -215,6 +215,10 @@
           "min_interval": "15m",
           "rules": {
             "disabled": [],
+            "disk": {
+              "free_bytes": "256MiB",
+              "free_percent": 5
+            },
             "error_rate": null,
             "latency": null
           },
@@ -1793,11 +1797,16 @@
           "description": "Admin security events: login lockouts, user and second-factor changes, tokens used\nfrom a new address.",
           "type": "string",
           "const": "security"
+        },
+        {
+          "description": "The data directory is running out of space (`rules.disk`).",
+          "type": "string",
+          "const": "disk"
         }
       ]
     },
     "AlertRules": {
-      "description": "What raises alerts. Certificates, backends, config and security are on; the thresholds are\noff until set.",
+      "description": "What raises alerts. Certificates, backends, config, security and disk are on; the error-rate\nand latency thresholds are off until set.",
       "type": "object",
       "properties": {
         "disabled": {
@@ -1806,6 +1815,14 @@
           "default": [],
           "items": {
             "$ref": "#/$defs/AlertRule"
+          }
+        },
+        "disk": {
+          "description": "When free space in the data directory raises the `disk` alert.",
+          "$ref": "#/$defs/DiskRule",
+          "default": {
+            "free_bytes": "256MiB",
+            "free_percent": 5
           }
         },
         "error_rate": {
@@ -1857,6 +1874,10 @@
           "$ref": "#/$defs/AlertRules",
           "default": {
             "disabled": [],
+            "disk": {
+              "free_bytes": "256MiB",
+              "free_percent": 5
+            },
             "error_rate": null,
             "latency": null
           }
@@ -2849,6 +2870,26 @@
       "required": [
         "api_token"
       ]
+    },
+    "DiskRule": {
+      "description": "Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the\nspace left drops below either. A full disk never stops request handling, but the\nconfiguration API, mutating admin calls and certificate orders are refused until there is\nroom. Defaults: 5 %, the warning level of the Prometheus node exporter's\n`NodeFilesystemAlmostOutOfSpace` alert (node-mixin `config.libsonnet`, checked\n2026-11-14), and 256 MiB, enough for several hundred certificate orders and configuration\nwrites.",
+      "type": "object",
+      "properties": {
+        "free_bytes": {
+          "description": "Alert when fewer bytes than this are free (0 turns this threshold off).",
+          "$ref": "#/$defs/ByteSize",
+          "default": "256MiB"
+        },
+        "free_percent": {
+          "description": "Alert when less than this share of the file system is free, in percent (0–50; 0 turns\nthis threshold off).",
+          "type": "integer",
+          "format": "uint8",
+          "default": 5,
+          "maximum": 255,
+          "minimum": 0
+        }
+      },
+      "additionalProperties": false
     },
     "DnsProvider": {
       "description": "A DNS provider for DNS-01 challenges.",
@@ -7548,6 +7589,10 @@
             "min_interval": "15m",
             "rules": {
               "disabled": [],
+              "disk": {
+                "free_bytes": "256MiB",
+                "free_percent": 5
+              },
               "error_rate": null,
               "latency": null
             },

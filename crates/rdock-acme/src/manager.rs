@@ -379,9 +379,11 @@ impl Worker {
             Ok(account) => account,
             Err(crate::account::AccountError::Busy) => return,
             Err(e) => {
-                for request in &due {
-                    self.failed(&request.names, format!("ACME account: {e}"));
+                let failed: Vec<Vec<String>> = due.iter().map(|r| r.names.clone()).collect();
+                for names in &failed {
+                    self.failed(names, format!("ACME account: {e}"));
                 }
+                self.honour_retry_after(&directory_url(&plan.acme).unwrap_or_default(), failed);
                 return;
             }
         };
@@ -429,6 +431,7 @@ impl Worker {
             });
         }
         let ca = host_of(&directory);
+        let mut failed = Vec::new();
         while let Some(joined) = orders.join_next().await {
             let Ok((request, outcome)) = joined else {
                 continue;
@@ -445,19 +448,51 @@ impl Worker {
                     .with_label_values(&[ca.as_str(), label])
                     .inc();
             }
-            match outcome {
-                Outcome::Issued(stored) | Outcome::Adopted(stored) => {
-                    info!(names = ?request.names, not_after = stored.cert.not_after, by = ?stored.meta.issued_by, "certificate issued");
-                    let state = self.certs.entry(request.names.clone()).or_default();
-                    state.set_cert(stored.cert);
-                    state.adopt_meta(&stored.meta);
-                    state.meta_version = stored.version;
-                }
-                Outcome::Busy(holder) => {
-                    let state = self.certs.entry(request.names.clone()).or_default();
-                    state.wait_for(&holder, BUSY_RECHECK);
-                }
-                Outcome::Failed(e) => self.failed(&request.names, e),
+            if let Some(names) = self.take_outcome(request, outcome) {
+                failed.push(names);
+            }
+        }
+        self.honour_retry_after(&directory, failed);
+    }
+
+    /// Takes one order's outcome; the names when it failed.
+    fn take_outcome(&mut self, request: CertRequest, outcome: Outcome) -> Option<Vec<String>> {
+        match outcome {
+            Outcome::Issued(stored) | Outcome::Adopted(stored) => {
+                info!(names = ?request.names, not_after = stored.cert.not_after, by = ?stored.meta.issued_by, "certificate issued");
+                let state = self.certs.entry(request.names.clone()).or_default();
+                state.set_cert(stored.cert);
+                state.adopt_meta(&stored.meta);
+                state.meta_version = stored.version;
+                None
+            }
+            Outcome::Busy(holder) => {
+                let state = self.certs.entry(request.names.clone()).or_default();
+                state.wait_for(&holder, BUSY_RECHECK);
+                None
+            }
+            Outcome::Failed(e) => {
+                self.failed(&request.names, e);
+                Some(request.names)
+            }
+        }
+    }
+
+    /// The CA asked to wait (`Retry-After` on a 429 or 503): no attempt on `failed` before
+    /// that.
+    fn honour_retry_after(&mut self, directory: &str, failed: Vec<Vec<String>>) {
+        if let Some(at) = self.accounts.retry_after(directory) {
+            let wait = at
+                .duration_since(std::time::SystemTime::now())
+                .unwrap_or_default();
+            if !failed.is_empty() {
+                info!(
+                    seconds = wait.as_secs(),
+                    "the CA asked to wait before the next order"
+                );
+            }
+            for names in failed {
+                self.certs.entry(names).or_default().not_before(at);
             }
         }
     }
@@ -769,6 +804,18 @@ impl Job {
         let Some(first) = names.first() else {
             return Outcome::Failed("a certificate without names".to_owned());
         };
+        // No order whose certificate could not be stored: it would use up the CA's rate limits
+        // for nothing (ADR-0033). Checked before the lease (itself a file in a single
+        // instance's directory) and before a journalled order is resumed, which stores too.
+        if let Err(no_room) = self.storage.check_room() {
+            self.metrics
+                .state_write_failures
+                .with_label_values(&["certificate"])
+                .inc();
+            return Outcome::Failed(format!(
+                "not ordering: {no_room}; the current certificate stays in use and the order is tried again later"
+            ));
+        }
         let store = self.storage.store().clone();
         let lease_name = cert_lease(first);
         let count = |result: &str| {
@@ -913,7 +960,15 @@ impl Job {
                     "another instance stored the certificate at the same time".to_owned(),
                 );
             }
-            Err(e) => return Outcome::Failed(format!("cannot store the certificate: {e}")),
+            Err(e) => {
+                self.metrics
+                    .state_write_failures
+                    .with_label_values(&["certificate"])
+                    .inc();
+                return Outcome::Failed(format!(
+                    "cannot store the certificate: {e}; the previous one stays in use, and the journalled order is collected again on the next attempt"
+                ));
+            }
         }
         if let Err(e) = self.storage.delete_order(first, Some(lease)).await {
             warn!(names = ?names, error = %e, "cannot remove the order journal");

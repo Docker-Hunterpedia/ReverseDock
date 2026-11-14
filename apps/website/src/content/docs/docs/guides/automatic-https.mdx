@@ -79,7 +79,8 @@ Let's Encrypt offers profiles: `classic` (90 days, moving to 64 days in 2027 and
 - **ARI** (RFC 9773): ReverseDock asks the CA for its suggested renewal window and renews at a random time inside it. Such renewals are exempt from Let's Encrypt's rate limits ([rate limits](https://letsencrypt.org/docs/rate-limits/), checked 2026-10-28).
 - **Without ARI**, it renews with a third of the lifetime left, whatever the lifetime.
 - **Failures** are retried after 1 minute, then 2, 4 … up to 24 hours. After a failure against Let's Encrypt, the next attempt is rehearsed on staging first, so a broken setup does not use up production limits.
-- **A CA outage** never stops serving: the stored certificate is used until it expires.
+- **A CA outage** never stops serving: the stored certificate is used until it expires. A `Retry-After` on a `429` or `503` answer is waited out, and each request to the CA has a 30-second deadline, so a CA that hangs fails the attempt instead of holding up other certificates.
+- **No room, no order**: while the storage directory has less than 1 MiB free, no order is placed (the certificate could not be stored and the order would use up rate limits); the attempt fails with "not ordering" and is retried. See [Failure behaviour](/docs/operations/failure-behaviour/).
 
 `rdock status` lists every automatic certificate with its expiry, planned renewal and last error. Metrics: `rdock_cert_expiry_timestamp_seconds`, `rdock_cert_renewal_failures_total` and `rdock_acme_orders_total`. After 3 failures in a row, or with less than 7 days left, a warning is logged and, if set, an [alert channel](/docs/guides/alerts/) receives the event:
 

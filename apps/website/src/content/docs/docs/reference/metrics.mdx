@@ -287,9 +287,10 @@ Label: `store`.
 
 ### `rdock_cache_dropped_total`
 
-**Counter.** Disk-store objects removed by the start-up walk. Labels: `store` and `reason`:
-`corrupt` (a checksum, length or format that does not check out) or `partial` (a temporary file
-an interrupted fill left behind).
+**Counter.** Disk-store objects removed by the start-up walk, or not stored. Labels: `store` and
+`reason`: `corrupt` (a checksum, length or format that does not check out), `partial` (a
+temporary file an interrupted fill left behind) or `write_error` (the disk refused the write, for
+example because it is full; the response is served uncached).
 
 ## Consumers and metering
 
@@ -479,6 +480,23 @@ applied reload.
 **Counter.** Attempts to apply a configuration, including the first one at start. Label:
 `result`, which is `applied` or `rejected`. A rejected reload leaves the running configuration
 in place.
+
+### `rdock_state_write_failures_total`
+
+**Counter.** Writes to the data directory that failed, typically because the disk is full. Label:
+`what`: `config` (a configuration API write, refused with `507`), `history`, `lkg` and
+`snapshot` (after a file reload, which still applies), `quota`, `bans` and `certificate`. See
+[Failure behaviour](/docs/operations/failure-behaviour/).
+
+### `rdock_data_dir_available_bytes`
+
+**Gauge.** Bytes the file system of the data directory still offers ReverseDock (capped by the
+process's file-size limit), read every 15 seconds. The `disk` alert fires when it drops below
+`observability.alerts.rules.disk`.
+
+### `rdock_data_dir_size_bytes`
+
+**Gauge.** Size of the file system of the data directory.
 
 ### `rdock_experimental_feature_in_use`
 

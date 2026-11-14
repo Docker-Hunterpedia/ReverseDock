@@ -4575,6 +4575,7 @@ version = "0.9.0-alpha.1"
 dependencies = [
  "jsonschema",
  "rdock-model",
+ "rustix",
  "serde",
  "serde-saphyr",
  "serde_json",
@@ -4978,6 +4979,7 @@ dependencies = [
  "rcgen",
  "rdock-acme",
  "ring",
+ "rustix",
  "rustls",
  "rustls-pki-types",
  "serde_json",

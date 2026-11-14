@@ -1,0 +1,81 @@
+---
+title: Failure behaviour
+description: What ReverseDock does when its control plane, Docker, the certificate authority, the disk or a backend fails, how fast it recovers, and what to watch.
+sidebar:
+  order: 3
+---
+
+ReverseDock keeps serving when the things around it fail. This page says what happens in each case, the recovery bounds that the chaos suite proves on every pull request, and the metrics and alerts that tell you about it.
+
+The chaos suite drives steady client load through the proxy for the whole of each scenario, injects the fault, heals it, and requires **zero failed requests**, the stated recovery bound, a consistent data directory and an intact audit chain (`rdock audit verify`). Its tests are in `crates/rdock/tests/chaos_*.rs`; see [Stability and support](/docs/project/stability/) for what the project promises.
+
+## The control plane or the admin side is down
+
+- **Cluster control plane** (`rdock control run`): data planes keep serving their stored bundle, restart from it, and take the next revision when the control plane returns. Certificates on the control plane's store keep serving but are not renewed until it is back. See [Cluster](/docs/guides/cluster/).
+- **The admin API of one instance**: the admin side runs apart from the data plane. Hundreds of stalled connections, a flood of expensive calls, back-to-back configuration writes and a removed Unix socket cost no proxied request; the admin API answers again within 10 seconds of the end of the attack.
+
+## Docker is unreachable
+
+When the Docker socket disappears, hangs or answers errors, the routes from the last snapshot keep serving and never flap. `rdock status` shows the provider as `degraded` with the reason, and ReverseDock reconnects with a backoff of 1 to 30 seconds:
+
+- A socket that comes back is used again within **40 seconds**, followed by a full listing.
+- A socket that accepts connections and never answers is noticed after the Engine API request timeout, **30 seconds**.
+- rdock **starts** within its usual time while the socket is absent or hanging: it serves its file routes and the stored Docker snapshot (`state/providers/docker.json`) and picks Docker up when it returns.
+
+## The certificate authority is down
+
+- Certificates already issued keep serving until they expire.
+- Failed attempts are retried after 1 minute, then 2, 4 and so on up to 24 hours. A `Retry-After` from the CA on a `429` or `503` answer is waited out.
+- Each request to the CA has a **30-second deadline**: a CA that accepts connections and never answers fails the attempt instead of holding up other certificates.
+- A name that has no certificate yet gets none until its first issuance. Its TLS handshakes get `defaults.certificate` if you set one, and fail otherwise; plain HTTP keeps answering.
+- When the CA returns, the next attempt renews with **one order**.
+
+`rdock status` lists each certificate's failures and last error. Watch `rdock_cert_renewal_failures_total`; the `certificates` alert fires after three failures in a row or with less than seven days left. See [Automatic HTTPS](/docs/guides/automatic-https/).
+
+## The disk is full
+
+Request handling never waits for or depends on a write. A full disk degrades persistence and refuses changes, with a clear answer:
+
+- **Requests**: served. The disk cache serves responses uncached while it cannot store them. A request body that must be held and cannot be spooled stays in memory up to 1 MiB. Logs that cannot be written are dropped.
+- **Configuration API writes and rollbacks**: refused with `507 Insufficient Storage` when their history entry or stored copy cannot be written. Nothing changes, in memory or on disk. A reload of the configuration file still applies, because the file is its own stored copy.
+- **Admin changes**: every call that changes something first reserves room for its audit record. Without room it is refused with `507` before it changes anything, so no change is ever made unaudited. Logging in, logging out and every read-only call keep working, so you can still see what is going on.
+- **Certificates**: no ACME order is placed while the storage directory has less than 1 MiB free, because the certificate could not be stored and the order would use up the CA's rate limits. The current certificate keeps serving and the order is retried with the backoff.
+- **Quota counters and ban lists** stay in memory and are written when there is room again.
+- **Recovery**: when space returns, writes succeed again within seconds, without a restart. A restart on a full disk starts on what is stored.
+
+The audit log never ends in half a record. When a record could not be written, the next change first writes an `audit.gap` record that says how many were lost, so the chain still verifies.
+
+ReverseDock reads the free space of its data directory every 15 seconds. The `disk` alert fires below 5 % or 256 MiB, whichever comes first; the 5 % default is the warning level of the Prometheus node exporter's `NodeFilesystemAlmostOutOfSpace` alert (checked 2026-11-14). Set your own thresholds, or `0` to turn one off:
+
+```yaml title="rdock.yaml (excerpt)"
+observability:
+  alerts:
+    rules:
+      disk:
+        free_percent: 10
+        free_bytes: 1GiB
+```
+
+## A backend fails or flaps
+
+Passive ejection and active health checks take a failing backend out of rotation, and idempotent requests are retried on another backend. While at least one backend is healthy, no request fails, even when a backend flaps faster than the health-check interval. A backend that comes back serves again within its ejection time plus one active check.
+
+When every backend is down, or the only one that is up has not passed a check since it came back, requests get `503` (or `502` after the retries). Keep `passive.ejection` and the active `interval` short if backends often restart one after another. See [Backends and health checks](/docs/guides/backends/).
+
+## A configuration change goes wrong
+
+A rejected configuration changes nothing: the previous one keeps serving. Rollbacks through the API or `rdock config rollback`, a rollback that races a file reload, and listeners or certificates changed and put back in the file cost no request; a rolled-back route set is served within 1 second of the answer. Every write and rollback is one audit record. See [Reloads and last-known-good](/docs/concepts/reloads-and-last-known-good/) and [Configuration API](/docs/guides/config-api/).
+
+## What to watch
+
+| Metric | What it tells you |
+|---|---|
+| `rdock_data_dir_available_bytes` | Free space of the data directory |
+| `rdock_state_write_failures_total` | Writes to the data directory that failed, by `what` |
+| `rdock_admin_audit_refusals_total` | Changes refused because the audit log had no room |
+| `rdock_admin_audit_write_failures_total` | Audit records that could not be written |
+| `rdock_cert_renewal_failures_total` | Failed certificate attempts, by name |
+| `rdock_cache_dropped_total` | Cache objects not stored, by `reason` |
+| `rdock_config_reloads_total` | Reloads, applied and rejected |
+
+Alerts: `disk`, `certificates`, `backends` and `config` are on by default; send them to a channel as [Alerts](/docs/guides/alerts/) describes. `rdock status` shows the providers' state, the certificates and the data directory's free space.

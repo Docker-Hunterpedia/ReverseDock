@@ -170,6 +170,15 @@ pub(crate) async fn setup(
     if let Err(weak) = state.policy.check(&body.password) {
         return error(StatusCode::UNPROCESSABLE_ENTITY, &weak.to_string());
     }
+    // Creating the first admin is a change like any other: refused while its audit record
+    // cannot be written (ADR-0033).
+    if let Err(err) = state.audit.prepare() {
+        state.audit.refused();
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            &format!("the audit log cannot be written ({err}); try again when it can"),
+        );
+    }
     let worker = state.clone();
     let created = hashing(&state, move || {
         let hash = worker

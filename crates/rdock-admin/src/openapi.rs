@@ -207,6 +207,10 @@ fn add_security(document: &mut Value) {
             "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next request is accepted" } },
             "content": error_content(),
         },
+        "AuditUnavailable": {
+            "description": "The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.",
+            "content": error_content(),
+        },
         "ConfigBusy": {
             "description": "More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.",
             "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next write is accepted" } },
@@ -216,6 +220,20 @@ fn add_security(document: &mut Value) {
     let Some(paths) = document["paths"].as_object_mut() else {
         return;
     };
+    for (path, item) in paths.iter_mut() {
+        let Some(operations) = item.as_object_mut() else {
+            continue;
+        };
+        for (method, operation) in operations.iter_mut() {
+            let gated = http::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+                .is_ok_and(|m| crate::caller::is_gated(&m, Some(path)))
+                && path != "/api/v1/auth/login";
+            if gated && operation["responses"].get("507").is_none() {
+                operation["responses"]["507"] =
+                    json!({ "$ref": "#/components/responses/AuditUnavailable" });
+            }
+        }
+    }
     for (path, item) in paths {
         if PUBLIC.contains(&path.as_str()) {
             continue;

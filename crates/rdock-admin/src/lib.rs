@@ -218,6 +218,9 @@ pub enum ApiWrite {
     },
     /// Not a valid document.
     Invalid(String),
+    /// Not applied because its stored copy (history entry, API snapshot) could not be written,
+    /// typically a full disk; nothing changed (ADR-0033). Answered `507 Insufficient Storage`.
+    NotStored(String),
 }
 
 /// Where and how the admin API listens (ADR-0024).

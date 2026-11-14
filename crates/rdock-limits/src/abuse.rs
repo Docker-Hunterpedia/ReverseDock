@@ -315,6 +315,8 @@ pub struct AbuseRegistry {
     clock: Arc<dyn Clock>,
     sets: Mutex<HashMap<String, Arc<Abuse>>>,
     bans: Mutex<HashMap<String, Arc<LocalBans>>>,
+    /// Failed writes, for the metric and a log line a minute.
+    persistence: crate::Persistence,
 }
 
 impl Default for AbuseRegistry {
@@ -332,6 +334,7 @@ impl AbuseRegistry {
             clock,
             sets: Mutex::new(HashMap::new()),
             bans: Mutex::new(HashMap::new()),
+            persistence: crate::Persistence::default(),
         }
     }
 
@@ -424,10 +427,15 @@ impl AbuseRegistry {
             .map(|(n, b)| (n.clone(), b.clone()))
             .collect();
         for (name, bans) in all {
-            if let Err(err) = bans.flush(now) {
-                tracing::warn!(abuse = %name, error = %err, "cannot write the ban list");
-            }
+            let result = bans.flush(now);
+            self.persistence.outcome("ban lists", &name, &result);
         }
+    }
+
+    /// Writes of ban lists that failed since the start (a full disk).
+    #[must_use]
+    pub fn write_failures(&self) -> u64 {
+        self.persistence.failures()
     }
 
     /// Reads every ban list file again (the next process of a binary upgrade, after the old

@@ -27,7 +27,7 @@ A **stable** surface breaks only in a major release, after its deprecation perio
 | Metrics | Removing or renaming a metric or label; adding a label name to an existing metric (it changes every series, so it needs a new metric instead); changing a stable metric's type, unit or histogram buckets | New metrics and label values |
 | JSON access-log fields | Removing or renaming a field; changing its type | New fields. The text format is not stable |
 | Problem types (RFC 9457) | Removing a `type` URI or changing its status | New types; the wording of `title` and `detail` |
-| Documented `RDOCK_*` environment variables | Removing or renaming one | New variables. `RDOCK_BUILD_*`, `RDOCK_*_TESTS`, `RDOCK_TEST_*` (such as `RDOCK_TEST_DEPRECATIONS`), `RDOCK_FAULT*`, `RDOCK_UPGRADE_FAULT`, `RDOCK_UPDATE_GOLDEN`, `RDOCK_ALLOC_COUNT_SOCKET` and the compatibility gate's `RDOCK_COMPAT_*` are internal |
+| Documented `RDOCK_*` environment variables | Removing or renaming one | New variables. `RDOCK_BUILD_*`, `RDOCK_*_TESTS`, `RDOCK_TEST_*` (such as `RDOCK_TEST_DEPRECATIONS`), `RDOCK_FAULT*`, `RDOCK_UPGRADE_FAULT`, `RDOCK_CHAOS_DISK`, `RDOCK_UPDATE_GOLDEN`, `RDOCK_ALLOC_COUNT_SOCKET` and the compatibility gate's `RDOCK_COMPAT_*` are internal |
 | Container image | Entrypoint, default command, user id (65532), data path (`/var/lib/rdock`), exposed ports, health check | Base image updates |
 | Helm values | As for the configuration file, on `values.schema.json`; renaming the resources the chart creates | New values |
 | Data directory | A release that cannot read the directory of either of the two minors before it; a format bump without a documented downgrade statement | New files. A downgrade across a format bump is refused (the code refuses a newer format) |

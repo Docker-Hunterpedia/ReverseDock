@@ -313,19 +313,32 @@ impl Disk {
             let mut options = OpenOptions::new();
             options.write(true).create_new(true);
             let mut file = self.root.open_with(&path, &options)?.into_std();
-            file.write_all(&head)?;
+            if let Err(e) = file.write_all(&head) {
+                self.unlink(&path);
+                return Err(e);
+            }
             Ok(file)
         })
         .await
-        .map_err(|e| internal_error(e.to_string()))?
-        .map_err(|e| internal_error(format!("creating a cache file: {e}")))?;
+        .map_err(|e| internal_error(e.to_string()))?;
+        // A disk that refuses the file (full) never fails the response: the body is passed
+        // through and not stored (ADR-0033).
+        let (created, failed) = match created {
+            Ok(file) => (Some(Arc::new(file)), None),
+            Err(e) => {
+                let error = format!("creating a cache file: {e}");
+                store.note_write_error(&error);
+                (None, Some(error))
+            }
+        };
         let (fill, cancelled) = self.index().begin_fill(info.url.clone(), info.tags.clone());
         Ok(Box::new(DiskMiss {
             disk: self,
             store,
             id,
             temp,
-            file: Some(Arc::new(created)),
+            failed,
+            file: created,
             buf: Vec::new(),
             head_len,
             body_len: 0,
@@ -489,6 +502,9 @@ struct DiskMiss {
     store: &'static Store,
     id: Id,
     temp: PathBuf,
+    /// Why the object is not being stored (the disk refused a write): the rest of the body is
+    /// discarded and [`HandleMiss::finish`] reports it, which Pingora takes as "not cached".
+    failed: Option<String>,
     file: Option<Arc<std::fs::File>>,
     buf: Vec<u8>,
     head_len: u64,
@@ -500,8 +516,13 @@ struct DiskMiss {
 }
 
 impl DiskMiss {
-    /// Writes the buffered body bytes to the temporary file.
+    /// Writes the buffered body bytes to the temporary file. A write the disk refuses gives
+    /// the object up instead of failing the response it belongs to.
     async fn flush(&mut self) -> pingora::Result<()> {
+        if self.failed.is_some() {
+            self.buf.clear();
+            return Ok(());
+        }
         if self.buf.is_empty() {
             return Ok(());
         }
@@ -511,13 +532,24 @@ impl DiskMiss {
         let buf = std::mem::take(&mut self.buf);
         let at = self.head_len + self.body_len;
         let len = buf.len() as u64;
-        let buf = tokio::task::spawn_blocking(move || -> io::Result<Vec<u8>> {
+        let written = tokio::task::spawn_blocking(move || -> io::Result<Vec<u8>> {
             file.write_all_at(&buf, at)?;
             Ok(buf)
         })
         .await
-        .map_err(|e| internal_error(e.to_string()))?
-        .map_err(|e| internal_error(format!("writing a cache file: {e}")))?;
+        .map_err(|e| internal_error(e.to_string()))?;
+        let buf = match written {
+            Ok(buf) => buf,
+            Err(e) => {
+                let error = format!("writing a cache file: {e}");
+                self.store.note_write_error(&error);
+                self.failed = Some(error);
+                self.file = None;
+                let (disk, temp) = (self.disk, self.temp.clone());
+                let _ = tokio::task::spawn_blocking(move || disk.unlink(&temp)).await;
+                return Ok(());
+            }
+        };
         self.body_len += len;
         // Keep the allocation for the next chunks.
         self.buf = buf;
@@ -538,6 +570,10 @@ impl HandleMiss for DiskMiss {
 
     async fn finish(mut self: Box<Self>) -> pingora::Result<MissFinishType> {
         self.flush().await?;
+        if let Some(error) = self.failed.take() {
+            // Dropping ends the fill and removes the temporary file.
+            return Err(internal_error(format!("not stored: {error}")));
+        }
         self.done = true;
         let handle = self.file.take();
         let disk = self.disk;
@@ -595,7 +631,9 @@ impl HandleMiss for DiskMiss {
             )),
             Err(e) => {
                 self.disk.unlink(&self.temp);
-                Err(internal_error(format!("storing a cache file: {e}")))
+                let error = format!("storing a cache file: {e}");
+                self.store.note_write_error(&error);
+                Err(internal_error(error))
             }
         }
     }

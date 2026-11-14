@@ -224,8 +224,12 @@ impl Cache {
         }
         let mut tmp = self.path.as_os_str().to_owned();
         tmp.push(".tmp");
-        fs::write(&tmp, bytes).map_err(io_error)?;
-        fs::rename(&tmp, &self.path).map_err(io_error)
+        if let Err(e) = fs::write(&tmp, bytes).and_then(|()| fs::rename(&tmp, &self.path)) {
+            // A full disk leaves no half-written temporary file behind (ADR-0033).
+            let _ = fs::remove_file(&tmp);
+            return Err(io_error(e));
+        }
+        Ok(())
     }
 }
 

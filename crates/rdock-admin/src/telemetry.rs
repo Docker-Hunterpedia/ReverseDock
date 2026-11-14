@@ -1,5 +1,6 @@
 //! The admin side's own metrics (ADR-0024), appended to `/metrics`:
 //! `rdock_admin_requests_total{endpoint,status_class}`, `rdock_admin_login_failures_total`, `rdock_admin_audit_write_failures_total`,
+//! `rdock_admin_audit_refusals_total`,
 //! `rdock_admin_sse_subscribers{stream}` and `rdock_admin_sse_dropped_events_total{stream}`.
 
 use std::collections::BTreeMap;
@@ -57,7 +58,7 @@ pub(crate) async fn count(
 /// The admin metrics: name, type, help text and label names. [`render`] writes their `# HELP`
 /// and `# TYPE` lines from here, and [`metric_catalogue`] lists them for the compatibility
 /// snapshot (ADR-0033).
-const METRICS: [(&str, &str, &str, &[&str]); 5] = [
+const METRICS: [(&str, &str, &str, &[&str]); 6] = [
     (
         "rdock_admin_requests_total",
         "counter",
@@ -74,6 +75,12 @@ const METRICS: [(&str, &str, &str, &[&str]); 5] = [
         "rdock_admin_audit_write_failures_total",
         "counter",
         "Audit records that could not be written.",
+        &[],
+    ),
+    (
+        "rdock_admin_audit_refusals_total",
+        "counter",
+        "Mutating admin calls refused because their audit record could not be written.",
         &[],
     ),
     (
@@ -138,7 +145,13 @@ pub(crate) fn render(state: &State) -> String {
         state.audit.write_failures()
     );
     header(&mut out, 3);
+    let _ = writeln!(
+        out,
+        "rdock_admin_audit_refusals_total {}",
+        state.audit.refusals()
+    );
     header(&mut out, 4);
+    header(&mut out, 5);
     for (name, hub) in [("logs", &state.logs), ("events", &state.events)] {
         let _ = writeln!(
             out,

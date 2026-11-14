@@ -13,12 +13,16 @@ pub mod backend;
 pub mod certs;
 pub mod client;
 pub mod cloudflare_access;
+pub mod disk;
 pub mod dns_contract;
 pub mod fake_acme;
 pub mod fake_api;
+pub mod fake_docker;
+pub mod fault_proxy;
 #[cfg(feature = "http3")]
 pub mod h3;
 pub mod haproxy;
+pub mod load;
 pub mod mmdb;
 pub mod oidc;
 pub mod origin;

@@ -2,6 +2,15 @@
 //! session end, in `$RDOCK_DATA_DIR/audit/` (mode 0600). Each line carries a sequence number
 //! and the SHA-256 of the previous line, across rotated files, so a removed or edited line
 //! breaks the chain; [`verify`] (`rdock audit verify`) checks it. Never a secret.
+//!
+//! **A full disk** (ADR-0033): a mutating admin call first asks [`Audit::prepare`] for room,
+//! which reserves [`RESERVE`] bytes past the end of the newest file (`fallocate` with
+//! `KEEP_SIZE`, or a free-space check where the file system cannot reserve). When that fails,
+//! the call is refused with `507` before it changes anything, so no change is applied and then
+//! left unaudited for lack of space. A record that still cannot be written (an I/O error other
+//! than space) is cut off the file again, so the chain never ends in half a record, and counted;
+//! the next [`Audit::prepare`] first writes an `audit.gap` record that says how many records
+//! were lost, and refuses the call if even that cannot be written.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, BufRead, BufReader, Write};
@@ -18,6 +27,8 @@ use serde_json::{Value, json};
 const GENESIS: &str = "0000000000000000000000000000000000000000000000000000000000000000";
 /// Records waiting for the syslog forwarder; past it they are dropped (and counted in the log).
 const FORWARD_QUEUE: usize = 1024;
+/// Bytes reserved past the end of the log before a mutating call: a few dozen records.
+pub const RESERVE: u64 = 16 * 1024;
 
 /// How a record ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -84,9 +95,17 @@ impl Event {
 
 struct Writer {
     file: Option<File>,
+    /// The file `file` writes, or the newest file when none is open yet.
+    path: Option<PathBuf>,
+    /// Bytes of complete records in `path`; a write that fails is cut back to this.
     size: u64,
     seq: u64,
     prev: String,
+    /// `path` may end in part of a record (a failed write that could not be cut off, or a
+    /// crash): it is cut back to `size` before the next record is appended.
+    torn: bool,
+    /// Records that could not be written since the last one that was.
+    lost: u64,
 }
 
 /// The log: one writer, records appended under a lock.
@@ -98,6 +117,8 @@ pub struct Audit {
     forward: Option<SyncSender<String>>,
     /// Records that could not be written, for `rdock_admin_audit_write_failures_total`.
     write_failures: std::sync::atomic::AtomicU64,
+    /// Mutating calls refused by [`Audit::prepare`], for `rdock_admin_audit_refusals_total`.
+    refusals: std::sync::atomic::AtomicU64,
     /// The events stream, which shows admin actions as they happen.
     events: std::sync::OnceLock<std::sync::Arc<crate::stream::Hub>>,
     /// Security-relevant records also raise an alert (`observability.alerts`, rule `security`).
@@ -130,15 +151,18 @@ fn files(dir: &Path) -> io::Result<Vec<PathBuf>> {
     Ok(found.into_iter().map(|(_, path)| path).collect())
 }
 
-fn last_line(path: &Path) -> io::Result<Option<String>> {
-    let mut last = None;
-    for line in BufReader::new(File::open(path)?).lines() {
-        let line = line?;
-        if !line.is_empty() {
-            last = Some(line);
-        }
-    }
-    Ok(last)
+/// The last complete line of `path` and the length of the file up to the end of it. Bytes
+/// after the last newline are part of a record whose write did not finish: not a record.
+fn last_line(path: &Path) -> io::Result<(Option<String>, u64)> {
+    let bytes = std::fs::read(path)?;
+    let complete = bytes.iter().rposition(|b| *b == b'\n').map_or(0, |i| i + 1);
+    let text = String::from_utf8_lossy(&bytes[..complete]);
+    let last = text
+        .lines()
+        .rev()
+        .find(|line| !line.is_empty())
+        .map(str::to_owned);
+    Ok((last, complete as u64))
 }
 
 fn open_append(path: &Path) -> io::Result<File> {
@@ -148,21 +172,45 @@ fn open_append(path: &Path) -> io::Result<File> {
     options.open(path)
 }
 
-/// The end of the chain in `dir`: the last sequence number, the hash of the last line and the
-/// newest file.
-fn head(dir: &Path) -> io::Result<(u64, String, Option<PathBuf>)> {
+/// The last sequence number, the hash of the last line, and the newest file with the length
+/// of its complete records.
+type Head = (u64, String, Option<(PathBuf, u64)>);
+
+/// The end of the chain in `dir`: the last sequence number, the hash of the last line, the
+/// newest file and the length of its complete records.
+fn head(dir: &Path) -> io::Result<Head> {
     let Some(path) = files(dir)?.pop() else {
         return Ok((0, GENESIS.to_owned(), None));
     };
     match last_line(&path)? {
-        Some(line) => {
+        (Some(line), complete) => {
             let record: Value = serde_json::from_str(&line)
                 .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
             let seq = record["seq"].as_u64().unwrap_or(0);
-            Ok((seq, sha256_hex(line.as_bytes()), Some(path)))
+            Ok((seq, sha256_hex(line.as_bytes()), Some((path, complete))))
         }
-        None => Ok((0, GENESIS.to_owned(), Some(path))),
+        (None, complete) => Ok((0, GENESIS.to_owned(), Some((path, complete)))),
     }
+}
+
+/// A writer at the end of the chain `head` found.
+fn writer_at(seq: u64, prev: String, newest: Option<(PathBuf, u64)>) -> io::Result<Writer> {
+    let (path, size, torn) = match newest {
+        Some((path, complete)) => {
+            let len = std::fs::metadata(&path)?.len();
+            (Some(path), complete, len != complete)
+        }
+        None => (None, 0, false),
+    };
+    Ok(Writer {
+        file: None,
+        path,
+        size,
+        seq,
+        prev,
+        torn,
+        lost: 0,
+    })
 }
 
 impl Audit {
@@ -175,19 +223,21 @@ impl Audit {
     ) -> io::Result<Self> {
         std::fs::create_dir_all(dir)?;
         std::fs::set_permissions(dir, std::os::unix::fs::PermissionsExt::from_mode(0o700))?;
-        let (seq, prev, _) = head(dir)?;
+        let (seq, prev, newest) = head(dir)?;
+        let mut writer = writer_at(seq, prev, newest)?;
+        // A new process starts a new file, as before; a torn end of the old one is cut off
+        // when this process first appends (see `resync` for the binary-upgrade handover).
+        writer.path = None;
+        writer.size = 0;
+        writer.torn = false;
         Ok(Self {
             dir: dir.to_owned(),
             max_bytes,
             retention,
-            writer: Mutex::new(Writer {
-                file: None,
-                size: 0,
-                seq,
-                prev,
-            }),
+            writer: Mutex::new(writer),
             forward: forward.map(syslog::start),
             write_failures: std::sync::atomic::AtomicU64::new(0),
+            refusals: std::sync::atomic::AtomicU64::new(0),
             events: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
         })
@@ -202,21 +252,82 @@ impl Audit {
     /// The files cannot be read; the chain in memory is unchanged.
     pub fn resync(&self) -> io::Result<()> {
         let (seq, prev, newest) = head(&self.dir)?;
-        let (file, size) = match newest {
-            Some(path) => {
-                let size = std::fs::metadata(&path)?.len();
-                (Some(open_append(&path)?), size)
-            }
-            None => (None, 0),
-        };
+        let mut fresh = writer_at(seq, prev, newest)?;
+        if let Some(path) = &fresh.path {
+            fresh.file = Some(open_append(path)?);
+            repair(&mut fresh)?;
+        }
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
-        *writer = Writer {
-            file,
-            size,
-            seq,
-            prev,
-        };
+        fresh.lost = writer.lost;
+        *writer = fresh;
         Ok(())
+    }
+
+    /// Makes sure the record of a mutating call can be written before the call changes
+    /// anything (ADR-0033): writes the `audit.gap` record first when records were lost, then
+    /// reserves [`RESERVE`] bytes past the end of the newest file.
+    ///
+    /// # Errors
+    ///
+    /// No room, or the gap record cannot be written: the caller refuses the call (`507`).
+    pub fn prepare(&self) -> io::Result<()> {
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        if writer.lost > 0 {
+            let lost = writer.lost;
+            let gap = Event {
+                outcome: Outcome::Failed,
+                reason: Some(format!(
+                    "{lost} audit record(s) could not be written before this one"
+                )),
+                ..Event::new("rdock", "-", "audit.gap")
+            };
+            let record = self.append_locked(&mut writer, gap)?;
+            writer.lost = 0;
+            drop(writer);
+            self.announce(record);
+            tracing::warn!(lost, "the audit log takes records again");
+            writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        }
+        let reserve = RESERVE.min(self.max_bytes / 2).max(1);
+        if writer.file.is_none() || (writer.size > 0 && writer.size + reserve > self.max_bytes) {
+            let seq = writer.seq + 1;
+            self.open_file(&mut writer, seq)?;
+        }
+        let Some(file) = writer.file.as_ref() else {
+            return Err(io::Error::other("the audit log has no open file"));
+        };
+        // `fallocate` with `KEEP_SIZE` is not bound by the file-size limit, appends are.
+        if rdock_config::disk::file_size_limit().is_some_and(|limit| writer.size + reserve > limit)
+        {
+            return Err(io::Error::new(
+                io::ErrorKind::FileTooLarge,
+                "the process's file-size limit leaves no room for the next audit record",
+            ));
+        }
+        if !rdock_config::disk::reserve(file, writer.size, reserve)? {
+            rdock_config::disk::check_room(&self.dir, reserve).map_err(io::Error::other)?;
+        }
+        Ok(())
+    }
+
+    /// Opens the file the next record goes to: the newest one (cut back to its complete
+    /// records) when it can still take records, else a new one named after `seq`.
+    fn open_file(&self, writer: &mut Writer, seq: u64) -> io::Result<()> {
+        let reusable = writer.file.is_none()
+            && writer.path.is_some()
+            && writer.size + RESERVE.min(self.max_bytes / 2) <= self.max_bytes;
+        if reusable && let Some(path) = writer.path.clone() {
+            writer.file = Some(open_append(&path)?);
+            return repair(writer);
+        }
+        let path = self.dir.join(format!("audit-{seq:012}.jsonl"));
+        let file = open_append(&path)?;
+        writer.size = file.metadata()?.len();
+        writer.torn = false;
+        writer.file = Some(file);
+        writer.path = Some(path);
+        self.prune();
+        repair(writer)
     }
 
     /// Also publishes every record on the events stream (`type: admin`).
@@ -229,13 +340,47 @@ impl Audit {
         let _ = self.alerts.set(sink);
     }
 
-    /// Appends a record. A failure to write is logged and never fails the request.
+    /// Appends a record. A failure to write is logged and counted, and the next
+    /// [`Audit::prepare`] records the gap; it never fails the request, so a call that
+    /// [`Audit::prepare`] admitted, a login or a refusal is answered either way.
     pub fn record(&self, event: Event) {
-        if let Err(err) = self.append(event) {
-            self.write_failures
-                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            tracing::error!(error = %err, dir = %self.dir.display(), "cannot write the audit log");
+        let action = event.action;
+        let actor = event.actor.clone();
+        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+        match self.append_locked(&mut writer, event) {
+            Ok(record) => {
+                drop(writer);
+                self.announce(record);
+            }
+            Err(err) => {
+                writer.lost += 1;
+                drop(writer);
+                self.write_failures
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                tracing::error!(error = %err, dir = %self.dir.display(), action, actor = %actor,
+                    "cannot write the audit log; the record is lost and the next mutating call records the gap");
+            }
         }
+    }
+
+    /// Whether records were lost since the last one written.
+    pub fn has_gap(&self) -> bool {
+        self.writer
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .lost
+            > 0
+    }
+
+    /// Counts a mutating call refused because [`Audit::prepare`] failed.
+    pub fn refused(&self) {
+        self.refusals
+            .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    }
+
+    /// How many mutating calls were refused since the start.
+    pub fn refusals(&self) -> u64 {
+        self.refusals.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// How many records could not be written since the start.
@@ -244,8 +389,9 @@ impl Audit {
             .load(std::sync::atomic::Ordering::Relaxed)
     }
 
-    fn append(&self, event: Event) -> io::Result<()> {
-        let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
+    /// Writes one record at the end of the chain; on any error the file is cut back to its
+    /// last complete record and the chain in memory is unchanged.
+    fn append_locked(&self, writer: &mut Writer, event: Event) -> io::Result<Value> {
         let seq = writer.seq + 1;
         let mut record = json!({
             "time": rdock_observability::rfc3339(SystemTime::now()),
@@ -267,20 +413,39 @@ impl Audit {
             record["tenant"] = json!(tenant);
         }
         let line = record.to_string();
-        if writer.file.is_none() || writer.size + line.len() as u64 + 1 > self.max_bytes {
-            let path = self.dir.join(format!("audit-{seq:012}.jsonl"));
-            writer.file = Some(open_append(&path)?);
-            writer.size = 0;
-            self.prune();
+        let length = line.len() as u64 + 1;
+        if writer.file.is_none() {
+            self.open_file(writer, seq)?;
         }
-        if let Some(file) = writer.file.as_mut() {
-            file.write_all(line.as_bytes())?;
-            file.write_all(b"\n")?;
-            file.sync_data()?;
+        if writer.size > 0 && writer.size + length > self.max_bytes {
+            writer.file = None;
+            writer.path = None;
+            self.open_file(writer, seq)?;
         }
-        writer.size += line.len() as u64 + 1;
+        let mut bytes = line.clone().into_bytes();
+        bytes.push(b'\n');
+        let written = match writer.file.as_mut() {
+            Some(file) => file.write_all(&bytes).and_then(|()| file.sync_data()),
+            None => Err(io::Error::other("the audit log has no open file")),
+        };
+        if let Err(err) = written {
+            // Never leave half a record: the next one would be appended to it and break the
+            // chain. If the cut fails too, it is retried before the next write.
+            writer.torn = true;
+            if repair(writer).is_err() {
+                writer.file = None;
+            }
+            return Err(err);
+        }
+        writer.size += length;
         writer.seq = seq;
         writer.prev = sha256_hex(line.as_bytes());
+        Ok(record)
+    }
+
+    /// Alerts, the events stream and the forwarder for a record that was written.
+    fn announce(&self, record: Value) {
+        let line = record.to_string();
         if let Some(sink) = self.alerts.get()
             && let Some(summary) = security_summary(&record)
         {
@@ -305,7 +470,6 @@ impl Audit {
         {
             tracing::warn!("the audit forwarder is behind; a record was not forwarded");
         }
-        Ok(())
     }
 
     /// Deletes files older than the retention, keeping the newest so the chain continues.
@@ -379,6 +543,19 @@ fn security_summary(record: &Value) -> Option<String> {
         )),
         _ => None,
     }
+}
+
+/// Cuts the open file back to its complete records when a write may have left part of one.
+fn repair(writer: &mut Writer) -> io::Result<()> {
+    if !writer.torn {
+        return Ok(());
+    }
+    if let Some(file) = writer.file.as_ref() {
+        file.set_len(writer.size)?;
+        file.sync_data()?;
+        writer.torn = false;
+    }
+    Ok(())
 }
 
 /// What [`verify`] found.
@@ -634,6 +811,82 @@ mod tests {
             "appended to the newest file, continuing its chain"
         );
         assert_eq!(new.recent(1, None).unwrap()[0]["seq"], 4);
+    }
+
+    /// ADR-0033: a record that cannot be written (here every write to `/dev/full` fails with
+    /// `ENOSPC`) is counted, and the next `prepare` writes the gap record before anything
+    /// else; the chain verifies.
+    #[test]
+    fn a_lost_record_is_followed_by_a_gap_record() {
+        if !Path::new("/dev/full").exists() {
+            return;
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(dir.path(), 1 << 20);
+        let first = dir.path().join("audit-000000000001.jsonl");
+        std::os::unix::fs::symlink("/dev/full", &first).unwrap();
+        log.record(login("a"));
+        assert_eq!(log.write_failures(), 1);
+        assert!(log.has_gap());
+        std::fs::remove_file(&first).unwrap();
+        log.prepare().unwrap();
+        assert!(!log.has_gap());
+        log.record(login("b"));
+        let recent = log.recent(10, None).unwrap();
+        assert_eq!(recent[1]["action"], "audit.gap");
+        assert_eq!(recent[1]["seq"], 1);
+        assert!(
+            recent[1]["reason"]
+                .as_str()
+                .unwrap()
+                .starts_with("1 audit record"),
+            "{recent:?}"
+        );
+        assert_eq!(recent[0]["actor"], "b");
+        assert_eq!(
+            verify(dir.path()).unwrap(),
+            Verdict::Intact {
+                records: 2,
+                files: 1
+            }
+        );
+    }
+
+    /// A file that ends in part of a record (a write cut short) is cut back before the next
+    /// record, so the chain never breaks at a torn tail.
+    #[test]
+    fn a_torn_tail_is_cut_off_before_the_next_record() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(dir.path(), 1 << 20);
+        log.record(login("a"));
+        log.record(login("b"));
+        let path = files(dir.path()).unwrap()[0].clone();
+        let mut file = OpenOptions::new().append(true).open(&path).unwrap();
+        file.write_all(b"{\"time\":\"2026-").unwrap();
+        drop(file);
+        assert!(matches!(
+            verify(dir.path()).unwrap(),
+            Verdict::Broken { .. }
+        ));
+        // The handover path re-reads the end of the chain and repairs the file.
+        log.resync().unwrap();
+        log.record(login("c"));
+        assert_eq!(
+            verify(dir.path()).unwrap(),
+            Verdict::Intact {
+                records: 3,
+                files: 1
+            }
+        );
+        // `prepare` reserves room without changing the file's size.
+        let before = std::fs::metadata(&path).unwrap().len();
+        log.prepare().unwrap();
+        assert_eq!(std::fs::metadata(&path).unwrap().len(), before);
+        log.record(login("d"));
+        assert!(matches!(
+            verify(dir.path()).unwrap(),
+            Verdict::Intact { records: 4, .. }
+        ));
     }
 
     #[test]
