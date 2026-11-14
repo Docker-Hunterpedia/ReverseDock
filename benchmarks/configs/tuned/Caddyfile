@@ -1,0 +1,17 @@
+# Caddy, tuned: ../Caddyfile plus
+#   keepalive_idle_conns_per_host 256   idle connections kept per backend; Caddy's default is 32
+#                                       (https://caddyserver.com/docs/caddyfile/directives/reverse_proxy,
+#                                       read 2026-11-14), NGINX keeps 256 here. Above 32 requests
+#                                       in flight Caddy otherwise opens and closes backend
+#                                       connections.
+{
+  auto_https off
+  admin off
+}
+:8080 {
+  reverse_proxy backend:80 {
+    transport http {
+      keepalive_idle_conns_per_host 256
+    }
+  }
+}

@@ -8,7 +8,7 @@ default:
     @just --list
 
 # Everything the Rust and docs CI jobs check
-ci: fmt-check clippy test doc deny docs-check compat-test traefik-diff-test lint-workflows
+ci: fmt-check clippy test doc deny docs-check compat-test release-test pin-verify traefik-diff-test lint-workflows
 
 # Format all crates
 fmt:
@@ -76,6 +76,14 @@ compat-check:
 # The gate's own tests (standard library only)
 compat-test:
     python3 -I scripts/test_compat.py
+
+# The `latest` rule of the release workflow (standard library only)
+release-test:
+    python3 -I scripts/test_release_latest.py
+
+# Every Dockerfile base image carries a digest (offline); `scripts/pin-base-images.sh --check` also asks the registries
+pin-verify:
+    scripts/pin-base-images.sh --verify
 
 # The offline tests of the Traefik differential harness (the comparison itself needs Docker: workflow traefik-diff)
 traefik-diff-test:

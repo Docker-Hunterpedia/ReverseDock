@@ -3,7 +3,8 @@
 # Release image: the static binaries built and signed by .github/workflows/release.yml, copied
 # into distroless (non-root, no shell). The workflow places them in image/<arch>/rdock.
 
-FROM gcr.io/distroless/static-debian13:nonroot
+# Pinned by tag and digest (scripts/pin-base-images.sh; Dependabot updates both).
+FROM gcr.io/distroless/static-debian13:nonroot@sha256:aafe993665bf6200db38a02c11a9351e782a84b6a45e7f33b6695638c88e3931
 ARG TARGETARCH
 LABEL org.opencontainers.image.title="ReverseDock" \
       org.opencontainers.image.description="Open-source reverse proxy on Cloudflare Pingora" \

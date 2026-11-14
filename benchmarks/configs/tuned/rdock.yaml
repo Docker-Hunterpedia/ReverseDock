@@ -1,0 +1,17 @@
+# ReverseDock, tuned: the default configuration (../rdock.yaml) plus what rdock's documentation
+# names for this case. The "Sockets and threads" guide (apps/website/.../guides/sockets-and-threads.mdx)
+# says the defaults suit most servers and every socket option should stay unset unless a
+# measurement points at it, so the only change is the thread count, stated instead of derived:
+#   runtime.worker_threads = the cores the proxy is pinned to (2), like NGINX's worker_processes.
+runtime: { worker_threads: 2 }
+listeners:
+  web: { address: ":8080" }
+defaults: { listeners: [web], tls: off }
+routes:
+  app: { match: "PathPrefix(`/`)", service: app }
+services:
+  app:
+    backends: [{ address: "backend:80" }]
+observability:
+  access_log: { format: off }
+admin: { enabled: false }

@@ -1,0 +1,7 @@
+http:
+  routers:
+    app: { rule: "PathPrefix(`/`)", service: app, entryPoints: [web] }
+  services:
+    app:
+      loadBalancer:
+        servers: [{ url: "http://backend:80" }]

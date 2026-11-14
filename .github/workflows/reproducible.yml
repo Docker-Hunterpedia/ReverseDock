@@ -1,0 +1,146 @@
+# Weekly rebuild-and-compare (ADR-0033, "Release integrity"; F-OSS-03). Not a required check.
+#
+# What it does: builds the x86_64 Linux release binary three times from one commit with the
+# release recipe (the `build` job of release.yml: the dashboard, then
+# `cargo auditable build --release --locked -p rdock --target x86_64-unknown-linux-musl`, the
+# same pinned toolchain and the same runner image), then compares SHA-256 hashes of the three
+# binaries:
+#   same-a, same-b   two independent builds on two runners, same directory
+#   other-path       one build from a copy of the tree in a different directory
+# Equal hashes of same-a and same-b show that the build is deterministic on this runner image;
+# an equal other-path shows the binary does not depend on where the tree is.
+#
+# What it does not do: it does not rebuild a published release or compare with a published
+# archive (a rebuild months later on a newer runner image would mix runner drift with real
+# non-determinism); it compares only the binary, not the .tar.gz (tar and gzip headers carry
+# times and owners, so the archives are not reproducible); it covers one target; and it says
+# nothing about builds on other machines or toolchains. The release archives and the image are
+# therefore NOT claimed to be reproducible: docs/06-repo-layout.md section 4 states the result.
+#
+# The job never fails because the hashes differ: it reports the result in the run summary and as
+# a warning annotation ("not reproducible yet, tracked"). It fails only when a build fails.
+#
+# Keep the build steps in step with release.yml; the comparison means nothing otherwise.
+name: reproducible
+
+on:
+  schedule:
+    - cron: "23 5 * * 2"
+  workflow_dispatch:
+  pull_request:
+    paths:
+      - .github/workflows/reproducible.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: reproducible-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  TARGET: x86_64-unknown-linux-musl
+
+jobs:
+  build:
+    name: build (${{ matrix.variant }})
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        variant: [same-a, same-b, other-path]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Choose the build directory
+        env:
+          VARIANT: ${{ matrix.variant }}
+        run: |
+          if [ "$VARIANT" = other-path ]; then
+            dir="$RUNNER_TEMP/another/place/for/the/tree"
+            mkdir -p "$dir"
+            cp -a "$GITHUB_WORKSPACE/." "$dir/"
+          else
+            dir="$GITHUB_WORKSPACE"
+          fi
+          echo "BUILD_DIR=$dir" >> "$GITHUB_ENV"
+          echo "Building in $dir"
+      - name: Install musl tools
+        run: sudo apt-get update -q && sudo apt-get install -yq musl-tools
+      - name: Install the pinned toolchain and target
+        run: cd "$BUILD_DIR" && rustup toolchain install && rustup target add "$TARGET"
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: 24
+      - name: Build the dashboard (embedded in the binary, ADR-0024)
+        run: |
+          cd "$BUILD_DIR"
+          pnpm install --frozen-lockfile --filter @reversedock/dashboard...
+          pnpm --dir apps/dashboard build
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: cargo-auditable@0.7.7
+      - name: Build
+        env:
+          RDOCK_BUILD_COMMIT: ${{ github.sha }}
+        run: cd "$BUILD_DIR" && cargo auditable build --release --locked -p rdock --target "$TARGET"
+      - name: Collect the binary
+        run: |
+          mkdir -p out
+          cp "$BUILD_DIR/target/$TARGET/release/rdock" out/rdock
+          sha256sum out/rdock
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: binary-${{ matrix.variant }}
+          path: out/rdock
+          if-no-files-found: error
+          retention-days: 14
+
+  compare:
+    name: compare
+    needs: build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          pattern: binary-*
+          path: bins
+      - name: Compare the hashes
+        run: |
+          hash() { sha256sum "bins/binary-$1/rdock" | cut -d' ' -f1; }
+          a=$(hash same-a); b=$(hash same-b); c=$(hash other-path)
+          verdict() { if [ "$1" = "$2" ]; then echo identical; else echo DIFFERENT; fi; }
+          same=$(verdict "$a" "$b"); path=$(verdict "$a" "$c")
+          {
+            echo "### Rebuild and compare (x86_64-unknown-linux-musl, commit ${GITHUB_SHA::12})"
+            echo
+            echo "| Build | SHA-256 | Size |"
+            echo "|---|---|---|"
+            for v in same-a same-b other-path; do
+              echo "| $v | \`$(hash "$v")\` | $(stat -c %s "bins/binary-$v/rdock") |"
+            done
+            echo
+            echo "- same directory, two runners (determinism): **$same**"
+            echo "- different directory (path independence): **$path**"
+            echo
+            if [ "$same" = identical ] && [ "$path" = identical ]; then
+              echo "All three binaries are bit-for-bit identical. This covers this binary, this target, this runner image and this commit; it does not cover the archives or other targets."
+            else
+              echo "**Not reproducible yet (tracked).** The differing binaries are in the run's artifacts for 14 days."
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$same" != identical ]; then
+            echo "::warning title=Not reproducible yet::two builds of the same commit in the same directory differ ($a vs $b)"
+            cmp -l bins/binary-same-a/rdock bins/binary-same-b/rdock | wc -l | sed 's/^/differing bytes (same-a vs same-b): /'
+            cmp bins/binary-same-a/rdock bins/binary-same-b/rdock || true
+          fi
+          if [ "$path" != identical ]; then
+            echo "::warning title=Depends on the build path::a build from another directory differs ($a vs $c)"
+            cmp -l bins/binary-same-a/rdock bins/binary-other-path/rdock | wc -l | sed 's/^/differing bytes (same-a vs other-path): /'
+            cmp bins/binary-same-a/rdock bins/binary-other-path/rdock || true
+          fi
+          echo "same directory: $same; other directory: $path"

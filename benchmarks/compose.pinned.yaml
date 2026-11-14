@@ -1,0 +1,30 @@
+# CPU pinning for a machine shared by the proxy, the backend and the load generator, such as a
+# free GitHub-hosted runner (4 vCPUs for public repositories; docs.github.com "GitHub-hosted
+# runners reference", read 2026-11-14). run.sh adds this file when PIN=1.
+#
+# The proxy gets its own cores (PROXY_CPUSET, default 0,1); the backend and k6 share the others
+# (LOAD_CPUSET, default 2,3), so they never run on the proxy's cores. Pinning replaces the CPU
+# quota as the limit that matters: a quota lets a process run on every core and then pauses all
+# of it when the quota is used up, which distorts tail latency (results/2026-11-01-isolation).
+# compose.yaml's `cpus` values stay; with two pinned cores, `cpus: "2"` never throttles.
+services:
+  backend:
+    cpuset: ${LOAD_CPUSET:-2,3}
+  backend-slow:
+    cpuset: ${LOAD_CPUSET:-2,3}
+  backend-2:
+    cpuset: ${LOAD_CPUSET:-2,3}
+  backend-3:
+    cpuset: ${LOAD_CPUSET:-2,3}
+  rdock:
+    cpuset: ${PROXY_CPUSET:-0,1}
+  nginx:
+    cpuset: ${PROXY_CPUSET:-0,1}
+  traefik:
+    cpuset: ${PROXY_CPUSET:-0,1}
+  caddy:
+    cpuset: ${PROXY_CPUSET:-0,1}
+  haproxy:
+    cpuset: ${PROXY_CPUSET:-0,1}
+  k6:
+    cpuset: ${LOAD_CPUSET:-2,3}

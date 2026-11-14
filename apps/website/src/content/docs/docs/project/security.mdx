@@ -47,7 +47,7 @@ The project will not pursue or support legal action against anyone who researche
 
 ## Signed releases
 
-Every release publishes `SHA256SUMS` with a keyless cosign signature, an SPDX SBOM, and GitHub build-provenance attestations for each archive. Container images are signed and attested too. [Verify a download](/docs/install/verify/) shows the commands.
+Every release publishes `SHA256SUMS` (archives and SBOMs) with a keyless cosign signature, one SPDX SBOM per archive read from the binary, and GitHub build-provenance and SBOM attestations for each archive. Container images are signed, with a provenance attestation and an SBOM attestation per platform. The weekly rebuild-and-compare job reports whether the binary is reproducible; ReverseDock does not claim that it is. [Verify a download](/docs/install/verify/) shows the commands.
 
 ## How the project tests itself
 

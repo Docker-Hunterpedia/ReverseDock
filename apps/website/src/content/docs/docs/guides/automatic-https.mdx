@@ -103,6 +103,15 @@ Accounts and certificates live in `$RDOCK_DATA_DIR/acme` (or `acme.storage`): `a
 
 Set `acme: { staging: true }` while you set things up: certificates come from Let's Encrypt's staging CA, which browsers do not trust, but its limits are much higher. Remove it when everything works; the production certificates follow within seconds.
 
+## How fast the first certificate comes
+
+The 1.0 goal is valid HTTPS within 60 seconds of `docker compose up` on a fresh server whose DNS already points at it. Two checks measure it on the [`https` example](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/deploy/docker/examples/https): one ReverseDock container and one application container with the labels `rdock.enable=true` and `rdock.host`.
+
+- **In CI:** the `https-60s` workflow builds the release image and runs the example against Pebble, Let's Encrypt's test CA, with Pebble's random validation delay of up to 15 seconds left on. It times `docker compose up -d` to the first answer whose certificate Pebble issued, prints the time and fails above 60 seconds. Image pulls are timed separately.
+- **On a real server:** `scripts/https-60s-vps.sh run --domain <name>` does the same against Let's Encrypt staging, or production with `--production`. A second machine can run `probe` at the same time to see the result from outside.
+
+Neither has run yet, so no measured time is published here.
+
 ## Related
 
 - [Wildcards and DNS-01](/docs/guides/dns-challenge/)

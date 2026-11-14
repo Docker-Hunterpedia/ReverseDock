@@ -1,0 +1,16 @@
+# Caddy, tuned, HTTPS: ../../tls/Caddyfile (TLS parity) plus ../Caddyfile's tuning.
+{
+  auto_https off
+  admin off
+}
+https://:8080 {
+  tls /certs/cert.pem /certs/key.pem {
+    protocols tls1.3
+    curves x25519
+  }
+  reverse_proxy backend:80 {
+    transport http {
+      keepalive_idle_conns_per_host 256
+    }
+  }
+}

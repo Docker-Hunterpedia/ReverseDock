@@ -68,7 +68,7 @@ We will not pursue or support legal action against anyone who researches and rep
 
 ## Verifying releases
 
-Every release publishes `SHA256SUMS`, a keyless cosign signature of it, an SPDX SBOM, and GitHub build-provenance attestations for each archive.
+Every release publishes, for each archive `rdock-<version>-<target>.tar.gz`, an SPDX SBOM `rdock-<version>-<target>.spdx.json` read from the binary inside it (not from the source tree), and `SHA256SUMS` over the archives and the SBOMs with a keyless cosign signature. Each archive has GitHub build-provenance and SBOM attestations. The image `ghcr.io/docker-hunterpedia/rdock:<version>` is signed with cosign, has a provenance attestation, and one SBOM attestation per platform. Releases up to `0.9.0-alpha.1` predate this: they have one unsigned SBOM of the source tree, `rdock-<version>.spdx.json`, and no SBOM attestations.
 
 ```bash
 # 1. The checksums file was signed by this repository's release workflow
@@ -76,12 +76,31 @@ cosign verify-blob SHA256SUMS --bundle SHA256SUMS.sigstore.json \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
 
-# 2. Your archive matches the signed checksums
+# 2. Your archive and its SBOM match the signed checksums
 sha256sum --ignore-missing -c SHA256SUMS
 
 # 3. The archive was built by GitHub Actions from this repository
 gh attestation verify rdock-<version>-<target>.tar.gz --repo Docker-Hunterpedia/ReverseDock
+
+# 4. The SBOM was attested for that archive (the predicate type carries the SPDX version)
+gh attestation verify rdock-<version>-<target>.tar.gz --repo Docker-Hunterpedia/ReverseDock \
+  --predicate-type "https://spdx.dev/Document/v$(jq -r .spdxVersion rdock-<version>-<target>.spdx.json | cut -d- -f2)"
+
+# 5. The image: signature (by digest) and provenance
+cosign verify ghcr.io/docker-hunterpedia/rdock:<version> \
+  --certificate-oidc-issuer https://token.actions.githubusercontent.com \
+  --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
+gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:<version> --repo Docker-Hunterpedia/ReverseDock
+
+# 6. The image's SBOM is attested to each platform's manifest digest, not to the tag
+#    (SPDX 2.3 is what the release workflow's syft writes today; see step 4 for the general form)
+digest=$(docker buildx imagetools inspect --raw ghcr.io/docker-hunterpedia/rdock:<version> |
+  jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest')
+gh attestation verify "oci://ghcr.io/docker-hunterpedia/rdock@$digest" --repo Docker-Hunterpedia/ReverseDock \
+  --predicate-type https://spdx.dev/Document/v2.3
 ```
+
+What the SBOMs list and what they do not, and the state of reproducible builds, are in [docs/06-repo-layout.md](docs/06-repo-layout.md) §4. Reproducibility is **not claimed**: a weekly job rebuilds and compares, and the repository states its result there.
 
 ## Hardening references
 

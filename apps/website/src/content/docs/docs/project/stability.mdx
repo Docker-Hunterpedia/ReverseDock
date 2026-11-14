@@ -88,6 +88,8 @@ A feature moves up when its tests run in a required CI job, it is documented, it
 
 Fixes land on `main` first and are cherry-picked to `release/X.Y` branches. Crashes, data loss and failed certificate issuance are backported too; other fixes go to the newest minor only, and fixes to experimental features are never backported. ReverseDock has **one maintainer and no SLA**: the response times in the [security policy](/docs/project/security/) are targets. Report vulnerabilities privately, as that page describes.
 
+A patch for an older minor is released from its `release/X.Y` branch and never moves the `latest` image tag or GitHub's "Latest release" mark, which stay with the highest stable version. Pre-releases never take them.
+
 ### Security fixes
 
 A change that refuses an unsafe configuration may come in a minor or patch release without the deprecation period when it fixes a vulnerability. It is listed under "Security" in the changelog, with a diagnostic that names the fix.

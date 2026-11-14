@@ -10,7 +10,22 @@ One route forwards every request to one backend, an NGINX serving a fixed 1 KiB 
 - has access logging off, and no other feature turned on;
 - runs in its own container limited to **2 CPUs and 1 GiB**; the backend gets 4 CPUs, k6 4 CPUs.
 
-Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](compose.yaml).
+Configurations: [`configs/`](configs/), with a tuned variant of each in [`configs/tuned/`](configs/tuned/) ([below](#default-and-tuned-configurations)). Every TLS scenario follows the [TLS parity](#tls-parity) rules.
+
+### Versions
+
+Every image is pinned by tag **and** digest in [`compose.yaml`](compose.yaml): the newest stable release of each on 2026-11-14, with the multi-platform index digest read that day from the registry (`Docker-Content-Digest` of `HEAD /v2/<repo>/manifests/<tag>` on `registry-1.docker.io`, the same value Docker Hub's tag API lists). `run.sh` writes the digests Docker actually resolved to `images.txt` next to each result, and the `bench-report` workflow prints them in its summary.
+
+| Image | Version | Source of the version (read 2026-11-14) |
+|---|---|---|
+| `nginx` (proxy and backend) | 1.30.6-alpine | Stable branch on [nginx.org](https://nginx.org/en/download.html); mainline is 1.31.8 |
+| `haproxy` | 3.4.7-alpine | LTS, released 2026-10-14, [haproxy.org](https://www.haproxy.org/) |
+| `traefik` | v3.7.19 | Newest v3.7 tag on [Docker Hub](https://hub.docker.com/_/traefik); v3.8.0 is a release candidate |
+| `caddy` | 2.11.9-alpine | Newest 2.11 tag on [Docker Hub](https://hub.docker.com/_/caddy) |
+| `grafana/k6` | 1.8.3 | Newest v1 tag on [Docker Hub](https://hub.docker.com/r/grafana/k6); 2.4.0 is a new major, not adopted until `load.js` is checked against it |
+| `traefik/whoami` (`slow`) | v1.11.0 | Unchanged; v1.12.0 exists |
+
+GitHub's release pages could not be read from the machine that made this change, so Traefik's and Caddy's versions come from the official images' tags, not from their release notes. The previous pins (NGINX 1.29.3, HAProxy 3.2.8, Traefik 3.5.4, Caddy 2.10.2, k6 1.3.0) are what every report before 2026-11-14 used.
 
 ### Scenarios
 
@@ -20,7 +35,8 @@ Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](
 |---|---|---|
 | `single` (default) | One route, one backend, plain HTTP | The cost of the proxy itself |
 | `lb` | Three backends, round-robin; they share the same 4 CPUs (1.33 each) | The load balancer |
-| `tls` | HTTPS with kept-alive connections, HTTP/1.1, a P-256 certificate | Encryption per request |
+| `tls` | HTTPS with kept-alive connections, HTTP/1.1, TLS 1.3 ([TLS parity](#tls-parity)) | Encryption per request |
+| `h2` | Like `tls`, on HTTP/2 negotiated by ALPN. k6 sends one request at a time on each connection, so this is HTTP/2 framing, HPACK and TLS on many connections, not many streams on few connections | The HTTP/2 path |
 | `tls-ramped` | Like `tls`, with the rate reached over 2 s (`RAMP`) instead of at once, so k6 opens its connections gradually | Whether the `tls` tail is the burst of handshakes at the start of a run (issue 181) |
 | `tls-new` | Like `tls`, with a new connection and TLS handshake for every request | Handshakes, the most expensive thing a proxy does. Latency here is k6's `iteration_duration`, because `http_req_duration` leaves out connecting and the handshake |
 | `slow` | The backend answers after 100 ms ([traefik/whoami](https://github.com/traefik/whoami) `?wait=100ms`) | Holding many requests open at once. Subtract the 100 ms when reading latency |
@@ -30,7 +46,47 @@ Configurations: [`configs/`](configs/). Versions are pinned in [`compose.yaml`](
 
 For `lb`, each proxy uses its own round-robin: rdock `policy: round_robin`, NGINX's default weighted round-robin ([upstream module](https://nginx.org/en/docs/http/ngx_http_upstream_module.html)), HAProxy `balance roundrobin` ([configuration manual](https://docs.haproxy.org/3.2/configuration.html#4.2-balance)), Caddy `lb_policy round_robin` ([reverse_proxy](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy#lb_policy)) and Traefik's default weighted round-robin ([services](https://doc.traefik.io/traefik/routing/services/)), all checked 2026-11-01. A check with 30 requests per proxy found each backend getting a third of them (NGINX 11/10/9, the others 10/10/10).
 
-For the `tls` scenarios, k6 runs with `GODEBUG=http2client=0`, so every proxy is measured on HTTP/1.1; not all of them offer HTTP/2 by default.
+In the `tls`, `tls-ramped` and `tls-new` scenarios k6 runs with `GODEBUG=http2client=0`, so every proxy is measured on HTTP/1.1; `h2` is the same configuration on HTTP/2.
+
+The proxy `direct` (`PROXIES="direct rdock …"`) sends k6 straight to the backend, in the plain HTTP scenarios with one backend: the ceiling the generator and the backend reach on that machine without any proxy. A proxy row close to `direct` is limited by the machine, not by the proxy.
+
+### TLS parity
+
+Every proxy terminates TLS with the same parameters, or the comparison measures settings instead of proxies. The rules, as configured in `configs/tls/` and `configs/tuned/tls/`:
+
+| What | Rule | How each proxy gets there |
+|---|---|---|
+| Certificate | One file for all: a self-signed ECDSA P-256 leaf made by `run.sh` | Mounted at `/certs` |
+| Protocol | TLS 1.3 only | rdock `tls: { policy: modern }`; NGINX `ssl_protocols TLSv1.3`; HAProxy `ssl-min-ver TLSv1.3`; Caddy `protocols tls1.3`; Traefik `minVersion: VersionTLS13` |
+| Cipher suite | `TLS_AES_128_GCM_SHA256` | NGINX `ssl_conf_command Ciphersuites`; HAProxy `ciphersuites` (it enforces the server's order by default); rdock, Caddy and Traefik cannot set TLS 1.3 suites and follow k6's order, AES-128-GCM first |
+| Key exchange | X25519 | k6 offers no post-quantum hybrid (`GODEBUG=tlsmlkem=0,tlssecpmlkem=0`); NGINX `ssl_ecdh_curve X25519`, HAProxy `curves X25519`, Caddy `curves x25519`, Traefik `curvePreferences: [X25519]`; rdock's ring provider has X25519 first |
+| ALPN | `h2` and `http/1.1` offered; k6 picks per scenario | NGINX `http2 on`; the others offer both by default |
+| HTTP/2 streams | 100 per connection | NGINX `http2_max_concurrent_streams 100`, Traefik `maxConcurrentStreams: 100`; rdock and HAProxy default to 100; Caddy has no setting (Go's default) |
+| Resumption | Each proxy's default (tickets on); k6 does not resume | Nothing set |
+| To the backend | Plain HTTP/1.1, kept alive | As in the plain scenarios |
+
+**Checked on every run.** In the TLS scenarios `load.js` reads the HTTP version, TLS version and cipher suite of each virtual user's first response and of every 50th after it, and `report.py` shows a **Negotiated** column: `ok`, or `parity mismatch` with what differed, which makes `run.sh` exit 3. k6 does not report the key exchange group, so that rule rests on the configuration of both ends. For rdock it was checked by hand on 2026-11-14 with Go 1.24.7's client (the library k6 uses): TLS 1.3, `TLS_AES_128_GCM_SHA256`, X25519, and `h2` or `http/1.1` as asked.
+
+**What stays different.** The TLS library: rustls with ring (rdock), OpenSSL as built into the Alpine images (NGINX, HAProxy), Go's `crypto/tls` (Caddy, Traefik). That cannot be equalised and is part of what is measured.
+
+Sources, read 2026-11-14: NGINX [ssl module](https://nginx.org/en/docs/http/ngx_http_ssl_module.html) and [HTTP/2 module](https://nginx.org/en/docs/http/ngx_http_v2_module.html); HAProxy [configuration manual 3.4](https://docs.haproxy.org/3.4/configuration.html) (`alpn` default "h2,http/1.1", `ciphersuites`, `curves`, `ssl-min-ver`, `prefer-client-ciphers`, `tune.h2.fe.max-concurrent-streams`); Caddy [`tls` directive](https://caddyserver.com/docs/caddyfile/directives/tls) ("cipher suites are not customizable for TLS 1.3"); Traefik [TLS options](https://doc.traefik.io/traefik/reference/routing-configuration/http/tls/tls-options/) ("With TLS 1.3, the cipher suites are not configurable") and [entry points](https://doc.traefik.io/traefik/reference/install-configuration/entrypoints/) (`http2.maxConcurrentStreams`, default 250); Go [GODEBUG settings](https://go.dev/doc/godebug) (`tlsmlkem`, Go 1.24; `tlssecpmlkem`, Go 1.26); k6 [SSL/TLS version and ciphers](https://grafana.com/docs/k6/latest/using-k6/protocols/ssl-tls/ssl-tls-version-and-ciphers/) and [Response](https://grafana.com/docs/k6/latest/javascript-api/k6-http/response/) (`proto`, `tls_version`, `tls_cipher_suite`).
+
+### Default and tuned configurations
+
+`CONFIG=default` (the default) runs the files in `configs/`: the shortest configuration that does the job, with access logging off, keep-alive to the backend and the worker count equal to the proxy's 2 CPUs. `CONFIG=tuned` runs `configs/tuned/` (scenarios `single`, `slow`, `large`, `huge`) and `configs/tuned/tls/` (`tls`, `tls-ramped`, `tls-new`, `h2`): the default plus what each project's own documentation recommends for throughput. Results go to `<scenario>-tuned/`. Each tuned setting and its source, read 2026-11-14:
+
+| Proxy | Tuned setting | Source |
+|---|---|---|
+| rdock | `runtime.worker_threads: 2` (stated instead of derived from the CPUs); nothing else, because the guide says to leave socket options unset unless a measurement points at one | [Sockets and threads](../apps/website/src/content/docs/docs/guides/sockets-and-threads.mdx) |
+| NGINX | `worker_cpu_affinity auto` | [core module](https://nginx.org/en/docs/ngx_core_module.html#worker_cpu_affinity) |
+| NGINX | `listen … reuseport` | [`listen`](https://nginx.org/en/docs/http/ngx_http_core_module.html#listen); F5 blog "Socket Sharding in NGINX Release 1.9.1" (2015-05-26) |
+| NGINX | `keepalive_requests 100000` (client and upstream; default 1000) | F5 blog "Tuning NGINX for Performance" (2014-10-10): "especially useful for testing with a load-generation tool" |
+| NGINX (TLS) | `ssl_session_cache shared:SSL:10m` | ["HTTPS server optimization"](https://nginx.org/en/docs/http/configuring_https_servers.html); k6 does not resume sessions, so it changes nothing measured here |
+| HAProxy | none: the tuned file is the default file | The manual documents the relevant defaults as the recommended values: `nbthread` follows the CPUs the process is bound to, `cpu-policy performance` is the default, and for `tune.h2.fe.max-concurrent-streams` "it is recommended not to change this value" ([manual 3.4](https://docs.haproxy.org/3.4/configuration.html)) |
+| Caddy | `keepalive_idle_conns_per_host 256` (default 32) | [`reverse_proxy`](https://caddyserver.com/docs/caddyfile/directives/reverse_proxy) |
+| Traefik | none: the tuned files are the default files | No throughput setting is documented; `serversTransport.maxIdleConnsPerHost` already defaults to 200 ([configuration options](https://doc.traefik.io/traefik/reference/install-configuration/configuration-options/)) |
+
+The tuned files are a starting point for review: the plan (ADR-0033 research, Q7) is to ask each project's maintainers to review theirs before numbers are published, and to record whether they answered. That has not been done.
 
 ## How load is generated
 
@@ -45,9 +101,14 @@ docker build -t rdock:bench ..             # or RDOCK_IMAGE=ghcr.io/docker-hunte
 VERSION=0.4.0-alpha.1 ./run.sh             # all proxies at 5k, 10k, 20k, 40k req/s
 PROXIES="rdock nginx" RATES="20000" DURATION=60s ./run.sh
 SCENARIO=lb VERSION=0.4.0-alpha.1 ./run.sh # another scenario, see above
+SCENARIO=h2 CONFIG=tuned ./run.sh          # HTTP/2 with the tuned configurations
+PIN=1 PROXIES="direct rdock nginx" ./run.sh   # cores pinned, with the no-proxy ceiling
+python3 -I test_reports.py                 # tests of report.py and hosted_report.py
 ```
 
-Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/<scenario>/` for the other scenarios), and `report.md` in the same folder sums them up. Requirements: Docker with Compose and Python 3.
+Results go to `results/<version>/<proxy>-<rate>.json` (`results/<version>/<scenario>/` for the other scenarios, `<scenario>-tuned/` with `CONFIG=tuned`), and `report.md` in the same folder sums them up, next to `machine.txt` (CPU, kernel, pinning) and `images.txt` (the digests that ran). Requirements: Docker with Compose and Python 3.
+
+`PIN=1` adds [`compose.pinned.yaml`](compose.pinned.yaml): the proxy on CPUs 0–1 (`PROXY_CPUSET`), the backend and k6 on 2–3 (`LOAD_CPUSET`), so they never share a core with the proxy. It needs 4 CPUs unless both sets are given. Pinning is used instead of relying on the CPU quota alone, because a quota lets a process run on every core and then pauses all of it, which distorts tail latency ([isolation results](results/2026-11-01-isolation/report.md)).
 
 ## Profiling
 
@@ -78,6 +139,18 @@ Measure over the same 30 seconds as the `cpu.stat` ladder ([`cpu-ladder.sh`](cpu
 The [`bench`](../.github/workflows/bench.yml) workflow runs every night, on demand and on pull requests that change `benchmarks/`. It builds ReverseDock from the commit, runs it and NGINX in the same job at 5,000 and 10,000 req/s, reads each proxy's CPU time from its cgroup at every rate (`CPU_STAT=1`, [`cpu-stat.sh`](cpu-stat.sh)), and fails when [`compare.py`](compare.py) finds ReverseDock clearly behind NGINX: under 0.98× its throughput (not 1.0: the runner's achieved rate rounds below the target by different amounts for each proxy), a p99 above 2× NGINX's plus 5 ms, more than 1 % failed requests, or more than 2.4× NGINX's CPU time per request (the lab measured 1.36× in v0.5 and 1.43× in v0.6; hosted runners read 1.32× to 2.18× for the same code on 2026-11-13, depending on the machine drawn, so the limit there only catches a large regression). Since [#93](https://github.com/Docker-Hunterpedia/ReverseDock/issues/93) ReverseDock completes as much as NGINX at these rates on 2 CPUs with a p99 within 1.4× of it, so the limits leave room for the runner's jitter only. The results are kept as a workflow artifact for 30 days and shown in the job summary.
 
 GitHub's shared runners are virtual machines whose speed changes from run to run, so these numbers are a regression check only and are never published. Running both proxies in one job cancels most of that noise. Published reports below come from fixed hardware.
+
+The images were updated on 2026-11-14 (NGINX 1.29.3 → 1.30.6 among them), so the nightly ratios are against a newer NGINX from that day on; the gates in `compare.py` are unchanged. The nightly job runs only the plain `single` scenario and does not use pinning.
+
+## On a hosted runner: all five proxies
+
+The [`bench-report`](../.github/workflows/bench-report.yml) workflow (weekly and by hand, not a required check) runs ReverseDock, NGINX, HAProxy, Caddy, Traefik and `direct` in one job on one free GitHub-hosted runner: the scenarios `single`, `tls`, `tls-new` and `h2` (inputs choose others), each with the default and the tuned configurations, `PIN=1`, 2,500, 5,000 and 10,000 req/s (500, 1,000 and 2,000 for `tls-new`), 30 s each, CPU per request from each proxy's cgroup. It fails when a proxy breaks TLS parity. [`hosted_report.py`](hosted_report.py) joins the results into `hosted-report.md`, shown in the job summary and kept as an artifact for 90 days.
+
+**What that report can claim, and its limit.** GitHub's standard Linux runner for public repositories is one virtual machine with 4 vCPUs and 16 GB ([GitHub-hosted runners reference](https://docs.github.com/en/actions/reference/runners/github-hosted-runners), read 2026-11-14), shared with other tenants. The proxy gets 2 pinned vCPUs; the backend and k6 share the other 2, so at the higher rates the generator can be the limit (compare with `direct`, read dropped iterations). Whether the vCPUs are SMT siblings and which CPU model is drawn change from run to run (`machine.txt`). One repetition per cell. The numbers compare the five proxies **within one run** under identical conditions; they are not absolute numbers and must not be compared with another run or with the dedicated-lab reports. `hosted_report.py` puts these limits at the top of every report it writes, so they travel with the numbers.
+
+**What a dedicated three-machine run would add (open).** Load generator, proxy and backend on three dedicated machines on a private network of 10 Gbit/s or more, the way HAProxy's own report does ([HAProxy blog, 2021-04-08](https://www.haproxy.com/blog/haproxy-forwards-over-2-million-http-requests-per-second-on-a-single-aws-arm-instance)): no shared kernel or network stack, the generator-to-backend ceiling measured first, the proxy pinned to 2, 4 and 8 cores, host tuning applied and recorded, 5 repetitions per cell with the proxies interleaved, latency at fixed rates and at 50 % of each proxy's own peak, an HTTP/2 multiplexing scenario with a closed-loop tool such as h2load, and absolute numbers that can be quoted. That run needs rented hardware ([research note](../docs/research/v1.0-stable.md), Part C §2.5 and question Q5) and has not been done.
+
+The workflow has not run yet: no hosted-runner results exist at the time of writing.
 
 ## Soak test
 

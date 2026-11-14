@@ -1,0 +1,54 @@
+# The 60-second HTTPS proof in CI (ADR-0033, "60-second HTTPS"): an override for the documented
+# example deploy/docker/examples/https/compose.yaml, used as
+#   docker compose -f deploy/docker/examples/https/compose.yaml -f tests/https-60s/compose.ci.yaml ...
+# by tests/https-60s/run.sh. What it changes, and nothing else:
+#   - rdock runs the image under test (RDOCK_IMAGE) with the example's rdock.yaml, in which
+#     run.sh replaces `staging: true` by Pebble's directory and its root (PROOF_CONFIG);
+#   - Pebble, Let's Encrypt's test CA, and pebble-challtestsrv, its DNS server, join the network.
+#     challtestsrv answers every name with rdock's address, as public DNS would after "DNS
+#     pointed"; for that rdock has a fixed address on the example's network.
+# Pebble 2.10.1 is the version the testkit uses (crates/rdock-testkit/src/pebble.rs). Digests are
+# the multi-platform index digests read from ghcr.io (`HEAD /v2/<repo>/manifests/2.10.1`) on
+# 2026-11-14; the newest tag that day was 2.10.3.
+services:
+  rdock:
+    image: ${RDOCK_IMAGE:?set RDOCK_IMAGE to the image under test}
+    volumes:
+      - ${PROOF_CONFIG:?set PROOF_CONFIG to the generated config directory}:/etc/rdock:ro
+    networks:
+      proxy:
+        ipv4_address: 10.30.50.10
+
+  pebble:
+    image: ghcr.io/letsencrypt/pebble:2.10.1@sha256:ddf230642b1a584f519f32e347de1b05a6e4c1f6c35c1863b33effeab5f78199
+    command: ["-config", "/cfg/pebble.json", "-dnsserver", "10.30.50.3:8053"]
+    environment:
+      # Pebble sleeps 0 to 15 s (random) before each validation unless PEBBLE_VA_NOSLEEP is set
+      # (Pebble README, read 2026-11-14). It is left on: the proof includes a validation delay.
+      # Rejecting 5 % of valid nonces (Pebble's default) is turned off, as in the testkit; a
+      # public CA does not do it on purpose.
+      PEBBLE_WFE_NONCEREJECT: "0"
+    volumes:
+      - ${PROOF_DIR:?set PROOF_DIR to tests/https-60s}/pebble.json:/cfg/pebble.json:ro
+    ports:
+      # The management API, for the root that signs issued certificates (/roots/0).
+      - "127.0.0.1:15000:15000"
+    networks:
+      proxy:
+        ipv4_address: 10.30.50.2
+
+  challtestsrv:
+    image: ghcr.io/letsencrypt/pebble-challtestsrv:2.10.1@sha256:12ce21884def456bcf9786542113949e1f19dc7738d2c70e156c2d0c38a1405b
+    command: ["-defaultIPv4", "10.30.50.10", "-defaultIPv6", "", "-http01", "", "-https01", "", "-tlsalpn01", "", "-doh", ""]
+    networks:
+      proxy:
+        ipv4_address: 10.30.50.3
+
+networks:
+  proxy:
+    ipam:
+      config:
+        # Fixed addresses come from the lower half; containers without one (the app) get an
+        # address from the upper half, so they can never take rdock's.
+        - subnet: 10.30.50.0/24
+          ip_range: 10.30.50.128/25

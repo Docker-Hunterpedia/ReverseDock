@@ -71,7 +71,17 @@ A change that refuses an unsafe configuration may ship in a minor or a patch rel
 - **Supported:** the two newest minor releases of the current major get security fixes. When `1.N` comes out, `1.N-2` ends.
 - **After a new major:** the last minor of the previous major gets security fixes for six months.
 - **Backported:** security fixes, and fixes for crashes, data loss and failed certificate issuance. Other fixes go to the newest minor only; fixes to experimental features are never backported.
-- **How:** fixes land on `main` first and are cherry-picked by pull request to `release/X.Y`, which has the same ruleset as `main`; releases are tagged from that branch. Embargoed fixes go through a private GitHub security advisory.
+- **How:** fixes land on `main` first and are cherry-picked by pull request to `release/X.Y`, which has a ruleset like the one of `main` (below); releases are tagged from that branch (the workflow builds a `v*` tag wherever it points). Embargoed fixes go through a private GitHub security advisory.
+- **Release branches.** `release/X.Y` (for example `release/1.4`) is cut from the tag `vX.Y.0` when the first patch for that minor is needed, by a maintainer (`git switch -c release/1.4 v1.4.0`, then push). It only ever receives cherry-picks of fixes that are already on `main` (`git cherry-pick -x`, one pull request each), so a patch release carries fixes only. A branch ends with its minor's support (above).
+- **`latest` never moves backwards.** The `latest` image tag and GitHub's "Latest release" mark belong to the highest stable version: a patch for an older minor (`1.3.5` published after `1.4.0`) and a pre-release (`1.0.0-rc.1`) do not take them; they stay reachable by their own tags. The release workflow decides with `scripts/release_latest.py` over the repository's tags ([06-repo-layout.md](06-repo-layout.md) §4).
+- **Ruleset for `release/*` (the maintainer creates it; the project never does).** In Settings, Rules, Rulesets, New branch ruleset, name "Protect release branches", enforcement Active:
+  - Target branches: include by pattern `release/*`.
+  - Bypass list: repository admins, **for pull requests only** (as for "Protect main").
+  - Restrict creations (only the bypass list creates a `release/*` branch), restrict deletions, block force pushes.
+  - Require linear history; require a pull request before merging: 1 approval, code-owner review required, the approval must be of the most recent reviewable push, all conversations resolved, merge method squash only.
+  - Require status checks to pass, branches up to date before merging, with the checks `docs`, `dco`, `pr-title`, `rust`, `msrv`, `deny` and `docker` (all bound to GitHub Actions). This is stricter than "Protect main", which requires the first three today, because a patch branch has no later release to repair a mistake.
+  - The existing "Protect release tags" ruleset (`v*`: only admins create tags; nobody moves or deletes them) already covers the tags cut from these branches.
+  - Not configurable by the project, and open: a rule that a release tag must point at a commit on `main` or `release/*`. Today the workflow checks only that the tag equals the `Cargo.toml` version.
 - **Skew:** data planes may be up to two minors older than their control plane, never newer; the data directory is readable by the next two minors.
 - **Pre-releases** (`-alpha`, `-rc`) and `0.x`: the latest release only.
 - **One maintainer, no SLA.** The response times in [SECURITY.md](../SECURITY.md) are targets, not guarantees.
