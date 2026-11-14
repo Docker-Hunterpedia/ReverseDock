@@ -119,6 +119,7 @@ pub fn check_room(dir: &Path, needed: u64) -> Result<Space, NoRoom> {
 /// # Errors
 ///
 /// The reservation failed for another reason, typically `ENOSPC` or `EFBIG`.
+#[cfg(any(target_os = "linux", target_os = "android"))]
 pub fn reserve(file: &File, offset: u64, len: u64) -> io::Result<bool> {
     match rustix::fs::fallocate(file, rustix::fs::FallocateFlags::KEEP_SIZE, offset, len) {
         Ok(()) => Ok(true),
@@ -127,6 +128,17 @@ pub fn reserve(file: &File, offset: u64, len: u64) -> io::Result<bool> {
         }
         Err(err) => Err(err.into()),
     }
+}
+
+/// Other systems (macOS) have no `FALLOC_FL_KEEP_SIZE`: nothing is reserved, and the caller
+/// relies on the free-space check, as on a file system that cannot reserve.
+///
+/// # Errors
+///
+/// Never on these systems.
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
+pub fn reserve(_file: &File, _offset: u64, _len: u64) -> io::Result<bool> {
+    Ok(false)
 }
 
 /// Whether `err` means the disk (or the quota, or the file-size limit) is full: `ENOSPC`,
