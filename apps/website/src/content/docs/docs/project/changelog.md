@@ -9,7 +9,9 @@ sidebar:
 
 ## [Unreleased]
 
-Steps 1 to 11 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md), [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md)).
+## [1.0.0-rc.1] — v1.0 "Stable" (release candidate)
+
+Released 2026-11-14: steps 1 to 11 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md), [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md)). This is a release candidate: the final 1.0 waits for an independent security review, which has not been done, and pre-releases do not move the `latest` image tag. The stability promise and the compatibility gate are in force from this release on. WASM plugins and HTTP/3 stay experimental and out of the release binaries and images. The benchmark with the 1.0 method, the 24-hour soak and a 60-second HTTPS run on a real server have not run; `docs/07-roadmap.md` says what has run and what is open.
 
 ### Added
 
@@ -52,6 +54,7 @@ Steps 1 to 11 of v1.0 "Stable" ([ADR-0033](https://github.com/Docker-Hunterpedia
 
 ### Changed
 
+- The configuration schema's `$id` is pinned to the release tag (`https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/v1.0.0-rc.1/schema/rdock.v1.json`), as ADR-0033 decided, instead of the file on `main`; it follows the version of each release. The `yaml-language-server` comments in the examples still point at `main`.
 - Benchmark images updated and pinned by tag and digest (read 2026-11-14): NGINX 1.29.3 → 1.30.6, HAProxy 3.2.8 → 3.4.7, Traefik 3.5.4 → 3.7.19, Caddy 2.10.2 → 2.11.9, k6 1.3.0 → 1.8.3; the TLS scenarios now run TLS 1.3 only with the parity settings, so their results are not comparable with earlier reports. The nightly `bench` gates are unchanged and now compare against NGINX 1.30.6.
 - **Behaviour change for running Docker setups: newly honoured Traefik labels.** The Docker and Swarm providers share the translator, so these labels, ignored with a warning before, now take effect: `traefik.http.services.<s>.loadbalancer.server.weight` (the container's backend weight), `…loadbalancer.sticky` (as `sticky.cookie=true`), `…sticky.cookie.path`; `traefik.http.middlewares.<m>.chain.middlewares` (inlined into the routes that use the chain), `ipwhitelist.sourcerange` (HTTP and TCP, as `ip_allow`), `headers.customFrameOptionsValue`, `customBrowserXSSValue`, `contentSecurityPolicy`, `contentSecurityPolicyReportOnly`, `referrerPolicy`, `permissionsPolicy` (response headers; a custom value overrides `frameDeny` and `browserXssFilter`), `headers.accessControlAllowCredentials`, `…AllowHeaders`, `…AllowMethods`, `…AllowOriginList`, `…ExposeHeaders`, `…MaxAge` and `addVaryHeader` (a `cors` middleware, named `<m>-cors` next to the headers middleware when it sets headers too), `compress.encodings` and `compress.includedContentTypes`, `ratelimit.sourcecriterion.requestheadername` (`key: header:<Name>`); `traefik.tcp.services.<s>.loadbalancer.proxyprotocol`, `.proxyprotocol.version` and `.terminationdelay`. A container that carried one of these labels gets its effect after the upgrade; check such containers before upgrading.
 - Warnings for Traefik labels without an equivalent now say why (from the coverage table) instead of "not in the supported Traefik label subset", which is kept for labels Traefik v3.7 does not have; `traefik.http.routers.<r>.tls.options` says to use listener TLS settings.

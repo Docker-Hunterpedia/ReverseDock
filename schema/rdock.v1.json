@@ -1,5 +1,5 @@
 {
-  "$id": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json",
+  "$id": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/v1.0.0-rc.1/schema/rdock.v1.json",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "ReverseDock configuration (rdock.yaml)",
   "description": "A complete ReverseDock configuration, as written in `rdock.yaml`.\n\nEvery section is optional. Names of listeners, routes, services, middlewares and\ncertificates are map keys; other objects refer to them by name.",

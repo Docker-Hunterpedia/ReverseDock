@@ -8,9 +8,13 @@ use crate::Config;
 use crate::deprecation::{self, Deprecation, Kind};
 use crate::maturity::{self, Level};
 
-/// Stable identifier of the published schema (`schema/rdock.v1.json` in the repository).
-pub const SCHEMA_ID: &str =
-    "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json";
+/// Identifier of the published schema (`schema/rdock.v1.json` in the repository): the file at
+/// the release tag of this version, so the URL does not move once the tag exists (ADR-0033).
+pub const SCHEMA_ID: &str = concat!(
+    "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/v",
+    env!("CARGO_PKG_VERSION"),
+    "/schema/rdock.v1.json"
+);
 
 /// The JSON Schema (draft 2020-12) of `rdock.yaml`. Objects reject unknown keys, as ReverseDock
 /// does, so editors flag typos; keys starting with `x-` are allowed everywhere (extension fields

@@ -9,7 +9,7 @@ import Status from '../../../../components/Status.astro';
 
 ## Is ReverseDock ready for production?
 
-The current release, 0.9.0-alpha.1, is a pre-release. The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load) and fuzz targets, but the configuration format can still change between 0.x releases. If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
+The current release, 1.0.0-rc.1, is a release candidate: the final 1.0 waits for an independent security review, which has not been done ([threat model](/docs/project/threat-model/)). The proxy is covered by end-to-end tests (protocols, middlewares, smuggling vectors, limits, reloads under load), a chaos suite and fuzz targets. From this release on, stable settings change only as the [stability promise](/docs/project/stability/) allows; beta and experimental features may still change ([maturity levels](/docs/project/maturity/)). If you run it in production, pin the version, read the changelog before upgrading and go through the [production checklist](/docs/operations/production-checklist/).
 
 ## Is it really free?
 

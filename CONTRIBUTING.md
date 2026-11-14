@@ -6,7 +6,7 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Project status
 
-ReverseDock is an alpha: v0.1 to v0.9 are implemented (`0.9.0-alpha.1` is the latest release) and v1.0 "Stable" is implemented and is released as `1.0.0-rc.N` until an independent security review is done. The plan lives in [`docs/`](docs/README.md) and [the roadmap](docs/07-roadmap.md) says what has run and what is open. The most useful contributions right now:
+ReverseDock is at its 1.0 release candidate: v0.1 to v1.0 "Stable" are implemented, and v1.0 is released as `1.0.0-rc.N` (currently `1.0.0-rc.1`) until an independent security review is done. The plan lives in [`docs/`](docs/README.md) and [the roadmap](docs/07-roadmap.md) says what has run and what is open. The most useful contributions right now:
 
 - review the [architecture](docs/05-architecture.md), the [threat model](docs/11-threat-model.md), [requirements](docs/04-requirements.md) and [roadmap](docs/07-roadmap.md) and open issues for mistakes or gaps;
 - verify facts in the [research](docs/02-research.md) against official sources;
