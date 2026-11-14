@@ -11655,7 +11655,10 @@
         "summary": "The keys banned on this instance now",
         "tags": [
           "security"
-        ]
+        ],
+        "x-rdock-feature": "abuse",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/abuse/bans/{key}": {
@@ -11724,7 +11727,10 @@
         "summary": "(operator): lifts the ban of `key` (as listed, e.g",
         "tags": [
           "security"
-        ]
+        ],
+        "x-rdock-feature": "abuse",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/audit": {
@@ -12638,7 +12644,10 @@
         "summary": "Every cache store with its objects, bytes, limits and counters",
         "tags": [
           "cache"
-        ]
+        ],
+        "x-rdock-feature": "http-cache",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/cache/{store}/purge": {
@@ -12728,7 +12737,10 @@
         "summary": "Remove objects from one store of this instance, by URL, URL prefix, tag or all (operator role)",
         "tags": [
           "cache"
-        ]
+        ],
+        "x-rdock-feature": "http-cache",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/certificates": {
@@ -12876,7 +12888,10 @@
         "summary": "Every enrolled data plane with its state (`synced`, `behind`, `error`, `offline`, `revoked`), the revision it serves and is given, its version, identity expiry and last error; and the rollout",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/cluster/instances/{name}/revoke": {
@@ -12936,7 +12951,10 @@
         "summary": "(operator): the instance can no longer fetch bundles or use the store; it keeps serving its last bundle",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/cluster/revisions": {
@@ -12985,7 +13003,10 @@
         "summary": "Published revisions, newest first, with the instances that refused each and why",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       },
       "post": {
         "description": "(operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision. Data planes pull it. Audited.",
@@ -13062,7 +13083,10 @@
         "summary": "(operator): validates and publishes `document` as the next revision, or publishes `rollback_to`'s document again as a new revision",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/cluster/rollout": {
@@ -13111,7 +13135,10 @@
         "summary": "The rollout of the newest revision",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/cluster/rollout/abandon": {
@@ -13170,7 +13197,10 @@
         "summary": "(operator): the stable revision's document is published again as a new revision, which every instance takes at once; instances already given the abandoned revision are sent back",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/cluster/rollout/resume": {
@@ -13229,7 +13259,10 @@
         "summary": "(operator): a halted (or still soaking) rollout goes on: every instance is given the revision now",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/cluster/tokens": {
@@ -13298,7 +13331,10 @@
         "summary": "(operator): a single-use join token, shown once, and the cluster CA's pin for `cluster.control.ca_pin`",
         "tags": [
           "cluster"
-        ]
+        ],
+        "x-rdock-feature": "cluster",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/config": {
@@ -14048,7 +14084,10 @@
         "summary": "Every consumer with its groups and keys (IDs, expiry, notes); key hashes for operators only",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/consumers/{name}": {
@@ -14127,7 +14166,10 @@
         "summary": "(operator): removes an API-owned consumer and the keys the API minted for it",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       },
       "get": {
         "description": "One consumer.",
@@ -14185,7 +14227,10 @@
         "summary": "One consumer",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       },
       "put": {
         "description": "(operator): creates or changes an API-owned consumer's groups; its keys stay. A consumer of the configuration file is changed there.",
@@ -14279,7 +14324,10 @@
         "summary": "(operator): creates or changes an API-owned consumer's groups; its keys stay",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/consumers/{name}/keys": {
@@ -14378,7 +14426,10 @@
         "summary": "(operator): mints an API key for a consumer of the file or the API",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/consumers/{name}/keys/{id}": {
@@ -14473,7 +14524,10 @@
         "summary": "(operator): revokes a key the API minted",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/events/stream": {
@@ -14879,7 +14933,10 @@
         "summary": "Every `quota` middleware of this instance with its window and the counts of the current window",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/quota/{consumer}": {
@@ -14938,7 +14995,10 @@
         "summary": "(operator): forgets the consumer's counts on this instance, in every quota or in `?middleware=` only",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       },
       "get": {
         "description": "One consumer's counts in every quota.",
@@ -14986,7 +15046,10 @@
         "summary": "One consumer's counts in every quota",
         "tags": [
           "consumers"
-        ]
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.8"
       }
     },
     "/api/v1/routes/explain": {
@@ -15415,7 +15478,10 @@
         "summary": "Replaces the running binary without dropping connections: the listeners are handed to a new process, which serves once it is ready; this one drains (ADR-0031)",
         "tags": [
           "status"
-        ]
+        ],
+        "x-rdock-feature": "binary-upgrade",
+        "x-rdock-maturity": "beta",
+        "x-rdock-since": "v0.9"
       }
     },
     "/api/v1/users": {

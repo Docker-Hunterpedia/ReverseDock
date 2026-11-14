@@ -144,6 +144,21 @@ impl ProblemKind {
         }
     }
 
+    /// The feature of the maturity registry (`rdock_model::maturity`) whose answers use this
+    /// kind: problem-details answers as a whole belong to `validation-and-transformation`
+    /// (ADR-0033's note on levels); a kind only one feature produces names that feature. The
+    /// compatibility snapshot (`schema/compat/problems.json`) carries it.
+    #[must_use]
+    pub fn feature(self) -> &'static str {
+        match self {
+            Self::Banned => "abuse",
+            Self::QuotaExceeded => "consumers",
+            Self::Overloaded => "admission-control",
+            Self::LoginFailed | Self::IdentityProviderUnavailable => "oidc",
+            _ => "validation-and-transformation",
+        }
+    }
+
     /// The last part of the type URI.
     #[must_use]
     pub fn slug(self) -> &'static str {

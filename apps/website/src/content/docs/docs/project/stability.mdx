@@ -20,10 +20,16 @@ Until 1.0 (the current 0.x alpha releases), configuration may still change betwe
 | `rdock.*` labels and the documented Traefik subset | as for `rdock.yaml`; dropping a supported Traefik label | new labels; following Traefik's own deprecations |
 | CLI | removed or renamed commands, flags and documented `RDOCK_*` variables; the meaning of exit codes `0`, `1`, `2`; JSON output fields | new commands, flags and fields; **all human-readable output** |
 | Admin API `/api/v1` | removed paths, methods, fields or values; newly required request fields; changed types, status codes or roles | new paths, optional fields and response fields (ignore unknown ones) |
-| Metrics, JSON access-log fields, problem types | removed or renamed names, labels and fields; changed types | new ones |
+| Metrics, JSON access-log fields, problem types | removed or renamed names, labels and fields; a new label on an existing metric; changed types, units, buckets or statuses | new ones |
 | Container image, Helm values, data directory | entrypoint, user, data path, ports, health check; values as for `rdock.yaml`; a directory the next two minors cannot read | base image updates, new values, new files |
 
 Not promised: performance, log and error wording, the dashboard's look, undocumented behaviour, the internal Rust crates (only `rdock-plugin-api` follows SemVer), and anything [beta or experimental](#maturity-levels).
+
+### How it is checked
+
+Every pull request runs a compatibility gate that compares the configuration schema, the admin API's OpenAPI document, the Helm values schema, the CLI's commands, flags and JSON outputs, the metrics, the access-log fields, the problem types, the documented `RDOCK_*` variables, the labels and the image's entrypoint, user, ports and health check with the last release, and `cargo-semver-checks` for `rdock-plugin-api`. A change the table above calls breaking fails the check, unless the element is beta or experimental, or deprecated with its removal release reached. Data directories written by earlier releases are tested against the current binary. Until 1.0.0-rc.1 the gate only reports.
+
+The gate reads definitions, not behaviour: a changed meaning, a default applied in code rather than declared, a different routing or retry decision, the roles an API operation needs and the rule grammar are guarded by tests and review, not by the gate. The repository's [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md) §9 lists exactly what each check covers.
 
 ## Deprecations
 

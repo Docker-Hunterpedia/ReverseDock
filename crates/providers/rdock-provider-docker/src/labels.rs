@@ -150,6 +150,14 @@ pub struct Workload {
     pub virtual_ip: bool,
 }
 
+/// The native labels read on their own (eligibility, network and the shorthand), for the
+/// compatibility snapshot `schema/compat/labels.json` (ADR-0033).
+pub const NATIVE_LABELS: [&str; 8] = native::HANDLED;
+
+/// The sections of the native full form `rdock.<section>.<name>.<field>`, whose `<field>` is a
+/// dotted path of the configuration schema (checked with the schema).
+pub const NATIVE_SECTIONS: [&str; 7] = native::SECTIONS;
+
 /// The provider's objects and what was found while building them.
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Translation {

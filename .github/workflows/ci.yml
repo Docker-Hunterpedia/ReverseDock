@@ -1,5 +1,6 @@
 # Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker,
-# clients. semgrep, waf-example, wasm and http3 report only.
+# clients. semgrep, waf-example, wasm and http3 report only. compat (ADR-0033) is meant to be
+# required: a maintainer adds it to the "Protect main" ruleset.
 name: ci
 
 on:
@@ -236,6 +237,50 @@ jobs:
           pnpm --dir apps/dashboard gen:api
           (cd clients/go && go generate ./... && go vet ./...)
           git diff --exit-code -- apps/dashboard/src/api clients/go || { echo "::error::Run 'just clients' and commit the result"; exit 1; }
+
+  # The compatibility gate (ADR-0033): every public surface against the newest release tag
+  # reachable from the commit. Before 1.0.0-rc.1 it runs in report mode (findings are printed
+  # and the job passes); stale snapshots, an invalid exceptions file or a missing baseline fail
+  # in every mode.
+  compat:
+    name: compat
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          # The baseline is a tag: a shallow clone has none, and the gate refuses to run.
+          fetch-depth: 0
+          fetch-tags: true
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: Install the pinned toolchain (rust-toolchain.toml)
+        run: rustup toolchain install && rustup show active-toolchain
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          key: compat
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2.88.1
+        with:
+          tool: just,cargo-semver-checks@0.51.0
+      - name: The gate's own tests
+        run: just compat-test
+      - name: Snapshots in schema/compat are current (fails in every mode)
+        run: |
+          just compat
+          git diff --exit-code -- schema/compat || { echo "::error::Run 'just compat' and commit the result"; exit 1; }
+      - name: Compare with the last release tag
+        run: |
+          cargo build --locked -p rdock
+          python3 -I scripts/compat.py check --rdock target/debug/rdock --require-tools --json "$RUNNER_TEMP/compat.json"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: compat-report
+          path: ${{ runner.temp }}/compat.json
+          if-no-files-found: ignore
+          retention-days: 14
 
   dashboard:
     name: dashboard

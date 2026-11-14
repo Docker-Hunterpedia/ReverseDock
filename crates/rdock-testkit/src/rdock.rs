@@ -64,6 +64,30 @@ impl Rdock {
         Ok(rdock)
     }
 
+    /// Like [`Self::try_start`], after `prepare` has filled the data directory, for example with
+    /// the files an earlier release wrote (the data-directory compatibility test, ADR-0033).
+    pub fn try_start_prepared(
+        binary: &str,
+        config: &str,
+        prepare: impl FnOnce(&Path),
+    ) -> Result<Self, String> {
+        let dir = tempfile::tempdir().unwrap();
+        let admin_port = crate::free_port();
+        let mut rdock = Self {
+            child: None,
+            dir,
+            admin: format!("127.0.0.1:{admin_port}").parse().unwrap(),
+            binary: PathBuf::from(binary),
+            env: Vec::new(),
+        };
+        std::fs::create_dir_all(rdock.data_dir()).unwrap();
+        prepare(&rdock.data_dir());
+        rdock.write_config(config);
+        rdock.spawn();
+        rdock.wait_ready(Duration::from_secs(15))?;
+        Ok(rdock)
+    }
+
     pub fn config_path(&self) -> PathBuf {
         self.dir.path().join("rdock.yaml")
     }

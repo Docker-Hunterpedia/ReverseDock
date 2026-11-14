@@ -14,7 +14,7 @@ use super::tree::{list, scalar};
 use super::{Draft, Platform, SWARM_LBSWARM, Scope};
 
 /// Labels read elsewhere: eligibility, network and the shorthand.
-const HANDLED: [&str; 8] = [
+pub(super) const HANDLED: [&str; 8] = [
     "rdock.enable",
     "rdock.network",
     "rdock.host",
@@ -23,6 +23,17 @@ const HANDLED: [&str; 8] = [
     "rdock.tls",
     "rdock.middlewares",
     STATIC_ROOT,
+];
+
+/// The sections of the full form, `rdock.<section>.<name>.<field>`.
+pub(super) const SECTIONS: [&str; 7] = [
+    "routes",
+    "services",
+    "middlewares",
+    "tcp_routes",
+    "tcp_services",
+    "udp_routes",
+    "udp_services",
 ];
 
 /// The shorthand for a site served from a directory of ReverseDock's file system.

@@ -12,9 +12,10 @@ use serde::Serialize;
 
 use crate::{DeprecationsArg, OutputFormat, Registry, ValidateArgs, print};
 
-/// Result of validating one file, as printed by `--format json`.
-#[derive(Serialize)]
-struct FileReport {
+/// Result of validating one file, as printed by `--format json` (a list of these). Its JSON
+/// Schema is part of the CLI compatibility snapshot (`schema/compat/cli.json`).
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct FileReport {
     file: String,
     valid: bool,
     errors: usize,

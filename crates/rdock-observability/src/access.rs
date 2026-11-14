@@ -14,7 +14,11 @@ const QUEUE: usize = 16_384;
 
 /// One request, as logged. Query strings are not logged (only their length) because they often
 /// carry tokens; headers listed in `observability.access_log.redact` are replaced by `***`.
-#[derive(Debug, Clone, Default, Serialize)]
+///
+/// These are the JSON access log's fields, a stable surface (ADR-0033): their names and types
+/// are snapshotted in `schema/compat/access-log.json`, generated from this type's JSON Schema,
+/// where fields of features below stable carry `x-rdock-feature`.
+#[derive(Debug, Clone, Default, Serialize, schemars::JsonSchema)]
 pub struct AccessRecord {
     /// Time the request started (RFC 3339, UTC).
     pub ts: String,
@@ -24,6 +28,7 @@ pub struct AccessRecord {
     pub client_ip: String,
     /// The load balancer that sent a PROXY protocol header naming the client, as `ip:port`.
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-rdock-feature" = "proxy-protocol"))]
     pub proxy_peer: Option<String>,
     /// Method.
     pub method: String,
@@ -71,9 +76,11 @@ pub struct AccessRecord {
     pub user: Option<String>,
     /// Consumer the request was attributed to by an authenticating middleware (v0.8).
     #[serde(skip_serializing_if = "Option::is_none")]
+    #[schemars(extend("x-rdock-feature" = "consumers"))]
     pub consumer: Option<String>,
     /// Public ID of the API key that authenticated the request (never the key).
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "consumers"))]
     pub key_id: Option<String>,
     /// `User-Agent`.
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -90,28 +97,36 @@ pub struct AccessRecord {
     /// What the HTTP cache did (`hit`, `stale`, `revalidated`, `expired`, `miss`, `bypass`),
     /// on caching routes only.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "http-cache"))]
     pub cache_status: Option<String>,
     /// JA4 TLS client fingerprint (listeners with `tls.fingerprint`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "tls-fingerprints"))]
     pub ja4: Option<String>,
     /// JA3 TLS client fingerprint (listeners with `tls.fingerprint.ja3`).
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "tls-fingerprints"))]
     pub ja3: Option<String>,
     /// Client country (ISO 3166-1 alpha-2), only with `geoip.log.country`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "geoip"))]
     pub country: Option<String>,
     /// Client autonomous system number, only with `geoip.log.asn`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "geoip"))]
     pub asn: Option<u32>,
     /// What an `abuse` middleware did: `banned`, `tarpit` or `tagged`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "abuse"))]
     pub abuse: Option<String>,
     /// What an `admission` middleware did: `shed:<priority class>` when it answered `503`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "admission-control"))]
     pub admission: Option<String>,
     /// The SPIFFE ID of the client certificate, when a `client_cert` middleware with
     /// `spiffe` accepted it.
     #[serde(skip_serializing_if = "Option::is_none", default)]
+    #[schemars(extend("x-rdock-feature" = "client-cert-identity"))]
     pub spiffe_id: Option<String>,
 }
 

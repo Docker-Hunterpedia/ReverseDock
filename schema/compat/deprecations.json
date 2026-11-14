@@ -1,0 +1,14 @@
+{
+  "deprecations": [
+    {
+      "element": "observability.alerts.webhook",
+      "kind": "config_key",
+      "removal": "2.0",
+      "replacement": "a channel under `observability.alerts.channels` with `type: webhook`",
+      "since": "1.0"
+    }
+  ],
+  "generated_by": "rdock schema --compat deprecations (just compat)",
+  "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+  "surface": "deprecations"
+}

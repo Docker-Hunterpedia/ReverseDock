@@ -95,6 +95,7 @@ mimalloc = { workspace = true, optional = true }
 tikv-jemallocator = { workspace = true, optional = true }
 stats_alloc = { workspace = true, optional = true }
 nix.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true

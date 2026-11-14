@@ -40,6 +40,7 @@ pub use cache::{CachePurge, PurgeOutcome};
 pub use cluster::{ClusterPublish, RolloutAction};
 pub use openapi::json as openapi_json;
 pub use server::{Running, Sockets, StartError, start, start_with};
+pub use telemetry::metric_catalogue;
 
 /// What the admin API reads from and asks of the running process.
 #[async_trait]

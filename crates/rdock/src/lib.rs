@@ -54,6 +54,7 @@ pub use rdock_plugin_api::Registry;
 
 mod admin_cli;
 mod cluster;
+mod compat;
 mod control;
 mod ctl;
 mod datadir;
@@ -149,6 +150,10 @@ enum Command {
         /// Print the OpenAPI 3.1 document of the admin API instead.
         #[arg(long)]
         openapi: bool,
+        /// Internal (ADR-0033): print one compatibility snapshot of `schema/compat/` instead.
+        /// Used by `just compat`; not for users.
+        #[arg(long, hide = true, value_enum, conflicts_with = "openapi")]
+        compat: Option<compat::Surface>,
     },
     /// Print version and build information.
     Version {
@@ -413,8 +418,14 @@ fn run_parsed(
         Command::Bans(command) => admin_cli::bans(&command),
         Command::Keys(command) => admin_cli::keys(&command),
         Command::Routes(command) => admin_cli::routes(&command),
-        Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
-        Command::Schema { openapi: true } => {
+        Command::Schema {
+            compat: Some(surface),
+            ..
+        } => compat::snapshot(surface)
+            .and_then(|text| print(&text))
+            .map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: false, .. } => schema().map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: true, .. } => {
             print(rdock_admin::openapi_json()).map(|()| ExitCode::SUCCESS)
         }
         Command::Version { json } => version(json, &plugins).map(|()| ExitCode::SUCCESS),
@@ -499,6 +510,72 @@ fn built(feature: &rdock_model::maturity::Feature) -> bool {
     }
 }
 
+/// `rdock version --json`. Its JSON Schema is part of the CLI compatibility snapshot
+/// (`schema/compat/cli.json`, ADR-0033), so its fields are a stable surface.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct VersionInfo {
+    /// The release, e.g. `0.9.0-alpha.1`.
+    version: &'static str,
+    /// The commit it was built from.
+    commit: &'static str,
+    /// The compiler that built it.
+    rustc: &'static str,
+    /// The target triple.
+    target: &'static str,
+    /// `rdock-plugin-api`'s `API_VERSION`.
+    plugin_api: &'static str,
+    /// Names of the native plugins compiled in.
+    plugins: Vec<String>,
+    /// The WASM host ABI, when the build includes WASM plugins.
+    wasm_abi: Option<&'static str>,
+    /// Whether the build includes HTTP/3.
+    http3: bool,
+    /// The configuration schema version.
+    schema_version: u32,
+    /// The maturity registry, with whether this build includes each feature.
+    features: Vec<FeatureInfo>,
+}
+
+/// One entry of [`VersionInfo::features`].
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct FeatureInfo {
+    id: &'static str,
+    /// `experimental`, `beta` or `stable`.
+    level: &'static str,
+    since: &'static str,
+    summary: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cargo_feature: Option<&'static str>,
+    locations: Vec<&'static str>,
+    built: bool,
+}
+
+fn version_info(plugins: &Registry) -> VersionInfo {
+    VersionInfo {
+        version: VERSION,
+        commit: COMMIT,
+        rustc: RUSTC,
+        target: TARGET,
+        plugin_api: rdock_plugin_api::API_VERSION,
+        plugins: plugins.names().map(str::to_owned).collect(),
+        wasm_abi: rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION),
+        http3: rdock_proxy::http3::ENABLED,
+        schema_version: rdock_model::deprecation::SCHEMA_VERSION,
+        features: rdock_model::maturity::FEATURES
+            .iter()
+            .map(|f| FeatureInfo {
+                id: f.id,
+                level: f.level.as_str(),
+                since: f.since,
+                summary: f.summary,
+                cargo_feature: f.cargo_feature,
+                locations: f.locations.to_vec(),
+                built: built(f),
+            })
+            .collect(),
+    }
+}
+
 fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
     use rdock_model::maturity::{FEATURES, Level, feature};
     let names: Vec<&str> = plugins.names().collect();
@@ -508,21 +585,8 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
     // The levels come from the maturity registry (ADR-0033).
     let level = |id: &str| feature(id).map_or("experimental", |f| f.level.as_str());
     if json {
-        let http3 = rdock_proxy::http3::ENABLED;
-        let features: Vec<serde_json::Value> = FEATURES
-            .iter()
-            .map(|f| {
-                let mut v = serde_json::to_value(f).unwrap_or_default();
-                v["built"] = built(f).into();
-                v
-            })
-            .collect();
-        let info = serde_json::json!({
-            "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET,
-            "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi, "http3": http3,
-            "schema_version": rdock_model::deprecation::SCHEMA_VERSION,
-            "features": features,
-        });
+        let info = version_info(plugins);
+        let info = serde_json::to_value(&info).context("serialising the version")?;
         print(&format!("{info}\n"))
     } else {
         let plugins = if names.is_empty() {

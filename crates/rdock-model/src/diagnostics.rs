@@ -5,7 +5,19 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// How serious a diagnostic is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     /// The configuration cannot be applied.
@@ -24,7 +36,7 @@ impl fmt::Display for Severity {
 }
 
 /// One finding about a configuration, located by a path such as `routes.app.service`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Diagnostic {
     /// Error or warning.
     pub severity: Severity,

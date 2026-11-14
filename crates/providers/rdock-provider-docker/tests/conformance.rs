@@ -226,3 +226,145 @@ fn traefik_label_conformance() {
         failures.join("\n")
     );
 }
+
+/// A Traefik label key with object names and list indices replaced, lower-cased as Traefik
+/// reads keys: `traefik.http.routers.<name>.tls.domains[n].main`.
+fn normalized(key: &str) -> String {
+    let lower = key.to_ascii_lowercase();
+    let mut parts: Vec<String> = lower.split('.').map(str::to_owned).collect();
+    if parts.len() > 3
+        && ["http", "tcp", "udp"].contains(&parts[1].as_str())
+        && ["routers", "services", "middlewares"].contains(&parts[2].as_str())
+    {
+        "<name>".clone_into(&mut parts[3]);
+    }
+    // A header name is the user's, like an object name.
+    let n = parts.len();
+    let header_map = n >= 2
+        && matches!(
+            parts[n - 2].as_str(),
+            "customrequestheaders" | "customresponseheaders"
+        )
+        || n >= 3 && parts[n - 2] == "headers" && parts[n - 3] == "healthcheck";
+    if header_map {
+        "<header>".clone_into(&mut parts[n - 1]);
+    }
+    let joined = parts.join(".");
+    let mut out = String::with_capacity(joined.len());
+    let mut chars = joined.chars().peekable();
+    while let Some(c) = chars.next() {
+        out.push(c);
+        if c == '[' {
+            while chars.peek().is_some_and(char::is_ascii_digit) {
+                chars.next();
+            }
+            out.push('n');
+        }
+    }
+    out
+}
+
+/// The label snapshot of the compatibility check (ADR-0033): the native labels, and every
+/// Traefik label the conformance fixtures use that its translation takes without a warning
+/// at that label, i.e. the conformance-tested subset. `RDOCK_UPDATE_GOLDEN=1` (or
+/// `just compat`) rewrites `schema/compat/labels.json`; otherwise it must be current.
+#[test]
+fn label_snapshot_is_current() {
+    let mut files: Vec<PathBuf> = std::fs::read_dir(suite_dir())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .filter(|p| p.extension().is_some_and(|e| e == "yaml"))
+        .collect();
+    files.sort();
+    let mut traefik = BTreeSet::new();
+    for path in &files {
+        let text = std::fs::read_to_string(path).unwrap();
+        let fixture: Fixture = serde_saphyr::from_str(&text).unwrap();
+        let settings: DockerProvider = match fixture.settings {
+            Some(value) => serde_json::from_value(value).unwrap(),
+            None => DockerProvider::default(),
+        };
+        let containers: Vec<Container> = fixture.containers.into_iter().map(container).collect();
+        let out = translate(&containers, &settings);
+        for c in &containers {
+            for key in c.labels.keys() {
+                let warned = out
+                    .diagnostics
+                    .iter()
+                    .any(|d| d.path.contains(key.as_str()));
+                if key.to_ascii_lowercase().starts_with("traefik.") && !warned {
+                    traefik.insert(normalized(key));
+                }
+            }
+        }
+    }
+    // Every section of the full form is read.
+    for section in rdock_provider_docker::labels::NATIVE_SECTIONS {
+        let key = format!("rdock.{section}.x.unknown_field_for_the_check");
+        let c = Container {
+            name: "app".into(),
+            labels: [
+                ("rdock.enable".to_owned(), "true".to_owned()),
+                (key, "1".into()),
+            ]
+            .into_iter()
+            .collect(),
+            networks: BTreeMap::new(),
+            host_network: false,
+            exposed_ports: BTreeSet::new(),
+            health: Health::None,
+            stopping: false,
+            dns_name: None,
+        };
+        let out = translate(&[c], &DockerProvider::default());
+        assert!(
+            !out.diagnostics
+                .iter()
+                .any(|d| d.message.contains("unknown label")),
+            "section {section} is not read: {:?}",
+            out.diagnostics
+        );
+    }
+    let mut native: Vec<&str> = rdock_provider_docker::labels::NATIVE_LABELS.to_vec();
+    native.sort_unstable();
+    let mut sections: Vec<&str> = rdock_provider_docker::labels::NATIVE_SECTIONS.to_vec();
+    sections.sort_unstable();
+    let snapshot = serde_json::json!({
+        "generated_by": "the label_snapshot_is_current test of rdock-provider-docker (just compat)",
+        "native": {
+            "full_form": "rdock.<section>.<name>.<field>, where <field> is a dotted path of the configuration schema; checked with schema/rdock.v1.json",
+            "labels": native,
+            "sections": sections,
+        },
+        "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+        "surface": "labels",
+        "traefik": {
+            "labels": traefik,
+            "source": "labels the fixtures in tests/conformance/traefik-labels use and the translation takes without a warning",
+        },
+    });
+    let text = serde_json::to_string_pretty(&snapshot).unwrap() + "\n";
+    let path = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../schema/compat/labels.json");
+    if std::env::var_os("RDOCK_UPDATE_GOLDEN").is_some_and(|v| v == "1") {
+        std::fs::write(&path, &text).unwrap();
+        return;
+    }
+    let committed = std::fs::read_to_string(&path).unwrap_or_default();
+    assert!(
+        committed == text,
+        "schema/compat/labels.json is out of date; run `just compat` and commit the result"
+    );
+}
+
+#[test]
+fn traefik_keys_are_normalized() {
+    assert_eq!(
+        normalized("traefik.http.routers.App.tls.domains[0].main"),
+        "traefik.http.routers.<name>.tls.domains[n].main"
+    );
+    assert_eq!(normalized("traefik.enable"), "traefik.enable");
+    assert_eq!(
+        normalized("traefik.http.middlewares.h.headers.customRequestHeaders.X-Script-Name"),
+        "traefik.http.middlewares.<name>.headers.customrequestheaders.<header>"
+    );
+}

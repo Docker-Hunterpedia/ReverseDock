@@ -54,14 +54,65 @@ pub(crate) async fn count(
     response
 }
 
+/// The admin metrics: name, type, help text and label names. [`render`] writes their `# HELP`
+/// and `# TYPE` lines from here, and [`metric_catalogue`] lists them for the compatibility
+/// snapshot (ADR-0033).
+const METRICS: [(&str, &str, &str, &[&str]); 5] = [
+    (
+        "rdock_admin_requests_total",
+        "counter",
+        "Admin API requests by endpoint and status class.",
+        &["endpoint", "status_class"],
+    ),
+    (
+        "rdock_admin_login_failures_total",
+        "counter",
+        "Failed admin logins.",
+        &[],
+    ),
+    (
+        "rdock_admin_audit_write_failures_total",
+        "counter",
+        "Audit records that could not be written.",
+        &[],
+    ),
+    (
+        "rdock_admin_sse_subscribers",
+        "gauge",
+        "Open live streams.",
+        &["stream"],
+    ),
+    (
+        "rdock_admin_sse_dropped_events_total",
+        "counter",
+        "Live entries not delivered because a reader fell behind.",
+        &["stream"],
+    ),
+];
+
+/// The admin metrics appended to `/metrics`, as the compatibility snapshot lists metrics.
+#[must_use]
+pub fn metric_catalogue() -> Vec<rdock_observability::MetricInfo> {
+    METRICS
+        .iter()
+        .map(|(name, kind, help, labels)| {
+            rdock_observability::MetricInfo::new(name, kind, help, labels)
+        })
+        .collect()
+}
+
+/// Writes the `# HELP` and `# TYPE` lines of `METRICS[index]`.
+fn header(out: &mut String, index: usize) {
+    if let Some((name, kind, help, _)) = METRICS.get(index) {
+        let _ = writeln!(out, "# HELP {name} {help}");
+        let _ = writeln!(out, "# TYPE {name} {kind}");
+    }
+}
+
 /// The Prometheus text of the admin metrics.
 pub(crate) fn render(state: &State) -> String {
     let mut out = String::new();
-    let _ = writeln!(
-        out,
-        "# HELP rdock_admin_requests_total Admin API requests by endpoint and status class."
-    );
-    let _ = writeln!(out, "# TYPE rdock_admin_requests_total counter");
+    header(&mut out, 0);
     for ((endpoint, class), n) in state
         .telemetry
         .requests
@@ -74,33 +125,20 @@ pub(crate) fn render(state: &State) -> String {
             "rdock_admin_requests_total{{endpoint=\"{endpoint}\",status_class=\"{class}\"}} {n}"
         );
     }
-    let _ = writeln!(
-        out,
-        "# HELP rdock_admin_login_failures_total Failed admin logins."
-    );
-    let _ = writeln!(out, "# TYPE rdock_admin_login_failures_total counter");
+    header(&mut out, 1);
     let _ = writeln!(
         out,
         "rdock_admin_login_failures_total {}",
         state.telemetry.login_failures.load(Ordering::Relaxed)
     );
-    let _ = writeln!(
-        out,
-        "# HELP rdock_admin_audit_write_failures_total Audit records that could not be written."
-    );
-    let _ = writeln!(out, "# TYPE rdock_admin_audit_write_failures_total counter");
+    header(&mut out, 2);
     let _ = writeln!(
         out,
         "rdock_admin_audit_write_failures_total {}",
         state.audit.write_failures()
     );
-    let _ = writeln!(out, "# HELP rdock_admin_sse_subscribers Open live streams.");
-    let _ = writeln!(out, "# TYPE rdock_admin_sse_subscribers gauge");
-    let _ = writeln!(
-        out,
-        "# HELP rdock_admin_sse_dropped_events_total Live entries not delivered because a reader fell behind."
-    );
-    let _ = writeln!(out, "# TYPE rdock_admin_sse_dropped_events_total counter");
+    header(&mut out, 3);
+    header(&mut out, 4);
     for (name, hub) in [("logs", &state.logs), ("events", &state.events)] {
         let _ = writeln!(
             out,

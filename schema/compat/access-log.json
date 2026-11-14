@@ -1,0 +1,237 @@
+{
+  "generated_by": "rdock schema --compat access-log (just compat)",
+  "schema": {
+    "$schema": "https://json-schema.org/draft/2020-12/schema",
+    "properties": {
+      "abuse": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "abuse",
+        "x-rdock-maturity": "beta"
+      },
+      "admission": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "admission-control",
+        "x-rdock-maturity": "beta"
+      },
+      "asn": {
+        "format": "uint32",
+        "minimum": 0,
+        "type": [
+          "integer",
+          "null"
+        ],
+        "x-rdock-feature": "geoip",
+        "x-rdock-maturity": "beta"
+      },
+      "bytes_in": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "bytes_out": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "cache_status": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "http-cache",
+        "x-rdock-maturity": "beta"
+      },
+      "cf_ray": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "client_ip": {
+        "type": "string"
+      },
+      "consumer": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta"
+      },
+      "country": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "geoip",
+        "x-rdock-maturity": "beta"
+      },
+      "duration_ms": {
+        "format": "double",
+        "type": "number"
+      },
+      "error": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "host": {
+        "type": "string"
+      },
+      "ja3": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "tls-fingerprints",
+        "x-rdock-maturity": "beta"
+      },
+      "ja4": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "tls-fingerprints",
+        "x-rdock-maturity": "beta"
+      },
+      "key_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "consumers",
+        "x-rdock-maturity": "beta"
+      },
+      "listener": {
+        "type": "string"
+      },
+      "method": {
+        "type": "string"
+      },
+      "path": {
+        "type": "string"
+      },
+      "proto": {
+        "type": "string"
+      },
+      "proxy_peer": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "proxy-protocol",
+        "x-rdock-maturity": "beta"
+      },
+      "query_len": {
+        "format": "uint",
+        "minimum": 0,
+        "type": "integer"
+      },
+      "referer": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "request_id": {
+        "type": "string"
+      },
+      "route": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "service": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "sni": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "spiffe_id": {
+        "type": [
+          "string",
+          "null"
+        ],
+        "x-rdock-feature": "client-cert-identity",
+        "x-rdock-maturity": "beta"
+      },
+      "status": {
+        "format": "uint16",
+        "maximum": 65535,
+        "minimum": 0,
+        "type": "integer"
+      },
+      "tls_cipher": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "tls_version": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "tried": {
+        "items": {
+          "type": "string"
+        },
+        "type": "array"
+      },
+      "ts": {
+        "type": "string"
+      },
+      "upstream": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "user": {
+        "type": [
+          "string",
+          "null"
+        ]
+      },
+      "user_agent": {
+        "type": [
+          "string",
+          "null"
+        ]
+      }
+    },
+    "required": [
+      "ts",
+      "request_id",
+      "client_ip",
+      "method",
+      "host",
+      "path",
+      "query_len",
+      "proto",
+      "status",
+      "bytes_in",
+      "bytes_out",
+      "duration_ms",
+      "listener"
+    ],
+    "type": "object"
+  },
+  "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+  "surface": "access-log"
+}

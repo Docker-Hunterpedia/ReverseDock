@@ -1,0 +1,4 @@
+{
+  "$comment": "Reviewed exceptions to the compatibility gate (ADR-0033, scripts/compat.py, CONTRIBUTING.md). Each entry names the surface, element and rule exactly as the gate prints them, a reason a reviewer can check, and the release that ships the change; it expires once the baseline tag reaches that release.",
+  "exceptions": []
+}
