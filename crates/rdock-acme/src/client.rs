@@ -103,6 +103,20 @@ fn retry_after(value: &str) -> Option<SystemTime> {
     Some(at.min(SystemTime::now() + MAX_RETRY_AFTER))
 }
 
+/// Fuzzing entry point (`tests/fuzz`, target `acme_answers`): a CA's `Retry-After` value.
+/// Never a panic, and never a time later than the cap allows.
+#[doc(hidden)]
+pub fn fuzz_retry_after(value: &str) {
+    let before = SystemTime::now();
+    if let Some(at) = retry_after(value) {
+        assert!(
+            at <= SystemTime::now() + MAX_RETRY_AFTER,
+            "{value:?} waits beyond the cap"
+        );
+        let _ = at.duration_since(before);
+    }
+}
+
 const MONTHS: [&str; 12] = [
     "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
 ];
@@ -121,6 +135,18 @@ fn http_date(value: &str) -> Option<SystemTime> {
         parts.next()?.ok()?,
         parts.next()?.ok()?,
     );
+    // RFC 9110's ranges (a leap second allowed). Without them a CA's answer such as year
+    // 99999999999999999 overflowed the arithmetic below (found by the `acme_answers` fuzz
+    // target: a panic in debug builds, a wrong time in release builds).
+    if parts.next().is_some()
+        || !(1..=31).contains(&day)
+        || !(1..=9999).contains(&year)
+        || !(0..24).contains(&h)
+        || !(0..60).contains(&m)
+        || !(0..=60).contains(&s)
+    {
+        return None;
+    }
     // Days since 1970-01-01 of a proleptic Gregorian date (Howard Hinnant's algorithm).
     let y = if month <= 2 { year - 1 } else { year };
     let era = y.div_euclid(400);
@@ -196,6 +222,23 @@ mod tests {
             Some(SystemTime::UNIX_EPOCH + Duration::from_secs(1_445_412_480))
         );
         assert!(retry_after("soon").is_none());
+    }
+
+    /// Fields out of RFC 9110's ranges are refused; before, the arithmetic overflowed.
+    #[test]
+    fn dates_out_of_range_are_refused() {
+        for value in [
+            "Wed, 21 Oct 99999999999999999 07:28:00 GMT",
+            "Wed, 9223372036854775807 Oct 2015 07:28:00 GMT",
+            "Wed, 21 Oct 2015 9223372036854775807:28:00 GMT",
+            "Wed, 21 Oct 2015 07:28:00:00 GMT",
+            "Wed, 0 Oct 2015 07:28:00 GMT",
+            "Wed, 21 Oct -5 07:28:00 GMT",
+        ] {
+            assert_eq!(http_date(value), None, "{value}");
+            assert_eq!(retry_after(value), None, "{value}");
+        }
+        assert!(http_date("Fri, 31 Dec 9999 23:59:60 GMT").is_some());
     }
 
     #[test]

@@ -1,0 +1,1 @@
+{"format": 1, "cluster_id": "c1", "revision": 7, "sha256": "8741fd4b9618c7306d152f1a892cecb59bbdfc790150c407ffa113e5611f8a48", "published_at": "2026-11-14T00:00:00Z", "published_by": "admin", "document": {"routes": {"app": {"match": "Host(`a.test`)", "service": "app"}}, "services": {"app": {"backends": [{"address": "10.0.0.2:80"}]}}}}

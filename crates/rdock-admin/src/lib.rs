@@ -330,3 +330,80 @@ struct State {
 fn hex(bytes: &[u8]) -> String {
     rdock_credentials::hex(bytes)
 }
+
+/// Fuzzing entry point (`tests/fuzz`, target `admin_input`): arbitrary text as every JSON
+/// request body the admin API reads, as the query string of every operation that takes one
+/// (through axum's own `Query` extractor), and through the small parsers in front of
+/// authentication (user names, admin token values, TOTP codes, the tenancy table). Only
+/// refusals are expected; the properties checked are those the handlers rely on.
+#[doc(hidden)]
+pub fn fuzz_admin_input(data: &[u8]) {
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
+    };
+    // Request bodies, as the handlers' `Json` extractor reads them.
+    macro_rules! bodies {
+        ($($t:ty),* $(,)?) => { $( let _ = serde_json::from_str::<$t>(text); )* };
+    }
+    bodies!(
+        manage::NewUser,
+        manage::UserChange,
+        manage::TokenRequest,
+        auth::Credentials,
+        account::Code,
+        account::Reauth,
+        account::PasswordChange,
+        cache::PurgeRequest,
+        cluster::JoinTokenRequest,
+        cluster::ClusterPublishRequest,
+        config_api::Rollback,
+        config_api::Import,
+        consumers::ConsumerSpec,
+        consumers::NewKey,
+        resources::BackendRef,
+    );
+    // Query strings, as the `Query` extractor reads them.
+    if let Ok(uri) = http::Uri::try_from(format!("/api/v1/x?{text}")) {
+        use axum::extract::Query;
+        let _ = Query::<abuse::BanScope>::try_from_uri(&uri);
+        let _ = Query::<consumers::QuotaScope>::try_from_uri(&uri);
+        let _ = Query::<manage::AuditQuery>::try_from_uri(&uri);
+        let _ = Query::<resources::Window>::try_from_uri(&uri);
+        let _ = Query::<stream::Filter>::try_from_uri(&uri);
+    }
+    // A user name is lower case, 1-64 characters of a fixed set, and normalising is idempotent.
+    if let Some(name) = users::normalize_name(text) {
+        assert!(!name.is_empty() && name.len() <= 64, "{name:?}");
+        assert!(
+            name.bytes()
+                .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b"._-".contains(&b)),
+            "{name:?}"
+        );
+        assert_eq!(users::normalize_name(&name).as_deref(), Some(name.as_str()));
+    }
+    // A token value splits into an ID and a secret taken from the value itself.
+    if let Some((id, secret)) = tokens::parse_value(text) {
+        assert!(text.contains(id) && text.contains(secret));
+    }
+    // A TOTP code is accepted for one step at most, and only a step newer than the last one.
+    let mut parts = text.splitn(4, '\n');
+    if let (Some(secret), Some(code), Some(now), Some(last)) =
+        (parts.next(), parts.next(), parts.next(), parts.next())
+    {
+        let now = now.trim().parse::<u64>().unwrap_or_default();
+        let last = last.trim().parse::<u64>().unwrap_or_default();
+        if let Some(step) = totp::verify(secret, code, now, last) {
+            assert!(step > last, "step {step} not after {last}");
+            assert!(
+                step.abs_diff(now / 30) <= 1,
+                "step {step} too far from {now}"
+            );
+        }
+    }
+    // The tenancy table answers for any method and route template.
+    if let Some((method, template)) = text.split_once(' ')
+        && let Ok(method) = http::Method::from_bytes(method.as_bytes())
+    {
+        let _ = tenancy::classify(&method, Some(template));
+    }
+}

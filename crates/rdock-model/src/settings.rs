@@ -475,15 +475,17 @@ pub struct AlertRules {
 /// Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the
 /// space left drops below either. A full disk never stops request handling, but the
 /// configuration API, mutating admin calls and certificate orders are refused until there is
-/// room. Defaults: 5 %, the warning level of the Prometheus node exporter's
-/// `NodeFilesystemAlmostOutOfSpace` alert (node-mixin `config.libsonnet`, checked
-/// 2026-11-14), and 256 MiB, enough for several hundred certificate orders and configuration
-/// writes.
+/// room. Default: 256 MiB, enough for several hundred certificate orders and configuration
+/// writes, and nothing by share. ReverseDock's data directory needs a fixed amount of room,
+/// not a share of the disk: 5 % (the warning level of the Prometheus node exporter's
+/// `NodeFilesystemAlmostOutOfSpace` alert, node-mixin `config.libsonnet`, checked 2026-11-14)
+/// is tens of gigabytes on a large disk and would fire while there is room for years of
+/// writes, so a share threshold is off unless set.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct DiskRule {
-    /// Alert when less than this share of the file system is free, in percent (0–50; 0 turns
-    /// this threshold off).
+    /// Alert when less than this share of the file system is free, in percent (0–50; 0, the
+    /// default, turns this threshold off).
     pub free_percent: u8,
     /// Alert when fewer bytes than this are free (0 turns this threshold off).
     pub free_bytes: crate::values::ByteSize,
@@ -492,7 +494,7 @@ pub struct DiskRule {
 impl Default for DiskRule {
     fn default() -> Self {
         Self {
-            free_percent: 5,
+            free_percent: 0,
             free_bytes: crate::values::ByteSize::mib(256),
         }
     }

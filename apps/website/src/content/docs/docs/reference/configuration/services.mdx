@@ -285,8 +285,8 @@ A backend that becomes healthy again ramps up its weight: a duration such as `30
 
 What happens when no backend is healthy.
 
-- `fail_open`: Send to every backend anyway: a broken health check must not cause an outage.
-- `fail_closed`: Answer `503`.
+- `fail_open`: Panic mode: route anyway, first to backends that only passive ejection keeps out while their active checks pass, else to every backend of the first tier (UDP: every backend). A broken health check must not cause an outage.
+- `fail_closed`: Answer `503` (UDP: drop new sessions).
 
 ## `services.<name>.hedge`
 

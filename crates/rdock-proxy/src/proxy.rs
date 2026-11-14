@@ -34,6 +34,10 @@ use crate::runtime::{
 };
 use crate::upstream;
 
+/// `X-Content-Type-Options` of every answer rdock writes itself (its error pages, redirects,
+/// middleware and `respond` bodies): clients must not guess another type than the one sent.
+const NOSNIFF: &str = "nosniff";
+
 /// State shared by every listener.
 #[derive(Debug)]
 pub struct Shared {
@@ -579,6 +583,16 @@ impl RdockProxy {
             .and_then(|(_, v)| v.to_str().ok()?.trim().parse::<u64>().ok());
         for (name, value) in reply.headers {
             resp.append_header(name, value)?;
+        }
+        // Every answer rdock writes itself says how to read it; a static file's own `nosniff`
+        // setting decides for files. Proxied responses never pass here.
+        let own_body = !matches!(reply.body, Some(Body::File(_)));
+        if own_body
+            && !resp
+                .headers
+                .contains_key(http::header::X_CONTENT_TYPE_OPTIONS)
+        {
+            resp.insert_header(http::header::X_CONTENT_TYPE_OPTIONS, NOSNIFF)?;
         }
         let body = if let Some(body) = reply.body {
             body
@@ -1295,6 +1309,13 @@ impl ProxyHttp for RdockProxy {
         };
         let selected = upstream::select(&service, key)
             .ok_or_else(|| status_error(503, "the service has no available backend"))?;
+        if selected.panic {
+            self.shared
+                .metrics
+                .panic_selections
+                .with_label_values(&[&*service.name])
+                .inc();
+        }
         ctx.tried.push(selected.member.id.clone());
         let mut peer = upstream::peer(&service, &selected.member.candidate, &route.timeouts)?;
         if let Some(connect) = peer.options.connection_timeout {
@@ -1716,6 +1737,7 @@ impl ProxyHttp for RdockProxy {
                     let _ = resp.insert_header(http::header::CONTENT_LANGUAGE, language);
                 }
                 let _ = resp.insert_header(http::header::CACHE_CONTROL, "no-store");
+                let _ = resp.insert_header(http::header::X_CONTENT_TYPE_OPTIONS, NOSNIFF);
                 let _ = resp.insert_header("x-request-id", ctx.request_id());
                 self.advertise_http3(session, &mut resp);
                 if let Some(cc) = ctx.cache.as_mut() {
@@ -2326,6 +2348,15 @@ fn set_path(req: &mut RequestHeader, path: &str) -> pingora::Result<()> {
         http::Uri::from_parts(parts).map_err(|_| status_error(400, "invalid request path"))?;
     req.set_uri(uri);
     Ok(())
+}
+
+/// Fuzzing entry point (`tests/fuzz`, target `backend_response`): what rdock does with a
+/// backend's response head before anything else reads it: the connection-specific headers it
+/// removes, and the pause a `503` with `Retry-After` asks for (capped like a real pause).
+#[doc(hidden)]
+pub fn fuzz_backend_response(resp: &mut ResponseHeader) -> Option<Duration> {
+    strip_response_hop_by_hop(resp);
+    retry_after(resp, SystemTime::now()).map(|wait| wait.min(MAX_PAUSE))
 }
 
 /// Removes connection-specific headers from a backend response (Pingora only cleans requests).

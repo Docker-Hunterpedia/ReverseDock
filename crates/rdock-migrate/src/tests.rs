@@ -589,3 +589,39 @@ fn credentials_in_labels_are_never_echoed() {
         Level::Dropped
     );
 }
+
+/// A value quoted in a finding cannot add to or break the written configuration: a carriage
+/// return in a Caddy upstream address stays inside the header comment, and a control character
+/// does not make the YAML unreadable (both found by the `migrate_caddy` fuzz target).
+#[test]
+fn quoted_input_stays_inside_the_header_comment() {
+    for dial in ["web\rinjected_key: 1", "web-b\u{7f}:80"] {
+        let json = serde_json::json!({
+            "apps": { "http": { "servers": { "s": {
+                "listen": [":80"],
+                "routes": [{ "handle": [{ "handler": "reverse_proxy", "upstreams": [{ "dial": dial }] }] }]
+            } } } }
+        })
+        .to_string();
+        let options = caddy::Options {
+            file: "-".to_owned(),
+            full: true,
+        };
+        let migration = caddy::caddy(&json, &options).unwrap();
+        // The address itself is invalid (and reported); the YAML must still read.
+        let loaded = rdock_config::load_str(&migration.yaml, rdock_config::Format::Yaml);
+        assert!(
+            !matches!(loaded, Err(rdock_config::LoadError::Syntax { .. })),
+            "{loaded:?}\n{}",
+            migration.yaml
+        );
+        assert!(
+            !migration
+                .yaml
+                .lines()
+                .any(|l| l.starts_with("injected_key")),
+            "{}",
+            migration.yaml
+        );
+    }
+}

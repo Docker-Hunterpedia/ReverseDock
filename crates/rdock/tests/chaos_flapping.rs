@@ -35,6 +35,11 @@ struct Lab {
 }
 
 async fn lab() -> Lab {
+    lab_with("failures: 1, window: 10s, ejection: 1s").await
+}
+
+/// The lab with these passive-health settings.
+async fn lab_with(passive: &str) -> Lab {
     let mut backends = Vec::new();
     let mut proxies = Vec::new();
     for i in 0..3 {
@@ -59,7 +64,7 @@ services:
     retries: {{ attempts: 2, on: [connect, reset], budget_percent: 100 }}
     health:
       active: {{ path: /healthz, interval: 500ms, timeout: 1s, healthy: 1, unhealthy: 1 }}
-      passive: {{ failures: 1, window: 10s, ejection: 1s }}
+      passive: {{ {passive} }}
 "#,
         list.join(", ")
     );
@@ -147,4 +152,52 @@ async fn every_backend_flapping_in_turn_costs_nothing() {
     let report = load.stop().await;
     eprintln!("load: {report:?}");
     report.assert_clean("every backend flapping in turn", &lab.rdock.log());
+}
+
+/// The fast rotation: the next backend comes up only a little more than one active interval
+/// before the others go down, every backend may be ejected (`max_ejection_percent: 100`) and
+/// an ejection lasts longer than a backend stays down (5 s against 2.4 s), so the one that is
+/// up is still ejected while the others are failing. With the selection before panic routing
+/// (a random pick among all three backends, twice) this run lost requests to `502` (3 of 1,188
+/// on 2026-11-14); now the ejected backend whose probes pass gets the traffic, its first answer
+/// ends its ejection, and a retry goes to it rather than to the backend that just failed.
+#[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+async fn a_fast_rotation_routes_to_the_ejected_backend_that_is_up() {
+    let lab = lab_with("failures: 1, window: 10s, ejection: 5s, max_ejection_percent: 100").await;
+    let load = Load::start(vec![Target::http(addr(lab.port), "app.test", "/")], 100);
+    load.wait_for_ok(100, Duration::from_secs(30)).await;
+    for step in 0..9 {
+        let up = step % 3;
+        lab.proxies[up].set(Fault::Pass);
+        // One active interval (500 ms) and the probe's round trip, not the 1 s ejection.
+        tokio::time::sleep(Duration::from_millis(700)).await;
+        for (i, proxy) in lab.proxies.iter().enumerate() {
+            if i != up {
+                proxy.set(Fault::Reset);
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+    }
+    for proxy in &lab.proxies {
+        proxy.set(Fault::Pass);
+    }
+    let before: Vec<usize> = lab.backends.iter().map(Backend::requests).collect();
+    all_serve_again(&lab, &before).await;
+    let report = load.stop().await;
+    eprintln!("load: {report:?}");
+    report.assert_clean("a fast rotation", &lab.rdock.log());
+    let (_, metrics) = lab.rdock.get_admin("/metrics").unwrap_or_default();
+    assert!(
+        metrics.contains("rdock_backend_panic_selections_total{service=\"app\"}"),
+        "panic routing is counted: {}",
+        metrics
+            .lines()
+            .filter(|l| l.contains("panic") || l.contains("ejections_total"))
+            .collect::<Vec<_>>()
+            .join("\n")
+    );
+    assert!(
+        lab.rdock.log().contains("panic mode"),
+        "entering panic mode is logged"
+    );
 }

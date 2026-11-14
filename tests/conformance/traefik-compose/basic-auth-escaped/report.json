@@ -83,9 +83,9 @@
       "target": "middlewares.admin-auth"
     },
     {
-      "code": "traefik.label.exact",
-      "level": "exact",
-      "message": "`basic_auth.realm`",
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`basic_auth.realm`; the Basic challenge also names the charset credentials are decoded with (`charset=\"UTF-8\"`, RFC 7617 §2.1); Traefik's names the realm only. Clients treat both as a challenge for the realm",
       "source": {
         "file": "compose.yaml",
         "item": "traefik.http.middlewares.admin-auth.basicauth.realm",
@@ -116,9 +116,9 @@
     "kind": "traefik"
   },
   "summary": {
-    "approximate": 1,
+    "approximate": 2,
     "dropped": 0,
-    "exact": 8,
+    "exact": 7,
     "items": 9,
     "manual": 0,
     "result": 0

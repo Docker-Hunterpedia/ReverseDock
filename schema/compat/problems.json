@@ -2,13 +2,13 @@
   "generated_by": "rdock schema --compat problems (just compat)",
   "problems": {
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 502
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 400
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#banned": {
@@ -17,23 +17,23 @@
       "status": 403
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 417
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 403
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 504
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 431
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#identity-provider-unavailable": {
@@ -42,8 +42,8 @@
       "status": 503
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 500
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#login-failed": {
@@ -52,18 +52,18 @@
       "status": 401
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#maintenance": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 503
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 405
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 404
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#overloaded": {
@@ -77,8 +77,8 @@
       "status": 422
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 413
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#quota-exceeded": {
@@ -87,33 +87,33 @@
       "status": 429
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 429
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 408
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 503
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 401
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#unsupported-media-type": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 415
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long": {
-      "feature": "validation-and-transformation",
-      "maturity": "beta",
+      "feature": "problem-types",
+      "maturity": "stable",
       "status": 414
     },
     "https://reversedock.oday-bakkour.com/docs/reference/problems/#validation-failed": {

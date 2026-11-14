@@ -2,7 +2,7 @@
 title: Security
 description: How to report a vulnerability in ReverseDock privately, what to expect, and how releases are signed.
 sidebar:
-  order: 5
+  order: 4.5
 ---
 
 ReverseDock sits in front of other people's infrastructure, so security reports have the highest priority. The full policy is [SECURITY.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/SECURITY.md) on GitHub.
@@ -49,7 +49,12 @@ The project will not pursue or support legal action against anyone who researche
 
 Every release publishes `SHA256SUMS` with a keyless cosign signature, an SPDX SBOM, and GitHub build-provenance attestations for each archive. Container images are signed and attested too. [Verify a download](/docs/install/verify/) shows the commands.
 
+## How the project tests itself
+
+The [threat model](/docs/project/threat-model/) lists what is protected, from whom, the threats per surface with their mitigations and tests, and the risks that remain. In short: 21 fuzz targets on every parser that reads outside bytes, end-to-end security suites, Clippy with panics denied, Semgrep and CodeQL, `cargo deny` for advisories, dependency review, an image scan and OpenSSF Scorecard. No independent audit has been done yet; the final 1.0 waits for one.
+
 ## Related
 
+- [Threat model](/docs/project/threat-model/)
 - [Security model](/docs/concepts/security-model/)
 - [Production checklist](/docs/operations/production-checklist/)

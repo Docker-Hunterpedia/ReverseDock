@@ -61,6 +61,7 @@ A setting that is not listed below belongs to the feature that lists its nearest
 | Listener socket and HTTP/2 options, the TLS handshake bound, shared TLS session resumption and runtime threads (`tuning`) | v0.9 | `runtime`, `listeners.<name>.socket`, `listeners.<name>.http2`, `listeners.<name>.tls.max_handshakes`, `listeners.<name>.tls.tickets`, `listeners.<name>.tls.session_cache` |
 | The Go client of the admin API (`clients/go`, generated; not tagged yet) (`go-client`) | v0.5 | outside the configuration file |
 | The JSON report of `rdock migrate traefik\|caddy\|nginx --report` (`schema/migrate-report.v1.json`) and its finding codes (`migrate-report`) | v1.0 | outside the configuration file |
+| `rdock migrate caddy`: Caddy's adapted JSON (`caddy adapt`) to rdock.yaml (ADR-0033) (`migrate-caddy`) | v1.0 | outside the configuration file |
 | `rdock migrate nginx`: an NGINX configuration to rdock.yaml (the faithful directive subset; ADR-0033) (`migrate-nginx`) | v1.0 | outside the configuration file |
 | The Terraform and OpenTofu provider (`clients/terraform`; not published yet) (`terraform-provider`) | v0.8 | outside the configuration file |
 
@@ -70,6 +71,7 @@ A setting that is not listed below belongs to the feature that lists its nearest
 |---|---|---|
 | The configuration file itself: schema v1, `version`, `$schema` and the `experimental` opt-in (`config-file`) | v0.1 | `$schema`, `version`, `experimental` |
 | HTTP/1.1, HTTP/2 and h2c proxying: listeners, routes and rules, services, defaults, manual certificates, client IP trust, the v0.1 middlewares (`http-proxy`) | v0.1 | `listeners`, `defaults`, `routes`, `services`, `certificates`, `security`, `lifecycle`, `middlewares`, `middlewares.<name>.type=headers`, `middlewares.<name>.type=redirect`, `middlewares.<name>.type=rewrite`, `middlewares.<name>.type=strip_prefix`, `middlewares.<name>.type=add_prefix`, `middlewares.<name>.type=replace_path`, `middlewares.<name>.type=basic_auth`, `middlewares.<name>.type=forward_auth`, `middlewares.<name>.type=ip_allow`, `middlewares.<name>.type=ip_deny`, `middlewares.<name>.type=rate_limit`, `middlewares.<name>.type=cors`, `middlewares.<name>.type=compress`, `middlewares.<name>.type=errors`, `middlewares.<name>.type=maintenance` |
+| The problem types of rdock's own answers (RFC 9457 `type` URIs and their statuses; ADR-0033 lists them as a stable surface). The settings that choose problem details (`errors.format`) are beta with validation and transformation; a type only a beta feature produces has that feature's level (`problem-types`) | v0.8 | outside the configuration file |
 | Access log, Prometheus metrics and OpenTelemetry traces (`observability`) | v0.1 | `observability` |
 | The file provider with watching, reload and the last-known-good copy (`file-provider`) | v0.1 | `providers`, `providers.file` |
 | The Docker provider with `rdock.*` and Traefik labels and zero-config mode (`docker-provider`) | v0.2 | `providers.docker` |

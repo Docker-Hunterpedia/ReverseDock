@@ -2129,7 +2129,7 @@
             "$ref": "#/components/schemas/rdock.DiskRule",
             "default": {
               "free_bytes": "256MiB",
-              "free_percent": 5
+              "free_percent": 0
             },
             "description": "When free space in the data directory raises the `disk` alert."
           },
@@ -2186,7 +2186,7 @@
               "disabled": [],
               "disk": {
                 "free_bytes": "256MiB",
-                "free_percent": 5
+                "free_percent": 0
               },
               "error_rate": null,
               "latency": null
@@ -3192,7 +3192,7 @@
                   "disabled": [],
                   "disk": {
                     "free_bytes": "256MiB",
-                    "free_percent": 5
+                    "free_percent": 0
                   },
                   "error_rate": null,
                   "latency": null
@@ -3552,7 +3552,7 @@
       },
       "rdock.DiskRule": {
         "additionalProperties": false,
-        "description": "Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the\nspace left drops below either. A full disk never stops request handling, but the\nconfiguration API, mutating admin calls and certificate orders are refused until there is\nroom. Defaults: 5 %, the warning level of the Prometheus node exporter's\n`NodeFilesystemAlmostOutOfSpace` alert (node-mixin `config.libsonnet`, checked\n2026-11-14), and 256 MiB, enough for several hundred certificate orders and configuration\nwrites.",
+        "description": "Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the\nspace left drops below either. A full disk never stops request handling, but the\nconfiguration API, mutating admin calls and certificate orders are refused until there is\nroom. Default: 256 MiB, enough for several hundred certificate orders and configuration\nwrites, and nothing by share. ReverseDock's data directory needs a fixed amount of room,\nnot a share of the disk: 5 % (the warning level of the Prometheus node exporter's\n`NodeFilesystemAlmostOutOfSpace` alert, node-mixin `config.libsonnet`, checked 2026-11-14)\nis tens of gigabytes on a large disk and would fire while there is room for years of\nwrites, so a share threshold is off unless set.",
         "properties": {
           "free_bytes": {
             "$ref": "#/components/schemas/rdock.ByteSize",
@@ -3560,8 +3560,8 @@
             "description": "Alert when fewer bytes than this are free (0 turns this threshold off)."
           },
           "free_percent": {
-            "default": 5,
-            "description": "Alert when less than this share of the file system is free, in percent (0–50; 0 turns\nthis threshold off).",
+            "default": 0,
+            "description": "Alert when less than this share of the file system is free, in percent (0–50; 0, the\ndefault, turns this threshold off).",
             "format": "uint8",
             "maximum": 255,
             "minimum": 0,
@@ -8272,7 +8272,7 @@
                 "disabled": [],
                 "disk": {
                   "free_bytes": "256MiB",
-                  "free_percent": 5
+                  "free_percent": 0
                 },
                 "error_rate": null,
                 "latency": null
@@ -11599,12 +11599,12 @@
         "oneOf": [
           {
             "const": "fail_open",
-            "description": "Send to every backend anyway: a broken health check must not cause an outage.",
+            "description": "Panic mode: route anyway, first to backends that only passive ejection keeps out while\ntheir active checks pass, else to every backend of the first tier (UDP: every backend).\nA broken health check must not cause an outage.",
             "type": "string"
           },
           {
             "const": "fail_closed",
-            "description": "Answer `503`.",
+            "description": "Answer `503` (UDP: drop new sessions).",
             "type": "string"
           }
         ]

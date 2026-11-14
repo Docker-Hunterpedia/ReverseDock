@@ -388,10 +388,12 @@ pub enum SlowStartOn {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(rename_all = "snake_case")]
 pub enum WhenAllDown {
-    /// Send to every backend anyway: a broken health check must not cause an outage.
+    /// Panic mode: route anyway, first to backends that only passive ejection keeps out while
+    /// their active checks pass, else to every backend of the first tier (UDP: every backend).
+    /// A broken health check must not cause an outage.
     #[default]
     FailOpen,
-    /// Answer `503`.
+    /// Answer `503` (UDP: drop new sessions).
     FailClosed,
 }
 

@@ -223,8 +223,8 @@ Tracked as W-SWM-01…03 below.
 
 ### F-OSS · Open-source quality
 - [x] F-OSS-01 Apache-2.0, DCO, public roadmap, issue/PR templates, CODE_OF_CONDUCT, SECURITY.md with private reporting
-- [x] F-OSS-02 `cargo-deny`/`cargo-audit`, SAST (Semgrep), dependency review in CI
-- [x] F-OSS-03 Signed releases (cosign), SBOM (SPDX), checksums, reproducible builds where possible
+- [x] F-OSS-02 `cargo-deny`/`cargo-audit`, SAST (Semgrep), dependency review in CI. *Note (v1.0 step 8):* `cargo deny check advisories` reads the RustSec database `cargo audit` reads, so `cargo audit` is covered without running it separately; SAST is Semgrep (fails on findings) and CodeQL (Rust, JavaScript/TypeScript, Go, Actions); dependency review runs on pull requests (it sees Go modules and actions, not `Cargo.lock`); the image is scanned with Grype; OpenSSF Scorecard runs weekly. What runs where: [06-repo-layout.md](06-repo-layout.md) §5
+- [x] F-OSS-03 Signed releases (cosign), SBOM (SPDX), checksums, reproducible builds where possible. *Note (v1.0 step 8):* signatures, the SBOM and checksums exist; the SBOM built from the binaries and signed, base images pinned by digest and a rebuild-and-compare job are the release-integrity step of ADR-0033 (research Part A §4.3), not yet done, so reproducibility is claimed and not yet tested
 - [x] F-OSS-04 Non-root, distroless/static images; read-only root FS; no mandatory account, telemetry or activation
 - [ ] F-OSS-05 Support policy: last two minor versions receive security fixes. *Progress (v1.0 step 2):* the policy is written in [10-stability.md](10-stability.md) §6 and `SECURITY.md` (two newest minors of the current major; the previous major's last minor for six months; one maintainer, no SLA); open until the first `release/X.Y` branch with its ruleset and one rehearsed backport release exist (ADR-0033, research A 5.8 item 6).
 

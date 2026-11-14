@@ -1,0 +1,13 @@
+# Reviewed exceptions for the image scan (`image-scan` in .github/workflows/ci.yml, Grype).
+# Each entry names the vulnerability, the package, why it does not apply or cannot be fixed
+# yet, who reviewed it and when, and is removed once a fixed version is released. An entry
+# without all of that is not accepted in review. Grype's format:
+# https://github.com/anchore/grype#specifying-matches-to-ignore
+#
+# ignore:
+#   - vulnerability: CVE-0000-00000
+#     package:
+#       name: example
+#       version: 1.2.3
+#     # reason: …; reviewed by …, 2026-11-14
+ignore: []

@@ -13,6 +13,12 @@
       "summary": "HTTP/1.1, HTTP/2 and h2c proxying: listeners, routes and rules, services, defaults, manual certificates, client IP trust, the v0.1 middlewares"
     },
     {
+      "id": "problem-types",
+      "level": "stable",
+      "since": "v0.8",
+      "summary": "The problem types of rdock's own answers (RFC 9457 `type` URIs and their statuses; ADR-0033 lists them as a stable surface). The settings that choose problem details (`errors.format`) are beta with validation and transformation; a type only a beta feature produces has that feature's level"
+    },
+    {
       "id": "observability",
       "level": "stable",
       "since": "v0.1",
@@ -251,6 +257,12 @@
       "level": "beta",
       "since": "v1.0",
       "summary": "The JSON report of `rdock migrate traefik|caddy|nginx --report` (`schema/migrate-report.v1.json`) and its finding codes"
+    },
+    {
+      "id": "migrate-caddy",
+      "level": "beta",
+      "since": "v1.0",
+      "summary": "`rdock migrate caddy`: Caddy's adapted JSON (`caddy adapt`) to rdock.yaml (ADR-0033)"
     },
     {
       "id": "migrate-nginx",

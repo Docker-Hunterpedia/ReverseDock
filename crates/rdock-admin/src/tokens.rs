@@ -40,6 +40,11 @@ fn parse(token: &str) -> Option<(&str, &str)> {
     FORMAT.parse(token)
 }
 
+/// [`parse`] for the fuzz entry point.
+pub(crate) fn parse_value(token: &str) -> Option<(&str, &str)> {
+    parse(token)
+}
+
 fn hash(secret: &str) -> String {
     rdock_credentials::hash_secret(secret)
 }

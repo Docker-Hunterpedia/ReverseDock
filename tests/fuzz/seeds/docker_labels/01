@@ -1,0 +1,6 @@
+web
+traefik.enable=true
+traefik.http.routers.web.rule=Host(`w.test`) && PathPrefix(`/x`)
+traefik.http.routers.web.middlewares=auth
+traefik.http.middlewares.auth.basicauth.users=u:$2y$05$abc
+traefik.http.services.web.loadbalancer.server.port=8080

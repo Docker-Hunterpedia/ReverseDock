@@ -184,9 +184,9 @@
         "misc-exact-options.yaml"
       ],
       "key": "traefik.http.middlewares.<name>.basicauth.realm",
-      "note": "",
+      "note": "the Basic challenge also names the charset credentials are decoded with (`charset=\"UTF-8\"`, RFC 7617 §2.1); Traefik's names the realm only. Clients treat both as a challenge for the realm",
       "rdock": "`basic_auth.realm`",
-      "status": "exact"
+      "status": "approximate"
     },
     {
       "fixtures": [
@@ -2477,8 +2477,8 @@
     }
   ],
   "totals": {
-    "approximate": 41,
-    "exact": 94,
+    "approximate": 42,
+    "exact": 93,
     "manual": 14,
     "none": 101
   },

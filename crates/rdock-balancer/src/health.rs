@@ -161,6 +161,15 @@ impl Health {
         self.trial_since = Some(now);
     }
 
+    /// Makes a request sent in panic mode to an ejected backend count as its trial: a success
+    /// ends the ejection at once (the backend answers), a failure ejects it again for longer.
+    /// A backend that is not ejected is left alone.
+    pub(crate) fn start_panic_trial(&mut self, now: Instant) {
+        if self.ejected_until.is_some() {
+            self.trial_since = Some(now);
+        }
+    }
+
     /// A probe result; returns the new verdict when it changed (`true` = healthy).
     pub(crate) fn probe(&mut self, ok: bool, policy: ProbePolicy, now: Instant) -> Option<bool> {
         if ok {
@@ -262,6 +271,12 @@ impl Health {
         self.ejected_until.is_some()
     }
 
+    /// Whether only passive ejection (or a running trial) keeps the backend out: its active
+    /// checks, if any, pass and it has not asked for a pause. Panic routing prefers these.
+    pub(crate) fn passes_checks(&self, now: Instant) -> bool {
+        !self.probes_down && self.paused_until.is_none_or(|t| now >= t)
+    }
+
     /// Marks the backend as having just joined its pool.
     pub(crate) fn join(&mut self, now: Instant) {
         self.joined_at = Some(now);
@@ -305,6 +320,44 @@ mod tests {
             on_recovery,
             on_join,
         }
+    }
+
+    #[test]
+    fn a_panic_request_that_succeeds_ends_the_ejection() {
+        let now = Instant::now();
+        let mut h = Health::default();
+        h.start_panic_trial(now);
+        assert!(h.trial_since.is_none(), "not ejected: no trial");
+        h.failure(EJECT, now);
+        h.failure(EJECT, now);
+        h.failure(EJECT, now);
+        h.eject(EJECT, now);
+        h.start_panic_trial(now);
+        assert!(h.success(now), "a success in panic mode ends the ejection");
+        assert_eq!(h.availability(now), Availability::Up);
+    }
+
+    #[test]
+    fn passive_ejection_alone_still_passes_checks() {
+        let now = Instant::now();
+        let mut h = Health::default();
+        for _ in 0..EJECT.failures {
+            h.failure(EJECT, now);
+        }
+        h.eject(EJECT, now);
+        assert_eq!(h.availability(now), Availability::Down);
+        assert!(
+            h.passes_checks(now),
+            "ejected by failures, probes still pass"
+        );
+        for _ in 0..PROBES.unhealthy {
+            h.probe(false, PROBES, now);
+        }
+        assert!(!h.passes_checks(now), "failing probes");
+        let mut paused = Health::default();
+        paused.pause(now + Duration::from_secs(5));
+        assert!(!paused.passes_checks(now), "asked for a pause");
+        assert!(paused.passes_checks(now + Duration::from_secs(6)));
     }
 
     #[test]

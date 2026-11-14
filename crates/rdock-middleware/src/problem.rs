@@ -144,10 +144,14 @@ impl ProblemKind {
         }
     }
 
-    /// The feature of the maturity registry (`rdock_model::maturity`) whose answers use this
-    /// kind: problem-details answers as a whole belong to `validation-and-transformation`
-    /// (ADR-0033's note on levels); a kind only one feature produces names that feature. The
-    /// compatibility snapshot (`schema/compat/problems.json`) carries it.
+    /// The feature of the maturity registry (`rdock_model::maturity`) that owns this kind's
+    /// type URI and status: `problem-types` (stable, ADR-0033 lists problem types as a stable
+    /// surface) for the kinds rdock's own answers use whatever is configured; a kind only one
+    /// beta feature produces names that feature (`validate` and `transform` produce
+    /// `validation-failed` and `patch-failed`). The settings that choose problem details stay
+    /// with `validation-and-transformation`. The compatibility snapshot
+    /// (`schema/compat/problems.json`) carries it, so removing or renumbering a stable type
+    /// fails the compatibility check.
     #[must_use]
     pub fn feature(self) -> &'static str {
         match self {
@@ -155,7 +159,8 @@ impl ProblemKind {
             Self::QuotaExceeded => "consumers",
             Self::Overloaded => "admission-control",
             Self::LoginFailed | Self::IdentityProviderUnavailable => "oidc",
-            _ => "validation-and-transformation",
+            Self::ValidationFailed | Self::PatchFailed => "validation-and-transformation",
+            _ => "problem-types",
         }
     }
 

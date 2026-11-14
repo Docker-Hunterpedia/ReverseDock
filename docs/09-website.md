@@ -88,7 +88,7 @@ Guides: **from NGINX** (directives → keys, `location` matching → rules) · *
 - Monitoring and alerts · Troubleshooting, by symptom (404, 502, 504, TLS errors, reload refused) · FAQ
 
 **Project**
-- Roadmap (from [07-roadmap](07-roadmap.md)) · ⚙ Changelog · Contributing · Governance · Security policy · Brand assets
+- Roadmap (from [07-roadmap](07-roadmap.md)) · ⚙ Changelog · Contributing · Governance · Security policy · Threat model (from [11-threat-model](11-threat-model.md)) · Brand assets
 - Blog: release notes and deep dives (`starlight-blog`)
 
 ## 5. Quality gates (`website` CI job)

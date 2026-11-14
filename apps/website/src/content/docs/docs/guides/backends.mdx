@@ -230,7 +230,14 @@ services:
 - Failures are the same as for `failures`: connection errors, resets and timeouts before the headers, and `statuses`. An outlier goes through the same ejection: `ejection` doubled for each ejection in a row (Envoy multiplies instead), `max_ejection_percent`, then one trial request.
 - `rdock_backend_outlier_ejections_total{service, backend, detector}` counts these ejections; they are also counted in `rdock_backend_ejections_total`.
 
-**When every backend is down**, `when_all_down: fail_open` (default) sends requests to all of them anyway: a broken health check, for example a wrong `path`, must not take your service offline. Envoy's panic mode and NGINX's rule for single-server upstreams do the same. `fail_closed` answers `503` with `Retry-After` instead.
+**When every backend is down**, `when_all_down: fail_open` (default) routes in *panic mode* instead of failing: a broken health check, for example a wrong `path`, must not take your service offline, and a backend that was ejected a moment ago may well be back. Panic mode picks, in this order:
+
+1. the backends that only passive ejection keeps out while their active checks pass (or that have no active checks): a failed request ejected them, but probes still reach them, so they are the likeliest to answer;
+2. if there are none, every backend of the first tier, including those failing their active checks.
+
+Drained backends and backends of weight 0 never get traffic. A retry whose every available backend was already tried also goes to a backend of the first kind, when the service has active checks, rather than back to the backend that just failed.
+
+Envoy's panic threshold works the same way at its core ([panic threshold](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/panic_threshold), checked 2026-11-14): with too few available hosts it disregards health and sends to all hosts of the priority level, unhealthy ones included. Envoy's default threshold is 50 % of hosts available; ReverseDock's is "none available", because at 50 % a pool of three with one healthy backend would send two thirds of its requests to backends known to be down. HAProxy and NGINX also try their servers when all are marked down. `rdock_backend_panic_selections_total{service}` counts requests routed this way, and the log says when a service enters and leaves panic mode. `fail_closed` turns panic mode off and answers `503` with `Retry-After` instead, like Envoy's threshold of 0 %.
 
 **Slow start:** with `slow_start: 30s`, a backend that comes back gets a growing share of its weight over 30 seconds, so a cold cache or JIT is not hit with full traffic at once. The long form <Status since="v0.9" /> sets the shape and when it applies (Envoy's `SlowStartConfig`, [cluster.proto](https://github.com/envoyproxy/envoy/blob/main/api/envoy/config/cluster/v3/cluster.proto), checked 2026-11-13):
 
@@ -268,7 +275,7 @@ services:
         priority: 1
 ```
 
-`when_all_down: fail_open` sends to every backend of the first tier when no backend of any tier is available. SRV targets of a higher SRV priority are one tier below their backend.
+Panic mode (`when_all_down: fail_open`) starts only when no backend of any tier is available; it then takes the first tier that has a backend whose checks pass, else every backend of the first tier. SRV targets of a higher SRV priority are one tier below their backend.
 
 ### Zones
 

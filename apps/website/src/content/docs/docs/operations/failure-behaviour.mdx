@@ -45,7 +45,7 @@ Request handling never waits for or depends on a write. A full disk degrades per
 
 The audit log never ends in half a record. When a record could not be written, the next change first writes an `audit.gap` record that says how many were lost, so the chain still verifies.
 
-ReverseDock reads the free space of its data directory every 15 seconds. The `disk` alert fires below 5 % or 256 MiB, whichever comes first; the 5 % default is the warning level of the Prometheus node exporter's `NodeFilesystemAlmostOutOfSpace` alert (checked 2026-11-14). Set your own thresholds, or `0` to turn one off:
+ReverseDock reads the free space of its data directory every 15 seconds. The `disk` alert fires when less than 256 MiB is free. The data directory needs a fixed amount of room, not a share of the disk, so there is no percentage threshold by default: 5 % of a large disk is tens of gigabytes, and an alert there would fire while there is room for years of writes. Add a share threshold if your disk is shared with something that grows (the Prometheus node exporter's `NodeFilesystemAlmostOutOfSpace` alert warns at 5 %, checked 2026-11-14); the alert then fires below either. `0` turns a threshold off:
 
 ```yaml title="rdock.yaml (excerpt)"
 observability:
@@ -60,7 +60,7 @@ observability:
 
 Passive ejection and active health checks take a failing backend out of rotation, and idempotent requests are retried on another backend. While at least one backend is healthy, no request fails, even when a backend flaps faster than the health-check interval. A backend that comes back serves again within its ejection time plus one active check.
 
-When every backend is down, or the only one that is up has not passed a check since it came back, requests get `503` (or `502` after the retries). Keep `passive.ejection` and the active `interval` short if backends often restart one after another. See [Backends and health checks](/docs/guides/backends/).
+When no backend is available, for example because the one that is up is still ejected after it came back, ReverseDock routes in panic mode (`when_all_down: fail_open`, the default): first to backends that only passive ejection keeps out while their active checks pass, else to every backend. The chaos suite rotates three backends faster than the ejection time without a failed request. Only when every backend really is down do requests get `502` after the retries, or `503` with `when_all_down: fail_closed`. Keep `passive.ejection` and the active `interval` short if backends often restart one after another. See [Backends and health checks](/docs/guides/backends/).
 
 ## A configuration change goes wrong
 

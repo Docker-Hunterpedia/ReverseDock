@@ -40,6 +40,38 @@ fn committed_snapshots_are_current() {
     }
 }
 
+/// Problem types are a stable surface (ADR-0033): the generic types rdock's own answers use
+/// are stable in the snapshot, so the compatibility check fails when one is removed or its
+/// status changes; only types a beta feature alone produces are exempt.
+#[test]
+fn generic_problem_types_are_stable() {
+    let text = std::fs::read_to_string(repo().join("schema/compat/problems.json")).unwrap();
+    let snapshot: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let problems = snapshot["problems"].as_object().unwrap();
+    for slug in [
+        "not-found",
+        "bad-gateway",
+        "service-unavailable",
+        "rate-limited",
+        "unauthenticated",
+        "maintenance",
+    ] {
+        let entry = problems
+            .iter()
+            .find(|(uri, _)| uri.ends_with(&format!("#{slug}")))
+            .unwrap_or_else(|| panic!("{slug} missing"))
+            .1;
+        assert_eq!(entry["maturity"], "stable", "{slug}: {entry}");
+        assert_eq!(entry["feature"], "problem-types", "{slug}");
+    }
+    let validation = problems
+        .iter()
+        .find(|(uri, _)| uri.ends_with("#validation-failed"))
+        .unwrap()
+        .1;
+    assert_eq!(validation["maturity"], "beta");
+}
+
 #[test]
 fn snapshots_are_the_same_on_every_machine() {
     for surface in SURFACES {

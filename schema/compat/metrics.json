@@ -227,6 +227,16 @@
       "type": "counter",
       "unit": ""
     },
+    "rdock_backend_panic_selections_total": {
+      "feature": "reliability",
+      "help": "Backend selections in panic mode: no backend of the service was available, so one that is out of rotation got the request (when_all_down: fail_open).",
+      "labels": [
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
     "rdock_backend_requests_total": {
       "feature": "reliability",
       "help": "Answers from each backend.",

@@ -1,0 +1,1 @@
+{"names": ["a.example"], "directory": "https://ca.invalid/directory", "not_before": 1700000000, "not_after": 1707776000, "chain_sha256": "0000000000000000000000000000000000000000000000000000000000000000", "ari": {"start": 1705000000, "end": 1705600000, "renew_at": 1705300000}}

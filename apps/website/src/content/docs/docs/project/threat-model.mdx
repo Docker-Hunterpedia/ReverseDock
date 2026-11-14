@@ -1,0 +1,96 @@
+---
+title: Threat model
+description: What ReverseDock protects, from whom, where the trust boundaries are, the threats per entry point and how each is mitigated and tested, the risks that remain, and what a first independent audit should cover.
+sidebar:
+  order: 5
+---
+
+This page summarises the threat model. The full document, with the code and the test behind every control, is [docs/11-threat-model.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/11-threat-model.md) in the repository; it is written for an external auditor. To report a problem, see [Security](/docs/project/security/).
+
+**No independent security audit has been done yet.** ReverseDock 1.0 is released as `1.0.0-rc.N` until one is, as [ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md) decided. The reviews so far are internal: an ASVS 5.0 Level 2 review of the admin surface (v0.5) and a review of each milestone's security surfaces, recorded in the ADRs.
+
+## What is protected
+
+- **Keys**: private keys of served certificates, the ACME account key, the local CA's root key.
+- **Admin access**: user passwords (argon2), TOTP secrets, sessions, API tokens (stored as hashes), the one-time bootstrap token.
+- **The audit log**, hash-chained, optionally forwarded over TLS.
+- **The configuration** and its history, and the secrets it references (files, environment, Vault), which are resolved in memory only.
+- **What backends trust**: the forwarding headers and identity headers rdock sets.
+- **Client traffic** in transit, cached objects and held request bodies.
+- **The cluster**: its CA, join tokens and enrolled identities.
+- **Tenant boundaries** between scoped users and their host claims.
+- **Availability** of the data plane.
+
+## Who is considered
+
+| Actor | Assumed to be able to |
+|---|---|
+| An Internet client | send any bytes to any public listener, open many connections, read and write slowly |
+| A low-privilege admin user | use the admin API and dashboard within a viewer or operator role |
+| A tenant | use a user or token scoped to a tenant |
+| A container on a Docker host | set any label on itself |
+| A Kubernetes namespace user | create routes, Services and Secrets in its namespaces |
+| A compromised backend | send any response, slowly or not at all |
+| A compromised cluster member | use its own enrolled identity |
+| A compromised control plane | control every data plane (a full compromise, by design) |
+| A local unprivileged user | reach loopback ports and read world-readable files |
+| A malicious CA or DNS server | send arbitrary answers to rdock's requests |
+| A supply-chain attacker | publish a malicious dependency, action or image |
+
+The operator and users with the admin role are trusted. An unsafe configuration is refused with a diagnostic where rdock can tell; a malicious operator is out of scope.
+
+## Trust boundaries
+
+```
+ Internet ──► listeners (HTTP/1.1, HTTP/2, TLS, PROXY, TCP, UDP)
+                  │  data plane: routing, middlewares, balancer, cache
+                  ├──► backends            (they trust rdock's forwarding headers)
+                  └──► outbound services   (CA, DNS APIs, forward-auth, agents,
+                                            JWKS/OIDC, Vault, webhooks, Redis)
+ Operators ──► admin listener / Unix socket ──► engine ──► data plane (one way)
+ Docker, Swarm, Kubernetes ──► providers ──► engine   (less trusted than the file)
+ Control plane ◄──► data planes                       (mTLS, digests, leases)
+ Process ◄──► data directory                          (0600 keys, lock file)
+```
+
+The data plane never calls the admin side or a provider while serving a request. Objects from providers are less trusted than the configuration file: they cannot use `${…}` references, read files, run commands or reach another provider's objects.
+
+## Threats and mitigations, by surface
+
+- **HTTP parsing**: request smuggling (conflicting lengths, obfuscated `Transfer-Encoding`, bare LF, the upgrade sequence), header syntax, path encoding that routes one way and forwards another, oversized and slow requests. Pingora's parser plus rdock's own checks; the smuggling catalogue is replayed end to end and a differential fuzz target checks that what is forwarded is exactly one request.
+- **HTTP/2**: reset floods and slow readers are bounded by per-listener limits and tested; CONTINUATION and HPACK floods rely on the `h2` crate and have no test of ours.
+- **TLS**: rdock's own ClientHello parser is bounded and fuzzed; session tickets never resume across listeners of different client-authentication classes; ACME validation certificates are never served to ordinary clients.
+- **Forwarding**: client addresses and PROXY-protocol headers are trusted only from configured sources; client copies of identity headers are removed before authentication middlewares set theirs.
+- **Backend responses**: connection-specific headers are removed, a backend's `Retry-After` pause is capped, and when no backend is available rdock routes in panic mode instead of failing.
+- **Providers**: containers are not exposed by default; labels cannot read secrets; Kubernetes cross-namespace references need a `ReferenceGrant`.
+- **Admin surface**: no default credentials, rate-limited logins that hide which users exist, TOTP codes usable once, roles on every operation, CSRF protection, a `Host` allow-list, secrets masked in every answer, conditional configuration writes, limits that keep admin floods away from the data plane, and an audit record reserved before every change.
+- **ACME**: hostile `Retry-After` values and renewal windows are clamped, stored records are integrity-checked, keys are written `0600`, DNS hooks run without a shell, and failures back off up to a day.
+- **Cluster**: join tokens are single-use with an expiry, bundles are checked against their cluster, revision and SHA-256 digest, and store writes are fenced by leases.
+
+## Risks that remain
+
+- An I/O error other than lack of space between an admin change and its audit record can lose that record; the loss is counted and the next change writes a gap record first.
+- The audit chain is not keyed: whoever can write its files can rewrite the tail. Forwarding to a remote syslog server over TLS is the tamper-resistant copy.
+- Once a container is exposed, its labels can name any hostname and cause certificate orders for it. Keep `expose_by_default` off on hosts with untrusted containers and use a socket proxy.
+- Client certificates are not checked for revocation; use short-lived certificates.
+- Stateless OIDC sessions cannot be ended early; keep their lifetime short.
+- A compromised control plane controls every data plane.
+- Private keys are not wiped from memory.
+- One maintainer reviews changes, with AI assistants.
+
+## How the project tests itself
+
+- **21 fuzz targets** cover rdock's side of every parser that reads bytes from outside, from HTTP/1 framing and the ClientHello to ACME answers, admin request bodies, cluster bundles and Redis replies. Each runs for 30 minutes a week with a corpus kept between runs, and a mutation smoke test of each runs with every `cargo test`. They have found and fixed real bugs.
+- **End-to-end suites** for smuggling vectors, limits, authentication, roles, tenants, TLS resumption, PROXY protocol, the cache and the chaos scenarios.
+- **Static analysis**: Clippy with panics denied in library code, no `unsafe` in rdock's crates, Semgrep and CodeQL.
+- **Supply chain**: `cargo deny` for RustSec advisories, licences and sources, dependency review on pull requests, an image scan, OpenSSF Scorecard, actions pinned by commit, and signed releases with an SBOM and provenance attestations.
+
+## Out of scope
+
+Volumetric denial of service, a malicious operator or admin, a compromised host, already public vulnerabilities in dependencies, documented configurable defaults, and the experimental features (HTTP/3, WASM plugins), which are off in release builds, unless an audit's scope adds them.
+
+## Related
+
+- [Security](/docs/project/security/): reporting, supported versions, signed releases
+- [Security model](/docs/concepts/security-model/)
+- [Production checklist](/docs/operations/production-checklist/)

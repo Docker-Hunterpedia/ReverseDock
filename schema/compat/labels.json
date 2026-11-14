@@ -26,6 +26,7 @@
   "surface": "labels",
   "traefik": {
     "approximate": [
+      "traefik.http.middlewares.<name>.basicauth.realm",
       "traefik.http.middlewares.<name>.compress",
       "traefik.http.middlewares.<name>.compress.includedcontenttypes",
       "traefik.http.middlewares.<name>.errors.query",

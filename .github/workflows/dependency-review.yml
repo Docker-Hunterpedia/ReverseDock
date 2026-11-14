@@ -1,0 +1,29 @@
+# Dependency review on pull requests (not a required check): fails when a pull request adds a
+# dependency with a known vulnerability of high or critical severity. The action is available
+# for all public repositories once the dependency graph is enabled
+# (https://docs.github.com/en/code-security/supply-chain-security/understanding-your-software-supply-chain/about-dependency-review,
+# read 2026-11-14). It sees what the dependency graph parses: Go modules and the workflows'
+# actions; the dependency graph's ecosystem table (read the same day) lists Cargo.lock for Rust
+# but no supported detection method for it, and does not read a pnpm lockfile written as two
+# YAML documents, as ours is. Rust advisories stay with `cargo deny check advisories` (the
+# required `deny` job), which reads the RustSec database that `cargo audit` reads.
+name: dependency-review
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-review:
+    name: dependency-review
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294 # v5.0.0
+        with:
+          fail-on-severity: high

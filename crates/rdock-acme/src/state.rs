@@ -115,8 +115,8 @@ impl CertState {
     pub fn renew_at(&self) -> Option<i64> {
         let cert = self.cert.as_ref()?;
         self.ari_renew_at.or_else(|| {
-            let lifetime = cert.not_after - cert.not_before;
-            Some(cert.not_after - lifetime / 3)
+            let lifetime = cert.not_after.saturating_sub(cert.not_before);
+            Some(cert.not_after.saturating_sub(lifetime / 3))
         })
     }
 
@@ -145,9 +145,11 @@ impl CertState {
         if end <= start {
             return;
         }
+        // A window from a CA's answer or a stored record: saturating, so extreme values (the
+        // `acme_answers` fuzz target) cannot overflow.
         #[allow(clippy::cast_possible_truncation, clippy::cast_precision_loss)]
-        let offset = ((end - start) as f64 * spread.clamp(0.0, 1.0)) as i64;
-        self.ari_renew_at = Some(start + offset);
+        let offset = (end.saturating_sub(start) as f64 * spread.clamp(0.0, 1.0)) as i64;
+        self.ari_renew_at = Some(start.saturating_add(offset).min(end));
         self.ari_known = true;
     }
 
@@ -165,8 +167,11 @@ impl CertState {
             return *at;
         }
         let renewal = self.retry_at.unwrap_or_else(|| {
-            let secs = self.renew_at().map_or(0, |at| at - now);
-            Instant::now() + Duration::from_secs(u64::try_from(secs).unwrap_or(0))
+            let secs = self.renew_at().map_or(0, |at| at.saturating_sub(now));
+            // At most a day ahead: the manager looks again then, and an instant far in the
+            // future (a stored renewal time from a corrupt record) cannot overflow.
+            let secs = u64::try_from(secs).unwrap_or(0).min(MAX_RETRY.as_secs());
+            Instant::now() + Duration::from_secs(secs)
         });
         match self.ari_check_at {
             Some(check) if !self.ari_unsupported && self.cert.is_some() => renewal.min(check),
@@ -188,6 +193,24 @@ impl CertState {
             last_error: self.last_error.clone(),
         }
     }
+}
+
+/// Fuzzing entry point (`tests/fuzz`, target `acme_answers`): an ARI window and the server's
+/// `Retry-After` from a CA's answer applied to a certificate's renewal state, then the
+/// questions the manager asks it. Never a panic; the renewal time stays inside the window.
+#[doc(hidden)]
+pub fn fuzz_ari_window(start: i64, end: i64, retry_after: Duration, spread: f64, now: i64) {
+    let mut state = CertState::default();
+    state.apply_window(start, end, retry_after, spread);
+    if let Some(at) = state.ari_renew_at {
+        assert!(
+            start < end && (start..=end).contains(&at),
+            "{at} outside [{start}, {end}]"
+        );
+    }
+    let _ = state.due(now);
+    let _ = state.wake_at(now);
+    let _ = state.status(&[]);
 }
 
 /// The first backoff. For tests only, never in a release build: `RDOCK_TEST_ACME_RETRY`
@@ -255,6 +278,20 @@ mod tests {
         empty.apply_window(2_000, 1_000, Duration::from_secs(48 * 3600), 0.5);
         assert_eq!(empty.ari_renew_at, None, "an inverted window is ignored");
         assert!(empty.ari_check_at.unwrap() <= Instant::now() + ARI_MAX_RECHECK);
+    }
+
+    /// Extreme windows and renewal times (from a CA's answer or a stored record) never
+    /// overflow; the renewal time stays inside the window.
+    #[test]
+    fn extreme_windows_do_not_overflow() {
+        let mut state = CertState::default();
+        state.apply_window(i64::MIN, i64::MAX, Duration::MAX, 1.0);
+        assert!(state.ari_renew_at.is_some());
+        let _ = state.wake_at(i64::MIN);
+        let _ = state.wake_at(i64::MAX);
+        state.apply_window(i64::MIN, i64::MIN + 1, Duration::ZERO, f64::NAN);
+        assert!(state.ari_renew_at.is_some_and(|at| at <= i64::MIN + 1));
+        let _ = state.due(i64::MAX);
     }
 
     #[test]

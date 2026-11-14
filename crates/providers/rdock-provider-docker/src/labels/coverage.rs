@@ -196,9 +196,10 @@ pub static TRAEFIK_OPTIONS: &[TraefikOption] = &[
         "the user name is not passed on in a header",
         "X-User",
     ),
-    exact(
+    approx(
         "traefik.http.middlewares.<name>.basicauth.realm",
         "`basic_auth.realm`",
+        "the Basic challenge also names the charset credentials are decoded with (`charset=\"UTF-8\"`, RFC 7617 §2.1); Traefik's names the realm only. Clients treat both as a challenge for the realm",
         "staff",
     ),
     exact(

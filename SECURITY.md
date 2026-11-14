@@ -52,6 +52,16 @@ Out of scope:
 - issues that require an already compromised host, a malicious administrator, or social engineering;
 - missing hardening that is documented as a deliberate, configurable default.
 
+Experimental features (HTTP/3, WASM plugins) are in scope for reports, but they are off in release builds and need an explicit `experimental:` opt-in; fixes to them are not backported.
+
+## How the project tests itself
+
+- **Threat model**: [docs/11-threat-model.md](docs/11-threat-model.md) lists the assets, actors and trust boundaries, and for each entry point the threats considered, the mitigation with the code and the test that proves it, and the residual risks. Start there if you are reviewing ReverseDock.
+- **Fuzzing**: 21 cargo-fuzz targets in `tests/fuzz` cover our side of every parser that reads bytes from outside (HTTP/1 framing, ClientHello, PROXY protocol, rules, backend response heads, ACME answers, admin request bodies, cluster bundles, Redis replies, labels, migration inputs); weekly for 30 minutes each, with seeds and mutation smoke tests in every `cargo test`.
+- **End-to-end security tests**: the request-smuggling catalogue, size and slow-client limits, admin authentication, CSRF, roles and tenants, secrets masking, TLS resumption classes, PROXY-protocol trust.
+- **Static analysis and supply chain**: `clippy` with panics denied in library crates and `unsafe` forbidden, Semgrep and CodeQL, `cargo deny` (RustSec advisories, licences, sources), dependency review, an image scan, OpenSSF Scorecard, actions pinned by commit SHA.
+- **Reviews**: internal reviews of the admin surface (ASVS 5.0 Level 2, [docs/security/](docs/security/asvs-5.0-l2-admin.md)) and of each milestone's security surfaces, recorded in the ADRs. **No independent third-party audit has been done yet**; 1.0 is not released as final without one ([ADR-0033](docs/decisions/0033-v1-0-stable.md)).
+
 ## Safe harbour
 
 We will not pursue or support legal action against anyone who researches and reports security issues in good faith under this policy: avoid privacy violations, data destruction and service degradation, only test against systems you own or have permission to test, and give us reasonable time to fix the issue before disclosure.
@@ -75,4 +85,4 @@ gh attestation verify rdock-<version>-<target>.tar.gz --repo Docker-Hunterpedia/
 
 ## Hardening references
 
-The threat model and controls are documented in [docs/05-architecture.md §15](docs/05-architecture.md#15-security-model).
+The threat model is [docs/11-threat-model.md](docs/11-threat-model.md); the control table is [docs/05-architecture.md §15](docs/05-architecture.md#15-security-model).

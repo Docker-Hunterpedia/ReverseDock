@@ -235,6 +235,12 @@ it out. Labels: `service`, `backend`.
 `rdock_backend_ejections_total`. Labels: `service`, `backend`, `detector` (`success_rate` or
 `failure_percentage`).
 
+### `rdock_backend_panic_selections_total`
+
+<Status since="v1.0" /> **Counter.** Requests sent to a backend that was out of rotation because
+no backend of the service was available (panic mode, `when_all_down: fail_open`; see
+[Backends and health checks](/docs/guides/backends/)). Labels: `service`.
+
 ### `rdock_retries_total`
 
 **Counter.** Retries. Labels: `service`, `reason` (`connect`, `reset`, `timeout`, `502`,

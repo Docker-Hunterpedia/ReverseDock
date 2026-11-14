@@ -2005,6 +2005,44 @@ fn percent(part: u64, total: u64) -> f64 {
 mod tests {
     use super::*;
 
+    /// The `disk` rule's default is bytes only: a large disk with a small share free has room
+    /// for years of writes, so it must not alert; a share threshold still works when set.
+    #[test]
+    fn the_disk_rule_defaults_to_a_byte_threshold() {
+        use rdock_config::disk::Space;
+        use rdock_model::settings::DiskRule;
+        const GIB: u64 = 1 << 30;
+        let rule = DiskRule::default();
+        assert_eq!(
+            rule.free_percent, 0,
+            "the share threshold is off by default"
+        );
+        assert_eq!(rule.free_bytes.as_u64(), 256 << 20);
+        // 10 TiB with 2 % (204 GiB) free: no alert by default.
+        let large = Space {
+            available: 204 * GIB,
+            total: 10_240 * GIB,
+        };
+        assert!(!low_space(&large, rule));
+        // Below 256 MiB on any disk: an alert.
+        let small = Space {
+            available: 100 << 20,
+            total: 10_240 * GIB,
+        };
+        assert!(low_space(&small, rule));
+        // Both thresholds stay available, and either fires.
+        let by_share = DiskRule {
+            free_percent: 5,
+            ..rule
+        };
+        assert!(low_space(&large, by_share));
+        let off = DiskRule {
+            free_percent: 0,
+            free_bytes: rdock_model::values::ByteSize::mib(0),
+        };
+        assert!(!low_space(&small, off));
+    }
+
     fn free_port() -> u16 {
         std::net::TcpListener::bind("127.0.0.1:0")
             .unwrap()

@@ -142,6 +142,9 @@ pub struct Metrics {
     pub backend_ejections: IntCounterVec,
     /// Backend ejections by an outlier detector, by service, address and detector.
     pub outlier_ejections: IntCounterVec,
+    /// Requests routed in panic mode (no backend available, `when_all_down: fail_open`), by
+    /// service.
+    pub panic_selections: IntCounterVec,
     /// Retries by service and reason (`connect`, `reset`, `timeout`, `502` …).
     pub retries: IntCounterVec,
     /// Retries not made because the service's retry budget was used up.
@@ -658,6 +661,11 @@ impl Metrics {
             "Backends ejected by an outlier detector (success_rate or failure_percentage); also counted in rdock_backend_ejections_total.",
             &["service", "backend", "detector"],
         )?;
+        let panic_selections = b.counters(
+            "rdock_backend_panic_selections_total",
+            "Backend selections in panic mode: no backend of the service was available, so one that is out of rotation got the request (when_all_down: fail_open).",
+            &["service"],
+        )?;
         let retries = b.counters(
             "rdock_retries_total",
             "Requests sent again to a backend after a failure.",
@@ -932,6 +940,7 @@ impl Metrics {
             backend_up,
             backend_ejections,
             outlier_ejections,
+            panic_selections,
             retries,
             retry_budget_exhausted,
             backend_requests,

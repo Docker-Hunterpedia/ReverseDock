@@ -1,6 +1,8 @@
 # Required checks for main: docs (incl. actionlint), dco, pr-title, rust, msrv, deny, docker,
-# clients. semgrep, waf-example, wasm and http3 report only. compat (ADR-0033) is meant to be
-# required: a maintainer adds it to the "Protect main" ruleset.
+# clients. waf-example, wasm, http3 and image-scan are not required. compat (ADR-0033) is
+# meant to be required, and semgrep may be (it fails on any finding and was clean on
+# 2026-11-14): a maintainer adds them to the "Protect main" ruleset. Other security workflows:
+# codeql.yml, scorecard.yml, dependency-review.yml, fuzz.yml (none required).
 name: ci
 
 on:
@@ -476,6 +478,30 @@ jobs:
           docker exec rdock-smoke /usr/local/bin/rdock healthcheck
           docker stop rdock-smoke
           test "$(docker inspect rdock-smoke --format '{{.State.ExitCode}}')" = 0 || { docker logs rdock-smoke; exit 1; }
+
+  # Vulnerabilities in the built image (OS packages of the base image and the binary's Rust
+  # crates), with Grype through anchore/scan-action (MIT; Grype is Apache-2.0); its database
+  # is downloaded without a token. Fails on high and critical findings unless `.grype.yaml`
+  # lists them with a reason. Not a required check. Trivy was not chosen: its GitHub Actions
+  # had their version tags replaced with a credential stealer on 2026-03-19
+  # (https://www.aquasec.com/blog/trivy-supply-chain-attack/, read 2026-11-14).
+  image-scan:
+    name: image-scan
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Build the image (as the docker job does)
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag rdock:ci .
+      - name: Scan the image
+        uses: anchore/scan-action@27805bf3b4e84b4a5c980df22ed233c00390a439 # v7.4.2
+        with:
+          image: rdock:ci
+          fail-build: true
+          severity-cutoff: high
+          output-format: table
 
   # The roadmap's WAF proof (ADR-0030): the CRS project's ModSecurity image as an rdock
   # `forward` agent in examples/waf; a clean request passes, attacks get 403, a stopped WAF

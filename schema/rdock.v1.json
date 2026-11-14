@@ -217,7 +217,7 @@
             "disabled": [],
             "disk": {
               "free_bytes": "256MiB",
-              "free_percent": 5
+              "free_percent": 0
             },
             "error_rate": null,
             "latency": null
@@ -423,6 +423,13 @@
       ],
       "since": "v0.1",
       "summary": "HTTP/1.1, HTTP/2 and h2c proxying: listeners, routes and rules, services, defaults, manual certificates, client IP trust, the v0.1 middlewares"
+    },
+    {
+      "id": "problem-types",
+      "level": "stable",
+      "locations": [],
+      "since": "v0.8",
+      "summary": "The problem types of rdock's own answers (RFC 9457 `type` URIs and their statuses; ADR-0033 lists them as a stable surface). The settings that choose problem details (`errors.format`) are beta with validation and transformation; a type only a beta feature produces has that feature's level"
     },
     {
       "id": "observability",
@@ -836,6 +843,13 @@
       "locations": [],
       "since": "v1.0",
       "summary": "The JSON report of `rdock migrate traefik|caddy|nginx --report` (`schema/migrate-report.v1.json`) and its finding codes"
+    },
+    {
+      "id": "migrate-caddy",
+      "level": "beta",
+      "locations": [],
+      "since": "v1.0",
+      "summary": "`rdock migrate caddy`: Caddy's adapted JSON (`caddy adapt`) to rdock.yaml (ADR-0033)"
     },
     {
       "id": "migrate-nginx",
@@ -1822,7 +1836,7 @@
           "$ref": "#/$defs/DiskRule",
           "default": {
             "free_bytes": "256MiB",
-            "free_percent": 5
+            "free_percent": 0
           }
         },
         "error_rate": {
@@ -1876,7 +1890,7 @@
             "disabled": [],
             "disk": {
               "free_bytes": "256MiB",
-              "free_percent": 5
+              "free_percent": 0
             },
             "error_rate": null,
             "latency": null
@@ -2872,7 +2886,7 @@
       ]
     },
     "DiskRule": {
-      "description": "Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the\nspace left drops below either. A full disk never stops request handling, but the\nconfiguration API, mutating admin calls and certificate orders are refused until there is\nroom. Defaults: 5 %, the warning level of the Prometheus node exporter's\n`NodeFilesystemAlmostOutOfSpace` alert (node-mixin `config.libsonnet`, checked\n2026-11-14), and 256 MiB, enough for several hundred certificate orders and configuration\nwrites.",
+      "description": "Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the\nspace left drops below either. A full disk never stops request handling, but the\nconfiguration API, mutating admin calls and certificate orders are refused until there is\nroom. Default: 256 MiB, enough for several hundred certificate orders and configuration\nwrites, and nothing by share. ReverseDock's data directory needs a fixed amount of room,\nnot a share of the disk: 5 % (the warning level of the Prometheus node exporter's\n`NodeFilesystemAlmostOutOfSpace` alert, node-mixin `config.libsonnet`, checked 2026-11-14)\nis tens of gigabytes on a large disk and would fire while there is room for years of\nwrites, so a share threshold is off unless set.",
       "type": "object",
       "properties": {
         "free_bytes": {
@@ -2881,10 +2895,10 @@
           "default": "256MiB"
         },
         "free_percent": {
-          "description": "Alert when less than this share of the file system is free, in percent (0–50; 0 turns\nthis threshold off).",
+          "description": "Alert when less than this share of the file system is free, in percent (0–50; 0, the\ndefault, turns this threshold off).",
           "type": "integer",
           "format": "uint8",
-          "default": 5,
+          "default": 0,
           "maximum": 255,
           "minimum": 0
         }
@@ -7591,7 +7605,7 @@
               "disabled": [],
               "disk": {
                 "free_bytes": "256MiB",
-                "free_percent": 5
+                "free_percent": 0
               },
               "error_rate": null,
               "latency": null
@@ -10919,12 +10933,12 @@
       "description": "Behaviour when every backend is unhealthy.",
       "oneOf": [
         {
-          "description": "Send to every backend anyway: a broken health check must not cause an outage.",
+          "description": "Panic mode: route anyway, first to backends that only passive ejection keeps out while\ntheir active checks pass, else to every backend of the first tier (UDP: every backend).\nA broken health check must not cause an outage.",
           "type": "string",
           "const": "fail_open"
         },
         {
-          "description": "Answer `503`.",
+          "description": "Answer `503` (UDP: drop new sessions).",
           "type": "string",
           "const": "fail_closed"
         }

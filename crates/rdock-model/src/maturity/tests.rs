@@ -115,6 +115,9 @@ fn levels_at_1_0_follow_adr_0033() {
         "tenants",
         "terraform-provider",
         "go-client",
+        "migrate-caddy",
+        "migrate-nginx",
+        "migrate-report",
     ] {
         assert_eq!(level(id), Level::Beta, "{id}");
     }
@@ -132,6 +135,7 @@ fn levels_at_1_0_follow_adr_0033() {
         "static-files",
         "dns-01-providers",
         "gateway-api",
+        "problem-types",
     ] {
         assert_eq!(level(id), Level::Stable, "{id}");
     }
