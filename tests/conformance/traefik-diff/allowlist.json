@@ -43,6 +43,16 @@
       },
       "reason": "rdock's Basic challenge names the charset it decodes credentials with (RFC 7617 section 2.1); Traefik's challenge has the realm only. Clients treat both as a Basic challenge for the realm.",
       "source": "https://www.rfc-editor.org/rfc/rfc7617#section-2.1 (read 2026-11-14); crates/rdock-middleware/src/auth.rs"
+    },
+    {
+      "id": "own-answers-nosniff",
+      "field": "response\\.header\\.x-content-type-options",
+      "when": {
+        "traefik": "None",
+        "rdock": "nosniff"
+      },
+      "reason": "Every answer rdock writes itself (a 401 challenge, a redirect, an error) carries `X-Content-Type-Options: nosniff`. Traefik sets it only on answers written with Go's http.Error, such as its 404, not on a Basic challenge or a redirect. The status and the other headers agree. First seen in the run of 2026-11-14 on commit 8ff297b (9 of 61 requests, in basic-auth-escaped, redirect-to-https-middleware and redirect-www).",
+      "source": "crates/rdock-proxy/src/proxy.rs (`reply`); https://pkg.go.dev/net/http#Error (read 2026-11-14); the traefik-diff run of commit 8ff297b"
     }
   ]
 }
