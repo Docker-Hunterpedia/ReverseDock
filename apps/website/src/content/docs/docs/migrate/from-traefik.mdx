@@ -400,13 +400,13 @@ Read these first: each one changes what a setup that relied on Traefik's default
 
 | Traefik | ReverseDock | What to do |
 |---|---|---|
-| **`exposedByDefault: true`**: every container with labels is routed | **`expose_by_default: false`**: a container needs `traefik.enable=true` (or `rdock.enable=true`) | Add `traefik.enable=true` where wanted (recommended), or set `providers.docker.expose_by_default: true`. The provider warns about each container with router labels that nothing exposes. `rdock migrate traefik` writes the explicit setting that reproduces your Traefik and marks it as a security-relevant choice. |
+| **`exposedByDefault: true`**: every container with labels is routed | **`expose_by_default: false`**: a container needs `traefik.enable=true` (or `rdock.enable=true`) | Add `traefik.enable=true` where wanted (recommended), or set `expose_by_default: true` under `providers.docker`. The provider warns about each container with router labels that nothing exposes. `rdock migrate traefik` writes the explicit setting that reproduces your Traefik and marks it as a security-relevant choice. |
 | A router without `tls` serves plain HTTP | A route asks for HTTPS (`defaults.tls: auto`), and HTTP is redirected for hosts with an HTTPS route | Keep it (recommended), or write `tls: off` and `listeners: [web]`; with the static configuration, the migration writes the route as your entry points serve it. |
 | A router without `entrypoints` is on every entry point | `defaults.listeners` (`[websecure]`) | Name the entry points, or set `defaults.listeners`. |
 | The entry-point redirect sends every request to HTTPS | Only hosts that have an HTTPS route are redirected | Nothing, usually; a host without an HTTPS route gets 404 on port 80. |
 | Several resolvers, each its own ACME account | One `acme` account | One email; the resolver name in labels is not kept. |
 | `acme.json` | Certificates in the data directory, not imported | Certificates are requested again; mind the CA's rate limits when many names move at once. |
-| No access log unless `accessLog` is set | A JSON access log on standard output | `observability.access_log.format: off` turns it off. |
+| No access log unless `accessLog` is set | A JSON access log on standard output | `format: off` under `observability.access_log` turns it off. |
 | `rateLimit` burst defaults to 1 | `burst` defaults to `average` | Set `burst` to keep Traefik's. |
 
 ### What moves automatically, and what does not
