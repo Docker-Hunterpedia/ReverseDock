@@ -111,37 +111,33 @@ async fn two_clients_get_their_own_sessions_and_only_their_own_replies() {
     assert_eq!(text(ask(&a, b"from-a", WAIT).await), "one:from-a");
     assert_eq!(text(ask(&b, b"from-b", WAIT).await), "one:from-b");
     assert_eq!(text(ask(&a, b"again", WAIT).await), "one:again");
-    assert_eq!(sessions(&rdock, "dns", "r"), "2");
+    eventually(WAIT, "sessions", "2", || sessions(&rdock, "dns", "r"));
     assert_eq!(echo.sources().len(), 2, "one upstream socket per session");
     assert_eq!(echo.datagrams(), 3);
-    assert_eq!(
+    eventually(WAIT, "metric", "3", || {
         metric(
             &rdock,
-            "rdock_udp_datagrams_total{direction=\"in\",route=\"r\"}"
-        ),
-        "3"
-    );
-    assert_eq!(
+            "rdock_udp_datagrams_total{direction=\"in\",route=\"r\"}",
+        )
+    });
+    eventually(WAIT, "metric", "3", || {
         metric(
             &rdock,
-            "rdock_udp_datagrams_total{direction=\"out\",route=\"r\"}"
-        ),
-        "3"
-    );
-    assert_eq!(
+            "rdock_udp_datagrams_total{direction=\"out\",route=\"r\"}",
+        )
+    });
+    eventually(WAIT, "metric", "17", || {
         metric(
             &rdock,
-            "rdock_udp_bytes_total{direction=\"in\",route=\"r\"}"
-        ),
-        "17"
-    );
-    assert_eq!(
+            "rdock_udp_bytes_total{direction=\"in\",route=\"r\"}",
+        )
+    });
+    eventually(WAIT, "metric", "29", || {
         metric(
             &rdock,
-            "rdock_udp_bytes_total{direction=\"out\",route=\"r\"}"
-        ),
-        "29"
-    );
+            "rdock_udp_bytes_total{direction=\"out\",route=\"r\"}",
+        )
+    });
     // Neither reply crossed over to the other client, and the silent socket got nothing.
     assert_eq!(receive(&a, SILENCE).await, None);
     assert_eq!(receive(&b, Duration::from_millis(50)).await, None);
@@ -170,7 +166,7 @@ async fn an_idle_session_closes_and_a_later_datagram_opens_a_new_one() {
     }
     assert_eq!(echo.sources().len(), 1);
     eventually(WAIT, "sessions", "0", || sessions(&rdock, "dns", "r"));
-    assert_eq!(ends(&rdock, "r", "idle"), "1");
+    eventually(WAIT, "ends", "1", || ends(&rdock, "r", "idle"));
     assert_eq!(text(ask(&client, b"2", WAIT).await), "one:2");
     assert_eq!(
         echo.sources().len(),
@@ -199,7 +195,7 @@ async fn responses_one_ends_a_dns_session_with_its_answer() {
     assert_eq!(answer[2] & 0x80, 0x80, "QR set");
     assert_eq!(&answer[12..], &query[12..], "the question");
     eventually(WAIT, "sessions", "0", || sessions(&rdock, "dns", "r"));
-    assert_eq!(ends(&rdock, "r", "responses"), "1");
+    eventually(WAIT, "ends", "1", || ends(&rdock, "r", "responses"));
     let answer = ask(&client, &udp::dns_query(7, "example.test"), WAIT)
         .await
         .expect("a second answer");
@@ -261,14 +257,18 @@ udp_services:
     assert!(ask(&one, b"1", WAIT).await.is_some());
     assert!(ask(&two, b"2", WAIT).await.is_some());
     assert_eq!(ask(&three, b"3", SILENCE).await, None);
-    assert_eq!(dropped(&rdock, "total", "session_limit"), "1");
+    eventually(WAIT, "dropped", "1", || {
+        dropped(&rdock, "total", "session_limit")
+    });
     // A live session still gets through at the cap.
     assert!(ask(&one, b"1", WAIT).await.is_some());
     let first = udp::client(addr(per_client)).await;
     let second = udp::client(addr(per_client)).await;
     assert!(ask(&first, b"a", WAIT).await.is_some());
     assert_eq!(ask(&second, b"b", SILENCE).await, None);
-    assert_eq!(dropped(&rdock, "each", "client_limit"), "1");
+    eventually(WAIT, "dropped", "1", || {
+        dropped(&rdock, "each", "client_limit")
+    });
     assert_eq!(echo.datagrams(), 4);
 }
 
@@ -296,10 +296,10 @@ udp_services:
     );
     let client = udp::client(addr(port)).await;
     assert_eq!(ask(&client, b"x", SILENCE).await, None);
-    assert_eq!(dropped(&rdock, "dns", "denied"), "1");
+    eventually(WAIT, "dropped", "1", || dropped(&rdock, "dns", "denied"));
     let client = udp::client(addr(other)).await;
     assert_eq!(ask(&client, b"x", SILENCE).await, None);
-    assert_eq!(dropped(&rdock, "lan", "no_route"), "1");
+    eventually(WAIT, "dropped", "1", || dropped(&rdock, "lan", "no_route"));
     assert_eq!(echo.datagrams(), 0);
 }
 
@@ -366,7 +366,9 @@ async fn a_refusing_backend_ends_its_session_and_is_ejected() {
     eventually(WAIT, "ends", "1", || {
         ends(&rdock, "r", "backend_unreachable")
     });
-    assert_eq!(dropped(&rdock, "dns", "backend_unreachable"), "1");
+    eventually(WAIT, "dropped", "1", || {
+        dropped(&rdock, "dns", "backend_unreachable")
+    });
     // The refusing backend is ejected: every new session goes to the other one.
     for i in 0..4 {
         let client = udp::client(addr(port)).await;
@@ -407,7 +409,7 @@ listeners:
     assert_eq!(text(ask(&open, b"before", WAIT).await), "one:before");
     let leaving = udp::client(addr(removed)).await;
     assert_eq!(text(ask(&leaving, b"before", WAIT).await), "one:before");
-    assert_eq!(sessions(&rdock, "gone", "gone"), "1");
+    eventually(WAIT, "sessions", "1", || sessions(&rdock, "gone", "gone"));
     rdock.write_config(&config(two.addr, false));
     let (status, body) = rdock.reload();
     assert_eq!(status, 200, "{body}");
@@ -422,7 +424,7 @@ listeners:
     eventually(Duration::from_secs(5), "sessions", "0", || {
         sessions(&rdock, "gone", "gone")
     });
-    assert_eq!(ends(&rdock, "gone", "closed"), "1");
+    eventually(WAIT, "ends", "1", || ends(&rdock, "gone", "closed"));
     let _ = leaving.send(b"late").await;
     assert_eq!(receive(&leaving, SILENCE).await, None);
 }
@@ -461,7 +463,7 @@ async fn a_udp_listener_replaced_on_its_address_in_one_reload_answers_at_once() 
     );
     let open = udp::client(addr(port)).await;
     assert_eq!(text(ask(&open, b"before", WAIT).await), "one:before");
-    assert_eq!(sessions(&rdock, "old", "old"), "1");
+    eventually(WAIT, "sessions", "1", || sessions(&rdock, "old", "old"));
     // Another name on the same address: the old listener is removed and the new one needs its
     // port, with the old one's session still open and a 10 s drain.
     rdock.write_config(&replacing_config(Some(("new", port)), kept, two.addr));
@@ -478,9 +480,9 @@ async fn a_udp_listener_replaced_on_its_address_in_one_reload_answers_at_once() 
     // The replaced listener's session ended at once; its client's next datagram opens a
     // session on the new listener.
     eventually(WAIT, "sessions", "0", || sessions(&rdock, "old", "old"));
-    assert_eq!(ends(&rdock, "old", "closed"), "1");
+    eventually(WAIT, "ends", "1", || ends(&rdock, "old", "closed"));
     assert_eq!(text(ask(&open, b"again", WAIT).await), "two:again");
-    assert_eq!(sessions(&rdock, "new", "new"), "2");
+    eventually(WAIT, "sessions", "2", || sessions(&rdock, "new", "new"));
 }
 
 #[tokio::test]
@@ -499,7 +501,7 @@ async fn a_port_a_draining_udp_listener_holds_is_free_for_the_next_reload() {
     let (status, body) = rdock.reload();
     assert_eq!(status, 200, "{body}");
     assert_eq!(text(ask(&open, b"draining", WAIT).await), "one:draining");
-    assert_eq!(sessions(&rdock, "old", "old"), "1");
+    eventually(WAIT, "sessions", "1", || sessions(&rdock, "old", "old"));
     tokio::time::sleep(Duration::from_secs(1)).await;
     // A second reload wants the port for a new listener: the drain ends, the port is bound.
     rdock.write_config(&replacing_config(Some(("new", port)), kept, two.addr));
@@ -514,7 +516,7 @@ async fn a_port_a_draining_udp_listener_holds_is_free_for_the_next_reload() {
         started.elapsed()
     );
     eventually(WAIT, "sessions", "0", || sessions(&rdock, "old", "old"));
-    assert_eq!(ends(&rdock, "old", "closed"), "1");
+    eventually(WAIT, "ends", "1", || ends(&rdock, "old", "closed"));
 }
 
 #[tokio::test]
@@ -556,6 +558,6 @@ udp_services:
     // reach the IPv4 backend, and is counted instead of being cut.
     let client = udp::client(SocketAddr::from((std::net::Ipv6Addr::LOCALHOST, six))).await;
     assert_eq!(ask(&client, &vec![b'o'; 65_520], SILENCE).await, None);
-    assert_eq!(dropped(&rdock, "six", "oversize"), "1");
+    eventually(WAIT, "dropped", "1", || dropped(&rdock, "six", "oversize"));
     assert_eq!(echo.datagrams(), 1);
 }
