@@ -1,0 +1,12 @@
+# Corpus case `basic-host` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: router rule Host, entrypoints, tls.certresolver, default service from the container.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  whoami:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.whoami.rule=Host(`whoami.example.com`)
+      - traefik.http.routers.whoami.entrypoints=websecure
+      - traefik.http.routers.whoami.tls.certresolver=le

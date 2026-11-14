@@ -144,6 +144,26 @@ impl ProblemKind {
         }
     }
 
+    /// The feature of the maturity registry (`rdock_model::maturity`) that owns this kind's
+    /// type URI and status: `problem-types` (stable, ADR-0033 lists problem types as a stable
+    /// surface) for the kinds rdock's own answers use whatever is configured; a kind only one
+    /// beta feature produces names that feature (`validate` and `transform` produce
+    /// `validation-failed` and `patch-failed`). The settings that choose problem details stay
+    /// with `validation-and-transformation`. The compatibility snapshot
+    /// (`schema/compat/problems.json`) carries it, so removing or renumbering a stable type
+    /// fails the compatibility check.
+    #[must_use]
+    pub fn feature(self) -> &'static str {
+        match self {
+            Self::Banned => "abuse",
+            Self::QuotaExceeded => "consumers",
+            Self::Overloaded => "admission-control",
+            Self::LoginFailed | Self::IdentityProviderUnavailable => "oidc",
+            Self::ValidationFailed | Self::PatchFailed => "validation-and-transformation",
+            _ => "problem-types",
+        }
+    }
+
     /// The last part of the type URI.
     #[must_use]
     pub fn slug(self) -> &'static str {

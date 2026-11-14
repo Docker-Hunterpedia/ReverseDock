@@ -198,7 +198,7 @@ impl rdock_cluster::agent::BundleSink for EngineSink {
         &self,
         bundle: rdock_cluster::protocol::Bundle,
     ) -> Result<Vec<serde_json::Value>, Vec<serde_json::Value>> {
-        self.engine.apply_bundle(bundle).await
+        Box::pin(self.engine.apply_bundle(bundle)).await
     }
 
     fn connection(&self, connected: bool, error: Option<String>) {

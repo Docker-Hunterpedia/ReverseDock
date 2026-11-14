@@ -1,0 +1,9 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "vars root \u2192 static root",
+    "encode \u2192 compress",
+    "file_server \u2192 static"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/root_directive_permutations.caddyfiletest and encode_options.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

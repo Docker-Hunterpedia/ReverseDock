@@ -1,0 +1,10 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "the default selection policy random written explicitly",
+    "header_up/header_down as a headers middleware",
+    "X-Real-IP {remote_host} is built in",
+    "flush_interval -1"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/reverse_proxy_options.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

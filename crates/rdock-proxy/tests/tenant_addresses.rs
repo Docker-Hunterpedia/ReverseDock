@@ -1,6 +1,7 @@
 //! A tenant's service never gets a member for an address its tenant may not reach, however the
 //! address came: a DNS answer, an SRV target, a later re-resolution (H-SEC-07, ADR-0031 review
-//! fixes).
+//! fixes). A service from Docker or Swarm labels never gets one on the proxy's own machine or
+//! a link-local address that a name resolved to (ADR-0033 review 10 fixes).
 
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
@@ -26,12 +27,16 @@ services:
 "#;
 
 fn api_service(name: &str, address: &str) -> rdock_config::merge::Snapshot {
+    provider_service("api", name, address)
+}
+
+fn provider_service(provider: &str, name: &str, address: &str) -> rdock_config::merge::Snapshot {
     let fragment: rdock_config::merge::Fragment = serde_json::from_value(serde_json::json!({
         "services": { name: { "backends": [{ "address": address }] } }
     }))
     .unwrap();
     rdock_config::merge::Snapshot {
-        provider: "api".into(),
+        provider: provider.into(),
         fragment,
         diagnostics: Vec::new(),
         revision: None,
@@ -196,6 +201,96 @@ services:
         assert!(
             !d.message.contains("admin-catchall") && !d.message.contains("edge-secret"),
             "{d:?}"
+        );
+    }
+}
+
+fn compile_with(config: &rdock_model::config::Config, dns: &Dns) -> rdock_proxy::runtime::Runtime {
+    let backends = rdock_balancer::Registry::default();
+    let cloudflare = CloudflareRanges::default();
+    let compiled = compile(
+        config,
+        &CompileEnv {
+            mode: Mode::Validate,
+            generation: 1,
+            dns,
+            client: Arc::new(rdock_middleware::HttpClient::default()),
+            previous: None,
+            cloudflare: &cloudflare,
+            backends: &backends,
+            sticky_key: b"test",
+            live: &rdock_observability::live::Live::default(),
+            caches: None,
+            plugins: &rdock_plugin_api::Registry::new(),
+            metrics: None,
+            quotas: None,
+            abuse: None,
+            shared_limits: None,
+        },
+    );
+    compiled
+        .runtime
+        .ok_or_else(|| format!("{:?}", compiled.diagnostics))
+        .unwrap()
+}
+
+#[test]
+fn label_services_never_reach_the_machine_through_a_name() {
+    let base = r#"
+listeners:
+  web: { address: ":8080" }
+defaults: { listeners: [web], tls: off }
+"#;
+    let snapshots = [
+        provider_service("docker", "rebind", "127.0.0.1.nip.io:80"),
+        // A host-network container's backend is `host_address`, 127.0.0.1 by default.
+        provider_service("docker", "host-net", "127.0.0.1:8080"),
+        provider_service("docker", "app", "172.18.0.5:80"),
+        provider_service("swarm", "meta", "metadata.google.internal:80"),
+    ];
+    let refs: Vec<&rdock_config::merge::Snapshot> = snapshots.iter().collect();
+    let addrs = |list: &[&str]| -> Arc<Vec<SocketAddr>> {
+        Arc::new(list.iter().map(|a| a.parse().unwrap()).collect())
+    };
+    for (allow, extra) in [
+        (false, ""),
+        (
+            true,
+            "providers:\n  docker: { allow_local_backends: true }\n  swarm: { allow_local_backends: true }\n",
+        ),
+    ] {
+        let file = rdock_config::load_str(&format!("{base}{extra}"), rdock_config::Format::Yaml)
+            .unwrap()
+            .config;
+        let merged =
+            rdock_config::merge::assemble(&file, &refs, &std::collections::BTreeSet::new());
+        assert!(merged.errors.is_empty(), "{merged:?}");
+        let dns = Dns::default();
+        let runtime = compile_with(&merged.config, &dns);
+        let rebind = runtime.services.get("rebind@docker").unwrap();
+        dns.cell("127.0.0.1.nip.io", 80)
+            .store(addrs(&["127.0.0.1:80", "[::1]:80", "0.0.0.0:80"]));
+        if allow {
+            assert_eq!(members_of(rebind).len(), 3, "allow_local_backends opts out");
+        } else {
+            assert_eq!(members_of(rebind), Vec::<String>::new());
+        }
+        // Private networks, where containers are, stay reachable.
+        dns.cell("127.0.0.1.nip.io", 80)
+            .store(addrs(&["127.0.0.1:80", "10.0.3.4:80"]));
+        assert!(members_of(rebind).contains(&"10.0.3.4:80".to_owned()));
+        let meta = runtime.services.get("meta@swarm").unwrap();
+        dns.cell("metadata.google.internal", 80)
+            .store(addrs(&["169.254.169.254:80"]));
+        assert_eq!(members_of(meta).is_empty(), !allow);
+        // Literals are the provider's own: a container address and `host_address`.
+        assert_eq!(
+            members_of(runtime.services.get("host-net@docker").unwrap()),
+            ["127.0.0.1:8080"]
+        );
+        assert_eq!(
+            members_of(runtime.services.get("app@docker").unwrap()),
+            ["172.18.0.5:80"]
         );
     }
 }

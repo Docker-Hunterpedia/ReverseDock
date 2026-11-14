@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "ipallowlist.sourcerange",
+    "ipwhitelist (old name)",
+    "ipstrategy (no equivalent)"
+  ],
+  "diff": false
+}

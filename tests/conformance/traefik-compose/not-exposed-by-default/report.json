@@ -1,0 +1,94 @@
+{
+  "findings": [
+    {
+      "code": "compose.service.not_exposed",
+      "hint": "add `traefik.enable=true` (or `rdock.enable=true`) to the container, or set `providers.docker.expose_by_default: true` for Traefik's behaviour (every container with labels is then routed)",
+      "level": "manual",
+      "message": "the container has Traefik router labels but is not exposed: containers are not exposed by default (Traefik's `exposedByDefault` is `true`; `providers.docker.expose_by_default` is `false`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.not_exposed",
+      "hint": "add `traefik.enable=true`, rerun with `--expose-by-default`, or migrate the static configuration (`--static`)",
+      "level": "manual",
+      "message": "not migrated: the container is not exposed (no `traefik.enable`; Traefik's `exposedByDefault` would route it)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.not_exposed",
+      "hint": "add `traefik.enable=true`, rerun with `--expose-by-default`, or migrate the static configuration (`--static`)",
+      "level": "manual",
+      "message": "not migrated: the container is not exposed (no `traefik.enable`; Traefik's `exposedByDefault` would route it)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `off` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.off",
+        "kind": "object",
+        "scope": "off"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the container is not routed, as in Traefik",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "off"
+      }
+    },
+    {
+      "code": "traefik.label.inactive",
+      "level": "exact",
+      "message": "the container is turned off (`enable=false`); Traefik ignores the label too",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.off.rule",
+        "kind": "label",
+        "scope": "off"
+      },
+      "target": "routes.off"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 3,
+    "items": 6,
+    "manual": 3,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

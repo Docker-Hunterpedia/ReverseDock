@@ -152,7 +152,17 @@ async fn read_reply_inner<R: AsyncBufReadExt + Unpin + Send>(
         return Err(RespError::Protocol("arrays nested too deeply".to_owned()));
     }
     let line = read_line(reader).await?;
-    let (kind, rest) = line.split_at(line.len().min(1));
+    // The type is one ASCII byte. Splitting after the first byte of a line that starts with a
+    // multi-byte character panicked (found by the `resp_reader` fuzz target): a server could
+    // stop the task that reads its replies.
+    let Some((kind, rest)) = line
+        .as_bytes()
+        .first()
+        .filter(|b| b.is_ascii())
+        .map(|_| line.split_at(1))
+    else {
+        return Err(RespError::Protocol("an unknown reply type".to_owned()));
+    };
     match kind {
         "+" => Ok(Reply::Simple(rest.to_owned())),
         // An error inside an array leaves the rest of the array unread: the connection is out
@@ -361,6 +371,18 @@ mod tests {
             encode(&[b"INCRBY", b"k", b"5"]),
             b"*3\r\n$6\r\nINCRBY\r\n$1\r\nk\r\n$1\r\n5\r\n"
         );
+    }
+
+    /// A reply line that starts with a multi-byte character is a protocol error, not a panic.
+    #[tokio::test]
+    async fn a_reply_starting_with_a_multi_byte_character_is_refused() {
+        for input in ["\u{7c5}\r\n", "\r\n"] {
+            let mut reader = BufReader::new(input.as_bytes());
+            assert!(matches!(
+                read_reply(&mut reader).await,
+                Err(RespError::Protocol(_))
+            ));
+        }
     }
 
     #[tokio::test]

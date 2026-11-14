@@ -2,7 +2,7 @@
 title: security
 description: "Client IP trust and request limits."
 sidebar:
-  order: 19
+  order: 20
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -63,6 +63,30 @@ Request target (path and query) length.
 **Type:** `integer` · **Default:** `4096`
 
 Idle keep-alive connections to backends kept per listener for reuse. Connections beyond it are closed when their request ends, so a busy listener keeps opening new ones. Applies to listeners started after the change.
+
+## `security.paths`
+
+**Type:** object · **Default:** `{"ambiguous":"reject","encoded_separators":"allow"}`
+
+Request paths that backends may read differently from the router.
+
+### `security.paths.ambiguous`
+
+**Type:** `reject` · `forward` · **Default:** `reject`
+
+Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`), a `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that appears once an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` is read as a separator (`..%2Fadmin`, `public\..\admin`). `reject` (default) answers `400`; `forward` routes and forwards them as written.
+
+- `reject`: Answer `400`.
+- `forward`: Route and forward them as written.
+
+### `security.paths.encoded_separators`
+
+**Type:** `allow` · `reject` · **Default:** `allow`
+
+Paths with an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` that form no dot segment, such as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and forwards them as sent; `reject` answers `400` for every such path, for backends that decode separators before their own access checks.
+
+- `allow`: Route and forward them as sent.
+- `reject`: Answer `400`.
 
 ## `security.trusted_proxies`
 

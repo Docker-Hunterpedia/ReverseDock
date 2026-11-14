@@ -1,0 +1,11 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "process directives (no equivalent needed)",
+    "events (dropped)",
+    "stream and mail (refused)",
+    "access_log",
+    "an unknown directive"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_core_module, ngx_http_log_module) read 2026-11-14."
+}

@@ -235,6 +235,12 @@ it out. Labels: `service`, `backend`.
 `rdock_backend_ejections_total`. Labels: `service`, `backend`, `detector` (`success_rate` or
 `failure_percentage`).
 
+### `rdock_backend_panic_selections_total`
+
+<Status since="v1.0" /> **Counter.** Requests sent to a backend that was out of rotation because
+no backend of the service was available (panic mode, `when_all_down: fail_open`; see
+[Backends and health checks](/docs/guides/backends/)). Labels: `service`.
+
 ### `rdock_retries_total`
 
 **Counter.** Retries. Labels: `service`, `reason` (`connect`, `reset`, `timeout`, `502`,
@@ -287,9 +293,10 @@ Label: `store`.
 
 ### `rdock_cache_dropped_total`
 
-**Counter.** Disk-store objects removed by the start-up walk. Labels: `store` and `reason`:
-`corrupt` (a checksum, length or format that does not check out) or `partial` (a temporary file
-an interrupted fill left behind).
+**Counter.** Disk-store objects removed by the start-up walk, or not stored. Labels: `store` and
+`reason`: `corrupt` (a checksum, length or format that does not check out), `partial` (a
+temporary file an interrupted fill left behind) or `write_error` (the disk refused the write, for
+example because it is full; the response is served uncached).
 
 ## Consumers and metering
 
@@ -479,6 +486,36 @@ applied reload.
 **Counter.** Attempts to apply a configuration, including the first one at start. Label:
 `result`, which is `applied` or `rejected`. A rejected reload leaves the running configuration
 in place.
+
+### `rdock_state_write_failures_total`
+
+**Counter.** Writes to the data directory that failed, typically because the disk is full. Label:
+`what`: `config` (a configuration API write, refused with `507`), `history`, `lkg` and
+`snapshot` (after a file reload, which still applies), `quota`, `bans` and `certificate`. See
+[Failure behaviour](/docs/operations/failure-behaviour/).
+
+### `rdock_data_dir_available_bytes`
+
+**Gauge.** Bytes the file system of the data directory still offers ReverseDock (capped by the
+process's file-size limit), read every 15 seconds. The `disk` alert fires when it drops below
+`observability.alerts.rules.disk`.
+
+### `rdock_data_dir_size_bytes`
+
+**Gauge.** Size of the file system of the data directory.
+
+### `rdock_experimental_feature_in_use`
+
+**Gauge.** `1` for each [experimental feature](/docs/project/maturity/) the applied configuration
+uses, `0` for the others; set at each applied load and reload. Label: `feature` (`wasm`, `http3`).
+
+### `rdock_deprecated_config_in_use`
+
+**Gauge**, `1` for each [deprecated element](/docs/project/deprecations/) the applied
+configuration uses (in the file or in a provider's labels). Label: `element`, as the registry
+names it, for example `observability.alerts.webhook`. An element no longer in use disappears.
+Alert on `count(rdock_deprecated_config_in_use) > 0` to find files to run through
+`rdock migrate config` before the release that removes the element.
 
 ## Alerts <Status since="v0.5" />
 

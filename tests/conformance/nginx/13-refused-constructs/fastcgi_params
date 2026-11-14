@@ -1,0 +1,2 @@
+# Exercises: an included FastCGI parameter file.
+fastcgi_param QUERY_STRING $query_string;

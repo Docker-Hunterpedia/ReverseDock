@@ -1,0 +1,58 @@
+{
+  "about": "Documented differences between Traefik v3.7 and rdock that the differential test accepts (tests/conformance/traefik-diff/harness.py, ADR-0033). Each entry needs a reason and a source; additions are reviewed like any other change of the documented Traefik subset (docs/10-stability.md). `field` is a regular expression over the compared fields (status, backend, seen.path, seen.header.<name>, response.header.<name>); `option` names the coverage-table row whose stated difference the entry covers; `when` narrows it to values (`*` any, `re:<pattern>` a regular expression over the whole value). Entries without `option` are about answers the proxy writes itself, not about a label.",
+  "differences": [
+    {
+      "id": "tls-certificate-source",
+      "option": "traefik.http.routers.<name>.tls",
+      "field": "certificate",
+      "reason": "`tls=true` takes an automatic certificate in rdock and Traefik's default or stored one; the harness gives both proxies the same certificate and does not compare certificates, so nothing is observed.",
+      "source": "tests/conformance/traefik-labels/coverage.json (the row's note); https://doc.traefik.io/traefik/reference/routing-configuration/http/tls/tls-certificates/ (read 2026-11-14)"
+    },
+    {
+      "id": "tls-resolver-name",
+      "option": "traefik.http.routers.<name>.tls.certresolver",
+      "field": "certificate",
+      "reason": "A resolver's name is not kept (one ACME account); ACME is off in the test and certificates are not compared, so nothing is observed.",
+      "source": "tests/conformance/traefik-labels/coverage.json (the row's note)"
+    },
+    {
+      "id": "compress-defaults",
+      "option": "traefik.http.middlewares.<name>.compress",
+      "field": "response\\.header\\.content-encoding",
+      "reason": "With `compress=true`, rdock prefers zstd, br, gzip and compresses common text types; Traefik prefers gzip, br, zstd and compresses every type not excluded. whoami's answers are below the 1024-byte minimum, so the difference shows only on larger answers.",
+      "source": "https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/compress/ (read 2026-11-14); crates/rdock-middleware/src/compress.rs"
+    },
+    {
+      "id": "ratelimit-default-burst",
+      "option": "traefik.http.middlewares.<name>.ratelimit.average",
+      "field": "status",
+      "when": {
+        "traefik": "429",
+        "rdock": "200"
+      },
+      "reason": "Without `burst`, rdock's burst is `average` and Traefik's is 1, so Traefik refuses a quick second request that rdock admits. The cases set `burst` where the matrix could reach the limit.",
+      "source": "https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/ratelimit/ (read 2026-11-14); apps/website/src/content/docs/docs/migrate/from-traefik.mdx"
+    },
+    {
+      "id": "basic-auth-challenge-charset",
+      "option": "traefik.http.middlewares.<name>.basicauth.realm",
+      "field": "response\\.header\\.www-authenticate",
+      "when": {
+        "traefik": "re:Basic realm=\"[^\"]*\"",
+        "rdock": "re:Basic realm=\"[^\"]*\", charset=\"UTF-8\""
+      },
+      "reason": "rdock's Basic challenge names the charset it decodes credentials with (RFC 7617 section 2.1); Traefik's challenge has the realm only. Clients treat both as a Basic challenge for the realm.",
+      "source": "https://www.rfc-editor.org/rfc/rfc7617#section-2.1 (read 2026-11-14); crates/rdock-middleware/src/auth.rs"
+    },
+    {
+      "id": "own-answers-nosniff",
+      "field": "response\\.header\\.x-content-type-options",
+      "when": {
+        "traefik": "None",
+        "rdock": "nosniff"
+      },
+      "reason": "Every answer rdock writes itself (a 401 challenge, a redirect, an error) carries `X-Content-Type-Options: nosniff`. Traefik sets it only on answers written with Go's http.Error, such as its 404, not on a Basic challenge or a redirect. The status and the other headers agree. First seen in the run of 2026-11-14 on commit 8ff297b (9 of 61 requests, in basic-auth-escaped, redirect-to-https-middleware and redirect-www).",
+      "source": "crates/rdock-proxy/src/proxy.rs (`reply`); https://pkg.go.dev/net/http#Error (read 2026-11-14); the traefik-diff run of commit 8ff297b"
+    }
+  ]
+}

@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "deploy.labels read as container labels",
+    "Swarm options dropped"
+  ],
+  "diff": false
+}

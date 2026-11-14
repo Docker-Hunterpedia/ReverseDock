@@ -64,6 +64,7 @@ impl Setup {
     fn config_listener(&self, h3: &str, listener: &str, service: &str, extra: &str) -> String {
         format!(
             r#"
+experimental: [http3]
 acme: false
 certificates:
   app: {{ cert_file: "{cert}", key_file: "{key}" }}

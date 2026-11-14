@@ -1,0 +1,9 @@
+# Exercises: an HTTPS upstream (Host is the upstream's since Caddy 2.11), a TLS server name and a CA file.
+portal.example.com {
+	reverse_proxy https://backend.internal:8443 {
+		transport http {
+			tls_server_name backend.internal
+			tls_trust_pool file /etc/caddy/backend-ca.pem
+		}
+	}
+}

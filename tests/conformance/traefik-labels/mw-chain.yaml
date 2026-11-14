@@ -1,0 +1,36 @@
+description: "A chain is inlined into every route that uses it, also from another container, and chains may name chains."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "secured,last"
+      traefik.http.middlewares.secured.chain.middlewares: "allow, base"
+      traefik.http.middlewares.base.chain.middlewares: "gz"
+      traefik.http.middlewares.allow.ipallowlist.sourcerange: "10.0.0.0/8"
+      traefik.http.middlewares.gz.compress: "true"
+      traefik.http.middlewares.last.addprefix.prefix: "/v1"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+  - name: "other"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.other.rule: "Host(`other.example.com`)"
+      traefik.http.routers.other.middlewares: "secured"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 80
+expect:
+  routes:
+    app: { middlewares: ["allow", "gz", "last"] }
+    other: { middlewares: ["allow", "gz"] }
+  services:
+    app: {}
+    other: {}
+  middlewares:
+    allow: { type: "ip_allow" }
+    gz: { type: "compress" }
+    last: { type: "add_prefix" }

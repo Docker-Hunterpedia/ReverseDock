@@ -1,0 +1,176 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `smtp` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.smtp",
+        "kind": "object",
+        "scope": "smtp"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "smtp"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.match` (`HostSNI`, `HostSNIRegexp`, `ALPN`, `ClientIP`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.routers.smtp.rule",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "tcp_routes.smtp"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.listeners`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.routers.smtp.entrypoints",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "tcp_routes.smtp"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.routers.smtp.middlewares",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "tcp_routes.smtp"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`ip_allow.cidrs` (the old name of `ipallowlist`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.middlewares.smtp-allow.ipwhitelist.sourcerange",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "middlewares.smtp-allow"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`in_flight.amount` (TCP connections)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.middlewares.smtp-conns.inflightconn.amount",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "middlewares.smtp-conns"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the backend's port",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.services.smtp.loadbalancer.server.port",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "tcp_services.smtp"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_services.<s>.proxy_protocol` (`1` → `v1`, `2` → `v2`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.services.smtp.loadbalancer.proxyprotocol.version",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "tcp_services.smtp"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_services.<s>.timeouts.termination_delay` (milliseconds; a negative value, no deadline, is refused)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.services.smtp.loadbalancer.terminationdelay",
+        "kind": "label",
+        "scope": "smtp"
+      },
+      "target": "tcp_services.smtp"
+    },
+    {
+      "code": "compose.service.traefik",
+      "hint": "replace the image with ReverseDock's and remove Traefik's flags: `rdock run` does not accept them",
+      "level": "exact",
+      "message": "the service runs Traefik (traefik:v3.7.19): its flags and `TRAEFIK_*` variables are read as static configuration",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.traefik",
+        "kind": "object",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:25`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.mail.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.mail.address"
+    },
+    {
+      "code": "traefik.static.expose_by_default",
+      "level": "exact",
+      "message": "`providers.docker.expose_by_default: false`, as Traefik's `exposedByDefault`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--providers.docker.exposedbydefault",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "providers.docker.expose_by_default"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 13,
+    "items": 13,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

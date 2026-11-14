@@ -1,0 +1,1028 @@
+{
+  "generated_by": "rdock schema --compat metrics (just compat)",
+  "metrics": {
+    "rdock_abuse_actions_total": {
+      "feature": "abuse",
+      "help": "Requests of banned keys denied, held or tagged, and bans started, by abuse middleware.",
+      "labels": [
+        "action",
+        "middleware"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_abuse_bans": {
+      "feature": "abuse",
+      "help": "Keys banned by abuse middlewares right now.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_abuse_bans_refused_total": {
+      "feature": "abuse",
+      "help": "Bans not started because the ban list was full.",
+      "labels": [
+        "middleware"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_acme_orders_total": {
+      "feature": "automatic-https",
+      "help": "ACME certificate orders.",
+      "labels": [
+        "ca",
+        "result"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_admin_audit_refusals_total": {
+      "feature": "admin-api",
+      "help": "Mutating admin calls refused because their audit record could not be written.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_admin_audit_write_failures_total": {
+      "feature": "admin-api",
+      "help": "Audit records that could not be written.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_admin_login_failures_total": {
+      "feature": "admin-api",
+      "help": "Failed admin logins.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_admin_requests_total": {
+      "feature": "admin-api",
+      "help": "Admin API requests by endpoint and status class.",
+      "labels": [
+        "endpoint",
+        "status_class"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_admin_sse_dropped_events_total": {
+      "feature": "admin-api",
+      "help": "Live entries not delivered because a reader fell behind.",
+      "labels": [
+        "stream"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_admin_sse_subscribers": {
+      "feature": "admin-api",
+      "help": "Open live streams.",
+      "labels": [
+        "stream"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_admission_in_flight": {
+      "feature": "admission-control",
+      "help": "Requests in flight under each admission middleware.",
+      "labels": [
+        "middleware"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_admission_limit": {
+      "feature": "admission-control",
+      "help": "Current adaptive concurrency limit of each admission middleware.",
+      "labels": [
+        "middleware"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_admission_shed_total": {
+      "feature": "admission-control",
+      "help": "Requests shed with 503 by admission middlewares, by priority class.",
+      "labels": [
+        "class",
+        "middleware"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_agent_breaker_open": {
+      "feature": "agents",
+      "help": "Whether an agent's circuit breaker is open (1) or closed (0).",
+      "labels": [
+        "agent"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_agent_duration_seconds": {
+      "buckets": [
+        0.001,
+        0.0025,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0
+      ],
+      "feature": "agents",
+      "help": "Time an agent took to answer.",
+      "labels": [
+        "agent"
+      ],
+      "maturity": "beta",
+      "type": "histogram",
+      "unit": "seconds"
+    },
+    "rdock_agent_ignored_headers_total": {
+      "feature": "agents",
+      "help": "Headers an agent asked to set on the request that were not applied, by reason.",
+      "labels": [
+        "agent",
+        "reason"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_agent_requests_total": {
+      "feature": "agents",
+      "help": "Calls to out-of-process agents, by result.",
+      "labels": [
+        "agent",
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_alerts_sent_total": {
+      "feature": "alerts",
+      "help": "Alerts delivered, by channel and result.",
+      "labels": [
+        "channel",
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_backend_addresses_refused_total": {
+      "feature": "tenants",
+      "help": "Resolved backend addresses of tenant services that the tenant may not reach; never connected to.",
+      "labels": [
+        "service"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_backend_ejections_total": {
+      "feature": "reliability",
+      "help": "Backends ejected by passive health: repeated failures or an outlier detector.",
+      "labels": [
+        "backend",
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_backend_outlier_ejections_total": {
+      "feature": "balancing",
+      "help": "Backends ejected by an outlier detector (success_rate or failure_percentage); also counted in rdock_backend_ejections_total.",
+      "labels": [
+        "backend",
+        "detector",
+        "service"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_backend_panic_selections_total": {
+      "feature": "reliability",
+      "help": "Backend selections in panic mode: no backend of the service was available, so one that is out of rotation got the request (when_all_down: fail_open).",
+      "labels": [
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_backend_requests_total": {
+      "feature": "reliability",
+      "help": "Answers from each backend.",
+      "labels": [
+        "backend",
+        "service",
+        "status_class"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_backend_up": {
+      "feature": "reliability",
+      "help": "Whether a backend takes traffic (health checks and ejection).",
+      "labels": [
+        "backend",
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_build_info": {
+      "feature": "observability",
+      "help": "Version of the running binary.",
+      "labels": [
+        "commit",
+        "version"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_cache_bytes": {
+      "feature": "http-cache",
+      "help": "Bytes in a cache store.",
+      "labels": [
+        "store"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": "bytes"
+    },
+    "rdock_cache_dropped_total": {
+      "feature": "http-cache",
+      "help": "Disk cache objects dropped at start because they were damaged or incomplete.",
+      "labels": [
+        "reason",
+        "store"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cache_evictions_total": {
+      "feature": "http-cache",
+      "help": "Cache objects evicted to stay within a store's limits.",
+      "labels": [
+        "reason",
+        "store"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cache_lock_waits_total": {
+      "feature": "http-cache",
+      "help": "Requests that waited for another request to fill the cache.",
+      "labels": [
+        "store"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cache_objects": {
+      "feature": "http-cache",
+      "help": "Objects in a cache store.",
+      "labels": [
+        "store"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_cache_requests_total": {
+      "feature": "http-cache",
+      "help": "Requests on caching routes, by outcome.",
+      "labels": [
+        "route",
+        "status",
+        "store"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cert_expiry_timestamp_seconds": {
+      "feature": "automatic-https",
+      "help": "Expiry of each certificate.",
+      "labels": [
+        "name"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": "seconds"
+    },
+    "rdock_cert_renewal_failures_total": {
+      "feature": "automatic-https",
+      "help": "Failed attempts to issue or renew an automatic certificate.",
+      "labels": [
+        "name"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cluster_bundle_revision": {
+      "feature": "cluster",
+      "help": "The control-plane bundle revision this data plane serves; 0 without a control plane.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_cluster_bundles_total": {
+      "feature": "cluster",
+      "help": "Bundles received from the control plane, by result (ack, nack, refused).",
+      "labels": [
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cluster_challenge_barriers_total": {
+      "feature": "cluster",
+      "help": "Challenge barriers, by result (complete, timeout).",
+      "labels": [
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cluster_control_connected": {
+      "feature": "cluster",
+      "help": "Whether the data plane's last request to its control plane succeeded (1) or not (0).",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_cluster_leases_total": {
+      "feature": "cluster",
+      "help": "Certificate leases asked for, by result (acquired, busy, lost, error).",
+      "labels": [
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cluster_limit_claims_total": {
+      "feature": "cluster-limits",
+      "help": "Claims of cluster-scoped limits, by outcome (granted, exhausted, forced, failed).",
+      "labels": [
+        "outcome"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_cluster_limits_members": {
+      "feature": "cluster-limits",
+      "help": "Instances sharing cluster-scoped limits, as this instance last counted them.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_cluster_limits_store_up": {
+      "feature": "cluster-limits",
+      "help": "Whether the store of cluster-scoped limits answers (1) or limits fall back to each instance's share (0).",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_config_generation": {
+      "feature": "observability",
+      "help": "Generation of the configuration in use.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_config_reloads_total": {
+      "feature": "observability",
+      "help": "Configuration reload attempts.",
+      "labels": [
+        "result"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_connections_open": {
+      "feature": "observability",
+      "help": "Open client connections.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_connections_total": {
+      "feature": "observability",
+      "help": "Accepted client connections.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_consumer_requests_total": {
+      "feature": "consumers",
+      "help": "Requests attributed to a consumer, by consumer, route and status class.",
+      "labels": [
+        "consumer",
+        "route",
+        "status_class"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_control_instances": {
+      "feature": "cluster",
+      "help": "Enrolled data planes by state (synced, stale, error, away, revoked).",
+      "labels": [
+        "state"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_control_revision": {
+      "feature": "cluster",
+      "help": "The control plane's latest published revision.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_data_dir_available_bytes": {
+      "feature": "observability",
+      "help": "Bytes the file system of the data directory still offers rdock.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": "bytes"
+    },
+    "rdock_data_dir_size_bytes": {
+      "feature": "observability",
+      "help": "Size of the file system of the data directory.",
+      "labels": [],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": "bytes"
+    },
+    "rdock_deprecated_config_in_use": {
+      "feature": "observability",
+      "help": "1 when the applied configuration uses this deprecated element.",
+      "labels": [
+        "element"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_experimental_feature_in_use": {
+      "feature": "observability",
+      "help": "1 when the applied configuration uses this experimental feature, else 0.",
+      "labels": [
+        "feature"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_geoip_build_timestamp_seconds": {
+      "feature": "geoip",
+      "help": "Build time of each GeoIP database, from its metadata.",
+      "labels": [
+        "database"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": "seconds"
+    },
+    "rdock_geoip_database_age_seconds": {
+      "feature": "geoip",
+      "help": "Age of each GeoIP database (now minus its build time).",
+      "labels": [
+        "database"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": "seconds"
+    },
+    "rdock_http3_connections": {
+      "feature": "http3",
+      "help": "Open QUIC connections of HTTP/3 listeners.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "experimental",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_http3_connections_closed_total": {
+      "feature": "http3",
+      "help": "QUIC connections of HTTP/3 listeners that ended or were refused, by reason.",
+      "labels": [
+        "listener",
+        "reason"
+      ],
+      "maturity": "experimental",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_http3_connections_total": {
+      "feature": "http3",
+      "help": "QUIC connections of HTTP/3 listeners that completed their handshake.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "experimental",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_http3_malformed_requests_total": {
+      "feature": "http3",
+      "help": "HTTP/3 requests reset before the pipeline because their header section was malformed.",
+      "labels": [
+        "listener",
+        "reason"
+      ],
+      "maturity": "experimental",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_http3_requests_total": {
+      "feature": "http3",
+      "help": "HTTP/3 requests answered, by status class.",
+      "labels": [
+        "listener",
+        "status_class"
+      ],
+      "maturity": "experimental",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_http3_retries_total": {
+      "feature": "http3",
+      "help": "QUIC Retry packets sent by HTTP/3 listeners.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "experimental",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_http_request_duration_seconds": {
+      "buckets": [
+        0.001,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "feature": "observability",
+      "help": "Time from request headers to the end of the response.",
+      "labels": [
+        "listener",
+        "route"
+      ],
+      "maturity": "stable",
+      "type": "histogram",
+      "unit": "seconds"
+    },
+    "rdock_http_requests_total": {
+      "feature": "observability",
+      "help": "HTTP requests handled.",
+      "labels": [
+        "listener",
+        "method",
+        "route",
+        "service",
+        "status_class"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_metering_dropped_total": {
+      "feature": "consumers",
+      "help": "Usage metering events dropped, by sink and reason (queue_full, undeliverable).",
+      "labels": [
+        "reason",
+        "sink"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_metering_events_total": {
+      "feature": "consumers",
+      "help": "Usage metering events by sink and result (sent, failed).",
+      "labels": [
+        "result",
+        "sink"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_mirror_requests_total": {
+      "feature": "reliability",
+      "help": "Copies of requests sent to mirror services.",
+      "labels": [
+        "outcome",
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_oidc_logins_total": {
+      "feature": "oidc",
+      "help": "OIDC logins completed or refused, by middleware and result.",
+      "labels": [
+        "middleware",
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_oidc_provider_errors_total": {
+      "feature": "oidc",
+      "help": "Failed requests to OIDC providers, by middleware and operation.",
+      "labels": [
+        "middleware",
+        "operation"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_oidc_refreshes_total": {
+      "feature": "oidc",
+      "help": "OIDC session refreshes, by middleware and result.",
+      "labels": [
+        "middleware",
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_plugin_panics_total": {
+      "feature": "native-plugins",
+      "help": "Panics caught in native plugin hooks; each answered its request with 500.",
+      "labels": [
+        "plugin"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_proxy_protocol_rejected_total": {
+      "feature": "proxy-protocol",
+      "help": "Connections closed for their PROXY protocol header, or its absence.",
+      "labels": [
+        "listener",
+        "reason"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_quota_overflows_total": {
+      "feature": "consumers",
+      "help": "Requests a quota counted on a shared counter because its keys of that class were full, by middleware and class.",
+      "labels": [
+        "class",
+        "middleware"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_retries_total": {
+      "feature": "reliability",
+      "help": "Requests sent again to a backend after a failure.",
+      "labels": [
+        "reason",
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_retry_budget_exhausted_total": {
+      "feature": "reliability",
+      "help": "Retries refused because the retry budget was used up.",
+      "labels": [
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_runtime_threads": {
+      "feature": "tuning",
+      "help": "Thread settings of the proxy runtime (worker threads, most blocking threads).",
+      "labels": [
+        "kind"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_state_write_failures_total": {
+      "feature": "observability",
+      "help": "Writes to the data directory that failed, by what was written.",
+      "labels": [
+        "what"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_tcp_bytes_total": {
+      "feature": "tcp-routes",
+      "help": "Bytes relayed by TCP routes (`in` from the client, `out` to the client).",
+      "labels": [
+        "direction",
+        "route"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": "bytes"
+    },
+    "rdock_tcp_connections": {
+      "feature": "tcp-routes",
+      "help": "Open connections of TCP routes.",
+      "labels": [
+        "listener",
+        "route"
+      ],
+      "maturity": "stable",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_tcp_rejected_total": {
+      "feature": "tcp-routes",
+      "help": "TCP connections closed without being relayed.",
+      "labels": [
+        "listener",
+        "reason"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_tls_handshake_errors_total": {
+      "feature": "observability",
+      "help": "Failed TLS handshakes.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_tls_handshake_waits_total": {
+      "feature": "tuning",
+      "help": "Times the listener stopped accepting because tls.max_handshakes was reached; new connections waited in the listen backlog.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_tls_handshakes_in_flight": {
+      "feature": "tuning",
+      "help": "TLS connections accepted whose handshake has not finished.",
+      "labels": [
+        "listener"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_transform_skipped_total": {
+      "feature": "validation-and-transformation",
+      "help": "Bodies a transform middleware left unchanged, by reason.",
+      "labels": [
+        "middleware",
+        "reason"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_udp_bytes_total": {
+      "feature": "udp",
+      "help": "Bytes relayed by UDP routes (`in` from the client, `out` to the client).",
+      "labels": [
+        "direction",
+        "route"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": "bytes"
+    },
+    "rdock_udp_datagrams_total": {
+      "feature": "udp",
+      "help": "Datagrams relayed by UDP routes (`in` from the client, `out` to the client).",
+      "labels": [
+        "direction",
+        "route"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_udp_dropped_total": {
+      "feature": "udp",
+      "help": "Datagrams a UDP listener dropped instead of relaying them.",
+      "labels": [
+        "listener",
+        "reason"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_udp_session_ends_total": {
+      "feature": "udp",
+      "help": "UDP sessions that ended, by why.",
+      "labels": [
+        "reason",
+        "route"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_udp_sessions": {
+      "feature": "udp",
+      "help": "Open sessions of UDP routes.",
+      "labels": [
+        "listener",
+        "route"
+      ],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_upgrade_drain_deadline_seconds": {
+      "feature": "binary-upgrade",
+      "help": "When the previous process's drain ends, in Unix seconds; 0 when none drains.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": "seconds"
+    },
+    "rdock_upgrade_draining_connections": {
+      "feature": "binary-upgrade",
+      "help": "Connections the previous process still serves while it drains after a binary upgrade.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_upgrade_generation": {
+      "feature": "binary-upgrade",
+      "help": "Binary upgrades behind this process (0 for a process started normally).",
+      "labels": [],
+      "maturity": "beta",
+      "type": "gauge",
+      "unit": ""
+    },
+    "rdock_upgrades_total": {
+      "feature": "binary-upgrade",
+      "help": "Binary upgrades started by this process, by result (ok, failed, refused).",
+      "labels": [
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_upstream_duration_seconds": {
+      "buckets": [
+        0.001,
+        0.005,
+        0.01,
+        0.025,
+        0.05,
+        0.1,
+        0.25,
+        0.5,
+        1.0,
+        2.5,
+        5.0,
+        10.0,
+        30.0
+      ],
+      "feature": "http-proxy",
+      "help": "Time from sending a request to a backend to its response headers.",
+      "labels": [
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "histogram",
+      "unit": "seconds"
+    },
+    "rdock_upstream_errors_total": {
+      "feature": "http-proxy",
+      "help": "Failed requests to backends.",
+      "labels": [
+        "kind",
+        "service"
+      ],
+      "maturity": "stable",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_validation_requests_total": {
+      "feature": "validation-and-transformation",
+      "help": "Requests checked by validate middlewares, by result.",
+      "labels": [
+        "middleware",
+        "result"
+      ],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_vault_refresh_failures_total": {
+      "feature": "vault",
+      "help": "Failed refreshes of Vault references; the last values stay in use.",
+      "labels": [],
+      "maturity": "beta",
+      "type": "counter",
+      "unit": ""
+    },
+    "rdock_wasm_failures_total": {
+      "feature": "wasm",
+      "help": "Failed calls into WASM plugins; each followed the middleware's on_error.",
+      "labels": [
+        "middleware",
+        "reason"
+      ],
+      "maturity": "experimental",
+      "type": "counter",
+      "unit": ""
+    }
+  },
+  "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+  "surface": "metrics"
+}

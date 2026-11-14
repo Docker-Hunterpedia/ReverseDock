@@ -1,0 +1,8 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "authentication http_basic \u2192 basic_auth",
+    "a conditional middleware route split into two routes"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/the basic_auth parser in modules/caddyhttp/caddyauth/caddyfile.go at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

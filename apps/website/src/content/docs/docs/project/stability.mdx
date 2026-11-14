@@ -1,0 +1,99 @@
+---
+title: Stability and support
+description: What ReverseDock promises from 1.0 on, per surface; how deprecations work and how to move off them; maturity levels; which versions get security fixes; MSRV.
+sidebar:
+  order: 6
+---
+
+import Status from '../../../../components/Status.astro';
+
+From 1.0 on, ReverseDock follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html): a **stable** surface breaks only in a major release, and only after it was deprecated for a while. Patch releases carry fixes only; minor releases add things and may deprecate some. The decision is [ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md); the repository's [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md) has the full text.
+
+Until 1.0 (the current 0.x alpha releases), configuration may still change between minor releases, with a migration note in the [changelog](/docs/project/changelog/).
+
+## What is promised
+
+| Surface | Breaks only in a major | Never counts as breaking |
+|---|---|---|
+| `rdock.yaml` (schema v1) | removed or renamed keys, changed types, newly required keys, removed values, a changed default that changes behaviour, refusing a file that validated | new optional keys and values, new warnings, refusing an unsafe configuration (see [Security fixes](#security-fixes)), diagnostic wording |
+| Rule grammar | a rule that parsed no longer parses or matches differently | new matchers |
+| `rdock.*` labels and the documented Traefik subset | as for `rdock.yaml`; dropping a supported Traefik label | new labels; following Traefik's own deprecations |
+| CLI | removed or renamed commands, flags and documented `RDOCK_*` variables; the meaning of exit codes `0`, `1`, `2`; JSON output fields | new commands, flags and fields; **all human-readable output** |
+| Admin API `/api/v1` | removed paths, methods, fields or values; newly required request fields; changed types, status codes or roles | new paths, optional fields and response fields (ignore unknown ones) |
+| Metrics, JSON access-log fields, problem types | removed or renamed names, labels and fields; a new label on an existing metric; changed types, units, buckets or statuses | new ones |
+| Container image, Helm values, data directory | entrypoint, user, data path, ports, health check; values as for `rdock.yaml`; a directory the next two minors cannot read | base image updates, new values, new files |
+
+Not promised: performance, log and error wording, the dashboard's look, undocumented behaviour, the internal Rust crates (only `rdock-plugin-api` follows SemVer), and anything [beta or experimental](#maturity-levels).
+
+### How it is checked
+
+Every pull request runs a compatibility gate that compares the configuration schema, the admin API's OpenAPI document, the Helm values schema, the CLI's commands, flags and JSON outputs, the metrics, the access-log fields, the problem types, the documented `RDOCK_*` variables, the labels and the image's entrypoint, user, ports and health check with the last release, and `cargo-semver-checks` for `rdock-plugin-api`. A change the table above calls breaking fails the check, unless the element is beta or experimental, or deprecated with its removal release reached. Data directories written by earlier releases are tested against the current binary. Until 1.0.0-rc.1 the gate only reports.
+
+The gate reads definitions, not behaviour: a changed meaning, a default applied in code rather than declared, a different routing or retry decision, the roles an API operation needs and the rule grammar are guarded by tests and review, not by the gate. The repository's [docs/10-stability.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/10-stability.md) §9 lists exactly what each check covers.
+
+## Deprecations
+
+Nothing is deprecated before its replacement is released. A deprecated stable element keeps working for at least **two minor releases and six months**, whichever is longer, and goes only in a major release. The current list, with removal releases and replacements, is on [Deprecations](/docs/project/deprecations/).
+
+While you use a deprecated element:
+
+- `rdock validate` warns, with the replacement and the removal release. `--strict` fails; `--deprecations error` fails on deprecations only, to check a file against the release that removes them. `--format json` carries `code: "deprecated"`, `element`, `since`, `removal` and `replacement`.
+- ReverseDock logs one warning per element at each load and reload, and sets `rdock_deprecated_config_in_use{element}` to 1, so you can alert on it.
+- `GET /api/v1/status` lists it under `deprecations_in_use`, and the dashboard's overview shows a notice.
+- The JSON Schema marks the key `deprecated`, so editors strike it through. A deprecated API operation is `deprecated` in the OpenAPI document and its answers carry `Deprecation` ([RFC 9745](https://www.rfc-editor.org/rfc/rfc9745)) and, when a date is set, `Sunset` ([RFC 8594](https://www.rfc-editor.org/rfc/rfc8594)). A deprecated CLI flag prints a warning on standard error.
+
+### Move off deprecated settings
+
+`rdock migrate config` rewrites every deprecated setting it can to its replacement:
+
+```bash
+rdock migrate config rdock.yaml           # print the migrated file
+rdock migrate config --diff rdock.yaml    # print a unified diff
+rdock migrate config --write rdock.yaml   # replace the file; the original goes to rdock.yaml.bak
+```
+
+- It edits the file as text where it can: a renamed key, a replaced value and a block moved elsewhere change only those lines, so your comments, blank lines, quoting and key order stay. The result is parsed again and must mean exactly the rewritten configuration.
+- Where a change cannot be made as a text edit (a moved section written in flow style, `{ … }`, or a JSON file whose section moves), the whole file is written out again: the content is the same, but comments and formatting are lost. The command says so; review the result.
+- Uses that need a decision are listed, not guessed. It exits `0` when done, `1` when the file cannot be read as a configuration (or has a `version` other than `1`), and `2` on an I/O error.
+- `-` reads standard input; `-o FILE` writes elsewhere. Check the result with `rdock validate`.
+
+## Maturity levels
+
+Each feature has one level, listed on [Maturity levels](/docs/project/maturity/) and shown as a badge in this documentation:
+
+- <Status maturity="stable" /> the promise above.
+- <Status maturity="beta" /> not removed without a deprecation (one minor and three months), but details may change in a minor release with a migration note. ReverseDock logs one info line per beta feature in use.
+- <Status maturity="experimental" /> no promise: it may change or disappear in any release, and it is not in the release binaries when it needs a build feature. A configuration must name it in the top-level `experimental` list, or it is refused:
+
+  ```yaml title="rdock.yaml (excerpt)"
+  experimental: [http3]
+  listeners:
+    websecure:
+      address: ":443"
+      tls: {}
+      http3: { enabled: true }
+  ```
+
+  ReverseDock then logs one warning per experimental feature at each load and sets `rdock_experimental_feature_in_use{feature}` to 1. Naming an unknown feature is an error; naming one you do not use is a warning.
+
+A feature moves up when its tests run in a required CI job, it is documented, it spent one release at its level and no correctness issue is open; beta → stable also needs a minor and three months without an incompatible change. A stable feature is never demoted, only deprecated.
+
+## Support
+
+| Version | Gets security fixes |
+|---|---|
+| 0.x and `-rc` pre-releases | the latest release only |
+| 1.x and later | the two newest minor releases of the current major |
+| the previous major, after a new major | its last minor release, for six months |
+
+Fixes land on `main` first and are cherry-picked to `release/X.Y` branches. Crashes, data loss and failed certificate issuance are backported too; other fixes go to the newest minor only, and fixes to experimental features are never backported. ReverseDock has **one maintainer and no SLA**: the response times in the [security policy](/docs/project/security/) are targets. Report vulnerabilities privately, as that page describes.
+
+A patch for an older minor is released from its `release/X.Y` branch and never moves the `latest` image tag or GitHub's "Latest release" mark, which stay with the highest stable version. Pre-releases never take them.
+
+### Security fixes
+
+A change that refuses an unsafe configuration may come in a minor or patch release without the deprecation period when it fixes a vulnerability. It is listed under "Security" in the changelog, with a diagnostic that names the fix.
+
+## Rust version (MSRV)
+
+Release binaries are built with a pinned toolchain; the minimum Rust version matters only when you build from source or write native plugins. It is 1.89 today, may rise in a minor release (never a patch) to a Rust release at least six months old, and each rise is in the changelog.

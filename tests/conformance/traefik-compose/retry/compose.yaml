@@ -1,0 +1,16 @@
+# Corpus case `retry` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: retry attempts (moved to the service), retry.status, retry.initialInterval (none).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  flaky:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.flaky.rule: Host(`flaky.example.com`)
+      traefik.http.routers.flaky.entrypoints: websecure
+      traefik.http.routers.flaky.tls: "true"
+      traefik.http.routers.flaky.middlewares: retry3
+      traefik.http.middlewares.retry3.retry.attempts: "3"
+      traefik.http.middlewares.retry3.retry.status: 500-504
+      traefik.http.middlewares.retry3.retry.initialInterval: 100ms

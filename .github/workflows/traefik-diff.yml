@@ -1,0 +1,80 @@
+# Differential test of the documented Traefik label subset (ADR-0033, layer 3 of
+# "conformance-tested"; tests/conformance/traefik-diff/README.md). Not a required check.
+#
+#   traefik-diff   Builds the rdock image, then for every corpus case marked `"diff": true`
+#                  (tests/conformance/traefik-compose) starts whoami backends with the case's
+#                  labels next to a pinned Traefik v3.7.19 and rdock, sends the same request
+#                  matrix to both and compares status, answering backend, the request the backend
+#                  saw, redirects and selected response headers. A difference that
+#                  tests/conformance/traefik-diff/allowlist.json does not accept fails the job.
+#
+# It needs Docker and cannot run in the repository's development sandbox, where image pulls are
+# blocked: the harness's offline parts are tested there (test_harness.py), the job itself is
+# unverified until it has run here.
+name: traefik-diff
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+    paths:
+      - crates/providers/rdock-provider-docker/src/labels/**
+      - crates/providers/rdock-provider-docker/src/labels.rs
+      - crates/rdock-migrate/**
+      - crates/rdock-middleware/**
+      - crates/rdock-proxy/**
+      - tests/conformance/traefik-labels/**
+      - tests/conformance/traefik-compose/**
+      - tests/conformance/traefik-diff/**
+      - .github/workflows/traefik-diff.yml
+  schedule:
+    - cron: "41 3 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: traefik-diff-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  traefik-diff:
+    name: traefik-diff
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7.1.0
+        with:
+          python-version: "3.12"
+      - name: The harness's offline tests
+        run: python3 -I tests/conformance/traefik-diff/test_harness.py
+      # The same command as the `docker` job in ci.yml.
+      - name: Build the image
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag rdock:ci .
+      - name: Pull the pinned images
+        run: |
+          python3 -I - <<'EOF' | xargs -n1 docker pull
+          import importlib.util, pathlib
+          spec = importlib.util.spec_from_file_location("h", pathlib.Path("tests/conformance/traefik-diff/harness.py"))
+          h = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(h)
+          print(h.TRAEFIK_IMAGE)
+          print(h.WHOAMI_IMAGE)
+          EOF
+      - name: Compare Traefik and rdock
+        run: python3 -I tests/conformance/traefik-diff/harness.py run --rdock-image rdock:ci --out "$RUNNER_TEMP/traefik-diff"
+      - name: Keep the report and the proxies' logs
+        if: always()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: traefik-diff
+          path: ${{ runner.temp }}/traefik-diff
+          retention-days: 14
+          if-no-files-found: ignore

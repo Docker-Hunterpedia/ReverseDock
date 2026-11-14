@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "ratelimit average, burst, period",
+    "sourceCriterion.requestHeaderName",
+    "ratelimit without burst (approximate)"
+  ],
+  "diff": false
+}

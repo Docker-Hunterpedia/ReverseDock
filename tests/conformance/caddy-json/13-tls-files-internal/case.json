@@ -1,0 +1,10 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "load_files with a tag \u2192 certificates + tls.certificate",
+    "protocol_min tls1.3 \u2192 listener policy modern",
+    "internal issuer for a private name \u2192 local CA"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/tls_automation_policies_10.caddyfiletest and tls_conn_policy_consolidate.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README).",
+  "full": true
+}

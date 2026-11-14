@@ -1,0 +1,56 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"portal.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "backend.internal:8443"
+														}
+													],
+													"transport": {
+														"protocol": "http",
+														"tls": {
+															"ca": {
+																"pem_files": [
+																	"/etc/caddy/backend-ca.pem"
+																],
+																"provider": "file"
+															},
+															"server_name": "backend.internal"
+														}
+													}
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

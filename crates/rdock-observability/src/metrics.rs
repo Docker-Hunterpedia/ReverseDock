@@ -6,6 +6,7 @@ use prometheus::{
     Encoder, HistogramOpts, HistogramVec, IntCounterVec, IntGaugeVec, Opts, Registry, TextEncoder,
 };
 pub use prometheus::{IntCounter, IntGauge};
+use serde::Serialize;
 
 /// Methods reported as themselves; others count as `OTHER`.
 const KNOWN_METHODS: [&str; 9] = [
@@ -16,6 +17,8 @@ const KNOWN_METHODS: [&str; 9] = [
 #[derive(Debug, Clone)]
 pub struct Metrics {
     registry: Registry,
+    /// Every registered metric, in registration order.
+    catalogue: std::sync::Arc<[MetricInfo]>,
     /// Live feeds for the admin API's log and event streams.
     pub feeds: crate::feed::Feeds,
     /// Alerts delivered by channel and result (`sent`, `failed`).
@@ -90,6 +93,20 @@ pub struct Metrics {
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
     pub config_reloads: IntCounterVec,
+    /// Writes to the data directory that failed, by what was written (`config`, `history`,
+    /// `lkg`, `snapshot`, `bundle`, `audit`, `quota`, `bans`, `cache`, `certificate`):
+    /// a full disk degrades persistence, never request handling (ADR-0033).
+    pub state_write_failures: IntCounterVec,
+    /// Bytes the file system of the data directory still offers rdock (capped by the
+    /// file-size limit), refreshed every 15 seconds.
+    pub data_dir_available: IntGauge,
+    /// Size of the file system of the data directory.
+    pub data_dir_size: IntGauge,
+    /// 1 for each experimental feature the applied configuration uses, 0 for the others
+    /// (ADR-0033).
+    pub experimental_in_use: IntGaugeVec,
+    /// 1 for each deprecated element the applied configuration uses (ADR-0033).
+    pub deprecated_in_use: IntGaugeVec,
     /// Expiry of each certificate, in seconds since the Unix epoch.
     pub cert_expiry: IntGaugeVec,
     /// Failed attempts to issue or renew an automatic certificate, by its first name.
@@ -125,6 +142,9 @@ pub struct Metrics {
     pub backend_ejections: IntCounterVec,
     /// Backend ejections by an outlier detector, by service, address and detector.
     pub outlier_ejections: IntCounterVec,
+    /// Requests routed in panic mode (no backend available, `when_all_down: fail_open`), by
+    /// service.
+    pub panic_selections: IntCounterVec,
     /// Retries by service and reason (`connect`, `reset`, `timeout`, `502` …).
     pub retries: IntCounterVec,
     /// Retries not made because the service's retry budget was used up.
@@ -226,32 +246,163 @@ pub const MAX_CONSUMER_LABELS: usize = 1000;
 /// The `consumer` label of consumers past [`MAX_CONSUMER_LABELS`].
 pub const OTHER_CONSUMERS: &str = "_other";
 
-/// Creates `metric` and registers it in `registry`.
-fn registered<M: prometheus::core::Collector + Clone + 'static>(
-    registry: &Registry,
-    metric: prometheus::Result<M>,
-) -> prometheus::Result<M> {
-    let metric = metric?;
-    registry.register(Box::new(metric.clone()))?;
-    Ok(metric)
+/// One registered metric as `/metrics` exposes it: name, type, help text, label names and, for
+/// a histogram, its buckets. [`Metrics::catalogue`] lists every metric this way; the
+/// compatibility snapshot (`schema/compat/metrics.json`, ADR-0033) is generated from it.
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub struct MetricInfo {
+    /// The metric's name, e.g. `rdock_http_requests_total`.
+    pub name: String,
+    /// `counter`, `gauge` or `histogram`.
+    #[serde(rename = "type")]
+    pub kind: &'static str,
+    /// The `# HELP` text.
+    pub help: String,
+    /// Label names, in registration order.
+    pub labels: Vec<String>,
+    /// Upper bounds of a histogram's buckets; `None` for other types.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub buckets: Option<Vec<f64>>,
 }
 
-fn counters(
-    registry: &Registry,
-    name: &str,
-    help: &str,
-    labels: &[&str],
-) -> prometheus::Result<IntCounterVec> {
-    registered(registry, IntCounterVec::new(Opts::new(name, help), labels))
+impl MetricInfo {
+    /// A metric of `kind` without buckets.
+    #[must_use]
+    pub fn new(name: &str, kind: &'static str, help: &str, labels: &[&str]) -> Self {
+        Self {
+            name: name.to_owned(),
+            kind,
+            help: help.to_owned(),
+            labels: labels.iter().map(|l| (*l).to_owned()).collect(),
+            buckets: None,
+        }
+    }
 }
 
-fn gauges(
-    registry: &Registry,
-    name: &str,
-    help: &str,
-    labels: &[&str],
-) -> prometheus::Result<IntGaugeVec> {
-    registered(registry, IntGaugeVec::new(Opts::new(name, help), labels))
+/// Which feature of the maturity registry (`rdock_model::maturity::FEATURES`) each metric
+/// belongs to, by name prefix; the first matching prefix wins. The compatibility check exempts
+/// metrics of features below stable, and a test keeps every metric matched.
+pub const METRIC_FEATURES: &[(&str, &str)] = &[
+    ("rdock_http3_", "http3"),
+    ("rdock_cache_", "http-cache"),
+    ("rdock_agent_", "agents"),
+    ("rdock_plugin_panics", "native-plugins"),
+    ("rdock_wasm_", "wasm"),
+    ("rdock_consumer_", "consumers"),
+    ("rdock_quota_", "consumers"),
+    ("rdock_metering_", "consumers"),
+    ("rdock_validation_", "validation-and-transformation"),
+    ("rdock_transform_", "validation-and-transformation"),
+    ("rdock_vault_", "vault"),
+    ("rdock_oidc_", "oidc"),
+    ("rdock_geoip_", "geoip"),
+    ("rdock_abuse_", "abuse"),
+    ("rdock_admission_", "admission-control"),
+    ("rdock_backend_addresses_refused", "tenants"),
+    ("rdock_backend_outlier_", "balancing"),
+    ("rdock_upgrade", "binary-upgrade"),
+    ("rdock_cluster_limit", "cluster-limits"),
+    ("rdock_cluster_", "cluster"),
+    ("rdock_control_", "cluster"),
+    ("rdock_udp_", "udp"),
+    ("rdock_tcp_", "tcp-routes"),
+    ("rdock_proxy_protocol_", "proxy-protocol"),
+    ("rdock_alerts_", "alerts"),
+    ("rdock_runtime_", "tuning"),
+    ("rdock_tls_handshakes_in_flight", "tuning"),
+    ("rdock_tls_handshake_waits", "tuning"),
+    ("rdock_cert_", "automatic-https"),
+    ("rdock_acme_", "automatic-https"),
+    ("rdock_admin_", "admin-api"),
+    ("rdock_backend_", "reliability"),
+    ("rdock_retr", "reliability"),
+    ("rdock_mirror_", "reliability"),
+    ("rdock_upstream_", "http-proxy"),
+    ("rdock_", "observability"),
+];
+
+/// The feature a metric belongs to (see [`METRIC_FEATURES`]).
+#[must_use]
+pub fn metric_feature(name: &str) -> Option<&'static str> {
+    METRIC_FEATURES
+        .iter()
+        .find(|(prefix, _)| name.starts_with(prefix))
+        .map(|(_, feature)| *feature)
+}
+
+/// Creates metrics, registers them and notes each in the catalogue.
+struct Builder {
+    registry: Registry,
+    catalogue: Vec<MetricInfo>,
+}
+
+impl Builder {
+    fn register<M: prometheus::core::Collector + Clone + 'static>(
+        &mut self,
+        metric: prometheus::Result<M>,
+        info: MetricInfo,
+    ) -> prometheus::Result<M> {
+        let metric = metric?;
+        self.registry.register(Box::new(metric.clone()))?;
+        self.catalogue.push(info);
+        Ok(metric)
+    }
+
+    fn counters(
+        &mut self,
+        name: &str,
+        help: &str,
+        labels: &[&str],
+    ) -> prometheus::Result<IntCounterVec> {
+        self.register(
+            IntCounterVec::new(Opts::new(name, help), labels),
+            MetricInfo::new(name, "counter", help, labels),
+        )
+    }
+
+    fn gauges(
+        &mut self,
+        name: &str,
+        help: &str,
+        labels: &[&str],
+    ) -> prometheus::Result<IntGaugeVec> {
+        self.register(
+            IntGaugeVec::new(Opts::new(name, help), labels),
+            MetricInfo::new(name, "gauge", help, labels),
+        )
+    }
+
+    fn counter(&mut self, name: &str, help: &str) -> prometheus::Result<IntCounter> {
+        self.register(
+            IntCounter::new(name, help),
+            MetricInfo::new(name, "counter", help, &[]),
+        )
+    }
+
+    fn gauge(&mut self, name: &str, help: &str) -> prometheus::Result<IntGauge> {
+        self.register(
+            IntGauge::new(name, help),
+            MetricInfo::new(name, "gauge", help, &[]),
+        )
+    }
+
+    fn histograms(
+        &mut self,
+        name: &str,
+        help: &str,
+        buckets: &[f64],
+        labels: &[&str],
+    ) -> prometheus::Result<HistogramVec> {
+        let mut info = MetricInfo::new(name, "histogram", help, labels);
+        info.buckets = Some(buckets.to_vec());
+        self.register(
+            HistogramVec::new(
+                HistogramOpts::new(name, help).buckets(buckets.to_vec()),
+                labels,
+            ),
+            info,
+        )
+    }
 }
 
 impl Metrics {
@@ -259,540 +410,449 @@ impl Metrics {
     // A flat list of metric declarations; splitting it would only scatter them.
     #[allow(clippy::too_many_lines)]
     pub fn new(version: &str, commit: &str) -> prometheus::Result<Self> {
-        let registry = Registry::new();
-        let requests = counters(
-            &registry,
+        let mut b = Builder {
+            registry: Registry::new(),
+            catalogue: Vec::new(),
+        };
+        let requests = b.counters(
             "rdock_http_requests_total",
             "HTTP requests handled.",
             &["listener", "route", "service", "method", "status_class"],
         )?;
-        let duration = registered(
-            &registry,
-            HistogramVec::new(
-                HistogramOpts::new(
-                    "rdock_http_request_duration_seconds",
-                    "Time from request headers to the end of the response.",
-                )
-                .buckets(vec![
-                    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
-                ]),
-                &["listener", "route"],
-            ),
+        let duration = b.histograms(
+            "rdock_http_request_duration_seconds",
+            "Time from request headers to the end of the response.",
+            &[
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+            ],
+            &["listener", "route"],
         )?;
-        let upstream_errors = counters(
-            &registry,
+        let upstream_errors = b.counters(
             "rdock_upstream_errors_total",
             "Failed requests to backends.",
             &["service", "kind"],
         )?;
-        let connections = gauges(
-            &registry,
+        let connections = b.gauges(
             "rdock_connections_open",
             "Open client connections.",
             &["listener"],
         )?;
-        let connections_total = counters(
-            &registry,
+        let connections_total = b.counters(
             "rdock_connections_total",
             "Accepted client connections.",
             &["listener"],
         )?;
-        let tls_handshake_errors = counters(
-            &registry,
+        let tls_handshake_errors = b.counters(
             "rdock_tls_handshake_errors_total",
             "Failed TLS handshakes.",
             &["listener"],
         )?;
-        let tls_handshakes_in_flight = gauges(
-            &registry,
+        let tls_handshakes_in_flight = b.gauges(
             "rdock_tls_handshakes_in_flight",
             "TLS connections accepted whose handshake has not finished.",
             &["listener"],
         )?;
-        let tls_handshake_waits = counters(
-            &registry,
+        let tls_handshake_waits = b.counters(
             "rdock_tls_handshake_waits_total",
             "Times the listener stopped accepting because tls.max_handshakes was reached; new connections waited in the listen backlog.",
             &["listener"],
         )?;
-        let runtime_threads = gauges(
-            &registry,
+        let runtime_threads = b.gauges(
             "rdock_runtime_threads",
             "Thread settings of the proxy runtime (worker threads, most blocking threads).",
             &["kind"],
         )?;
-        let upgrades = counters(
-            &registry,
+        let upgrades = b.counters(
             "rdock_upgrades_total",
             "Binary upgrades started by this process, by result (ok, failed, refused).",
             &["result"],
         )?;
-        let upgrade_draining_connections = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_upgrade_draining_connections",
-                "Connections the previous process still serves while it drains after a binary upgrade.",
-            ),
+        let upgrade_draining_connections = b.gauge(
+            "rdock_upgrade_draining_connections",
+            "Connections the previous process still serves while it drains after a binary upgrade.",
         )?;
-        let upgrade_generation = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_upgrade_generation",
-                "Binary upgrades behind this process (0 for a process started normally).",
-            ),
+        let upgrade_generation = b.gauge(
+            "rdock_upgrade_generation",
+            "Binary upgrades behind this process (0 for a process started normally).",
         )?;
-        let upgrade_drain_deadline = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_upgrade_drain_deadline_seconds",
-                "When the previous process's drain ends, in Unix seconds; 0 when none drains.",
-            ),
+        let upgrade_drain_deadline = b.gauge(
+            "rdock_upgrade_drain_deadline_seconds",
+            "When the previous process's drain ends, in Unix seconds; 0 when none drains.",
         )?;
-        let proxy_protocol_rejected = counters(
-            &registry,
+        let proxy_protocol_rejected = b.counters(
             "rdock_proxy_protocol_rejected_total",
             "Connections closed for their PROXY protocol header, or its absence.",
             &["listener", "reason"],
         )?;
-        let http3_connections_total = counters(
-            &registry,
+        let http3_connections_total = b.counters(
             "rdock_http3_connections_total",
             "QUIC connections of HTTP/3 listeners that completed their handshake.",
             &["listener"],
         )?;
-        let http3_connections = gauges(
-            &registry,
+        let http3_connections = b.gauges(
             "rdock_http3_connections",
             "Open QUIC connections of HTTP/3 listeners.",
             &["listener"],
         )?;
-        let http3_retries = counters(
-            &registry,
+        let http3_retries = b.counters(
             "rdock_http3_retries_total",
             "QUIC Retry packets sent by HTTP/3 listeners.",
             &["listener"],
         )?;
-        let http3_connections_closed = counters(
-            &registry,
+        let http3_connections_closed = b.counters(
             "rdock_http3_connections_closed_total",
             "QUIC connections of HTTP/3 listeners that ended or were refused, by reason.",
             &["listener", "reason"],
         )?;
-        let http3_malformed_requests = counters(
-            &registry,
+        let http3_malformed_requests = b.counters(
             "rdock_http3_malformed_requests_total",
             "HTTP/3 requests reset before the pipeline because their header section was malformed.",
             &["listener", "reason"],
         )?;
-        let http3_requests = counters(
-            &registry,
+        let http3_requests = b.counters(
             "rdock_http3_requests_total",
             "HTTP/3 requests answered, by status class.",
             &["listener", "status_class"],
         )?;
-        let tcp_connections = gauges(
-            &registry,
+        let tcp_connections = b.gauges(
             "rdock_tcp_connections",
             "Open connections of TCP routes.",
             &["listener", "route"],
         )?;
-        let tcp_bytes = counters(
-            &registry,
+        let tcp_bytes = b.counters(
             "rdock_tcp_bytes_total",
             "Bytes relayed by TCP routes (`in` from the client, `out` to the client).",
             &["route", "direction"],
         )?;
-        let tcp_rejected = counters(
-            &registry,
+        let tcp_rejected = b.counters(
             "rdock_tcp_rejected_total",
             "TCP connections closed without being relayed.",
             &["listener", "reason"],
         )?;
-        let udp_sessions = gauges(
-            &registry,
+        let udp_sessions = b.gauges(
             "rdock_udp_sessions",
             "Open sessions of UDP routes.",
             &["listener", "route"],
         )?;
-        let udp_datagrams = counters(
-            &registry,
+        let udp_datagrams = b.counters(
             "rdock_udp_datagrams_total",
             "Datagrams relayed by UDP routes (`in` from the client, `out` to the client).",
             &["route", "direction"],
         )?;
-        let udp_bytes = counters(
-            &registry,
+        let udp_bytes = b.counters(
             "rdock_udp_bytes_total",
             "Bytes relayed by UDP routes (`in` from the client, `out` to the client).",
             &["route", "direction"],
         )?;
-        let udp_dropped = counters(
-            &registry,
+        let udp_dropped = b.counters(
             "rdock_udp_dropped_total",
             "Datagrams a UDP listener dropped instead of relaying them.",
             &["listener", "reason"],
         )?;
-        let udp_session_ends = counters(
-            &registry,
+        let udp_session_ends = b.counters(
             "rdock_udp_session_ends_total",
             "UDP sessions that ended, by why.",
             &["route", "reason"],
         )?;
-        let config_generation = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_config_generation",
-                "Generation of the configuration in use.",
-            ),
+        let config_generation = b.gauge(
+            "rdock_config_generation",
+            "Generation of the configuration in use.",
         )?;
-        let config_reloads = counters(
-            &registry,
+        let config_reloads = b.counters(
             "rdock_config_reloads_total",
             "Configuration reload attempts.",
             &["result"],
         )?;
-        let cert_expiry = gauges(
-            &registry,
+        let state_write_failures = b.counters(
+            "rdock_state_write_failures_total",
+            "Writes to the data directory that failed, by what was written.",
+            &["what"],
+        )?;
+        let data_dir_available = b.gauge(
+            "rdock_data_dir_available_bytes",
+            "Bytes the file system of the data directory still offers rdock.",
+        )?;
+        let data_dir_size = b.gauge(
+            "rdock_data_dir_size_bytes",
+            "Size of the file system of the data directory.",
+        )?;
+        let experimental_in_use = b.gauges(
+            "rdock_experimental_feature_in_use",
+            "1 when the applied configuration uses this experimental feature, else 0.",
+            &["feature"],
+        )?;
+        let deprecated_in_use = b.gauges(
+            "rdock_deprecated_config_in_use",
+            "1 when the applied configuration uses this deprecated element.",
+            &["element"],
+        )?;
+        let cert_expiry = b.gauges(
             "rdock_cert_expiry_timestamp_seconds",
             "Expiry of each certificate.",
             &["name"],
         )?;
-        let cert_renewal_failures = counters(
-            &registry,
+        let cert_renewal_failures = b.counters(
             "rdock_cert_renewal_failures_total",
             "Failed attempts to issue or renew an automatic certificate.",
             &["name"],
         )?;
-        let acme_orders = counters(
-            &registry,
+        let acme_orders = b.counters(
             "rdock_acme_orders_total",
             "ACME certificate orders.",
             &["ca", "result"],
         )?;
-        let cluster_bundle_revision = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_cluster_bundle_revision",
-                "The control-plane bundle revision this data plane serves; 0 without a control plane.",
-            ),
+        let cluster_bundle_revision = b.gauge(
+            "rdock_cluster_bundle_revision",
+            "The control-plane bundle revision this data plane serves; 0 without a control plane.",
         )?;
-        let cluster_bundles = counters(
-            &registry,
+        let cluster_bundles = b.counters(
             "rdock_cluster_bundles_total",
             "Bundles received from the control plane, by result (ack, nack, refused).",
             &["result"],
         )?;
-        let cluster_control_connected = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_cluster_control_connected",
-                "Whether the data plane's last request to its control plane succeeded (1) or not (0).",
-            ),
+        let cluster_control_connected = b.gauge(
+            "rdock_cluster_control_connected",
+            "Whether the data plane's last request to its control plane succeeded (1) or not (0).",
         )?;
-        let cluster_leases = counters(
-            &registry,
+        let cluster_leases = b.counters(
             "rdock_cluster_leases_total",
             "Certificate leases asked for, by result (acquired, busy, lost, error).",
             &["result"],
         )?;
-        let cluster_limits_store_up = registered(
-            &registry,
-            IntGauge::new(
+        let cluster_limits_store_up = b.gauge(
                 "rdock_cluster_limits_store_up",
                 "Whether the store of cluster-scoped limits answers (1) or limits fall back to each instance's share (0).",
-            ),
         )?;
-        let cluster_limit_claims = counters(
-            &registry,
+        let cluster_limit_claims = b.counters(
             "rdock_cluster_limit_claims_total",
             "Claims of cluster-scoped limits, by outcome (granted, exhausted, forced, failed).",
             &["outcome"],
         )?;
-        let cluster_limits_members = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_cluster_limits_members",
-                "Instances sharing cluster-scoped limits, as this instance last counted them.",
-            ),
+        let cluster_limits_members = b.gauge(
+            "rdock_cluster_limits_members",
+            "Instances sharing cluster-scoped limits, as this instance last counted them.",
         )?;
-        let cluster_barriers = counters(
-            &registry,
+        let cluster_barriers = b.counters(
             "rdock_cluster_challenge_barriers_total",
             "Challenge barriers, by result (complete, timeout).",
             &["result"],
         )?;
-        let control_revision = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_control_revision",
-                "The control plane's latest published revision.",
-            ),
+        let control_revision = b.gauge(
+            "rdock_control_revision",
+            "The control plane's latest published revision.",
         )?;
-        let control_instances = gauges(
-            &registry,
+        let control_instances = b.gauges(
             "rdock_control_instances",
             "Enrolled data planes by state (synced, stale, error, away, revoked).",
             &["state"],
         )?;
-        let backend_up = gauges(
-            &registry,
+        let backend_up = b.gauges(
             "rdock_backend_up",
             "Whether a backend takes traffic (health checks and ejection).",
             &["service", "backend"],
         )?;
-        let backend_ejections = counters(
-            &registry,
+        let backend_ejections = b.counters(
             "rdock_backend_ejections_total",
             "Backends ejected by passive health: repeated failures or an outlier detector.",
             &["service", "backend"],
         )?;
-        let outlier_ejections = counters(
-            &registry,
+        let outlier_ejections = b.counters(
             "rdock_backend_outlier_ejections_total",
             "Backends ejected by an outlier detector (success_rate or failure_percentage); also counted in rdock_backend_ejections_total.",
             &["service", "backend", "detector"],
         )?;
-        let retries = counters(
-            &registry,
+        let panic_selections = b.counters(
+            "rdock_backend_panic_selections_total",
+            "Backend selections in panic mode: no backend of the service was available, so one that is out of rotation got the request (when_all_down: fail_open).",
+            &["service"],
+        )?;
+        let retries = b.counters(
             "rdock_retries_total",
             "Requests sent again to a backend after a failure.",
             &["service", "reason"],
         )?;
-        let retry_budget_exhausted = counters(
-            &registry,
+        let retry_budget_exhausted = b.counters(
             "rdock_retry_budget_exhausted_total",
             "Retries refused because the retry budget was used up.",
             &["service"],
         )?;
-        let backend_requests = counters(
-            &registry,
+        let backend_requests = b.counters(
             "rdock_backend_requests_total",
             "Answers from each backend.",
             &["service", "backend", "status_class"],
         )?;
-        let upstream_duration = registered(
-            &registry,
-            HistogramVec::new(
-                HistogramOpts::new(
-                    "rdock_upstream_duration_seconds",
-                    "Time from sending a request to a backend to its response headers.",
-                )
-                .buckets(vec![
-                    0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
-                ]),
-                &["service"],
-            ),
+        let upstream_duration = b.histograms(
+            "rdock_upstream_duration_seconds",
+            "Time from sending a request to a backend to its response headers.",
+            &[
+                0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 30.0,
+            ],
+            &["service"],
         )?;
-        let alerts_sent = counters(
-            &registry,
+        let alerts_sent = b.counters(
             "rdock_alerts_sent_total",
             "Alerts delivered, by channel and result.",
             &["channel", "result"],
         )?;
-        let mirrors = counters(
-            &registry,
+        let mirrors = b.counters(
             "rdock_mirror_requests_total",
             "Copies of requests sent to mirror services.",
             &["service", "outcome"],
         )?;
-        let plugin_panics = counters(
-            &registry,
+        let plugin_panics = b.counters(
             "rdock_plugin_panics_total",
             "Panics caught in native plugin hooks; each answered its request with 500.",
             &["plugin"],
         )?;
-        let wasm_failures = counters(
-            &registry,
+        let wasm_failures = b.counters(
             "rdock_wasm_failures_total",
             "Failed calls into WASM plugins; each followed the middleware's on_error.",
             &["middleware", "reason"],
         )?;
-        let agent_requests = counters(
-            &registry,
+        let agent_requests = b.counters(
             "rdock_agent_requests_total",
             "Calls to out-of-process agents, by result.",
             &["agent", "result"],
         )?;
-        let agent_duration = registered(
-            &registry,
-            HistogramVec::new(
-                HistogramOpts::new(
-                    "rdock_agent_duration_seconds",
-                    "Time an agent took to answer.",
-                )
-                .buckets(vec![
-                    0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
-                ]),
-                &["agent"],
-            ),
+        let agent_duration = b.histograms(
+            "rdock_agent_duration_seconds",
+            "Time an agent took to answer.",
+            &[
+                0.001, 0.0025, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0,
+            ],
+            &["agent"],
         )?;
-        let agent_breaker_open = gauges(
-            &registry,
+        let agent_breaker_open = b.gauges(
             "rdock_agent_breaker_open",
             "Whether an agent's circuit breaker is open (1) or closed (0).",
             &["agent"],
         )?;
-        let agent_ignored_headers = counters(
-            &registry,
+        let agent_ignored_headers = b.counters(
             "rdock_agent_ignored_headers_total",
             "Headers an agent asked to set on the request that were not applied, by reason.",
             &["agent", "reason"],
         )?;
-        let build_info = gauges(
-            &registry,
+        let build_info = b.gauges(
             "rdock_build_info",
             "Version of the running binary.",
             &["version", "commit"],
         )?;
         build_info.with_label_values(&[version, commit]).set(1);
-        let cache_requests = counters(
-            &registry,
+        let cache_requests = b.counters(
             "rdock_cache_requests_total",
             "Requests on caching routes, by outcome.",
             &["store", "route", "status"],
         )?;
-        let cache_objects = gauges(
-            &registry,
+        let cache_objects = b.gauges(
             "rdock_cache_objects",
             "Objects in a cache store.",
             &["store"],
         )?;
-        let cache_bytes = gauges(
-            &registry,
-            "rdock_cache_bytes",
-            "Bytes in a cache store.",
-            &["store"],
-        )?;
-        let cache_evictions = counters(
-            &registry,
+        let cache_bytes = b.gauges("rdock_cache_bytes", "Bytes in a cache store.", &["store"])?;
+        let cache_evictions = b.counters(
             "rdock_cache_evictions_total",
             "Cache objects evicted to stay within a store's limits.",
             &["store", "reason"],
         )?;
-        let cache_lock_waits = counters(
-            &registry,
+        let cache_lock_waits = b.counters(
             "rdock_cache_lock_waits_total",
             "Requests that waited for another request to fill the cache.",
             &["store"],
         )?;
-        let cache_dropped = counters(
-            &registry,
+        let cache_dropped = b.counters(
             "rdock_cache_dropped_total",
             "Disk cache objects dropped at start because they were damaged or incomplete.",
             &["store", "reason"],
         )?;
-        let consumer_requests = counters(
-            &registry,
+        let consumer_requests = b.counters(
             "rdock_consumer_requests_total",
             "Requests attributed to a consumer, by consumer, route and status class.",
             &["consumer", "route", "status_class"],
         )?;
-        let metering_events = counters(
-            &registry,
+        let metering_events = b.counters(
             "rdock_metering_events_total",
             "Usage metering events by sink and result (sent, failed).",
             &["sink", "result"],
         )?;
-        let metering_dropped = counters(
-            &registry,
+        let metering_dropped = b.counters(
             "rdock_metering_dropped_total",
             "Usage metering events dropped, by sink and reason (queue_full, undeliverable).",
             &["sink", "reason"],
         )?;
-        let validation_requests = counters(
-            &registry,
+        let validation_requests = b.counters(
             "rdock_validation_requests_total",
             "Requests checked by validate middlewares, by result.",
             &["middleware", "result"],
         )?;
-        let transform_skipped = counters(
-            &registry,
+        let transform_skipped = b.counters(
             "rdock_transform_skipped_total",
             "Bodies a transform middleware left unchanged, by reason.",
             &["middleware", "reason"],
         )?;
-        let vault_refresh_failures = registered(
-            &registry,
-            prometheus::IntCounter::new(
-                "rdock_vault_refresh_failures_total",
-                "Failed refreshes of Vault references; the last values stay in use.",
-            ),
+        let vault_refresh_failures = b.counter(
+            "rdock_vault_refresh_failures_total",
+            "Failed refreshes of Vault references; the last values stay in use.",
         )?;
-        let quota_overflows = counters(
-            &registry,
+        let quota_overflows = b.counters(
             "rdock_quota_overflows_total",
             "Requests a quota counted on a shared counter because its keys of that class were full, by middleware and class.",
             &["middleware", "class"],
         )?;
-        let oidc_logins = counters(
-            &registry,
+        let oidc_logins = b.counters(
             "rdock_oidc_logins_total",
             "OIDC logins completed or refused, by middleware and result.",
             &["middleware", "result"],
         )?;
-        let geoip_build = gauges(
-            &registry,
+        let geoip_build = b.gauges(
             "rdock_geoip_build_timestamp_seconds",
             "Build time of each GeoIP database, from its metadata.",
             &["database"],
         )?;
-        let geoip_age = gauges(
-            &registry,
+        let geoip_age = b.gauges(
             "rdock_geoip_database_age_seconds",
             "Age of each GeoIP database (now minus its build time).",
             &["database"],
         )?;
-        let abuse_actions = counters(
-            &registry,
+        let abuse_actions = b.counters(
             "rdock_abuse_actions_total",
             "Requests of banned keys denied, held or tagged, and bans started, by abuse middleware.",
             &["middleware", "action"],
         )?;
-        let abuse_bans = registered(
-            &registry,
-            IntGauge::new(
-                "rdock_abuse_bans",
-                "Keys banned by abuse middlewares right now.",
-            ),
+        let abuse_bans = b.gauge(
+            "rdock_abuse_bans",
+            "Keys banned by abuse middlewares right now.",
         )?;
-        let abuse_bans_refused = counters(
-            &registry,
+        let abuse_bans_refused = b.counters(
             "rdock_abuse_bans_refused_total",
             "Bans not started because the ban list was full.",
             &["middleware"],
         )?;
-        let admission_limit = gauges(
-            &registry,
+        let admission_limit = b.gauges(
             "rdock_admission_limit",
             "Current adaptive concurrency limit of each admission middleware.",
             &["middleware"],
         )?;
-        let admission_in_flight = gauges(
-            &registry,
+        let admission_in_flight = b.gauges(
             "rdock_admission_in_flight",
             "Requests in flight under each admission middleware.",
             &["middleware"],
         )?;
-        let admission_shed = counters(
-            &registry,
+        let admission_shed = b.counters(
             "rdock_admission_shed_total",
             "Requests shed with 503 by admission middlewares, by priority class.",
             &["middleware", "class"],
         )?;
-        let backend_addresses_refused = counters(
-            &registry,
+        let backend_addresses_refused = b.counters(
             "rdock_backend_addresses_refused_total",
             "Resolved backend addresses of tenant services that the tenant may not reach; never connected to.",
             &["service"],
         )?;
-        let oidc_refreshes = counters(
-            &registry,
+        let oidc_refreshes = b.counters(
             "rdock_oidc_refreshes_total",
             "OIDC session refreshes, by middleware and result.",
             &["middleware", "result"],
         )?;
-        let oidc_provider_errors = counters(
-            &registry,
+        let oidc_provider_errors = b.counters(
             "rdock_oidc_provider_errors_total",
             "Failed requests to OIDC providers, by middleware and operation.",
             &["middleware", "operation"],
@@ -825,7 +885,8 @@ impl Metrics {
             cache_evictions,
             cache_lock_waits,
             cache_dropped,
-            registry,
+            registry: b.registry,
+            catalogue: b.catalogue.into(),
             feeds: crate::feed::Feeds::default(),
             alerts_sent,
             requests,
@@ -858,6 +919,11 @@ impl Metrics {
             udp_session_ends,
             config_generation,
             config_reloads,
+            state_write_failures,
+            data_dir_available,
+            data_dir_size,
+            experimental_in_use,
+            deprecated_in_use,
             cert_expiry,
             cert_renewal_failures,
             acme_orders,
@@ -874,6 +940,7 @@ impl Metrics {
             backend_up,
             backend_ejections,
             outlier_ejections,
+            panic_selections,
             retries,
             retry_budget_exhausted,
             backend_requests,
@@ -886,6 +953,14 @@ impl Metrics {
             agent_breaker_open,
             agent_ignored_headers,
         })
+    }
+
+    /// Every metric this process registers, in registration order (ADR-0033's compatibility
+    /// snapshot is generated from it). The admin API's own metrics are listed by
+    /// `rdock_admin::metric_catalogue`.
+    #[must_use]
+    pub fn catalogue(&self) -> &[MetricInfo] {
+        &self.catalogue
     }
 
     /// Records one finished request.

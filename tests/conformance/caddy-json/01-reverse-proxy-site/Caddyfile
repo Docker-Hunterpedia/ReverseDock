@@ -1,0 +1,4 @@
+# Exercises: one site with automatic HTTPS and a reverse proxy to one backend.
+app.example.com {
+	reverse_proxy app:8080
+}

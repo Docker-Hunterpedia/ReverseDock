@@ -337,3 +337,127 @@ async fn an_exhausted_retry_budget_answers_504() {
     assert!(ok >= 7, "{statuses:?}");
     assert_eq!(ok + timeouts, 10, "{statuses:?}");
 }
+
+/// A backend whose first connection answers one request with keep-alive, then resets when the
+/// next request arrives on it (a pooled connection the backend dropped); every other
+/// connection answers normally. Returns its address and how many requests got an answer.
+async fn resetting_backend() -> (SocketAddr, std::sync::Arc<std::sync::atomic::AtomicUsize>) {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+    async fn head(stream: &mut tokio::net::TcpStream, buf: &mut Vec<u8>) -> Option<usize> {
+        loop {
+            if let Some(end) = buf.windows(4).position(|w| w == b"\r\n\r\n") {
+                return Some(end + 4);
+            }
+            let mut chunk = [0_u8; 4096];
+            match stream.read(&mut chunk).await {
+                Ok(0) | Err(_) => return None,
+                Ok(n) => buf.extend_from_slice(&chunk[..n]),
+            }
+        }
+    }
+
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let addr = listener.local_addr().unwrap();
+    let answered = std::sync::Arc::new(AtomicUsize::new(0));
+    let counter = answered.clone();
+    tokio::spawn(async move {
+        let mut index = 0_usize;
+        loop {
+            let Ok((mut stream, _)) = listener.accept().await else {
+                continue;
+            };
+            let first = index == 0;
+            index += 1;
+            let counter = counter.clone();
+            tokio::spawn(async move {
+                let mut buf = Vec::new();
+                let mut served = 0_usize;
+                while let Some(end) = head(&mut stream, &mut buf).await {
+                    if first && served == 1 {
+                        // The second request on the first connection: reset it.
+                        let _ = stream.set_zero_linger();
+                        return;
+                    }
+                    let text = String::from_utf8_lossy(&buf[..end]).to_ascii_lowercase();
+                    let length: usize = text
+                        .lines()
+                        .find_map(|l| l.strip_prefix("content-length:"))
+                        .and_then(|v| v.trim().parse().ok())
+                        .unwrap_or(0);
+                    while buf.len() < end + length {
+                        let mut chunk = [0_u8; 4096];
+                        match stream.read(&mut chunk).await {
+                            Ok(0) | Err(_) => return,
+                            Ok(n) => buf.extend_from_slice(&chunk[..n]),
+                        }
+                    }
+                    buf.drain(..end + length);
+                    served += 1;
+                    counter.fetch_add(1, Ordering::SeqCst);
+                    let reply =
+                        format!("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nok{served:02}");
+                    if stream.write_all(reply.as_bytes()).await.is_err() {
+                        return;
+                    }
+                }
+            });
+        }
+    });
+    (addr, answered)
+}
+
+/// ci-1: a request that fails on a reused pooled connection before any answer is sent once
+/// more on another connection when it is idempotent, even with retries off. Which error the
+/// reset surfaces as (a read error while waiting for the answer, or `EPIPE` while writing the
+/// body, as in the CI failure) depends on timing; this test usually sees the first, so the
+/// decision for write errors is pinned by the unit test
+/// `connection_failures_of_pooled_connections_are_recognised` in `rdock-proxy`.
+#[tokio::test]
+async fn an_idempotent_request_on_a_dropped_pooled_connection_gets_another_connection() {
+    let (backend, answered) = resetting_backend().await;
+    let port = free_port();
+    let _rdock = Rdock::start(
+        RDOCK,
+        &config(port, &[backend.to_string()], "    retries: { attempts: 0 }"),
+    );
+    // The first request leaves its upstream connection in rdock's pool.
+    assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
+    assert_eq!(answered.load(std::sync::atomic::Ordering::SeqCst), 1);
+    // The PUT is given the pooled connection, which the backend resets.
+    let body = "x".repeat(1024);
+    let put = client::http1(addr(port), request("PUT", "a", "/config/x", body)).await;
+    assert_eq!(put.status, 200, "{}", put.text());
+    assert_eq!(answered.load(std::sync::atomic::Ordering::SeqCst), 2);
+}
+
+/// Review 10, M1: the attempt after a failed pooled connection replays the body into fresh
+/// counts, so a body over half of `max_body` is not counted twice and refused with 413.
+#[tokio::test]
+async fn a_replayed_body_on_another_connection_is_counted_once() {
+    let (backend, answered) = resetting_backend().await;
+    let port = free_port();
+    let _rdock = Rdock::start(
+        RDOCK,
+        &format!(
+            r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "PathPrefix(`/`)", service: app, max_body: 60KiB }}
+services:
+  app:
+    backends: [{{ address: "{backend}" }}]
+    retries: {{ attempts: 0 }}
+"#
+        ),
+    );
+    assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
+    // 40 KiB: over half of the limit, inside Pingora's 64 KiB replay buffer.
+    let body = "x".repeat(40 * 1024);
+    let put = client::http1(addr(port), request("PUT", "a", "/config/x", body)).await;
+    assert_eq!(put.status, 200, "{}", put.text());
+    assert_eq!(answered.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

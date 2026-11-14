@@ -383,7 +383,8 @@ settings, use the full form:
 `rdock.middlewares.docs.type=static`, `rdock.middlewares.docs.root=/srv/www/docs`,
 `rdock.middlewares.docs.fallback=/index.html`, and the route label
 `rdock.routes.docs.middlewares=docs`. A label root outside `static_roots` (links resolved) is
-reported in `rdock status` and its route is left out.
+reported in `rdock status` and its route is left out, and so is a label middleware with
+`symlinks: all`: whoever writes into the directory could link out of it. `within_root` works.
 
 ## Check that it worked
 

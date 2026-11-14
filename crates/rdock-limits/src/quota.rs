@@ -608,14 +608,20 @@ pub(crate) fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(&tmp)?;
-    // A temporary file left by an older version keeps its mode through `open`.
-    #[cfg(unix)]
-    file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    drop(file);
-    std::fs::rename(&tmp, path)
+    let written = options.open(&tmp).and_then(|mut file| {
+        // A temporary file left by an older version keeps its mode through `open`.
+        #[cfg(unix)]
+        file.set_permissions(std::os::unix::fs::PermissionsExt::from_mode(0o600))?;
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    if let Err(err) = written.and_then(|()| std::fs::rename(&tmp, path)) {
+        // A full disk leaves no half-written temporary file behind (ADR-0033); the counts
+        // in memory stay authoritative and the next save tries again.
+        let _ = std::fs::remove_file(&tmp);
+        return Err(err);
+    }
+    Ok(())
 }
 
 /// Every `quota` middleware's counters, by middleware name, for the life of the process: a
@@ -625,6 +631,8 @@ pub struct QuotaRegistry {
     dir: Mutex<Option<PathBuf>>,
     clock: Arc<dyn Clock>,
     counters: Mutex<HashMap<String, Arc<QuotaCounter>>>,
+    /// Failed writes, for the metric and a log line a minute.
+    persistence: crate::Persistence,
 }
 
 impl Default for QuotaRegistry {
@@ -641,7 +649,14 @@ impl QuotaRegistry {
             dir: Mutex::new(None),
             clock,
             counters: Mutex::new(HashMap::new()),
+            persistence: crate::Persistence::default(),
         }
+    }
+
+    /// Writes of counter files that failed since the start (a full disk).
+    #[must_use]
+    pub fn write_failures(&self) -> u64 {
+        self.persistence.failures()
     }
 
     /// Where counters are written (`<data dir>/quota`); none means memory only.
@@ -686,10 +701,9 @@ impl QuotaRegistry {
     /// Writes the counters whose flush interval has passed.
     pub fn flush_due(&self) {
         for (name, counter) in self.counters() {
-            if counter.due()
-                && let Err(err) = counter.flush()
-            {
-                warn_unwritten(&name, &err);
+            if counter.due() {
+                let result = counter.flush();
+                self.persistence.outcome("quota counters", &name, &result);
             }
         }
     }
@@ -697,15 +711,10 @@ impl QuotaRegistry {
     /// Writes every changed counter (at shutdown).
     pub fn flush_all(&self) {
         for (name, counter) in self.counters() {
-            if let Err(err) = counter.flush() {
-                warn_unwritten(&name, &err);
-            }
+            let result = counter.flush();
+            self.persistence.outcome("quota counters", &name, &result);
         }
     }
-}
-
-fn warn_unwritten(name: &str, err: &io::Error) {
-    tracing::warn!(quota = %name, error = %err, "cannot write the quota counters");
 }
 
 /// A file name for a middleware name (`name@provider` included): safe characters only, plus

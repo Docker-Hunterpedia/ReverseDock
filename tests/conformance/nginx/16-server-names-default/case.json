@@ -1,0 +1,12 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "default_server catch-all excluding the other names",
+    "wildcards of any depth (HostRegexp)",
+    ".example.org",
+    "trailing wildcard",
+    "a wildcard excluding more specific names",
+    "regex server name (manual)"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (server_names.html, request_processing.html) read 2026-11-14."
+}

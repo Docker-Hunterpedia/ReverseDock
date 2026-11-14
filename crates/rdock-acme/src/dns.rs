@@ -93,6 +93,9 @@ fn provider_type(config: &DnsProvider) -> &'static str {
     }
 }
 
+/// Characters of an `exec` solver's standard error kept in its error message.
+const STDERR_SHOWN: usize = 512;
+
 /// Runs `<command> <args…> present|cleanup <fqdn> <value>` without a shell.
 #[derive(Debug)]
 struct ExecSolver {
@@ -108,6 +111,8 @@ impl ExecSolver {
             .args(&self.args)
             .args([action, fqdn, value])
             .stdin(std::process::Stdio::null())
+            // Nothing reads standard output; buffering it would cost memory only.
+            .stdout(std::process::Stdio::null())
             .kill_on_drop(true);
         let output = tokio::time::timeout(self.timeout, command.output())
             .await
@@ -122,12 +127,20 @@ impl ExecSolver {
         if output.status.success() {
             return Ok(());
         }
+        // The message reaches logs, the certificate status viewers read and alerts: the end of
+        // standard error, where the reason usually is, and no more.
         let stderr = String::from_utf8_lossy(&output.stderr);
+        let stderr = stderr.trim();
+        let tail = stderr
+            .char_indices()
+            .rev()
+            .nth(STDERR_SHOWN.saturating_sub(1))
+            .map_or(stderr, |(i, _)| &stderr[i..]);
+        let cut = if tail.len() < stderr.len() { "…" } else { "" };
         Err(DnsError(format!(
-            "`{}` {action} failed ({}): {}",
+            "`{}` {action} failed ({}): {cut}{tail}",
             self.command.display(),
             output.status,
-            stderr.trim()
         )))
     }
 }
@@ -339,5 +352,25 @@ mod tests {
             calls,
             "--zone present _acme-challenge.a.example.com v; rm -rf /\n--zone cleanup fail x\n"
         );
+        // A failure reports only the end of standard error (it reaches logs, the status
+        // viewers read and alerts). In this test, not one of its own: scripts written while
+        // another test spawns one can fail with `ETXTBSY`.
+        let script = dir.path().join("noisy.sh");
+        std::fs::write(
+            &script,
+            "#!/bin/sh\ni=0\nwhile [ $i -lt 2000 ]; do echo secret-line-$i >&2; i=$((i+1)); done\necho the-reason >&2\nexit 1\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&script, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let solver = ExecSolver {
+            command: script,
+            args: Vec::new(),
+            timeout: Duration::from_secs(10),
+        };
+        let err = solver.present("x", "y").await.unwrap_err().0;
+        assert!(err.ends_with("the-reason"), "{err}");
+        assert!(!err.contains("secret-line-0\n"), "{err}");
+        assert!(err.len() < STDERR_SHOWN + 200, "{}", err.len());
     }
 }

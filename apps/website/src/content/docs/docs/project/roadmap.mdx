@@ -21,7 +21,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 | v0.7 | Kubernetes | run it as a Gateway API controller | <Status since="v0.7" />  0.8.0-alpha.1 |
 | v0.8 | Cache and extensibility | cache like NGINX, extend it with plugins and agents, run an API gateway | <Status since="v0.8" />  0.8.0-alpha.1 |
 | v0.9 | Scale | several instances with a control plane, distributed limits, zero-downtime upgrades, HTTP/3 (experimental, not in release builds) | <Status since="v0.9" />  0.9.0-alpha.1 |
-| v1.0 | Stable | stability guarantees, a security audit, conformance, the full docs site | <Status planned="v1.0" /> |
+| v1.0 | Stable | rely on a written stability promise and migrate from Traefik, Caddy or NGINX; implemented, released as `1.0.0-rc.N` until an independent security review | <Status planned="v1.0" /> |
 
 ## v0.1: Hello proxy <Status since="v0.1" />
 
@@ -77,9 +77,15 @@ Released in 0.9.0-alpha.1 ([ADR-0031](https://github.com/Docker-Hunterpedia/Reve
 
 **Refused as planned or left open:** hedged requests, automatic rollback of a rollout on health, a cluster-wide `in_flight` count, a highly available control plane, tenant-owned listeners and certificates, a tenant label on core metrics, HTTP/3 to backends, 0-RTT, connection migration, WebTransport and WebSocket over HTTP/3, the SPIFFE Workload API, bot verification, CPU pinning, and migrating UDP sessions across an upgrade. See the [roadmap in the repository](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/07-roadmap.md) for the full list.
 
-## v1.0
+## v1.0: Stable <Status planned="v1.0" />
 
-Stability and deprecation guarantees, a third-party security audit, migration guides, benchmarks.
+Implemented on `main` and released as `1.0.0-rc.N`; the final 1.0 waits for an independent security review, which has not been commissioned ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)).
+
+- **The promise:** [stability, deprecations and support](/docs/project/stability/) per surface, [maturity levels](/docs/project/maturity/) with an `experimental:` opt-in, and a CI check that compares the public surfaces with the last release.
+- **Migration:** [`rdock migrate traefik`](/docs/migrate/from-traefik/), [`rdock migrate caddy`](/docs/migrate/from-caddy/) and [`rdock migrate nginx`](/docs/migrate/from-nginx/) with a report of every item; the last two are beta. `rdock migrate config` rewrites deprecated settings.
+- **Failure and security:** [failure behaviour](/docs/operations/failure-behaviour/) proven by a chaos suite, the [threat model](/docs/project/threat-model/), more fuzz targets, the fixes of two internal reviews and SBOMs read from the shipped binaries.
+
+**Not run yet:** the benchmark workflow with the 1.0 method and the 60-second HTTPS proof, so [no new result](/docs/project/performance/) is published; the chaos suite's tmpfs, Docker and Pebble variants; the reproducible-build check. **Open outside the project:** the independent security review, a benchmark on dedicated hardware, the 24-hour soak, and a 60-second run on a real server. The [roadmap in the repository](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/07-roadmap.md) says what has run and what has not, criterion by criterion.
 
 ## Out of scope for 1.0
 

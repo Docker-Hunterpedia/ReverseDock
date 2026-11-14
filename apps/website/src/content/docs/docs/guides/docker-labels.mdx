@@ -111,7 +111,9 @@ labels:
 
 Existing `traefik.*` labels work as they are, within the [supported subset](/docs/reference/docker-labels/#traefik-labels). Labels outside it are reported in the logs and in `rdock status`, never ignored silently.
 
-Label values are taken literally. `${…}` references are refused in labels, and labels cannot name files on the proxy's host, so a container cannot read ReverseDock's secrets or files. The one exception is a [static site](/docs/guides/static-files/#docker-labels) <Status since="v0.6" />, whose directory must be inside one you list in `providers.docker.static_roots`.
+Label values are taken literally. `${…}` references are refused in labels, and labels cannot name files on the proxy's host, so a container cannot read ReverseDock's secrets or files. The one exception is a [static site](/docs/guides/static-files/#docker-labels) <Status since="v0.6" />, whose directory must be inside one you list in `providers.docker.static_roots`, without `symlinks: all`.
+
+A backend or middleware URL a label names (`server.url`, `forwardauth.address`, …) must be a network address: a `unix://` socket is refused, and so are loopback, `localhost`, unspecified, link-local and cloud metadata addresses (such as `169.254.169.254`) and numeric spellings like `2130706433`, unless you set `providers.docker.allow_local_backends: true` (Swarm: `providers.swarm.allow_local_backends`). URLs are read as the configuration reads them, so `http://127.0.0.%31/` is `127.0.0.1`, and a DNS name is checked again each time it resolves: a name such as `127.0.0.1.nip.io` is never connected to on the proxy's machine. Private networks stay reachable, and the container's own address is not affected, also `host_address` for containers in host network mode. URLs that are never fetched, such as `jwt.issuer` and `oidc.redirect_url`, may name `localhost`. Labels cannot define a `wasm` middleware. Labels can still route any host name, so whoever may start containers decides what those names serve.
 
 ## Which address and port
 

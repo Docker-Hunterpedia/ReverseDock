@@ -1,0 +1,16 @@
+# Corpus case `basic-auth-escaped` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: basicauth.users with $$ escapes, basicauth.realm, basicauth.removeheader.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  admin:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.admin.rule=Host(`admin.example.com`)
+      - traefik.http.routers.admin.entrypoints=websecure
+      - traefik.http.routers.admin.tls=true
+      - traefik.http.routers.admin.middlewares=admin-auth
+      - "traefik.http.middlewares.admin-auth.basicauth.users=alice:$$apr1$$rdocksal$$5LPVgykbpaVCZ1TvRi2xV."
+      - traefik.http.middlewares.admin-auth.basicauth.realm=Staff
+      - traefik.http.middlewares.admin-auth.basicauth.removeheader=true

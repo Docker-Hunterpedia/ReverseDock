@@ -1,0 +1,9 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "a host matcher with two names",
+    "a catch-all route after host routes",
+    "an internal issuer for every name (manual)"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/enable_tls_for_catch_all_site.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

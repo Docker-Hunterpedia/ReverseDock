@@ -1,0 +1,7 @@
+{
+  "input": "dynamic.toml",
+  "exercises": [
+    "a TOML dynamic file (manual: convert to YAML)"
+  ],
+  "diff": false
+}

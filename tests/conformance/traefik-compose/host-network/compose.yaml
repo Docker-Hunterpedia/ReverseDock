@@ -1,0 +1,14 @@
+# Corpus case `host-network` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: network_mode host with a port label, container_name.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  monitor:
+    image: example/monitor:5
+    container_name: monitor-main
+    network_mode: host
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.monitor.rule=Host(`monitor.example.com`)
+      - traefik.http.routers.monitor.entrypoints=websecure
+      - traefik.http.routers.monitor.tls=true
+      - traefik.http.services.monitor.loadbalancer.server.port=19999

@@ -1,0 +1,39 @@
+description: "Every passTLSClientCert info field becomes the same client_cert middleware (the field selection is not kept)."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.commonname: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.country: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.domaincomponent: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.locality: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.organization: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.province: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.issuer.serialnumber: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.notafter: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.notbefore: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.sans: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.serialnumber: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.commonname: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.country: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.domaincomponent: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.locality: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.organization: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.organizationalunit: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.province: "true"
+      traefik.http.middlewares.cert.passtlsclientcert.info.subject.serialnumber: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    cert:
+      type: "client_cert"
+      required: false
+      forward: "traefik"

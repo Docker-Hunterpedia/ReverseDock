@@ -17,7 +17,7 @@ use rdock_model::settings::ClientIpHeader;
 const MAX_FORWARDED_HOPS: usize = 32;
 
 /// Headers ReverseDock manages: removed when the peer is not trusted.
-const MANAGED: [&str; 13] = [
+const MANAGED: [&str; 16] = [
     "x-forwarded-for",
     "x-forwarded-proto",
     "x-forwarded-host",
@@ -31,6 +31,11 @@ const MANAGED: [&str; 13] = [
     "x-real-ip",
     "forwarded",
     "cf-connecting-ip",
+    // Set by path middlewares; a client's copy would come first.
+    "x-replaced-path",
+    // Read by some frameworks as the request's real path (routing overrides).
+    "x-original-url",
+    "x-rewrite-url",
 ];
 
 /// Cloudflare's edge ranges, replaced in place by the range sync of `rdock-cloudflare`

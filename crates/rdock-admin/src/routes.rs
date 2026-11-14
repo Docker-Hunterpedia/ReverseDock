@@ -137,6 +137,7 @@ pub(crate) fn router(state: Arc<State>) -> Router {
             state.clone(),
             telemetry::count,
         ))
+        .layer(middleware::from_fn(crate::deprecated::headers))
         .layer(middleware::from_fn_with_state(state.clone(), guard::checks))
         .with_state(state)
 }
@@ -232,8 +233,9 @@ async fn metrics(Extract(state): Extract<Arc<State>>, request: Request) -> Respo
     }
 }
 
-/// The running process: version, configuration generation, listeners, providers and the
-/// last reload.
+/// The running process: version, configuration generation, listeners, providers, the last
+/// reload, and the experimental and beta features and deprecated settings the configuration
+/// uses (`features_in_use`, `deprecations_in_use`).
 #[utoipa::path(get, path = "/status", tag = "status",
     responses(
         (status = OK, description = "The status document", body = Object),

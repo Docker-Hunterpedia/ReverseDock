@@ -10,14 +10,15 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-An `https` listener can also serve HTTP/3 <Status since="v0.9" /> (experimental; only in builds
+An `https` listener can also serve HTTP/3 <Status since="v0.9" /> <Status feature="http3" /> (only in builds
 made with `--features http3`, not in the release binaries or images) on the UDP port of its
 address. Requests that arrive over HTTP/3 go through the same routes, middlewares, cache, retries
 and access log as HTTP/1 and HTTP/2; backends are still reached over HTTP/1.1 or HTTP/2.
 
 :::caution[Experimental]
-HTTP/3 is experimental. It is only in builds made with the cargo feature `http3`; the stock binary
-and the release images do not include it. It rests on the `h3` crate, whose own README calls it
+HTTP/3 is experimental ([maturity levels](/docs/project/maturity/)): a configuration that turns it
+on must say so with `experimental: [http3]`, or it is refused. It is only in builds made with the
+cargo feature `http3`; the stock binary and the release images do not include it. It rests on the `h3` crate, whose own README calls it
 "still very experimental", and on a Pingora API that is not public. The configuration keys may
 change in any release. It leaves "experimental" only after an `h3` release with the fixes still
 unreleased today, an interop run and a soak ([ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)).
@@ -35,11 +36,13 @@ cargo build --release --locked -p rdock --features http3
 on the rustls configuration ReverseDock already uses (ring, no second TLS library): seven crates.
 A build without the feature refuses `http3.enabled: true`: `rdock run` stops with
 `this build does not include HTTP/3; build with --features http3`, and `rdock validate` reports
-the same as a warning.
+the same as a warning. The two checks are separate: without `experimental: [http3]` every build
+refuses the configuration, and the error says that the build feature is needed too.
 
 ## Turn it on
 
 ```yaml title="rdock.yaml (excerpt)"
+experimental: [http3]   # HTTP/3 may change or be removed in any release
 listeners:
   websecure:
     address: ":443"
@@ -47,6 +50,9 @@ listeners:
     http3:
       enabled: true
 ```
+
+While it is on, ReverseDock logs `experimental feature in use` once at each load and reload, and
+`rdock_experimental_feature_in_use{feature="http3"}` is 1.
 
 The listener then also owns UDP port 443 of its address; a `udp` listener on the same address is
 refused. Open the port in your firewall and publish it in containers (`-p 443:443/udp` next to
@@ -80,6 +86,7 @@ every 250 ms until the port is free.
 | `gso` | `true` | | UDP segmentation offload where the kernel supports it |
 
 ```yaml title="rdock.yaml (excerpt)"
+experimental: [http3]
 listeners:
   websecure:
     address: ":8443"

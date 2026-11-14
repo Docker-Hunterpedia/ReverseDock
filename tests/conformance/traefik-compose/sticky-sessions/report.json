@@ -1,0 +1,164 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `cart` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.cart",
+        "kind": "object",
+        "scope": "cart"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "cart"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.cart.entrypoints",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "routes.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.cart.rule",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "routes.cart"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.cart.tls",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "routes.cart"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`sticky.cookie` named `rdock_sticky`; the cookie is named `rdock_sticky` unless `sticky.cookie.name` is set (Traefik derives a name), is signed, and is `Secure`, `HttpOnly` and `SameSite=Lax` unless the labels say otherwise (Traefik: none of the three)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`sticky.cookie.http_only`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie.httpOnly",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`sticky.cookie.max_age`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie.maxAge",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`sticky.cookie.name`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie.name",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`sticky.cookie.path`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie.path",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`sticky.cookie.same_site`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie.sameSite",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`sticky.cookie.secure`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.cart.loadbalancer.sticky.cookie.secure",
+        "kind": "label",
+        "scope": "cart"
+      },
+      "target": "services.cart"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 10,
+    "items": 12,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

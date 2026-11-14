@@ -1,0 +1,16 @@
+# Corpus case `plain-http-with-static` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: a router without tls on a plain entry point, known from the static configuration (written as tls: off).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  traefik:
+    image: traefik:v3.7.19
+    command:
+      - --entrypoints.web.address=:80
+      - --providers.docker.exposedbydefault=false
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.app.entrypoints=web

@@ -1,0 +1,10 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "handle_path as a subroute with strip_path_prefix",
+    "handle groups (first match wins)",
+    "static_response with a status only",
+    "case-insensitive path matchers"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/handle_path.caddyfiletest and sort_directives_within_handle.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

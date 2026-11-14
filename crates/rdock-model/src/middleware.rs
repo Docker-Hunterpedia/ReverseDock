@@ -68,9 +68,10 @@ pub enum Middleware {
     /// A native plugin compiled into this binary and registered under `name` (ADR-0030). The
     /// stock `rdock` binary registers none; see `docs/guides/plugins`.
     Plugin(PluginConfig),
-    /// A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world
+    /// A sandboxed WebAssembly plugin (ADR-0030): a component for the world
     /// `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with
-    /// minisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
+    /// minisign. Experimental: name `wasm` under `experimental`. Needs a build with the `wasm`
+    /// cargo feature; see `docs/guides/wasm-plugins`.
     Wasm(WasmConfig),
     /// Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,
     /// with its body up to `max_body` (ADR-0030). Fails closed by default.
@@ -836,8 +837,8 @@ pub struct PluginConfig {
     pub config: serde_json::Map<String, serde_json::Value>,
 }
 
-/// A sandboxed WebAssembly plugin (`type: wasm`, F-EXT-03, ADR-0030). EXPERIMENTAL: the
-/// host ABI is `0.x` and may change in any release.
+/// A sandboxed WebAssembly plugin (`type: wasm`, F-EXT-03, ADR-0030). Its maturity level
+/// (experimental: the host ABI is `0.x`) is in the registry (`crate::maturity`).
 ///
 /// The file is checked before it is compiled: its SHA-256 must equal `sha256`, and its
 /// minisign signature (`signature`, by default `<path>.minisig`) must be made by one of

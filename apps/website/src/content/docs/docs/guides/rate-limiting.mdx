@@ -32,7 +32,7 @@ bursts of up to 50.
 
 | `key` | One bucket per |
 |---|---|
-| `client_ip` | Resolved client IP, after [trusted-proxy handling](/docs/guides/behind-a-proxy/). |
+| `client_ip` | Resolved client IP, after [trusted-proxy handling](/docs/guides/behind-a-proxy/). An IPv6 client counts by its /64, which one subscriber usually holds. |
 | `route` | Route. All clients of the route share one bucket. |
 | `header:<Name>` | Value of a request header, for example `header:X-Api-Key`. Requests without the header share one bucket. |
 | `cookie:<name>` <Status since="v0.4" /> | Value of a cookie, for example `cookie:session`. Requests without it share one bucket. |

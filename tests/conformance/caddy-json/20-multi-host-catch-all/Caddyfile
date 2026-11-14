@@ -1,0 +1,9 @@
+# Exercises: a site with two addresses, a catch-all site on :443 after it, and hosts excluded from the catch-all by priority.
+a.example.com, b.example.com {
+	reverse_proxy ab:8080
+}
+
+:443 {
+	tls internal
+	respond 421
+}

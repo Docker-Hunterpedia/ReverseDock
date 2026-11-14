@@ -1,0 +1,9 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "add_header inherited",
+    "a location level discards the server's",
+    "always vs without always"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_headers_module) read 2026-11-14."
+}

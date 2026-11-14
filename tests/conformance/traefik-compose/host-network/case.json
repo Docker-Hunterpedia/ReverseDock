@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "network_mode host with a port label",
+    "container_name"
+  ],
+  "diff": false
+}

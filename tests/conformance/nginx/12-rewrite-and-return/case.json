@@ -1,0 +1,13 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "server-level rewrite permanent",
+    "location rewrite redirect with an absolute URL",
+    "rewrite break \u2192 rewrite middleware; the proxy_pass URI is ignored",
+    "return 301 with $request_uri",
+    "return 410",
+    "return 200 with a body (manual)",
+    "rewrite last (refused)"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_rewrite_module) read 2026-11-14."
+}

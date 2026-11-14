@@ -45,6 +45,44 @@ impl Tree {
         Ok(())
     }
 
+    /// Whether `path` (dot-separated) is set.
+    pub(crate) fn contains(&self, path: &str) -> bool {
+        let mut node = &self.0;
+        let mut segments = path.split('.').peekable();
+        while let Some(segment) = segments.next() {
+            match (node.get(segment), segments.peek()) {
+                (Some(_), None) => return true,
+                (Some(Value::Object(next)), Some(_)) => node = next,
+                _ => return false,
+            }
+        }
+        false
+    }
+
+    /// Sets `path` to `value`, replacing a value already there (not an object).
+    pub(crate) fn replace(&mut self, path: &str, value: Value) -> Result<(), String> {
+        if let Some((parent, last)) = path.rsplit_once('.') {
+            let mut map = &mut self.0;
+            for segment in parent.split('.') {
+                let entry = map
+                    .entry(segment.to_owned())
+                    .or_insert_with(|| Value::Object(Map::new()));
+                let Value::Object(next) = entry else {
+                    return Err(format!("`{path}` is below a value"));
+                };
+                map = next;
+            }
+            if matches!(map.get(last), Some(Value::Object(_))) {
+                return Err(format!("`{path}` is an object"));
+            }
+            map.insert(last.to_owned(), value);
+            Ok(())
+        } else {
+            self.0.insert(path.to_owned(), value);
+            Ok(())
+        }
+    }
+
     /// Appends `value` to the list at `path`, creating it.
     pub(crate) fn push(&mut self, path: &str, value: Value) -> Result<(), String> {
         let (parent, last) = path.rsplit_once('.').unwrap_or(("", path));

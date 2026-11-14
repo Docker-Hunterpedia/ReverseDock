@@ -1,0 +1,125 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "/etc/nginx/nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.include",
+      "level": "exact",
+      "message": "read conf.d/dump.conf",
+      "source": {
+        "file": "/etc/nginx/nginx.conf",
+        "item": "include /etc/nginx/conf.d/*.conf",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "conf.d/dump.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 1
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "conf.d/dump.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "conf.d/dump.conf",
+        "item": "server_name dump.example.com",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "conf.d/dump.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "conf.d/dump.conf",
+        "item": "proxy_pass http://dumped:8080",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "/etc/nginx/nginx.conf",
+      "conf.d/dump.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 7,
+    "items": 7,
+    "manual": 0,
+    "result": 5
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

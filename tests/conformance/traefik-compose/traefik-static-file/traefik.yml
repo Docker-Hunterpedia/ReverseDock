@@ -1,0 +1,42 @@
+# Traefik's static configuration for the corpus case (written by hand).
+entryPoints:
+  web:
+    address: ":80"
+    http:
+      redirections:
+        entryPoint:
+          to: websecure
+          scheme: https
+          permanent: true
+  websecure:
+    address: ":443"
+    asDefault: true
+    forwardedHeaders:
+      trustedIPs: ["10.0.0.0/8"]
+    proxyProtocol:
+      trustedIPs: ["10.0.0.1"]
+    http:
+      tls:
+        certResolver: dns
+certificatesResolvers:
+  dns:
+    acme:
+      email: admin@example.com
+      caServer: https://acme-staging-v02.api.letsencrypt.org/directory
+      storage: /data/acme.json
+      dnsChallenge:
+        provider: cloudflare
+        resolvers: ["1.1.1.1:53"]
+providers:
+  docker:
+    exposedByDefault: false
+    network: proxy
+  file:
+    directory: /etc/traefik/dynamic
+    watch: true
+api:
+  dashboard: true
+metrics:
+  prometheus: {}
+log:
+  level: INFO

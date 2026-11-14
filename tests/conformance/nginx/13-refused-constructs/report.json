@@ -1,0 +1,456 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "write the cases as routes with matchers",
+      "level": "manual",
+      "message": "`map` (variables computed from others) has no equivalent; directives that use its variable are reported where they are",
+      "source": {
+        "file": "nginx.conf",
+        "item": "map $http_user_agent $is_bot",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside a `map`, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "default 0",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside a `map`, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "~*bot 1",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "if a 429 at once is acceptable, write a `rate_limit` middleware (`average`, `period`, `burst`)",
+      "level": "manual",
+      "message": "`limit_req` delays excess requests and answers 503 by default; ReverseDock's `rate_limit` answers 429 at once, so it is not migrated in this version",
+      "source": {
+        "file": "nginx.conf",
+        "item": "limit_req_zone $binary_remote_addr zone=perip:10m rate=10r/s",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "use the `cache` middleware and `caches` (see the HTTP cache guide)",
+      "level": "manual",
+      "message": "caching (`proxy_cache*`) is not migrated in this version",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_cache_path /var/cache/nginx keys_zone=cache:10m",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name refused.example.com",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 14
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "write each case as a route with matchers (`Method`, `Header`, `Query`)",
+      "level": "manual",
+      "message": "`if` has no faithful translation (inside a location it acts as a nested location)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "if ($is_bot)",
+        "kind": "directive",
+        "line": 15
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside an `if`, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "return 403",
+        "kind": "directive",
+        "line": 16
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "`set` (variables) has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "set $backend web",
+        "kind": "directive",
+        "line": 18
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "if a 429 at once is acceptable, write a `rate_limit` middleware (`average`, `period`, `burst`)",
+      "level": "manual",
+      "message": "`limit_req` delays excess requests and answers 503 by default; ReverseDock's `rate_limit` answers 429 at once, so it is not migrated in this version",
+      "source": {
+        "file": "nginx.conf",
+        "item": "limit_req zone=perip burst=20 nodelay",
+        "kind": "directive",
+        "line": 19
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "use the `cache` middleware and `caches` (see the HTTP cache guide)",
+      "level": "manual",
+      "message": "caching (`proxy_cache*`) is not migrated in this version",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_cache cache",
+        "kind": "directive",
+        "line": 20
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "for custom error pages, use the `errors` middleware (`status`, `file` or `service` and `path`)",
+      "level": "manual",
+      "message": "`error_page` (an internal redirect) is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "error_page 502 /50x.html",
+        "kind": "directive",
+        "line": 21
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://web:8080",
+        "kind": "directive",
+        "line": 22
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /php/",
+        "kind": "directive",
+        "line": 24
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "run the application behind an HTTP server and proxy to it",
+      "level": "manual",
+      "message": "FastCGI has no equivalent (F-WEB-04 is not implemented)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "fastcgi_pass unix:/run/php-fpm.sock",
+        "kind": "directive",
+        "line": 25
+      }
+    },
+    {
+      "code": "nginx.include",
+      "level": "exact",
+      "message": "read fastcgi_params",
+      "source": {
+        "file": "nginx.conf",
+        "item": "include fastcgi_params",
+        "kind": "directive",
+        "line": 26
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "run the application behind an HTTP server and proxy to it",
+      "level": "manual",
+      "message": "FastCGI has no equivalent (F-WEB-04 is not implemented)",
+      "source": {
+        "file": "fastcgi_params",
+        "item": "fastcgi_param QUERY_STRING $query_string",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /secure/",
+        "kind": "directive",
+        "line": 28
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "use the `forward_auth` middleware with the internal location's backend as `address`",
+      "level": "manual",
+      "message": "`auth_request` (a subrequest to an internal location) is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "auth_request /auth",
+        "kind": "directive",
+        "line": 29
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://secure:8080",
+        "kind": "directive",
+        "line": 30
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /lua/",
+        "kind": "directive",
+        "line": 32
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "a native plugin (`type: plugin`) or a backend",
+      "level": "manual",
+      "message": "Lua scripting has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "content_by_lua_block",
+        "kind": "directive",
+        "line": 33
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /filter/",
+        "kind": "directive",
+        "line": 37
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "the `transform` middleware rewrites JSON bodies",
+      "level": "manual",
+      "message": "rewriting response bodies (`sub_filter`) has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "sub_filter \"http://\" \"https://\"",
+        "kind": "directive",
+        "line": 38
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://filter:8080",
+        "kind": "directive",
+        "line": 39
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "write it as its own location",
+      "level": "manual",
+      "message": "nested locations are not migrated: requests for it are left out of the outer location's route (they get 404)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /filter/inner/",
+        "kind": "directive",
+        "line": 40
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside a nested location, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://inner:8080",
+        "kind": "directive",
+        "line": 41
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "a named location reached other than as a `try_files` fallback (`error_page`, `rewrite`, `X-Accel-Redirect`) has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location @unused",
+        "kind": "directive",
+        "line": 44
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside a named location, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://unused:8080",
+        "kind": "directive",
+        "line": 45
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `refused-example-com-root` is written disabled (`enabled: false`): an `if` was not migrated; a `set` was not migrated",
+      "security": true,
+      "target": "routes.refused-example-com-root"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `refused-example-com-php` is written disabled (`enabled: false`): `fastcgi_pass` was not migrated; `fastcgi_param` was not migrated",
+      "security": true,
+      "target": "routes.refused-example-com-php"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `refused-example-com-secure` is written disabled (`enabled: false`): its `auth_request` was not migrated",
+      "security": true,
+      "target": "routes.refused-example-com-secure"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `refused-example-com-lua` is written disabled (`enabled: false`): Lua scripting was not migrated",
+      "security": true,
+      "target": "routes.refused-example-com-lua"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf",
+      "fastcgi_params"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 13,
+    "items": 33,
+    "manual": 20,
+    "result": 9
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

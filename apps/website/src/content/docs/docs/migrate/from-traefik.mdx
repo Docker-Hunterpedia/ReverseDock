@@ -1,6 +1,6 @@
 ---
 title: Migrate from Traefik
-description: Move a Traefik v3 file-provider configuration to rdock.yaml, with a concept map, five side-by-side setups, the deliberate differences and a cutover plan.
+description: Move a Traefik v3 setup (Docker labels, file provider, static configuration) to ReverseDock, with the defaults that differ, rdock migrate traefik, a concept map, five side-by-side setups and a cutover plan.
 sidebar:
   order: 1
 ---
@@ -10,7 +10,7 @@ import { Steps } from '@astrojs/starlight/components';
 
 ReverseDock's configuration model is a superset of Traefik's dynamic configuration: entry points, routers, services and middlewares map onto listeners, routes, services and middlewares, and route rules use the Traefik v3 grammar unchanged. This page moves a configuration written for Traefik's **file provider** <Status since="v0.1" />.
 
-Traefik **Docker labels** are read by the Docker provider <Status since="v0.2" />, and `rdock migrate traefik` turns labels or a dynamic configuration into YAML <Status since="v0.2" />: see [Docker labels and `rdock migrate traefik`](#docker-labels-and-rdock-migrate-traefik) below.
+Traefik **Docker labels** are read by the Docker provider <Status since="v0.2" />, and `rdock migrate traefik` turns labels, a dynamic configuration or Traefik's static configuration into YAML with a report of every item: see [Docker labels and `rdock migrate traefik`](#docker-labels-and-rdock-migrate-traefik) below, which starts with the defaults that differ (`exposedByDefault` first).
 
 The Traefik facts below come from the Traefik v3.7 documentation (checked 2026-10-27) and from the ReverseDock research of Traefik v3.7.16, recorded in [ADR-0014](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0014-http-semantics-v0-1.md).
 
@@ -392,37 +392,56 @@ See [Behind a proxy](/docs/guides/behind-a-proxy/) for how the client IP is reso
 
 ## Docker labels and `rdock migrate traefik`
 
-There are two ways to move a Docker setup with Traefik labels <Status since="v0.2" />:
+A Traefik-on-Docker setup switches by **changing the image, removing Traefik's flags (or running `rdock migrate traefik --static`), and keeping the labels** ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)). `rdock run` does not accept Traefik's `--entrypoints…`, `--providers…` or `--certificatesresolvers…` flags; their settings move into `rdock.yaml`, which `rdock migrate traefik` can write for you.
 
-- **Keep the labels.** Enable the Docker provider; `traefik.*` labels are read as they are, within the [supported subset](/docs/reference/docker-labels/#traefik-labels). Set `providers.docker.entrypoints` when your entry points are not called `web` and `websecure`. See [Docker containers and labels](/docs/guides/docker-labels/).
+### Defaults that differ
 
-  ```yaml title="rdock.yaml"
-  listeners:
-    web: { address: ":80" }
-    websecure: { address: ":443", tls: {} }
+Read these first: each one changes what a setup that relied on Traefik's default does.
 
-  certificates:
-    example:
-      cert_file: /etc/rdock/certs/example.pem
-      key_file: /etc/rdock/certs/example.key
+| Traefik | ReverseDock | What to do |
+|---|---|---|
+| **`exposedByDefault: true`**: every container with labels is routed | **`expose_by_default: false`**: a container needs `traefik.enable=true` (or `rdock.enable=true`) | Add `traefik.enable=true` where wanted (recommended), or set `expose_by_default: true` under `providers.docker`. The provider warns about each container with router labels that nothing exposes. `rdock migrate traefik` writes the explicit setting that reproduces your Traefik and marks it as a security-relevant choice. |
+| A router without `tls` serves plain HTTP | A route asks for HTTPS (`defaults.tls: auto`), and HTTP is redirected for hosts with an HTTPS route | Keep it (recommended), or write `tls: off` and `listeners: [web]`; with the static configuration, the migration writes the route as your entry points serve it. |
+| A router without `entrypoints` is on every entry point | `defaults.listeners` (`[websecure]`) | Name the entry points, or set `defaults.listeners`. |
+| The entry-point redirect sends every request to HTTPS | Only hosts that have an HTTPS route are redirected | Nothing, usually; a host without an HTTPS route gets 404 on port 80. |
+| Several resolvers, each its own ACME account | One `acme` account | One email; the resolver name in labels is not kept. |
+| `acme.json` | Certificates in the data directory, not imported | Certificates are requested again; mind the CA's rate limits when many names move at once. |
+| No access log unless `accessLog` is set | A JSON access log on standard output | `format: off` under `observability.access_log` turns it off. |
+| `rateLimit` burst defaults to 1 | `burst` defaults to `average` | Set `burst` to keep Traefik's. |
+| No `nosniff` on a Basic challenge or a redirect | Every answer rdock writes has `X-Content-Type-Options: nosniff` | Nothing; proxied responses are not changed. |
+| `tls=true` serves Traefik's default or a stored certificate | `tls=true` takes an automatic certificate for the route's hosts | List your own under `certificates`: a host that one of them covers gets no automatic order. |
+| `compress`: gzip, br, zstd in that order, every type not excluded | zstd, br, gzip in that order, common text types only | Set `compress.algorithms` and `content_types` to match. |
+| A Basic challenge is `Basic realm="traefik"` | `Basic realm="rdock", charset="UTF-8"` (RFC 7617) | Set `basic_auth.realm` if clients or scripts match the realm; the charset stays. |
 
-  providers:
-    docker:
-      network: proxy
-      entrypoints: { http: web, https: websecure }
-  ```
+The differential test that runs Traefik v3.7 and ReverseDock on the same labels records every difference it accepts in [`tests/conformance/traefik-diff/allowlist.json`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/tests/conformance/traefik-diff/allowlist.json), each with a reason and a source. The table above lists them all: certificate source and resolver name (the `tls` and resolver rows), compression defaults, the rate-limit burst, the Basic challenge and `nosniff`. Anything else that differs between the two on labels marked exact is a bug: please open a *Migration / compatibility gap* issue.
 
-- **Turn them into YAML.** `rdock migrate traefik` reads a Compose file, or a Traefik dynamic configuration, and prints routes, services and middlewares through the Docker provider's own translator. Everything it cannot carry over is listed at the top of the output.
+### What moves automatically, and what does not
 
-  ```sh
-  rdock migrate traefik compose.yaml -o conf.d/app.yaml
-  rdock migrate traefik /etc/traefik/dynamic/app.yml > conf.d/app.yaml
-  rdock validate rdock.yaml
-  ```
+- **Labels** are read by the Docker provider <Status since="v0.2" /> as they are, within the [supported Traefik subset](/docs/reference/traefik-subset/) (pinned to Traefik v3.7; each label exact, approximate with the difference stated, manual or none). Set `providers.docker.entrypoints` when your entry points are not called `web` and `websecure`. See [Docker containers and labels](/docs/guides/docker-labels/).
+- **Static configuration** (`traefik.yml`, the `command:` flags or `TRAEFIK_*` variables of the Traefik service): entry points (addresses, UDP, `asDefault`, the HTTPS redirect, `http.tls`, forwarded-header and PROXY-protocol trust), certificate resolvers (email, CA server, profile, HTTP-01, TLS-ALPN-01, DNS-01 with Cloudflare, DigitalOcean, Hetzner, deSEC, Route 53 or Google Cloud DNS), the Docker, Swarm and file providers, the access log, Prometheus metrics and OTLP tracing. Credentials are never copied: the output refers to the same environment variables (`${env:CF_DNS_API_TOKEN}`), and the report says which to set.
+- **Not carried over**, each reported with what to do: the API and dashboard (ReverseDock's are on the admin listener, with users and tokens), `acme.json`, TLS options (listener `tls.policy` instead), per-entry-point middlewares, `defaultRule` and `constraints`, lego DNS providers without an adapter, plugins, and the options the subset page marks manual or none.
 
-  Compose service names become backend hosts (`api:8080`). A service without `expose`, `ports` or a port label gets port 80 with a note, because Traefik would use the port the image exposes, which the Compose file does not say. Traefik exposes containers by default; ReverseDock does not, so services without `traefik.enable` are skipped unless you pass `--expose-by-default`.
+### `rdock migrate traefik`
 
-The provider differs from Traefik on purpose in a few places (opt-in containers, no guessed port, no default rule): see [Differences from Traefik](/docs/reference/docker-labels/#differences-from-traefik).
+`rdock migrate traefik` reads a Compose file, a Traefik dynamic configuration (YAML) or `traefik.yml`, and writes YAML through the Docker provider's own translator, so the result is what the provider would do with the same labels <Status since="v0.2" />. Every label, key and flag gets one finding in its [report](/docs/reference/migrate-report/): exact, approximate (with the difference), manual (with what to do) or dropped (with why).
+
+```sh
+# The label routes as YAML, with Compose's ${VAR} values from a file:
+rdock migrate traefik compose.yaml --env-file .env -o conf.d/app.yaml
+# A complete rdock.yaml from the Traefik service's flags (the labels stay on the containers):
+rdock migrate traefik compose.yaml --full -o rdock.yaml
+# A dynamic file, with traefik.yml for the entry points and the report as JSON:
+rdock migrate traefik /etc/traefik/dynamic/app.yml --static /etc/traefik/traefik.yml --report report.json
+rdock validate rdock.yaml
+```
+
+- Compose `${VAR}`, `${VAR:-default}`, `${VAR?error}` and `$$` are read as Compose reads them. Values come from `--env-file` (Compose's `.env` syntax, repeatable) and, only with `--process-env`, from the environment; `.env` is never read by itself, and an unset variable is reported.
+- Compose service names become backend hosts (`api:8080`). A service without `expose`, `ports` or a port label gets port 80 with a finding: Traefik uses the port the image exposes, which the Compose file does not say.
+- A dynamic file keeps every server and its `weight`, `serversTransports` (server name, CA, client certificate, timeouts), `weighted` services (as `split`), `basicAuth.usersFile` (the file is named, never read), TCP and UDP sections and certificates. TOML files are reported, not read: convert them to YAML first.
+- A route that uses a middleware or service that could not be migrated is written `enabled: false`, so it never goes live without, say, its authentication.
+- Nothing is written to disk without `-o` or `--report`. `--strict` exits 2 when anything needs a decision or has no equivalent.
+
+The provider differs from Traefik on purpose in a few more places (no guessed port, no default rule): see [Differences from Traefik](/docs/reference/docker-labels/#differences-from-traefik).
 
 ## Differences and gotchas
 
@@ -435,7 +454,7 @@ These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterped
 - **Paths are normalised and the normalised path is forwarded**, as in Traefik 3.7. Encoded slashes (`%2F`) are allowed and never act as separators.
 - **`ClientIP`, `ip_allow`, `ip_deny`, `rate_limit` and `maintenance.allow` use the resolved client IP.** Without `security.trusted_proxies` this is the TCP peer, the same as Traefik. Behind a load balancer it is the address the load balancer reports; Traefik needs an `ipStrategy` per middleware for that.
 - **Route defaults differ.** A Traefik router without `entryPoints` attaches to every entry point, and one without `tls` serves plain HTTP. A ReverseDock route without `listeners` attaches to `defaults.listeners` (`[websecure]`) and asks for HTTPS (`defaults.tls: auto`). A route meant for plain HTTP needs `listeners: [web]` and `tls: off`.
-- **Until automatic certificates arrive** <Status since="v0.3" />, a route on an HTTPS listener needs a certificate under `certificates` that covers each of its hosts, or `defaults.certificate`. `rdock validate` warns, and `rdock run` refuses the configuration, when a host is not covered.
+- **Certificates are automatic** <Status since="v0.3" /> for the hosts of routes on an HTTPS listener (see [Automatic HTTPS](/docs/guides/automatic-https/)). A host that a certificate under `certificates` covers gets no automatic order.
 
 ### Forwarding headers and limits
 
@@ -457,14 +476,14 @@ These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterped
 - `rate_limit` defaults `burst` to `average`; Traefik's default burst is 1 (checked 2026-10-27). Requests over the limit get 429 with `Retry-After` at once; Traefik first delays them briefly (Traefik v3.7.16 source, per the research behind ADR-0014). `average: 0` is a validation error, where Traefik reads it as no limit.
 - `ip_allow` answers 403 and has no `rejectStatusCode`.
 - `cors` is its own middleware. It answers preflights itself with 204; `*` together with `allow_credentials: true` is a validation error, where Traefik echoes the request's `Origin`. List the origins instead.
-- `compress` uses gzip on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. zstd and Brotli <Status since="v0.4" /> are offered too, preferred in that order.
+- `compress` works on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. It offers zstd, Brotli <Status since="v0.4" /> and gzip, preferred in that order (Traefik: gzip, Brotli, zstd).
 - `errors` keeps the original status and also covers ReverseDock's own 502, 503 and 504 answers.
 - `maintenance` has no Traefik equivalent: it answers with its `status` (503 by default), `Retry-After`, `Cache-Control: no-store` and your page, except for the `allow` networks.
 
 ### Configuration files
 
 - Unknown keys are errors, with a suggestion for the nearest valid key, so a Traefik key such as `stsSeconds` pasted into a ReverseDock middleware is reported, not ignored. Keys that start with `x-` are ignored, for YAML anchors.
-- Settings the model accepts but v0.1 cannot honour are reported: `rdock validate` lists them as warnings ("planned for vX.Y") and `rdock run` refuses them. In v0.1 these are ACME and DNS-01, TCP and UDP listeners and routes, the PROXY protocol, traffic splits, load-balancing policies other than `round_robin` and `random`, health checks, retries, sticky sessions, client certificates to backends, brotli and zstd, extra configuration files, the Docker, Swarm and Kubernetes providers, `cloudflare` in `trusted_proxies`, `client_ip_header: cf-connecting-ip`, and tracing. See the [roadmap](/docs/project/roadmap/).
+- Settings the model accepts but that are not implemented yet are reported: `rdock validate` lists them as warnings ("planned for a later version") and `rdock run` refuses them. The list is short (hedged requests, for example); the [roadmap](/docs/project/roadmap/) names them.
 
 ## Cutover
 

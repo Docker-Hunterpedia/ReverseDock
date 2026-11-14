@@ -1,10 +1,9 @@
-description: "Middlewares outside the subset (chain, plugin) are warnings naming the label."
+description: "Traefik plugin middlewares are warnings naming the label and why; a chain is inlined (mw-chain.yaml)."
 containers:
   - name: "app"
     labels:
       traefik.enable: "true"
       traefik.http.routers.app.rule: "Host(`app.example.com`)"
-      traefik.http.middlewares.c.chain.middlewares: "a,b"
       traefik.http.middlewares.p.plugin.demo.key: "v"
     networks:
       web: "172.18.0.2"
@@ -16,5 +15,4 @@ expect:
   services:
     app: {}
   diagnostics:
-    - "c.chain.middlewares\"]: not in the supported Traefik label subset"
-    - "p.plugin.demo.key\"]: not in the supported Traefik label subset"
+    - "p.plugin.demo.key\"]: Traefik (Yaegi) plugins do not run here"

@@ -1,0 +1,63 @@
+# Corpus case `dynamic-file` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: a dynamic configuration file, routers, several servers with weights, serversTransports, weighted service, usersFile, TCP and UDP sections, tls.certificates and options.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+http:
+  routers:
+    app:
+      rule: Host(`app.example.com`)
+      entryPoints: [websecure]
+      service: canary
+      middlewares: [auth]
+      tls:
+        certResolver: le
+  middlewares:
+    auth:
+      basicAuth:
+        usersFile: /etc/traefik/users.htpasswd
+        removeHeader: true
+  services:
+    canary:
+      weighted:
+        services:
+          - name: stable
+            weight: 9
+          - name: next
+            weight: 1
+    stable:
+      loadBalancer:
+        serversTransport: internal-ca
+        servers:
+          - url: https://10.0.1.10:8443
+            weight: 2
+          - url: https://10.0.1.11:8443
+    next:
+      loadBalancer:
+        servers:
+          - url: http://10.0.1.20:8080
+  serversTransports:
+    internal-ca:
+      serverName: app.internal
+      rootCAs: [/etc/traefik/internal-ca.pem]
+      forwardingTimeouts:
+        dialTimeout: 3s
+        responseHeaderTimeout: 30s
+tcp:
+  routers:
+    db:
+      rule: HostSNI(`db.example.com`)
+      entryPoints: [websecure]
+      service: db
+      tls:
+        passthrough: true
+  services:
+    db:
+      loadBalancer:
+        servers:
+          - address: 10.0.2.10:5432
+tls:
+  certificates:
+    - certFile: /etc/traefik/certs/example.pem
+      keyFile: /etc/traefik/certs/example.key
+  options:
+    default:
+      minVersion: VersionTLS12

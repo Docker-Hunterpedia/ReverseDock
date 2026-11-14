@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "sticky.cookie",
+    "cookie name, path, secure, httpOnly, sameSite, maxAge"
+  ],
+  "diff": false
+}

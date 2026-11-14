@@ -1,0 +1,12 @@
+# Exercises: tls with certificate files (load_files and a connection policy), TLS 1.3 only, tls internal for a private name.
+secure.example.com {
+	tls /etc/ssl/secure.pem /etc/ssl/secure.key {
+		protocols tls1.3
+	}
+	reverse_proxy secure-app:8080
+}
+
+dev.localhost {
+	tls internal
+	reverse_proxy devapp:3000
+}

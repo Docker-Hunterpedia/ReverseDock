@@ -1,0 +1,216 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `app` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "compose.service.traefik",
+      "hint": "replace the image with ReverseDock's and remove Traefik's flags: `rdock run` does not accept them",
+      "level": "exact",
+      "message": "the service runs Traefik (traefik:v3.7.19): its flags and `TRAEFIK_*` variables are read as static configuration",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.traefik",
+        "kind": "object",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:80`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.web.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.web.address"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "`defaults.redirect_http_to_https: true` (ReverseDock's default): plain-HTTP requests for hosts that have an HTTPS route are redirected, permanently (301 for GET, 308 otherwise); Traefik redirects every request on `web` to `websecure`, temporarily unless `permanent` is set",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.web.http.redirections.entrypoint.to",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "redirects go to `https`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.web.http.redirections.entrypoint.scheme",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:443`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.websecure.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.websecure.address"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "routes on this listener get automatic certificates from the one `acme` account (the resolver's name is not kept)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.websecure.http.tls.certresolver",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.websecure.tls"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "the docker provider, reading `traefik.*` labels too",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--providers.docker",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "providers.docker"
+    },
+    {
+      "code": "traefik.static.expose_by_default",
+      "level": "exact",
+      "message": "`providers.docker.expose_by_default: false`, as Traefik's `exposedByDefault`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--providers.docker.exposedbydefault",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "providers.docker.expose_by_default"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "`acme.email`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--certificatesresolvers.le.acme.email",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "acme.email"
+    },
+    {
+      "code": "traefik.static.manual",
+      "level": "manual",
+      "message": "`acme.json` is not imported: certificates are requested again and kept in ReverseDock's data directory; mind the CA's rate limits when many names move at once",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--certificatesresolvers.le.acme.storage",
+        "kind": "flag",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "the HTTP-01 challenge (answered on every plain-HTTP listener)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--certificatesresolvers.le.acme.httpchallenge.entrypoint",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "acme.challenges"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "the access log is on (`observability.access_log`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--accesslog",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "observability.access_log"
+    },
+    {
+      "code": "output.labels_live",
+      "level": "exact",
+      "message": "the routes, services and middlewares from labels are not written: with `--full` the Docker provider reads the same labels at run time (run without `--full` to see them as YAML)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 13,
+    "items": 16,
+    "manual": 1,
+    "result": 1
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

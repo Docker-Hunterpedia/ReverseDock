@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 /// musl's malloc took a global lock on every allocation and mapped and unmapped memory for
 /// the 64 KiB connection buffers, which was about a quarter of the CPU per request on 2 CPUs
@@ -54,6 +54,7 @@ pub use rdock_plugin_api::Registry;
 
 mod admin_cli;
 mod cluster;
+mod compat;
 mod control;
 mod ctl;
 mod datadir;
@@ -110,7 +111,8 @@ enum Command {
     /// Install the local CA's root (for localhost and private names) into the system trust
     /// stores, or remove it with --uninstall.
     Trust(TrustArgs),
-    /// Turn another proxy's configuration into rdock.yaml.
+    /// Turn another proxy's configuration into rdock.yaml, or move an rdock.yaml off deprecated
+    /// settings.
     #[command(subcommand)]
     Migrate(MigrateCommand),
     /// Work with the admin audit log.
@@ -148,6 +150,13 @@ enum Command {
         /// Print the OpenAPI 3.1 document of the admin API instead.
         #[arg(long)]
         openapi: bool,
+        /// Print the JSON Schema of the `rdock migrate … --report` document instead (beta).
+        #[arg(long, conflicts_with_all = ["openapi", "compat"])]
+        migrate_report: bool,
+        /// Internal (ADR-0033): print one compatibility snapshot of `schema/compat/` instead.
+        /// Used by `just compat`; not for users.
+        #[arg(long, hide = true, value_enum, conflicts_with = "openapi")]
+        compat: Option<compat::Surface>,
     },
     /// Print version and build information.
     Version {
@@ -174,20 +183,125 @@ struct AuditArgs {
 
 #[derive(Subcommand)]
 enum MigrateCommand {
-    /// Traefik labels (a Compose file) or a Traefik dynamic configuration → rdock.yaml.
+    /// Traefik labels (a Compose file), a Traefik dynamic configuration or Traefik's static
+    /// configuration → rdock.yaml, with a report that accounts for every label, key and flag.
+    /// Exit codes: 0 migrated (findings may exist), 1 the input is not one of these, 2 an
+    /// error, or with --strict anything that needs a decision (manual) or has no equivalent
+    /// (dropped). Nothing is written to disk without -o or --report.
     Traefik(MigrateTraefikArgs),
+    /// Caddy's JSON configuration → rdock.yaml, with a report that accounts for every handler,
+    /// matcher and setting. Reads the JSON `caddy adapt` writes, not a Caddyfile:
+    /// `caddy adapt --config Caddyfile | rdock migrate caddy -`. Exit codes as for `traefik`.
+    Caddy(MigrateCaddyArgs),
+    /// An NGINX configuration (a file, or the output of `nginx -T`) → rdock.yaml, with a report
+    /// that accounts for every directive (beta). Constructs without a faithful translation (`if`,
+    /// `map`, `rewrite … last`, variables, …) are refused one by one and their routes written
+    /// disabled. Exit codes as for `traefik`.
+    Nginx(MigrateNginxArgs),
+    /// Rewrite deprecated settings of an rdock.yaml to their replacements (and, once a later
+    /// schema version exists, convert to it). Comments and formatting are kept where the
+    /// change can be made as a text edit.
+    Config(MigrateConfigArgs),
 }
 
 #[derive(Args)]
+struct MigrateConfigArgs {
+    /// Configuration file (YAML, or JSON with a .json extension); `-` reads standard input as
+    /// YAML.
+    input: PathBuf,
+    /// Print a unified diff instead of the migrated file.
+    #[arg(long, conflicts_with_all = ["write", "output"])]
+    diff: bool,
+    /// Replace the file, after copying it to `<file>.bak` (or `.bak.1`, `.bak.2`, … when
+    /// taken).
+    #[arg(long, conflicts_with = "output")]
+    write: bool,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+}
+
+#[derive(Args)]
+#[allow(clippy::struct_excessive_bools)] // command-line switches
 struct MigrateTraefikArgs {
-    /// Compose file or Traefik dynamic configuration; `-` reads standard input.
+    /// Compose file, Traefik dynamic configuration or Traefik static configuration
+    /// (`traefik.yml`); `-` reads standard input. TOML files are reported, not read.
     input: PathBuf,
     /// Migrate Compose services without `traefik.enable`, as Traefik's `exposedByDefault` does.
+    /// Traefik's static configuration, when read, decides this by itself.
     #[arg(long)]
     expose_by_default: bool,
     /// Write the result to this file instead of standard output.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Also read Traefik's static configuration from this file (`traefik.yml`): entry points,
+    /// certificate resolvers, providers, logs and metrics. A Compose file's Traefik service
+    /// (its `command:` flags and `TRAEFIK_*` variables) is always read.
+    #[arg(long = "static", value_name = "FILE")]
+    static_file: Option<PathBuf>,
+    /// Write a complete rdock.yaml (listeners, acme, providers and the rest) instead of a
+    /// fragment. With a Compose file, the routes from labels are left out: the Docker provider
+    /// reads the same labels at run time.
+    #[arg(long)]
+    full: bool,
+    /// Values for Compose `${VAR}` references in KEY=VALUE lines (Compose's `.env` syntax);
+    /// may be given more than once, later files win. Without it, `.env` is not read.
+    #[arg(long, value_name = "FILE")]
+    env_file: Vec<PathBuf>,
+    /// Also take `${VAR}` values from this process's environment (it wins over --env-file,
+    /// as in Compose). Off by default: the environment is never read unless asked.
+    #[arg(long)]
+    process_env: bool,
+    /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
+    /// standard error instead of the text summary.
+    #[arg(long, value_name = "FILE")]
+    report: Option<PathBuf>,
+    /// Exit 2 when any finding is manual (needs a decision) or dropped (no equivalent).
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+struct MigrateCaddyArgs {
+    /// Caddy's JSON configuration (`caddy adapt` output, or `GET /config/` of a running Caddy);
+    /// `-` reads standard input. A Caddyfile is refused with how to adapt it.
+    input: PathBuf,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Write a complete rdock.yaml (listeners, defaults, acme, security) instead of a fragment.
+    #[arg(long)]
+    full: bool,
+    /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
+    /// standard error instead of the text summary.
+    #[arg(long, value_name = "FILE")]
+    report: Option<PathBuf>,
+    /// Exit 2 when any finding is manual (needs a decision) or dropped (no equivalent).
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+struct MigrateNginxArgs {
+    /// The main configuration file (`nginx.conf`), a file with server blocks, or the output of
+    /// `nginx -T`; `-` reads standard input. `include` is resolved against the file's directory.
+    input: PathBuf,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Also read included files outside the main file's directory tree.
+    #[arg(long)]
+    include_outside: bool,
+    /// Write a complete rdock.yaml (listeners, defaults, security) instead of a fragment.
+    #[arg(long)]
+    full: bool,
+    /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
+    /// standard error instead of the text summary.
+    #[arg(long, value_name = "FILE")]
+    report: Option<PathBuf>,
+    /// Exit 2 when any finding is manual (needs a decision) or dropped (no equivalent).
+    #[arg(long)]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -251,9 +365,21 @@ struct ValidateArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     strict: bool,
+    /// How deprecated settings count: `warn` (the default) or `error`, to see whether a file
+    /// is ready for the release that removes them.
+    #[arg(long, value_enum, default_value_t = DeprecationsArg::Warn)]
+    deprecations: DeprecationsArg,
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DeprecationsArg {
+    /// A warning (an error under `--strict`).
+    Warn,
+    /// An error.
+    Error,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -307,7 +433,7 @@ struct StatusArgs {
 #[must_use]
 pub fn run(registry: Registry) -> ExitCode {
     // clap reads the process's arguments itself.
-    run_parsed(registry, Cli::try_parse)
+    run_parsed(registry, || Cli::command().try_get_matches())
 }
 
 /// Like [`run`], with explicit arguments (the first is the program name), e.g. for tests.
@@ -317,16 +443,29 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    run_parsed(registry, || Cli::try_parse_from(args))
+    run_parsed(registry, || Cli::command().try_get_matches_from(args))
 }
 
 /// Checks the registry, parses the command line with `parse` and runs the command.
-fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Error>) -> ExitCode {
+fn run_parsed(
+    registry: Registry,
+    parse: impl FnOnce() -> Result<clap::ArgMatches, clap::Error>,
+) -> ExitCode {
+    // Test hook (ADR-0033): registry entries that exercise the deprecation plumbing end to
+    // end. Debug builds only; a release binary never reads the variable.
+    if cfg!(debug_assertions)
+        && std::env::var_os("RDOCK_TEST_DEPRECATIONS").is_some_and(|v| v == "1")
+    {
+        rdock_model::deprecation::enable_test_entries();
+    }
     if let Err(err) = registry.check() {
         eprintln!("error: the plugin registry is invalid: {err}");
         return ExitCode::from(2);
     }
-    let cli = match parse() {
+    let cli = match parse().and_then(|matches| {
+        warn_deprecated_cli(&matches);
+        Cli::from_arg_matches(&matches)
+    }) {
         Ok(cli) => cli,
         Err(err) => {
             // `--help` and `--version` print and succeed; usage errors exit 2.
@@ -354,6 +493,9 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
+        Command::Migrate(MigrateCommand::Caddy(args)) => migrate::caddy(&args),
+        Command::Migrate(MigrateCommand::Nginx(args)) => migrate::nginx(&args),
+        Command::Migrate(MigrateCommand::Config(args)) => migrate::config(&args),
         Command::Audit(AuditCommand::Verify(args)) => audit_verify(&args),
         Command::Audit(AuditCommand::List(args)) => admin_cli::audit_list(&args),
         Command::Config(command) => admin_cli::config(&command),
@@ -365,8 +507,21 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Bans(command) => admin_cli::bans(&command),
         Command::Keys(command) => admin_cli::keys(&command),
         Command::Routes(command) => admin_cli::routes(&command),
-        Command::Schema { openapi: false } => schema().map(|()| ExitCode::SUCCESS),
-        Command::Schema { openapi: true } => {
+        Command::Schema {
+            compat: Some(surface),
+            ..
+        } => compat::snapshot(surface)
+            .and_then(|text| print(&text))
+            .map(|()| ExitCode::SUCCESS),
+        Command::Schema {
+            migrate_report: true,
+            ..
+        } => serde_json::to_string_pretty(&rdock_migrate::report::json_schema())
+            .context("serialising the report schema")
+            .and_then(|text| print(&(text + "\n")))
+            .map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: false, .. } => schema().map(|()| ExitCode::SUCCESS),
+        Command::Schema { openapi: true, .. } => {
             print(rdock_admin::openapi_json()).map(|()| ExitCode::SUCCESS)
         }
         Command::Version { json } => version(json, &plugins).map(|()| ExitCode::SUCCESS),
@@ -375,6 +530,41 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         eprintln!("error: {err:#}");
         ExitCode::from(2)
     })
+}
+
+/// A warning on standard error for each deprecated command and flag used (ADR-0033). Flags are
+/// named as clap derives them: `--` and the field name with `-` for `_`.
+fn warn_deprecated_cli(matches: &clap::ArgMatches) {
+    let mut words: Vec<&str> = Vec::new();
+    let mut level = matches;
+    while let Some((name, sub)) = level.subcommand() {
+        words.push(name);
+        if let Some(entry) = rdock_model::deprecation::cli_command(&words) {
+            eprintln!(
+                "warning: `rdock {}` is deprecated since {} and will be removed in {}: use {}",
+                words.join(" "),
+                entry.since,
+                entry.removal,
+                entry.replacement
+            );
+        }
+        for id in sub.ids() {
+            if sub.value_source(id.as_str()) != Some(clap::parser::ValueSource::CommandLine) {
+                continue;
+            }
+            let flag = format!("--{}", id.as_str().replace('_', "-"));
+            if let Some(entry) = rdock_model::deprecation::cli_flag(&words, &flag) {
+                eprintln!(
+                    "warning: `rdock {} {flag}` is deprecated since {} and will be removed in {}: use {}",
+                    words.join(" "),
+                    entry.since,
+                    entry.removal,
+                    entry.replacement
+                );
+            }
+        }
+        level = sub;
+    }
 }
 
 fn print(text: &str) -> anyhow::Result<()> {
@@ -405,15 +595,94 @@ fn schema() -> anyhow::Result<()> {
     print(&rdock_model::json_schema_string().context("serialising the JSON Schema")?)
 }
 
+/// Whether this build includes a feature: every feature but those behind a cargo feature that
+/// is off.
+fn built(feature: &rdock_model::maturity::Feature) -> bool {
+    match feature.cargo_feature {
+        Some("wasm") => rdock_middleware::wasm::ENABLED,
+        Some("http3") => rdock_proxy::http3::ENABLED,
+        Some(_) => false,
+        None => true,
+    }
+}
+
+/// `rdock version --json`. Its JSON Schema is part of the CLI compatibility snapshot
+/// (`schema/compat/cli.json`, ADR-0033), so its fields are a stable surface.
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct VersionInfo {
+    /// The release, e.g. `0.9.0-alpha.1`.
+    version: &'static str,
+    /// The commit it was built from.
+    commit: &'static str,
+    /// The compiler that built it.
+    rustc: &'static str,
+    /// The target triple.
+    target: &'static str,
+    /// `rdock-plugin-api`'s `API_VERSION`.
+    plugin_api: &'static str,
+    /// Names of the native plugins compiled in.
+    plugins: Vec<String>,
+    /// The WASM host ABI, when the build includes WASM plugins.
+    wasm_abi: Option<&'static str>,
+    /// Whether the build includes HTTP/3.
+    http3: bool,
+    /// The configuration schema version.
+    schema_version: u32,
+    /// The maturity registry, with whether this build includes each feature.
+    features: Vec<FeatureInfo>,
+}
+
+/// One entry of [`VersionInfo::features`].
+#[derive(serde::Serialize, schemars::JsonSchema)]
+pub(crate) struct FeatureInfo {
+    id: &'static str,
+    /// `experimental`, `beta` or `stable`.
+    level: &'static str,
+    since: &'static str,
+    summary: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    cargo_feature: Option<&'static str>,
+    locations: Vec<&'static str>,
+    built: bool,
+}
+
+fn version_info(plugins: &Registry) -> VersionInfo {
+    VersionInfo {
+        version: VERSION,
+        commit: COMMIT,
+        rustc: RUSTC,
+        target: TARGET,
+        plugin_api: rdock_plugin_api::API_VERSION,
+        plugins: plugins.names().map(str::to_owned).collect(),
+        wasm_abi: rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION),
+        http3: rdock_proxy::http3::ENABLED,
+        schema_version: rdock_model::deprecation::SCHEMA_VERSION,
+        features: rdock_model::maturity::FEATURES
+            .iter()
+            .map(|f| FeatureInfo {
+                id: f.id,
+                level: f.level.as_str(),
+                since: f.since,
+                summary: f.summary,
+                cargo_feature: f.cargo_feature,
+                locations: f.locations.to_vec(),
+                built: built(f),
+            })
+            .collect(),
+    }
+}
+
 fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
+    use rdock_model::maturity::{FEATURES, Level, feature};
     let names: Vec<&str> = plugins.names().collect();
     let api = rdock_plugin_api::API_VERSION;
-    // The WASM host ABI, when this build includes it (`wasm` feature, experimental).
+    // The WASM host ABI, when this build includes it (`wasm` feature).
     let wasm_abi = rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION);
+    // The levels come from the maturity registry (ADR-0033).
+    let level = |id: &str| feature(id).map_or("experimental", |f| f.level.as_str());
     if json {
-        // HTTP/3 ingress, when this build includes it (`http3` feature, experimental).
-        let http3 = rdock_proxy::http3::ENABLED;
-        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi, "http3": http3 });
+        let info = version_info(plugins);
+        let info = serde_json::to_value(&info).context("serialising the version")?;
         print(&format!("{info}\n"))
     } else {
         let plugins = if names.is_empty() {
@@ -423,15 +692,32 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
         };
         let wasm = wasm_abi.map_or_else(
             || "not in this build".to_owned(),
-            |abi| format!("ABI {abi} (experimental)"),
+            |abi| format!("ABI {abi} ({})", level("wasm")),
         );
         let http3 = if rdock_proxy::http3::ENABLED {
-            "quinn and h3 (experimental)"
+            format!("quinn and h3 ({})", level("http3"))
         } else {
-            "not in this build"
+            "not in this build".to_owned()
+        };
+        let list = |wanted: Level| {
+            FEATURES
+                .iter()
+                .filter(|f| f.level == wanted)
+                .map(|f| {
+                    if built(f) {
+                        f.id.to_owned()
+                    } else {
+                        format!("{} (not in this build)", f.id)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         print(&format!(
-            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\nHTTP/3: {http3}\n"
+            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\nHTTP/3: {http3}\nconfiguration schema: v{}\nexperimental: {}\nbeta: {}\n",
+            rdock_model::deprecation::SCHEMA_VERSION,
+            list(Level::Experimental),
+            list(Level::Beta),
         ))
     }
 }

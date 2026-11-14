@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "PathPrefix",
+    "stripprefix.prefixes",
+    "router middlewares"
+  ],
+  "diff": true
+}

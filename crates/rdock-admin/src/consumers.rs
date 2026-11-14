@@ -19,7 +19,7 @@ use utoipa::{IntoParams, ToSchema};
 use crate::State;
 use crate::audit::Event;
 use crate::caller::{Access, Caller, need};
-use crate::config_api::{api_config, if_match, write_as, writes_allowed};
+use crate::config_api::{api_config, editable, if_match, write_as, writes_allowed};
 use crate::routes::error;
 
 macro_rules! check {
@@ -195,10 +195,10 @@ pub(crate) async fn put(
         Ok(tag) => tag,
         Err(denied) => return denied.into_response(),
     };
-    let (Some(config), Some((mut api, _))) = (effective(&state).await, api_config(&state).await)
-    else {
+    let (Some(config), Some((api, _))) = (effective(&state).await, api_config(&state).await) else {
         return gone();
     };
+    let mut api = editable(&api, &caller);
     if defined_in_file(&config, &api, &name) {
         return error(
             StatusCode::FORBIDDEN,
@@ -242,9 +242,10 @@ pub(crate) async fn delete(
         Ok(tag) => tag,
         Err(denied) => return denied.into_response(),
     };
-    let Some((mut api, _)) = api_config(&state).await else {
+    let Some((api, _)) = api_config(&state).await else {
         return gone();
     };
+    let mut api = editable(&api, &caller);
     let Some(consumers) = consumers_of(&mut api) else {
         return gone();
     };
@@ -341,10 +342,10 @@ pub(crate) async fn create_key(
         },
         (None, None) => None,
     };
-    let (Some(config), Some((mut api, _))) = (effective(&state).await, api_config(&state).await)
-    else {
+    let (Some(config), Some((api, _))) = (effective(&state).await, api_config(&state).await) else {
         return gone();
     };
+    let mut api = editable(&api, &caller);
     if config["consumers"].get(&name).is_none() && api["consumers"].get(&name).is_none() {
         return error(StatusCode::NOT_FOUND, "no such consumer");
     }
@@ -419,10 +420,10 @@ pub(crate) async fn revoke_key(
         Ok(tag) => tag,
         Err(denied) => return denied.into_response(),
     };
-    let (Some(config), Some((mut api, _))) = (effective(&state).await, api_config(&state).await)
-    else {
+    let (Some(config), Some((api, _))) = (effective(&state).await, api_config(&state).await) else {
         return gone();
     };
+    let mut api = editable(&api, &caller);
     let Some(consumers) = consumers_of(&mut api) else {
         return gone();
     };

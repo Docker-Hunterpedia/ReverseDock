@@ -69,7 +69,7 @@ fn config(
     broken: bool,
 ) -> String {
     format!(
-        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"PathPrefix(`/`)\", service: {} }}\nservices:\n  app: {{ backends: [{{ address: \"{backend}\" }}] }}\nobservability:\n  alerts:\n    min_interval: 1m\n    channels:\n      signed: {{ type: webhook, url: \"http://{hook}/hook\", secret: \"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\", allow_private_targets: true }}\n      chat: {{ type: slack_compatible, url: \"http://{hook}/chat\", allow_private_targets: true, rules: [config] }}\n",
+        "listeners:\n  web: {{ address: \"127.0.0.1:{port}\" }}\ndefaults: {{ listeners: [web], tls: off }}\nroutes:\n  app: {{ match: \"PathPrefix(`/`)\", service: {} }}\nservices:\n  app: {{ backends: [{{ address: \"{backend}\" }}] }}\nobservability:\n  alerts:\n    min_interval: 1m\n    rules: {{ disabled: [disk] }}\n    channels:\n      signed: {{ type: webhook, url: \"http://{hook}/hook\", secret: \"whsec_MfKQ9r8GKYqrTwjUPD8ILPZIo2LaLaSw\", allow_private_targets: true }}\n      chat: {{ type: slack_compatible, url: \"http://{hook}/chat\", allow_private_targets: true, rules: [config] }}\n",
         if broken { "missing" } else { "app" }
     )
 }

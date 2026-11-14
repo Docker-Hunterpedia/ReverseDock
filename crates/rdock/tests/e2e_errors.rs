@@ -44,6 +44,7 @@ fn problem(reply: &client::Reply, status: u16, slug: &str) -> Value {
     );
     assert_eq!(reply.header("content-language"), Some("en"));
     assert_eq!(reply.header("cache-control"), Some("no-store"));
+    assert_eq!(reply.header("x-content-type-options"), Some("nosniff"));
     let json = reply.json();
     assert_eq!(json["type"], format!("{BASE}{slug}"), "{json}");
     assert_eq!(json["status"], status);
@@ -164,6 +165,64 @@ services:
     let reply = call(get("maintpage.test", "/")).await;
     assert_eq!(reply.status, 503);
     assert_eq!(reply.text(), "<h1>back soon</h1>");
+    assert_eq!(reply.header("x-content-type-options"), Some("nosniff"));
+}
+
+/// `X-Content-Type-Options: nosniff` on every answer rdock writes itself (the differential test
+/// against Traefik found its own 404 without it), and never added to a backend's response.
+#[tokio::test]
+async fn own_answers_say_nosniff_and_proxied_ones_are_left_alone() {
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let dead = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "Host(`app.test`)", service: app }}
+  moved: {{ match: "Host(`moved.test`)", service: app, middlewares: [moved] }}
+  fixed: {{ match: "Host(`fixed.test`)", service: fixed }}
+  down: {{ match: "Host(`down.test`)", service: dead }}
+  auth: {{ match: "Host(`auth.test`)", service: app, middlewares: [auth] }}
+  edited: {{ match: "Host(`edited.test`)", service: fixed, middlewares: [sniff] }}
+middlewares:
+  moved: {{ type: redirect, regex: "^http://moved.test/(.*)$", replacement: "http://app.test/${{1}}" }}
+  auth: {{ type: basic_auth, users: ["u:$2y$05$Ba2L27xH4nV/uMHG7kprmeoQS4NGMKB5hcdRvBYcBkK6rWsMnNEPO"] }}
+  sniff: {{ type: headers, response: {{ remove: [X-Content-Type-Options] }} }}
+services:
+  app: {{ backends: [{{ address: "{backend}" }}] }}
+  fixed: {{ respond: {{ status: 418 }} }}
+  dead: {{ backends: [{{ address: "127.0.0.1:{dead}" }}] }}
+"#,
+        backend = backend.addr,
+    );
+    let _rdock = Rdock::start(RDOCK, &config);
+    let call = |req| client::http1(addr(port), req);
+    for (host, status) in [
+        ("nowhere.test", 404),
+        ("moved.test", 302),
+        ("fixed.test", 418),
+        ("down.test", 502),
+        ("auth.test", 401),
+    ] {
+        let reply = call(get(host, "/x")).await;
+        assert_eq!(reply.status, status, "{host}: {}", reply.text());
+        assert_eq!(
+            reply.header("x-content-type-options"),
+            Some("nosniff"),
+            "{host}"
+        );
+    }
+    // The backend's answer passes as the backend wrote it.
+    let reply = call(get("app.test", "/x")).await;
+    assert_eq!(reply.status, 200);
+    assert_eq!(reply.header("x-content-type-options"), None);
+    // A route's response middlewares still have the last word on rdock's own answers.
+    let reply = call(get("edited.test", "/x")).await;
+    assert_eq!(reply.status, 418);
+    assert_eq!(reply.header("x-content-type-options"), None);
 }
 
 #[tokio::test]

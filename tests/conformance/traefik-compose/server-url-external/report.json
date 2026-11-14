@@ -1,0 +1,92 @@
+{
+  "findings": [
+    {
+      "code": "compose.service.port_assumed",
+      "level": "approximate",
+      "message": "no `expose`, `ports` or port label: port 80 was assumed (Traefik uses the port the image exposes)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.legacy",
+        "kind": "object",
+        "scope": "legacy"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "legacy"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.legacy.entrypoints",
+        "kind": "label",
+        "scope": "legacy"
+      },
+      "target": "routes.legacy"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.legacy.rule",
+        "kind": "label",
+        "scope": "legacy"
+      },
+      "target": "routes.legacy"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.legacy.tls",
+        "kind": "label",
+        "scope": "legacy"
+      },
+      "target": "routes.legacy"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the backend's address and `scheme`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.legacy.loadbalancer.server.url",
+        "kind": "label",
+        "scope": "legacy"
+      },
+      "target": "services.legacy"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 4,
+    "items": 6,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

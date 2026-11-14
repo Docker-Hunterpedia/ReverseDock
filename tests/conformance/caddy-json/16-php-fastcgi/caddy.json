@@ -1,0 +1,136 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"php.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "vars",
+													"root": "/var/www/html"
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "static_response",
+																	"headers": {
+																		"Location": [
+																			"{http.request.orig_uri.path}/{http.request.orig_uri.prefixed_query}"
+																		]
+																	},
+																	"status_code": 308
+																}
+															],
+															"match": [
+																{
+																	"file": {
+																		"try_files": [
+																			"{http.request.uri.path}/index.php"
+																		]
+																	},
+																	"not": [
+																		{
+																			"path": [
+																				"*/"
+																			]
+																		}
+																	]
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "rewrite",
+																	"uri": "{http.matchers.file.relative}"
+																}
+															],
+															"match": [
+																{
+																	"file": {
+																		"split_path": [
+																			".php"
+																		],
+																		"try_files": [
+																			"{http.request.uri.path}",
+																			"{http.request.uri.path}/index.php",
+																			"index.php"
+																		],
+																		"try_policy": "first_exist_fallback"
+																	}
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"transport": {
+																		"protocol": "fastcgi",
+																		"split_path": [
+																			".php"
+																		]
+																	},
+																	"upstreams": [
+																		{
+																			"dial": "unix//run/php/php-fpm.sock"
+																		}
+																	]
+																}
+															],
+															"match": [
+																{
+																	"path": [
+																		"*.php"
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "file_server",
+													"hide": [
+														"./Caddyfile"
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

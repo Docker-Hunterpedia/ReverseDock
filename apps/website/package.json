@@ -7,7 +7,7 @@
     "build": "astro build",
     "preview": "astro preview",
     "check": "astro check",
-    "gen": "node scripts/gen-config-reference.ts && node scripts/gen-cli-reference.ts && node scripts/gen-changelog.ts",
+    "gen": "node scripts/gen-stability.ts && node scripts/gen-config-reference.ts && node scripts/gen-cli-reference.ts && node scripts/gen-migrate.ts && node scripts/gen-changelog.ts",
     "check:status": "node scripts/check-status.ts",
     "check:snippets": "node scripts/check-snippets.ts",
     "check:a11y": "node scripts/check-a11y.ts",

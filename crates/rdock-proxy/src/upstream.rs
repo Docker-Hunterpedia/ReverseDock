@@ -32,6 +32,8 @@ pub struct Selected {
     /// `Set-Cookie` value to send, when the sticky cookie is missing, stale or names a backend
     /// that is gone.
     pub set_cookie: Option<String>,
+    /// Chosen in panic mode: no backend of the service was available (see [`select`]).
+    pub panic: bool,
 }
 
 /// What a request contributes to backend selection.
@@ -77,21 +79,50 @@ pub fn resolve(service: &Arc<ServiceRuntime>) -> Arc<ServiceRuntime> {
 /// tier with an available backend; `spill`: a tier drawn by the tiers' health, Envoy's
 /// priority levels), then backends this request has not tried yet, then backends in the
 /// preferred zone when one of them is left (`locality: prefer`). With `when_all_down:
-/// fail_open`, an empty result falls back to every backend of the first tier (ADR-0022).
-/// A sticky cookie naming one of those wins over the policy.
+/// fail_open` (the default), a service with no available backend in any tier routes in
+/// *panic mode* (Envoy's panic threshold at "no healthy host", HAProxy's and NGINX's "all down,
+/// try anyway"): first to the backends that only passive ejection keeps out while their active
+/// checks pass, else to every backend of the first tier (ADR-0022). A sticky cookie naming one
+/// of those wins over the policy.
 #[must_use]
 pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected> {
     let members = service.members();
     let now = Instant::now();
     let draw =
         matches!(service.selection.failover, Failover::Spill(_)).then(|| fastrand::f64() * 100.0);
-    let mut pool = eligible(service, &members, now, draw);
+    let (mut pool, mut panic) = eligible(service, &members, now, draw);
     if draw.is_some() && pool.iter().all(|m| key.tried.contains(&m.id)) {
         // The drawn tier was tried already: any tier that gets traffic will do.
-        pool = eligible(service, &members, now, None);
+        (pool, panic) = eligible(service, &members, now, None);
+    }
+    if !pool.is_empty() && service.pool.set_panic(panic) {
+        // (Logged here, from the first attempt's view; a retry's fallback below is not a
+        // change of state.)
+        if panic {
+            tracing::warn!(
+                service = %service.name,
+                "no backend is available: routing in panic mode to backends that are out of rotation"
+            );
+        } else {
+            tracing::info!(service = %service.name, "a backend is available again: panic mode ended");
+        }
     }
     if pool.iter().any(|m| !key.tried.contains(&m.id)) {
         pool.retain(|m| !key.tried.contains(&m.id));
+    } else if !key.tried.is_empty() && service.health.fail_open && service.health.active.is_some() {
+        // A retry whose every available backend was tried already: rather than repeat the one
+        // that just failed (the health view lags behind a backend that went down a moment
+        // ago), try a backend that passive ejection keeps out while its probes pass.
+        let spare: Vec<Arc<Member>> = members
+            .iter()
+            .filter(|m| m.weight > 0 && !m.state.is_drained() && !key.tried.contains(&m.id))
+            .filter(|m| m.state.passes_checks(now))
+            .cloned()
+            .collect();
+        if !spare.is_empty() {
+            pool = panic_pool(spare, now);
+            panic = true;
+        }
     }
     if service.selection.zone.is_some() && pool.iter().any(|m| m.local) {
         pool.retain(|m| m.local);
@@ -99,8 +130,8 @@ pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected>
     if let (Some(sticky), Some(request)) = (&service.sticky, key.request)
         && let Some(found) = sticky_member(sticky, &pool, request)
     {
-        claim_trial(&found.member, now);
-        return Some(found);
+        claim_trial(&found.member, now, panic);
+        return Some(Selected { panic, ..found });
     }
     let slow = service.health.slow_start.as_ref();
     let peak = service.selection.peak.is_some();
@@ -116,14 +147,18 @@ pub fn select(service: &ServiceRuntime, key: RequestKey<'_>) -> Option<Selected>
     let hash = hash_input(&service.hash_on, key);
     let index = service.balancer.pick(&choices, hash.as_deref())?;
     let member = pool.get(index)?.clone();
-    claim_trial(&member, now);
+    claim_trial(&member, now, panic);
     let set_cookie = service.sticky.as_ref().and_then(|sticky| {
         member
             .sticky
             .as_ref()
             .map(|token| format!("{}={token}{}", sticky.name, sticky.attributes))
     });
-    Some(Selected { member, set_cookie })
+    Some(Selected {
+        member,
+        set_cookie,
+        panic,
+    })
 }
 
 /// The weight a backend competes with: its configured weight, or with slow start configured,
@@ -135,14 +170,14 @@ fn weight(member: &Member, slow: Option<&SlowStart>, now: Instant) -> u32 {
     }
 }
 
-/// The backends of the tier in use. `draw` (0 to 100) picks the tier under `failover:
-/// spill`; `None` returns every tier that gets traffic.
+/// The backends of the tier in use, and whether they were chosen in panic mode. `draw` (0 to
+/// 100) picks the tier under `failover: spill`; `None` returns every tier that gets traffic.
 fn eligible(
     service: &ServiceRuntime,
     members: &[Arc<Member>],
     now: Instant,
     draw: Option<f64>,
-) -> Vec<Arc<Member>> {
+) -> (Vec<Arc<Member>>, bool) {
     let has_room = |m: &Member| {
         service
             .max_per_backend
@@ -208,19 +243,43 @@ fn eligible(
         }
     };
     if !chosen.is_empty() || !service.health.fail_open {
-        return chosen;
+        return (chosen, false);
     }
-    // Fail open: every backend of the first tier, whatever its health.
-    let first = candidates().map(|m| m.priority).min();
-    candidates()
-        .filter(|m| Some(m.priority) == first)
-        .cloned()
-        .collect()
+    (panic_pool(candidates().cloned().collect(), now), true)
 }
 
-/// A request sent to a half-open backend is its trial.
-fn claim_trial(member: &Member, now: Instant) {
-    if member.state.availability(now) == Availability::Trial {
+/// Panic mode: no backend of any tier is available. The backends that only passive ejection
+/// keeps out while their active checks pass (or that have no active checks) are the likeliest
+/// to answer, since a request is what ejected them and probes still reach them: the first tier
+/// that has such backends gets the traffic. Without any, every backend of the first tier gets
+/// it, the ones failing active checks included, as in Envoy: a broken health check (a wrong
+/// path, a probe port that changed) must not take a service down that still answers requests.
+/// Drained backends and backends of weight 0 never get traffic.
+fn panic_pool(candidates: Vec<Arc<Member>>, now: Instant) -> Vec<Arc<Member>> {
+    let first_tier = |pool: Vec<Arc<Member>>| {
+        let first = pool.iter().map(|m| m.priority).min();
+        pool.into_iter()
+            .filter(|m| Some(m.priority) == first)
+            .collect::<Vec<_>>()
+    };
+    let passing: Vec<Arc<Member>> = candidates
+        .iter()
+        .filter(|m| m.state.passes_checks(now))
+        .cloned()
+        .collect();
+    if passing.is_empty() {
+        first_tier(candidates)
+    } else {
+        first_tier(passing)
+    }
+}
+
+/// A request sent to a half-open backend is its trial; so is one sent to an ejected backend
+/// in panic mode, so that the first answer it gives puts it back in rotation.
+fn claim_trial(member: &Member, now: Instant, panic: bool) {
+    if panic {
+        member.state.start_panic_trial(now);
+    } else if member.state.availability(now) == Availability::Trial {
         member.state.start_trial(now);
     }
 }
@@ -237,6 +296,7 @@ fn sticky_member(
         return Some(Selected {
             member: member.clone(),
             set_cookie: None,
+            panic: false,
         });
     }
     // Cookies from before a key rotation name the right backend but get a fresh value.
@@ -247,6 +307,7 @@ fn sticky_member(
             .sticky
             .as_ref()
             .map(|token| format!("{}={token}{}", sticky.name, sticky.attributes)),
+        panic: false,
     })
 }
 
@@ -354,6 +415,7 @@ pub fn connect_budget(
 pub(crate) fn has_untried(service: &ServiceRuntime, tried: &[String]) -> bool {
     let members = service.members();
     eligible(service, &members, Instant::now(), None)
+        .0
         .iter()
         .any(|m| !tried.contains(&m.id))
 }

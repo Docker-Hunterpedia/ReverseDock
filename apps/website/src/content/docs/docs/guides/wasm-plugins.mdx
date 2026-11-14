@@ -10,14 +10,15 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-A WASM plugin <Status since="v0.8" /> (experimental; only in builds made with `--features wasm`, not in the release binaries or images) is a WebAssembly component that runs as a middleware in a
+A WASM plugin <Status since="v0.8" /> <Status feature="wasm" /> (only in builds made with `--features wasm`, not in the release binaries or images) is a WebAssembly component that runs as a middleware in a
 sandbox: it sees the request and response heads it is given and nothing else. Use it for logic
 you want to load from a file and change without rebuilding ReverseDock, from a publisher whose
 signature you check.
 
 :::caution[Experimental]
-WASM plugins are experimental. They are only in builds made with the cargo feature `wasm`; the
-stock binary and the release images do not include them. The host ABI (the WIT package
+WASM plugins are experimental ([maturity levels](/docs/project/maturity/)): a configuration that
+uses one must say so with `experimental: [wasm]`, or it is refused. They are only in builds made
+with the cargo feature `wasm`; the stock binary and the release images do not include them. The host ABI (the WIT package
 `rdock:plugin@0.1.0`) is versioned `0.x` and may change in any release, without a deprecation
 period. The configuration keys may change too. Nothing here is covered by the 1.0 stability
 promise.
@@ -53,11 +54,14 @@ release for 24 months). It makes a release binary roughly 13 MB larger (the meas
 behind [ADR-0030](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0030-v0-8-cache-extensibility-gateway.md)). A build without the feature
 refuses a configuration with `type: wasm`: `rdock run` stops with
 `this build does not include WASM plugins; build with --features wasm`, and `rdock validate`
-reports the same as a warning.
+reports the same as a warning. The opt-in is checked first and in every build: without
+`experimental: [wasm]` the configuration is refused, and the error says that the build feature is
+needed too.
 
 ## Configure
 
 ```yaml title="rdock.yaml (excerpt)"
+experimental: [wasm]   # WASM plugins may change or be removed in any release
 routes:
   app:
     match: "Host(`app.example.com`)"

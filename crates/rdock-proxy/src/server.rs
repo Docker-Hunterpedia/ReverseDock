@@ -356,9 +356,11 @@ impl DataPlane {
         self.quotas.set_dir(dir);
         let quotas = Arc::downgrade(&self.quotas);
         let paused = self.quota_writes_paused.clone();
+        let metrics = self.shared.metrics.clone();
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut failed = 0;
             loop {
                 tick.tick().await;
                 let Some(quotas) = quotas.upgrade() else {
@@ -367,8 +369,16 @@ impl DataPlane {
                 if paused.load(std::sync::atomic::Ordering::SeqCst) {
                     continue;
                 }
-                // File writes stay off the request threads' runtime workers.
-                let _ = tokio::task::spawn_blocking(move || quotas.flush_due()).await;
+                // File writes stay off the request threads' runtime workers. A full disk is
+                // counted and logged once a minute; the counts stay in memory (ADR-0033).
+                let writer = quotas.clone();
+                let _ = tokio::task::spawn_blocking(move || writer.flush_due()).await;
+                let now = quotas.write_failures();
+                metrics
+                    .state_write_failures
+                    .with_label_values(&["quota"])
+                    .inc_by(now.saturating_sub(failed));
+                failed = now;
             }
         });
     }
@@ -383,6 +393,7 @@ impl DataPlane {
         tokio::spawn(async move {
             let mut tick = tokio::time::interval(Duration::from_secs(1));
             tick.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+            let mut failed = 0;
             loop {
                 tick.tick().await;
                 let Some(abuse) = abuse.upgrade() else {
@@ -394,7 +405,14 @@ impl DataPlane {
                 if paused.load(std::sync::atomic::Ordering::SeqCst) {
                     continue;
                 }
-                let _ = tokio::task::spawn_blocking(move || abuse.flush_all()).await;
+                let writer = abuse.clone();
+                let _ = tokio::task::spawn_blocking(move || writer.flush_all()).await;
+                let now = abuse.write_failures();
+                metrics
+                    .state_write_failures
+                    .with_label_values(&["bans"])
+                    .inc_by(now.saturating_sub(failed));
+                failed = now;
             }
         });
     }

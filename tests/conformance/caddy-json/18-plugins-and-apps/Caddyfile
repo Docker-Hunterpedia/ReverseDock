@@ -1,0 +1,27 @@
+# Exercises: top-level admin, logging and storage, an app without an equivalent (layer4), templates, push, metrics and a plugin handler.
+{
+	admin off
+	debug
+	storage file_system /data
+	layer4 {
+		:2222 {
+			route {
+				proxy ssh-host:22
+			}
+		}
+	}
+}
+
+plugins.example.com {
+	templates
+	push
+	rate_limit {
+		zone dynamic {
+			key {remote_host}
+			events 10
+			window 1m
+		}
+	}
+	metrics /metrics
+	reverse_proxy app:8080
+}

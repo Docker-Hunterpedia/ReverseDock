@@ -1,0 +1,11 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "tls.domains main and sans",
+    "a DNS resolver name"
+  ],
+  "diff": false,
+  "expect_invalid": [
+    "needs a DNS-01 certificate"
+  ]
+}

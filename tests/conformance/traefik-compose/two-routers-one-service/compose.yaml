@@ -1,0 +1,19 @@
+# Corpus case `two-routers-one-service` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: two routers, router service, server.port, priority.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  site:
+    image: traefik/whoami:v1.12.0
+    expose: [80, 8080]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.www.rule=Host(`www.example.com`)
+      - traefik.http.routers.www.entrypoints=websecure
+      - traefik.http.routers.www.tls=true
+      - traefik.http.routers.www.service=site
+      - traefik.http.routers.admin.rule=Host(`www.example.com`) && PathPrefix(`/admin`)
+      - traefik.http.routers.admin.priority=100
+      - traefik.http.routers.admin.entrypoints=websecure
+      - traefik.http.routers.admin.tls=true
+      - traefik.http.routers.admin.service=site
+      - traefik.http.services.site.loadbalancer.server.port=80

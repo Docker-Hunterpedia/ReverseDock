@@ -21,6 +21,10 @@ use crate::phase::BodyHold;
 /// Pingora's request replay buffer (`BODY_BUF_LIMIT`).
 pub const MEMORY_LIMIT: usize = 64 * 1024;
 
+/// A body that cannot be spooled (the disk is full) is held in memory up to this size; a
+/// longer one is refused (`500`, as any spool failure) rather than risk the process's memory.
+pub const SPOOL_FALLBACK: u64 = 1024 * 1024;
+
 /// The spool directory for held bodies.
 #[derive(Debug)]
 pub struct Spool {
@@ -196,20 +200,64 @@ impl BodyHolder {
             return Err(HoldError::TooLarge);
         }
         if let Some(file) = self.file.as_mut() {
-            file.write_all(chunk).await?;
+            if let Err(e) = file.write_all(chunk).await {
+                // The disk refused the spool file (full): keep the body in memory instead,
+                // up to `SPOOL_FALLBACK` (ADR-0033).
+                self.back_to_memory(e, chunk.len()).await?;
+                self.memory.extend_from_slice(chunk);
+            }
             return Ok(());
         }
         let in_memory = self.memory.len() + chunk.len() <= MEMORY_LIMIT;
-        match self.spool.as_ref().filter(|_| !in_memory) {
+        match self.spool.clone().filter(|_| !in_memory) {
             Some(spool) => {
-                let mut file = tokio::fs::File::from_std(spool.create()?);
-                file.write_all(&self.memory).await?;
-                file.write_all(chunk).await?;
-                self.memory = BytesMut::new();
-                self.file = Some(file);
+                let started = async {
+                    let mut file = tokio::fs::File::from_std(spool.create()?);
+                    file.write_all(&self.memory).await?;
+                    file.write_all(chunk).await?;
+                    Ok::<_, io::Error>(file)
+                }
+                .await;
+                match started {
+                    Ok(file) => {
+                        self.memory = BytesMut::new();
+                        self.file = Some(file);
+                    }
+                    Err(e) => {
+                        self.memory_instead(e)?;
+                        self.memory.extend_from_slice(chunk);
+                    }
+                }
             }
             None => self.memory.extend_from_slice(chunk),
         }
+        Ok(())
+    }
+
+    /// Gives the spool up for this body after a write error: the body stays in memory while
+    /// it is at most [`SPOOL_FALLBACK`] long, else the error stands.
+    fn memory_instead(&mut self, e: io::Error) -> Result<(), HoldError> {
+        if self.len > SPOOL_FALLBACK {
+            return Err(HoldError::Io(e));
+        }
+        tracing::debug!(error = %e, "cannot spool a request body; holding it in memory");
+        self.spool = None;
+        Ok(())
+    }
+
+    /// [`Self::memory_instead`] for a body already partly in a spool file: what the file
+    /// holds (all but the last `pending` bytes of `len`) is read back into memory.
+    async fn back_to_memory(&mut self, e: io::Error, pending: usize) -> Result<(), HoldError> {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        self.memory_instead(e)?;
+        let Some(mut file) = self.file.take() else {
+            return Ok(());
+        };
+        let written = usize::try_from(self.len).unwrap_or(usize::MAX) - pending;
+        let mut held = vec![0; written];
+        file.seek(std::io::SeekFrom::Start(0)).await?;
+        file.read_exact(&mut held).await?;
+        self.memory = BytesMut::from(&held[..]);
         Ok(())
     }
 

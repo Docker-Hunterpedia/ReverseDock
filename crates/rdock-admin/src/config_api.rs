@@ -175,6 +175,232 @@ fn restore_masked(
     Ok(())
 }
 
+/// Sections of the API document whose objects make the data plane act with the process's own
+/// authority when they read files or reach local sockets.
+const OPERATOR_CHECKED: [&str; 3] = ["routes", "services", "middlewares"];
+
+/// Middleware types an operator cannot add or change: they serve or load files of the
+/// proxy's machine.
+const OPERATOR_TYPES: [(&str, &str); 3] = [
+    ("static", "serves files from the proxy's file system"),
+    ("wasm", "loads a module from the proxy's file system"),
+    (
+        "plugin",
+        "runs native code compiled into the binary, with a free-form `config` this check cannot read",
+    ),
+];
+
+/// Why an operator may not write `candidate` over `current`, if they may not: an object they
+/// add or change reaches a Unix socket on the proxy's machine (the admin socket is one),
+/// reads a file there, or holds a `${…}` reference, which reads an environment variable, a
+/// file or a Vault secret with the process's authority. Administrators may; objects an
+/// operator leaves unchanged are not checked, so an operator can still edit around them.
+fn operator_refusal(current: &Value, candidate: &Value) -> Option<String> {
+    for section in OPERATOR_CHECKED {
+        let Some(objects) = candidate[section].as_object() else {
+            continue;
+        };
+        for (name, object) in objects {
+            if current[section].get(name) == Some(object) {
+                continue;
+            }
+            let at = format!("{section}.{name}");
+            if let Some(why) = operator_object_refusal(section, object) {
+                return Some(format!(
+                    "{at}: {why}; only an administrator can write this (or define it in the configuration file)"
+                ));
+            }
+        }
+    }
+    None
+}
+
+fn operator_object_refusal(section: &str, object: &Value) -> Option<String> {
+    if let Some(at) = rdock_model::tenant::references(object).first() {
+        return Some(format!(
+            "`{at}` holds a `${{…}}` reference, which reads an environment variable, a file or a Vault secret on the proxy's machine"
+        ));
+    }
+    if section == "middlewares" {
+        let kind = object["type"].as_str().unwrap_or_default();
+        if let Some((_, why)) = OPERATOR_TYPES.iter().find(|(t, _)| *t == kind) {
+            return Some(format!("`type: {kind}` {why}"));
+        }
+    }
+    if section == "services" {
+        let unix = object["backends"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|b| b["address"].as_str())
+            .any(|a| a.starts_with("unix:"));
+        if unix {
+            return Some("a `unix://` backend is a socket on the proxy's machine".to_owned());
+        }
+    }
+    file_field(object, "").map(|at| format!("`{at}` reads a file on the proxy's machine"))
+}
+
+/// The path of the first field that names a file to read (`file`, `openapi`, `*_file`).
+fn file_field(value: &Value, path: &str) -> Option<String> {
+    match value {
+        Value::Object(map) => map.iter().find_map(|(key, child)| {
+            let at = if path.is_empty() {
+                key.clone()
+            } else {
+                format!("{path}.{key}")
+            };
+            let names_file = key == "file" || key == "openapi" || key.ends_with("_file");
+            if names_file && !child.is_null() {
+                Some(at)
+            } else {
+                file_field(child, &at)
+            }
+        }),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .find_map(|(i, child)| file_field(child, &format!("{path}[{i}]"))),
+        _ => None,
+    }
+}
+
+/// Paths (as keys) of the `***` values in `candidate` that stand for a kept secret.
+fn kept_secrets(candidate: &Value, path: &mut Vec<String>, out: &mut Vec<Vec<String>>) {
+    match candidate {
+        Value::Object(map) => {
+            for (key, child) in map {
+                path.push(key.clone());
+                kept_secrets(child, path, out);
+                path.pop();
+            }
+        }
+        Value::Array(items) => {
+            path.push("*".into());
+            if !is_users_path(path) {
+                for item in items {
+                    kept_secrets(item, path, out);
+                }
+            }
+            path.pop();
+        }
+        Value::String(text) if text == "***" && is_masked_field(path) => out.push(path.clone()),
+        _ => {}
+    }
+}
+
+/// [`restore_masked`], refusing to keep a secret in an object whose other settings changed:
+/// they may say where the secret goes (an identity provider's `issuer`, a server's address),
+/// and whoever cannot read the secret must not be able to send it elsewhere.
+fn restore_secrets(candidate: &mut Value, current: &Value) -> Result<(), String> {
+    let mut kept = Vec::new();
+    kept_secrets(candidate, &mut Vec::new(), &mut kept);
+    restore_masked(candidate, current, &mut Vec::new())?;
+    for path in kept {
+        let [section, name, ..] = path.as_slice() else {
+            continue;
+        };
+        let root = [section.as_str(), name.as_str()];
+        let new = masked(candidate[section.as_str()][name.as_str()].clone(), &root);
+        let old = masked(current[section.as_str()][name.as_str()].clone(), &root);
+        if new != old {
+            return Err(format!(
+                "{} is `***`, the masked value, while other settings of {section}.{name} changed; write the secret again (or a ${{file:…}} reference) when changing them",
+                path.join(".")
+            ));
+        }
+    }
+    Ok(())
+}
+
+/// The document every edit of the API objects starts from: what the caller reads (its own
+/// part for a tenant), secrets masked. Edits made on it go through [`restore_secrets`] like a
+/// whole document written back, so no route can keep a secret in an object whose other
+/// settings changed, or move or copy a secret it cannot read.
+pub(crate) fn editable(fragment: &Value, caller: &Caller) -> Value {
+    match caller.scope() {
+        Some(scope) => masked(scope.view(fragment), &[]),
+        None => masked(fragment.clone(), &[]),
+    }
+}
+
+/// The map keys from the root to the value at a JSON Pointer in `doc` (`*` for an array
+/// index, as [`is_masked_field`] reads them), as far as the document goes.
+fn pointer_keys(doc: &Value, pointer: &str) -> Vec<String> {
+    let mut keys = Vec::new();
+    let mut at = Some(doc);
+    for token in pointer.split('/').skip(1) {
+        let token = token.replace("~1", "/").replace("~0", "~");
+        match at {
+            Some(Value::Array(items)) => {
+                at = token.parse::<usize>().ok().and_then(|i| items.get(i));
+                keys.push("*".to_owned());
+            }
+            Some(Value::Object(map)) => {
+                at = map.get(&token);
+                keys.push(token);
+            }
+            _ => {
+                at = None;
+                keys.push(token);
+            }
+        }
+    }
+    keys
+}
+
+/// Whether `value`, found at `path`, is or holds a masked secret (`***`, or a basic-auth
+/// `name:***` entry).
+fn holds_masked(value: &Value, path: &mut Vec<String>) -> bool {
+    match value {
+        Value::Object(map) => map.iter().any(|(key, child)| {
+            path.push(key.clone());
+            let found = holds_masked(child, path);
+            path.pop();
+            found
+        }),
+        Value::Array(items) => {
+            path.push("*".into());
+            let found = items.iter().any(|item| holds_masked(item, path));
+            path.pop();
+            found
+        }
+        Value::String(text) if is_users_path(path) => text.ends_with(":***"),
+        Value::String(text) => text == "***" && is_masked_field(path),
+        _ => false,
+    }
+}
+
+/// Why a JSON Patch may not be applied to `doc` (the [`editable`] document), if it may not:
+/// `copy` and `move` may not take a secret elsewhere, and `test` may not compare one (an
+/// oracle for its value). Checked against the document as each operation finds it.
+fn secret_operation(doc: &Value, patch: &json_patch::Patch) -> Option<String> {
+    use json_patch::PatchOperation;
+    let mut doc = doc.clone();
+    for operation in &patch.0 {
+        let (verb, pointer) = match operation {
+            PatchOperation::Copy(op) => ("copy", op.from.as_str()),
+            PatchOperation::Move(op) => ("move", op.from.as_str()),
+            PatchOperation::Test(op) => ("test", op.path.as_str()),
+            _ => ("", ""),
+        };
+        if !verb.is_empty()
+            && let Some(value) = doc.pointer(pointer)
+            && holds_masked(value, &mut pointer_keys(&doc, pointer))
+        {
+            return Some(format!(
+                "`{verb}` of {pointer}: it is or holds a secret, which a patch can neither copy, move nor test; write the secret itself"
+            ));
+        }
+        // Later operations see what the earlier ones made; one that fails is reported when
+        // the whole patch is applied.
+        if json_patch::patch(&mut doc, std::slice::from_ref(operation)).is_err() {
+            return None;
+        }
+    }
+    None
+}
+
 pub(crate) fn masked(mut value: Value, root: &[&str]) -> Value {
     let mut path: Vec<String> = root.iter().map(|s| (*s).to_owned()).collect();
     mask(&mut value, &mut path);
@@ -279,6 +505,36 @@ fn hash_of(etag: &str) -> String {
         .to_owned()
 }
 
+/// The checks every write of the API objects passes, whichever route made the candidate
+/// (PUT, either PATCH, an object route, consumers, rollback, import; a tenant's against its
+/// own part): masked secrets are restored and may only stay in objects otherwise unchanged
+/// ([`restore_secrets`]), and a caller below administrator, or any tenant-scoped caller (a
+/// tenant's administrator is not the proxy's), may not write objects that act with the
+/// process's authority ([`operator_refusal`]; refusals are audited).
+fn admit(
+    state: &State,
+    caller: &Caller,
+    candidate: &mut Value,
+    current: &Value,
+    (action, resource): (&'static str, &Option<String>),
+) -> Result<(), Box<Response>> {
+    if let Err(message) = restore_secrets(candidate, current) {
+        return Err(Box::new(error(StatusCode::UNPROCESSABLE_ENTITY, &message)));
+    }
+    if (caller.access() < Access::Admin || caller.scope().is_some())
+        && let Some(message) = operator_refusal(current, candidate)
+    {
+        state.audit.record(Event {
+            outcome: Outcome::Denied,
+            reason: Some(message.clone()),
+            resource: resource.clone(),
+            ..caller.event(action)
+        });
+        return Err(Box::new(error(StatusCode::UNPROCESSABLE_ENTITY, &message)));
+    }
+    Ok(())
+}
+
 /// Applies a candidate through [`crate::Control::write_api`] and answers it, auditing as
 /// `action`.
 pub(crate) async fn write(
@@ -316,8 +572,8 @@ pub(crate) async fn write_as(
     let Some((current, _)) = api_config(state).await else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
     };
-    if let Err(message) = restore_masked(&mut candidate, &current, &mut Vec::new()) {
-        return error(StatusCode::UNPROCESSABLE_ENTITY, &message);
+    if let Err(refused) = admit(state, caller, &mut candidate, &current, (action, &resource)) {
+        return *refused;
     }
     let before = hash_of(&if_match);
     let control = state.control.clone();
@@ -354,7 +610,25 @@ pub(crate) async fn write_as(
             &etag,
         ),
         ApiWrite::Invalid(message) => error(StatusCode::UNPROCESSABLE_ENTITY, &message),
+        ApiWrite::NotStored(message) => not_stored(state, caller, action, resource, &message),
     }
+}
+
+/// The answer to a write whose stored copy could not be written: `507`, audited as failed.
+fn not_stored(
+    state: &State,
+    caller: &Caller,
+    action: &'static str,
+    resource: Option<String>,
+    message: &str,
+) -> Response {
+    state.audit.record(Event {
+        outcome: Outcome::Failed,
+        reason: Some("the configuration could not be stored".into()),
+        resource,
+        ..caller.event(action)
+    });
+    error(StatusCode::INSUFFICIENT_STORAGE, message)
 }
 
 pub(crate) async fn api_config(state: &State) -> Option<(Value, String)> {
@@ -485,9 +759,9 @@ pub(crate) async fn write_scoped(
             );
         }
         let mut candidate = candidate.clone();
-        if let Err(message) = restore_masked(&mut candidate, &scope.view(&current), &mut Vec::new())
-        {
-            return error(StatusCode::UNPROCESSABLE_ENTITY, &message);
+        let own = scope.view(&current);
+        if let Err(refused) = admit(state, caller, &mut candidate, &own, (action, &resource)) {
+            return *refused;
         }
         let full = match scope.merge(&current, &candidate) {
             Ok(full) => full,
@@ -534,6 +808,9 @@ pub(crate) async fn write_scoped(
             }
             // Another write came in between; try again on the new objects.
             ApiWrite::Stale { .. } => {}
+            ApiWrite::NotStored(message) => {
+                return not_stored(state, caller, action, resource, &message);
+            }
             ApiWrite::Invalid(message) => {
                 state.audit.record(Event {
                     outcome: Outcome::Failed,
@@ -590,13 +867,12 @@ pub(crate) async fn patch_api(
     let Ok(patch) = serde_json::from_slice::<Value>(&body) else {
         return error(StatusCode::BAD_REQUEST, "the body is not JSON");
     };
-    let Some((mut current, _)) = api_config(&state).await else {
+    let Some((fragment, _)) = api_config(&state).await else {
         return error(StatusCode::SERVICE_UNAVAILABLE, "rdock is shutting down");
     };
-    // A tenant patches its own part, as it reads it.
-    if let Some(scope) = caller.scope() {
-        current = scope.view(&current);
-    }
+    // The patch applies to the document as the caller reads it: a tenant's own part, secrets
+    // masked. The write then restores and checks the masked secrets like a PUT.
+    let mut current = editable(&fragment, &caller);
     match kind.as_str() {
         "application/merge-patch+json" => merge_patch(&mut current, &patch),
         "application/json-patch+json" => {
@@ -609,6 +885,9 @@ pub(crate) async fn patch_api(
                     );
                 }
             };
+            if let Some(message) = secret_operation(&current, &operations) {
+                return error(StatusCode::UNPROCESSABLE_ENTITY, &message);
+            }
             if let Err(err) = json_patch::patch(&mut current, &operations) {
                 return error(
                     StatusCode::UNPROCESSABLE_ENTITY,
@@ -891,6 +1170,120 @@ mod tests {
         let mut plain = json!({ "routes": { "r": { "match": "***" } } });
         restore_masked(&mut plain, &current, &mut Vec::new()).unwrap();
         assert_eq!(plain["routes"]["r"]["match"], "***");
+    }
+
+    #[test]
+    fn a_kept_secret_cannot_be_sent_somewhere_else() {
+        let current = json!({
+            "middlewares": {
+                "sso": {
+                    "type": "oidc", "issuer": "https://idp.example", "client_id": "app",
+                    "client_secret": "s3cret"
+                },
+                "auth": { "type": "basic_auth", "users": ["ann:$2y$05$abc"] }
+            }
+        });
+        // Read masked, the issuer changed, the secret kept as `***`: refused.
+        let mut moved = masked(current.clone(), &[]);
+        moved["middlewares"]["sso"]["issuer"] = json!("https://elsewhere.example");
+        let err = restore_secrets(&mut moved, &current).unwrap_err();
+        assert!(err.contains("middlewares.sso.client_secret"), "{err}");
+        assert!(err.contains("write the secret again"), "{err}");
+        // With the secret written again, or with the object unchanged, it is accepted.
+        let mut rewritten = moved.clone();
+        rewritten["middlewares"]["sso"]["client_secret"] = json!("n3w");
+        restore_secrets(&mut rewritten, &current).unwrap();
+        let mut same = masked(current.clone(), &[]);
+        restore_secrets(&mut same, &current).unwrap();
+        assert_eq!(same, current);
+        // Other objects may change around it; basic-auth entries keep their hashes as before.
+        let mut around = masked(current.clone(), &[]);
+        around["middlewares"]["auth"]["realm"] = json!("staff");
+        restore_secrets(&mut around, &current).unwrap();
+        assert_eq!(around["middlewares"]["sso"]["client_secret"], "s3cret");
+    }
+
+    #[test]
+    fn json_patches_cannot_take_or_compare_a_secret() {
+        let current = masked(
+            json!({ "middlewares": {
+                "sso": { "type": "oidc", "client_secret": "s3cret", "session": { "keys": ["k1"] } },
+                "auth": { "type": "basic_auth", "users": ["ann:$2y$05$abc"] },
+                "h": { "type": "headers", "request": { "set": { "x": "1" } } }
+            } }),
+            &[],
+        );
+        let refused = |ops: Value| {
+            let patch: json_patch::Patch = serde_json::from_value(ops).unwrap();
+            secret_operation(&current, &patch)
+        };
+        for ops in [
+            json!([{ "op": "copy", "from": "/middlewares/sso/client_secret", "path": "/middlewares/h/request/set/y" }]),
+            json!([{ "op": "move", "from": "/middlewares/sso/session/keys/0", "path": "/middlewares/h/request/set/y" }]),
+            json!([{ "op": "copy", "from": "/middlewares/auth/users/0", "path": "/middlewares/h/request/set/y" }]),
+            json!([{ "op": "copy", "from": "/middlewares", "path": "/routes" }]),
+            json!([{ "op": "test", "path": "/middlewares/sso/client_secret", "value": "***" }]),
+            // Found where an earlier operation put it.
+            json!([{ "op": "copy", "from": "/middlewares/sso", "path": "/middlewares/x" },
+                   { "op": "move", "from": "/middlewares/x/client_secret", "path": "/middlewares/h/request/set/y" }]),
+        ] {
+            assert!(refused(ops.clone()).is_some(), "{ops}");
+        }
+        for ops in [
+            json!([{ "op": "copy", "from": "/middlewares/h/request/set/x", "path": "/middlewares/h/request/set/y" }]),
+            json!([{ "op": "test", "path": "/middlewares/sso/type", "value": "oidc" }]),
+            json!([{ "op": "replace", "path": "/middlewares/sso/client_secret", "value": "n3w" }]),
+        ] {
+            assert_eq!(refused(ops.clone()), None, "{ops}");
+        }
+    }
+
+    #[test]
+    fn operators_cannot_write_objects_that_use_the_process_authority() {
+        let current = json!({
+            "services": { "kept": { "backends": [{ "address": "unix:///run/app.sock" }] } },
+            "middlewares": {}
+        });
+        let refused = |candidate: Value| operator_refusal(&current, &candidate);
+        for (candidate, needle) in [
+            (
+                json!({ "services": { "s": { "backends": [{ "address": "unix:///var/lib/rdock/admin.sock" }] } } }),
+                "unix://",
+            ),
+            (
+                json!({ "middlewares": { "m": { "type": "static", "root": "/var/lib/rdock" } } }),
+                "type: static",
+            ),
+            (
+                json!({ "middlewares": { "m": { "type": "plugin", "name": "x", "config": { "path": "/etc" } } } }),
+                "type: plugin",
+            ),
+            (
+                json!({ "middlewares": { "m": { "type": "errors", "status": ["500"], "file": "/etc/passwd" } } }),
+                "`file` reads a file",
+            ),
+            (
+                json!({ "middlewares": { "m": { "type": "oidc", "issuer": "https://x.example", "client_id": "a", "client_secret": "${env:VAULT_TOKEN}" } } }),
+                "`client_secret` holds a `${…}` reference",
+            ),
+            (
+                json!({ "services": { "s": { "backends": [{ "address": "a:1" }], "tls": { "key_file": "/k" } } } }),
+                "`tls.key_file` reads a file",
+            ),
+            (
+                json!({ "middlewares": { "m": { "type": "oidc", "issuer": "https://x.example", "client_id": "a", "session": { "key_file": "/k" } } } }),
+                "`session.key_file`",
+            ),
+        ] {
+            let message = refused(candidate).expect("refused");
+            assert!(message.contains(needle), "{message}");
+            assert!(message.contains("only an administrator"), "{message}");
+        }
+        // An object the operator leaves as it is stays, and ordinary objects are fine.
+        let mut untouched = current.clone();
+        untouched["services"]["web"] = json!({ "backends": [{ "address": "app:3000" }] });
+        untouched["middlewares"]["h"] = json!({ "type": "headers" });
+        assert_eq!(refused(untouched), None);
     }
 
     #[test]

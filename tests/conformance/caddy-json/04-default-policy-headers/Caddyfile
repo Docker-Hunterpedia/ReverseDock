@@ -1,0 +1,9 @@
+# Exercises: Caddy's default random policy, header_up with a forwarding placeholder and a literal, header_down removal, flush_interval.
+www.example.org {
+	reverse_proxy web-a:80 web-b:80 {
+		header_up X-Real-IP {remote_host}
+		header_up X-App-Name shop
+		header_down -Server
+		flush_interval -1
+	}
+}

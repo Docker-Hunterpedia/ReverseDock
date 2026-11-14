@@ -1,0 +1,21 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "plugin",
+    "digestauth",
+    "circuitbreaker",
+    "observability",
+    "rulesyntax",
+    "tls.options",
+    "serverstransport",
+    "usersfile from a label",
+    "an unknown label"
+  ],
+  "diff": false,
+  "expect_invalid": [
+    "middleware `geo` does not exist",
+    "middleware `digest` does not exist",
+    "middleware `cb` does not exist",
+    "middleware `files` does not exist"
+  ]
+}

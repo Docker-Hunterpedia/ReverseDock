@@ -57,6 +57,7 @@ impl Config {
             out: Vec::new(),
         };
         v.check_version();
+        crate::maturity::check_opt_in(self, merged, &mut v.out);
         v.check_listeners();
         v.check_sockets();
         v.check_resumption();
@@ -2159,6 +2160,12 @@ impl Validator<'_> {
         let window_ok = |w: crate::values::Duration| {
             (minute..=std::time::Duration::from_secs(900)).contains(&w.as_std())
         };
+        if alerts.rules.disk.free_percent > 50 {
+            self.error(
+                "observability.alerts.rules.disk.free_percent",
+                "must be between 0 and 50",
+            );
+        }
         if let Some(rule) = alerts.rules.error_rate {
             if !(1..=100).contains(&rule.percent) {
                 self.error(

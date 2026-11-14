@@ -2,7 +2,7 @@
 title: providers
 description: "Dynamic configuration sources (file, Docker, Swarm, Kubernetes)."
 sidebar:
-  order: 15
+  order: 16
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -16,6 +16,12 @@ Dynamic configuration sources (file, Docker, Swarm, Kubernetes).
 **Type:** object
 
 Docker containers and their labels.
+
+### `providers.docker.allow_local_backends`
+
+**Type:** `boolean` · **Default:** `false`
+
+Let labels name a backend or a middleware URL on the proxy's own machine (loopback, `localhost`, unspecified) or a link-local or cloud metadata address. Off by default: a container could otherwise publish ReverseDock's admin listener or other local services. Names from labels are checked again whenever they resolve; private networks are always allowed.
 
 ### `providers.docker.endpoint`
 
@@ -141,7 +147,7 @@ Type of the Service created for each Gateway; its addresses become the Gateway's
 - `cluster_ip`: `ClusterIP`: reachable inside the cluster only; the cluster IP is the Gateway address.
 - `node_port`: `NodePort`: a port on every node. The Gateway address is still the Service's cluster IP, reachable only inside the cluster (`status.addresses` cannot hold a node port); clients outside use a node's address and the node port. `rdock validate` warns.
 
-### `providers.kubernetes.ingress`
+### `providers.kubernetes.ingress` <Status maturity="beta" />
 
 **Type:** object · **Default:** see the fields below
 
@@ -218,6 +224,12 @@ Namespaces whose objects are watched; all namespaces when empty. Cluster-scoped 
 **Type:** object
 
 Docker Swarm services and their `deploy.labels`.
+
+### `providers.swarm.allow_local_backends`
+
+**Type:** `boolean` · **Default:** `false`
+
+Let labels name a backend or a middleware URL on the proxy's own machine (loopback, `localhost`, unspecified) or a link-local or cloud metadata address. Off by default: a service could otherwise publish ReverseDock's admin listener or other local services. Names from labels are checked again whenever they resolve; private networks are always allowed.
 
 ### `providers.swarm.endpoint`
 

@@ -1,9 +1,14 @@
 # Caddy: HTTPS on :8080 with a given certificate; access logs are off unless `log` is set.
+# TLS parity (README "TLS parity"): TLS 1.3 only and X25519 only. TLS 1.3 cipher suites are not
+# configurable in Caddy (Go chooses); HTTP/2 is on by default.
 {
   auto_https off
   admin off
 }
 https://:8080 {
-  tls /certs/cert.pem /certs/key.pem
+  tls /certs/cert.pem /certs/key.pem {
+    protocols tls1.3
+    curves x25519
+  }
   reverse_proxy backend:80
 }

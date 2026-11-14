@@ -1,0 +1,4 @@
+app
+rdock.enable=true
+rdock.host=a.test
+rdock.port=80

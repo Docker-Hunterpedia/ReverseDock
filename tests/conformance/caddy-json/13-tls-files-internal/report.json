@@ -1,0 +1,171 @@
+{
+  "findings": [
+    {
+      "code": "caddy.tls.exact",
+      "level": "exact",
+      "message": "certificate files → `certificates.cert0` (the files are named, never read)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/certificates/load_files/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "certificates.cert0"
+    },
+    {
+      "code": "caddy.tls.exact",
+      "level": "exact",
+      "message": "Caddy's internal CA for private names → ReverseDock's local CA, which signs these names automatically (`rdock trust` installs its root)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/0/issuers/0",
+        "kind": "key",
+        "scope": "tls"
+      }
+    },
+    {
+      "code": "caddy.tls.exact",
+      "level": "exact",
+      "message": "applies to dev.localhost",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.server.approximate",
+      "level": "approximate",
+      "message": "routes for secure.example.com use `certificates.cert0` (`tls.certificate`); matched by server name; TLS 1.3 only → `tls.policy: modern` on the whole listener, also for the names of other connection policies",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/tls_connection_policies/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "TLS with the defaults",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/tls_connection_policies/1",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/1/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/1/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/1/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.default.dial_timeout",
+      "level": "exact",
+      "message": "Caddy's default dial timeout (3s) is written as `timeouts.connect: 3s` on each service (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "caddy.default.response_timeout",
+      "level": "approximate",
+      "message": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads (raise it on services with slow answers)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 11,
+    "items": 12,
+    "manual": 0,
+    "result": 2
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

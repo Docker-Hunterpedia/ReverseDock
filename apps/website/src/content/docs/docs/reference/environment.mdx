@@ -69,6 +69,15 @@ The admin API address used by `rdock reload`, `rdock status` and `rdock healthch
 `admin.listener` in the configuration file, with `127.0.0.1` in place of an unspecified address;
 when the file cannot be read, `127.0.0.1:2080` is used.
 
+### Read without a flag
+
+| Variable | Read by | Meaning |
+|---|---|---|
+| `RDOCK_ZONE` <Status since="v0.9" feature="balancing" /> | `run` | This instance's zone when [`locality.zone`](/docs/reference/configuration/locality/) is not set, for zone-aware balancing. |
+| `RDOCK_POD_NAME`, `RDOCK_POD_NAMESPACE` <Status since="v0.7" /> | `run` with the Kubernetes provider | The controller's own pod and namespace, set by the Helm chart from the downward API. |
+
+Variables that start with `RDOCK_BUILD_`, `RDOCK_TEST_` or `RDOCK_FAULT`, end in `_TESTS`, or are named `RDOCK_UPGRADE_FAULT`, `RDOCK_CHAOS_DISK`, `RDOCK_UPDATE_GOLDEN`, `RDOCK_ALLOC_COUNT_SOCKET` or `RDOCK_COMPAT_*` are for building and testing ReverseDock and are not part of the [stability promise](/docs/project/stability/).
+
 ## Read by other programs, not by `rdock`
 
 The [Terraform and OpenTofu provider](/docs/guides/terraform/) <Status since="v0.8" /> reads `RDOCK_ADMIN_URL` (the URL of the admin API, `https://…`, or `http://` on a loopback address) and `RDOCK_ADMIN_TOKEN` (the same kind of API token as above). The `rdock` binary ignores `RDOCK_ADMIN_URL`; it takes `RDOCK_ADMIN` as `IP:port`.

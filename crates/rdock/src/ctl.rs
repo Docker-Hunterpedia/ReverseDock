@@ -366,6 +366,18 @@ pub(crate) fn status(args: &StatusArgs) -> anyhow::Result<ExitCode> {
     for cert in s["certificates"].as_array().into_iter().flatten() {
         lines.push(certificate_line(cert));
     }
+    if let Some(available) = s["data_dir"]["available_bytes"].as_u64() {
+        lines.push(format!(
+            "data dir     {} — {} MiB free{}",
+            s["data_dir"]["path"].as_str().unwrap_or("?"),
+            available >> 20,
+            if s["data_dir"]["low"] == true {
+                " (low: configuration writes, mutating admin calls and certificate orders are refused when it is full)"
+            } else {
+                ""
+            }
+        ));
+    }
     if let Some(last) = s["last_reload"].as_object() {
         lines.push(format!(
             "last reload  {} by {} at {}",

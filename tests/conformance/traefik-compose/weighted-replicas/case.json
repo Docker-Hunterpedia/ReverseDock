@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "one service declared by two Compose services",
+    "server.weight",
+    "strategy"
+  ],
+  "diff": false
+}

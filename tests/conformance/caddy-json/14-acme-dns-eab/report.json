@@ -1,0 +1,131 @@
+{
+  "findings": [
+    {
+      "code": "caddy.tls.credentials",
+      "hint": "set ACME_EAB_HMAC_KEY in ReverseDock's environment (or use `${file:…}` references)",
+      "level": "manual",
+      "message": "DNS-01 with `cloudflare` → `acme.dns_providers.cloudflare` (type `cloudflare`); credentials are never copied: the output reads them from `ACME_EAB_HMAC_KEY`",
+      "security": true,
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/0/issuers/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.tls.exact",
+      "level": "exact",
+      "message": "translated",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.default.dial_timeout",
+      "level": "exact",
+      "message": "Caddy's default dial timeout (3s) is written as `timeouts.connect: 3s` on each service (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "caddy.default.response_timeout",
+      "level": "approximate",
+      "message": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads (raise it on services with slow answers)"
+    },
+    {
+      "code": "caddy.route.unanswered",
+      "level": "approximate",
+      "message": "requests that no handler answers (for example a path a site does not handle) get an empty `200` from Caddy; ReverseDock answers `404`"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 7,
+    "items": 8,
+    "manual": 1,
+    "result": 3
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

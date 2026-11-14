@@ -1,0 +1,78 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `app` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "rdock.label",
+      "level": "exact",
+      "message": "read as it is",
+      "source": {
+        "file": "compose.yaml",
+        "item": "rdock.enable",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "rdock.label",
+      "level": "exact",
+      "message": "read as it is",
+      "source": {
+        "file": "compose.yaml",
+        "item": "rdock.host",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "rdock.label",
+      "level": "exact",
+      "message": "read as it is",
+      "source": {
+        "file": "compose.yaml",
+        "item": "rdock.middlewares",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`compress` with its defaults; ReverseDock compresses common text types only (Traefik: every type not excluded, and it sniffs a missing `Content-Type`), and prefers zstd, then br, then gzip (Traefik: gzip, br, zstd)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.gz.compress",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "middlewares.gz"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 4,
+    "items": 5,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

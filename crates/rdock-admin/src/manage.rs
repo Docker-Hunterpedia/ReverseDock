@@ -30,6 +30,13 @@ macro_rules! check {
 
 fn internal(err: &std::io::Error) -> Response {
     tracing::error!(error = %err, "cannot save the admin state");
+    if rdock_config::disk::is_out_of_space(err) {
+        // ADR-0033: a change that cannot be stored is refused with nothing changed.
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "cannot save the change: the disk is full; nothing was changed",
+        );
+    }
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save the change")
 }
 

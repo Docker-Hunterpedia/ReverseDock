@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "router labels without traefik.enable (Traefik's exposedByDefault)",
+    "traefik.enable=false"
+  ],
+  "diff": false
+}

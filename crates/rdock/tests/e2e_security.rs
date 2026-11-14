@@ -114,6 +114,19 @@ async fn target_authority_and_header_syntax_vectors() {
         ("28 bare LF headers", b"GET / HTTP/1.1\nHost: x\n\n"),
         ("29 obfuscated Expect", b"POST / HTTP/1.1\r\nHost: x\r\nContent-Length: 6\r\nExpect: y 100-continue\r\n\r\nABCDEF"),
         ("31 Connection nominates XFF", b"GET / HTTP/1.1\r\nHost: x\r\nConnection: keep-alive, X-Forwarded-For\r\nX-Forwarded-For: 1.2.3.4\r\n\r\n"),
+        ("Host with a path", b"GET / HTTP/1.1\r\nHost: a/b.example.com\r\n\r\n"),
+        ("Host with a query", b"GET / HTTP/1.1\r\nHost: a?b.example.com\r\n\r\n"),
+        ("Host with a backslash", b"GET / HTTP/1.1\r\nHost: a\\b.example.com\r\n\r\n"),
+        ("Host with a space", b"GET / HTTP/1.1\r\nHost: a b\r\n\r\n"),
+        ("Host with a bad port", b"GET / HTTP/1.1\r\nHost: a.example.com:http\r\n\r\n"),
+        ("WebSocket handshake with a body", b"GET / HTTP/1.1\r\nHost: x\r\nUpgrade: websocket\r\nConnection: Upgrade\r\nContent-Length: 5\r\n\r\nhello"),
+        ("ambiguous path ..;", b"GET /public/..;/admin HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ("ambiguous path %2F", b"GET /public/..%2Fadmin HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ("ambiguous path %5C", b"GET /public/%5C..%5Cadmin HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ("ambiguous path backslash", b"GET /public\\..\\admin HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ("ambiguous path %2F..%2F", b"GET /public%2F..%2Fadmin HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ("ambiguous path %2e%2e%5C", b"GET /public/%2e%2e%5Cadmin HTTP/1.1\r\nHost: x\r\n\r\n"),
+        ("ambiguous path %00", b"GET /a%00 HTTP/1.1\r\nHost: x\r\n\r\n"),
     ];
     for (name, raw) in vectors {
         let found = send(&s, raw).await;
@@ -211,4 +224,130 @@ async fn idle_connections_without_bytes_are_closed() {
         .unwrap();
     assert_eq!(n, 0);
     assert!(started.elapsed() < Duration::from_secs(3));
+}
+
+/// The body of the backend's JSON echo in a raw response.
+fn echoed(raw: &[u8]) -> serde_json::Value {
+    let text = String::from_utf8_lossy(raw);
+    let body = text.split_once("\r\n\r\n").map_or("", |(_, b)| b);
+    let start = body.find('{').unwrap_or(0);
+    let end = body.rfind('}').map_or(body.len(), |i| i + 1);
+    serde_json::from_str(&body[start..end]).unwrap_or(serde_json::Value::Null)
+}
+
+/// A client cannot have headers rdock sets removed by naming them in `Connection`.
+#[tokio::test]
+async fn connection_cannot_strip_headers_rdock_sets() {
+    let s = setup("").await;
+    let raw = b"GET /echo HTTP/1.1\r\nHost: x\r\nConnection: keep-alive, X-Real-IP, X-Request-Id, X-Forwarded-Port\r\nX-Real-IP: 10.9.9.9\r\nConnection: close\r\n\r\n";
+    let received = client::raw(s.addr, raw, WAIT).await;
+    assert_eq!(statuses(&received), vec![200]);
+    let echo = echoed(&received);
+    let headers = &echo["headers"];
+    assert_eq!(
+        headers["x-real-ip"],
+        serde_json::json!(["127.0.0.1"]),
+        "{echo}"
+    );
+    assert!(headers["x-request-id"].is_array(), "{echo}");
+    assert!(headers["x-forwarded-port"].is_array(), "{echo}");
+}
+
+/// An `Upgrade` that is not a WebSocket handshake does not make a body a stream: Pingora drops
+/// the header and forwards the body, so the body-holding middlewares must see it.
+#[tokio::test]
+async fn an_upgrade_header_does_not_hide_a_body_from_validation() {
+    let backend = Backend::start("app").await;
+    let port = free_port();
+    let config = format!(
+        r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "PathPrefix(`/`)", service: app, middlewares: [check] }}
+services:
+  app: {{ backends: [{{ address: "{}" }}] }}
+middlewares:
+  check:
+    type: validate
+    body: {{ type: object, properties: {{ qty: {{ type: integer, minimum: 1 }} }} }}
+"#,
+        backend.addr
+    );
+    let _rdock = Rdock::start(RDOCK, &config);
+    let addr = SocketAddr::from(([127, 0, 0, 1], port));
+    let body = r#"{"qty":-1}"#;
+    for upgrade in ["x", "h2c"] {
+        let raw = format!(
+            "POST /orders HTTP/1.1\r\nHost: x\r\nUpgrade: {upgrade}\r\nConnection: Upgrade, close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        let found = statuses(&client::raw(addr, raw.as_bytes(), WAIT).await);
+        assert_eq!(found, vec![400], "Upgrade: {upgrade}");
+    }
+    // The head may already have left when the held body is refused (ADR-0030); the request
+    // is then aborted, so no answer of the backend reaches the client.
+    // A valid body still goes through.
+    let ok = r#"{"qty":2}"#;
+    let raw = format!(
+        "POST /orders HTTP/1.1\r\nHost: x\r\nUpgrade: x\r\nConnection: Upgrade, close\r\nContent-Type: application/json\r\nContent-Length: {}\r\n\r\n{ok}",
+        ok.len()
+    );
+    assert_eq!(
+        statuses(&client::raw(addr, raw.as_bytes(), WAIT).await),
+        vec![200]
+    );
+}
+
+/// `security.paths.ambiguous: forward` restores routing such paths as written.
+#[tokio::test]
+async fn ambiguous_paths_can_be_forwarded_on_request() {
+    let s = setup("security: { paths: { ambiguous: forward } }").await;
+    let found = send(
+        &s,
+        b"GET /public/..;/admin HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+    )
+    .await;
+    assert_eq!(found, vec![200]);
+    assert!(
+        s.backend.targets().iter().any(|t| t == "/public/..;/admin"),
+        "{:?}",
+        s.backend.targets()
+    );
+}
+
+/// Encoded separators that form no dot segment (GitLab-style project paths, scoped npm
+/// packages) pass by default and reach the backend exactly as sent.
+#[tokio::test]
+async fn encoded_separators_without_a_dot_segment_pass_unchanged_by_default() {
+    let s = setup("").await;
+    for target in ["/api/projects/group%2Fproject", "/@scope%2Fname", "/a%5Cb"] {
+        let raw = format!("GET {target} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        assert_eq!(send(&s, raw.as_bytes()).await, vec![200], "{target}");
+        assert!(
+            s.backend.targets().iter().any(|t| t == target),
+            "{target}: {:?}",
+            s.backend.targets()
+        );
+    }
+}
+
+/// `security.paths.encoded_separators: reject` refuses every encoded separator.
+#[tokio::test]
+async fn encoded_separators_can_be_refused() {
+    let s = setup("security: { paths: { encoded_separators: reject } }").await;
+    for target in ["/api/projects/group%2Fproject", "/@scope%2fname", "/a%5Cb"] {
+        let raw = format!("GET {target} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        assert_eq!(send(&s, raw.as_bytes()).await, vec![400], "{target}");
+    }
+    assert_eq!(s.backend.requests(), 0, "{:?}", s.backend.targets());
+    assert_eq!(
+        send(
+            &s,
+            b"GET /fine HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n"
+        )
+        .await,
+        vec![200]
+    );
 }

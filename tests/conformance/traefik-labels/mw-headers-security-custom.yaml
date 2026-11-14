@@ -1,0 +1,44 @@
+description: "Security headers with custom values; customFrameOptionsValue and customBrowserXSSValue override frameDeny and browserXssFilter in any label order, and an empty value sets nothing."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.sec.headers.FrameDeny: "true"
+      traefik.http.middlewares.sec.headers.customFrameOptionsValue: "SAMEORIGIN"
+      traefik.http.middlewares.sec.headers.browserXssFilter: "true"
+      traefik.http.middlewares.sec.headers.customBrowserXSSValue: "0"
+      traefik.http.middlewares.sec.headers.contentSecurityPolicy: "default-src 'self'"
+      traefik.http.middlewares.sec.headers.contentSecurityPolicyReportOnly: "script-src 'none'"
+      traefik.http.middlewares.sec.headers.referrerPolicy: "no-referrer"
+      traefik.http.middlewares.sec.headers.permissionsPolicy: "camera=()"
+      traefik.http.middlewares.sec.headers.stsPreload: "true"
+      traefik.http.middlewares.sec.headers.stsSeconds: "60"
+      traefik.http.middlewares.empty.headers.referrerPolicy: ""
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    sec:
+      type: "headers"
+      response:
+        set:
+          X-Frame-Options: "SAMEORIGIN"
+          X-XSS-Protection: "0"
+          Content-Security-Policy: "default-src 'self'"
+          Content-Security-Policy-Report-Only: "script-src 'none'"
+          Referrer-Policy: "no-referrer"
+          Permissions-Policy: "camera=()"
+      hsts:
+        max_age: "1m"
+        preload: true
+    empty:
+      type: "headers"
+      response:
+        set: {}

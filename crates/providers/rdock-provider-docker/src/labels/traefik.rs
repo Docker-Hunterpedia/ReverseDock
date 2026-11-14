@@ -1,9 +1,15 @@
-//! The Traefik v3 label subset (W-DKR-03, architecture §11). Each supported label maps onto a
-//! field of the model; every other `traefik.*` label is a warning naming it.
+//! The Traefik v3 label subset (W-DKR-03, architecture §11, ADR-0033). Each supported label
+//! maps onto a field of the model; every other `traefik.*` label is a warning naming it, with
+//! the reason from the coverage table ([`super::coverage`]).
 //!
 //! Label names follow Traefik's Docker provider reference
 //! (<https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/docker/>,
-//! checked 2026-10-28). Keys are compared in lower case, as Traefik does.
+//! checked 2026-10-28, again 2026-11-14 for v3.7). Keys are compared in lower case, as Traefik
+//! does. The options added on 2026-11-14 (server weight, cookie path, `ipWhiteList`, `chain`,
+//! the security headers, `accessControl*`, `compress` encodings and content types, the rate
+//! limit's header key) follow the v3.7 pages of each middleware and of the load balancer
+//! (<https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/headers/>,
+//! `…/compress/`, `…/chain/`, `…/ratelimit/`, `…/http/load-balancing/service/`).
 
 use serde_json::Value;
 
@@ -30,7 +36,21 @@ pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: 
         Err(unsupported())
     };
     if let Err(message) = result {
+        let message = if message == unsupported() {
+            reason(key)
+        } else {
+            message
+        };
         scope.warn(key, message);
+    }
+}
+
+/// Why a label that no arm takes is ignored: the coverage table's note for a Traefik label
+/// without an equivalent, else the generic text.
+fn reason(key: &str) -> String {
+    match super::coverage::lookup(key) {
+        Some(row) if !row.status.translated() => format!("{}; the label is ignored", row.note),
+        _ => unsupported(),
     }
 }
 
@@ -95,6 +115,7 @@ fn router(
         },
         // Any resolver means automatic certificates from the default ACME account.
         "tls.certresolver" => auto_tls(route),
+        "tls.options" => Err("TLS options are listener settings here: set `listeners.<name>.tls` (`policy`, `client_auth`) in rdock.yaml; the label is ignored".to_owned()),
         _ => match field.strip_prefix("tls.domains[") {
             Some(rest) => domain(route, rest, value),
             None => Err(unsupported()),
@@ -167,6 +188,16 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
             Ok(())
         }
         "server.scheme" => service.tree.set("scheme", Value::String(value.to_owned())),
+        "server.weight" => {
+            let weight = value
+                .trim()
+                .parse::<u32>()
+                .ok()
+                .filter(|w| *w > 0)
+                .ok_or_else(|| format!("`{value}` is not a weight above 0"))?;
+            service.weight = Some(weight);
+            Ok(())
+        }
         "server.url" => {
             let (scheme, address) = value
                 .split_once("://")
@@ -176,7 +207,8 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
             service.tree.set("scheme", Value::String(scheme.to_owned()))
         }
         "passhostheader" => service.tree.set("pass_host_header", scalar(value)),
-        "sticky.cookie" => match value {
+        "sticky" | "sticky.cookie" => match value {
+            "true" if service.tree.contains("sticky.cookie.name") => Ok(()),
             "true" => service.tree.set(
                 "sticky.cookie.name",
                 Value::String("rdock_sticky".to_owned()),
@@ -185,7 +217,7 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
         },
         "sticky.cookie.name" => service
             .tree
-            .set("sticky.cookie.name", Value::String(value.to_owned())),
+            .replace("sticky.cookie.name", Value::String(value.to_owned())),
         "sticky.cookie.secure" => service.tree.set("sticky.cookie.secure", scalar(value)),
         "sticky.cookie.httponly" => service.tree.set("sticky.cookie.http_only", scalar(value)),
         "sticky.cookie.samesite" => service.tree.set(
@@ -193,6 +225,9 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
             Value::String(value.to_ascii_lowercase()),
         ),
         "sticky.cookie.maxage" => service.tree.set("sticky.cookie.max_age", seconds(value)),
+        "sticky.cookie.path" => service
+            .tree
+            .set("sticky.cookie.path", Value::String(value.to_owned())),
         "strategy" => {
             let policy = match value.to_ascii_lowercase().as_str() {
                 "wrr" => "round_robin",
@@ -288,11 +323,15 @@ enum Kind {
     List,
     Seconds,
     Port,
+    /// A comma-separated list in lower case.
+    Lower,
+    /// A header name as a limit key: `header:<Name>`.
+    Header,
 }
 
 /// Traefik middleware settings with a direct counterpart: (middleware, setting) → (our type,
 /// our field, value kind).
-const MIDDLEWARES: [(&str, &str, &str, &str, Kind); 24] = [
+const MIDDLEWARES: [(&str, &str, &str, &str, Kind); 28] = [
     ("redirectscheme", "scheme", "redirect", "scheme", Kind::Text),
     (
         "redirectscheme",
@@ -395,11 +434,57 @@ const MIDDLEWARES: [(&str, &str, &str, &str, Kind); 24] = [
         Kind::List,
     ),
     ("errors", "status", "errors", "status", Kind::List),
+    // `ipWhiteList` is the old name of `ipAllowList`, still in Traefik v3.7's label list.
+    (
+        "ipwhitelist",
+        "sourcerange",
+        "ip_allow",
+        "cidrs",
+        Kind::List,
+    ),
+    // Traefik's `encodings` is the list in order of preference, as `algorithms`.
+    (
+        "compress",
+        "encodings",
+        "compress",
+        "algorithms",
+        Kind::Lower,
+    ),
+    (
+        "compress",
+        "includedcontenttypes",
+        "compress",
+        "content_types",
+        Kind::List,
+    ),
+    (
+        "ratelimit",
+        "sourcecriterion.requestheadername",
+        "rate_limit",
+        "key",
+        Kind::Header,
+    ),
 ];
 
 fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
     let (kind, setting) = field.split_once('.').unwrap_or((field, ""));
     let (our_type, our_field, value) = match (kind, setting) {
+        ("headers", s) if s.starts_with("accesscontrol") || s == "addvaryheader" => {
+            return cors(draft, name, s, value);
+        }
+        ("chain", "middlewares") => {
+            let names: Vec<String> = value
+                .split(',')
+                .map(str::trim)
+                .filter(|m| !m.is_empty())
+                .map(str::to_owned)
+                .collect();
+            if names.is_empty() {
+                return Err("the chain lists no middleware".to_owned());
+            }
+            draft.chains.insert(name.to_owned(), names);
+            return Ok(());
+        }
         ("headers", _) => {
             let tree = draft.middlewares.entry(name.to_owned()).or_default();
             set_type(tree, "headers")?;
@@ -444,6 +529,8 @@ fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result
                 Kind::List => list(value),
                 Kind::Seconds => seconds(value),
                 Kind::Port => Value::from(port(value)?),
+                Kind::Lower => list(&value.to_ascii_lowercase()),
+                Kind::Header => Value::String(format!("header:{}", value.trim())),
             };
             (*our_type, Some(*our_field), value)
         }
@@ -476,6 +563,36 @@ fn headers(tree: &mut super::Tree, setting: &str, value: &str) -> Result<(), Str
             )
         }
     };
+    // A security header with a custom value: Traefik leaves an empty value out, and the custom
+    // value of `X-Frame-Options` and `X-XSS-Protection` overrides `frameDeny` and
+    // `browserXssFilter` whatever the order of the labels.
+    let header = |name: &str| format!("response.set.{name}");
+    let custom_value = match setting {
+        "customframeoptionsvalue" => Some("X-Frame-Options"),
+        "custombrowserxssvalue" => Some("X-XSS-Protection"),
+        "contentsecuritypolicy" => Some("Content-Security-Policy"),
+        "contentsecuritypolicyreportonly" => Some("Content-Security-Policy-Report-Only"),
+        "referrerpolicy" => Some("Referrer-Policy"),
+        "permissionspolicy" => Some("Permissions-Policy"),
+        _ => None,
+    };
+    if let Some(name) = custom_value {
+        if value.is_empty() {
+            return Ok(());
+        }
+        return tree.replace(&header(name), Value::String(value.to_owned()));
+    }
+    let fixed = match (setting, value) {
+        ("framedeny", "true") => Some(("X-Frame-Options", "DENY")),
+        ("browserxssfilter", "true") => Some(("X-XSS-Protection", "1; mode=block")),
+        _ => None,
+    };
+    if let Some((name, fixed)) = fixed {
+        if tree.contains(&header(name)) {
+            return Ok(());
+        }
+        return tree.set(&header(name), Value::String(fixed.to_owned()));
+    }
     let (path, value) = if let Some(header) = setting.strip_prefix("customrequestheaders.") {
         custom("request", header)
     } else if let Some(header) = setting.strip_prefix("customresponseheaders.") {
@@ -485,17 +602,9 @@ fn headers(tree: &mut super::Tree, setting: &str, value: &str) -> Result<(), Str
             ("stsseconds", v) => ("hsts.max_age".to_owned(), seconds(v)),
             ("stsincludesubdomains", v) => ("hsts.include_subdomains".to_owned(), scalar(v)),
             ("stspreload", v) => ("hsts.preload".to_owned(), scalar(v)),
-            ("framedeny", "true") => (
-                "response.set.X-Frame-Options".to_owned(),
-                Value::String("DENY".to_owned()),
-            ),
             ("contenttypenosniff", "true") => (
                 "response.set.X-Content-Type-Options".to_owned(),
                 Value::String("nosniff".to_owned()),
-            ),
-            ("browserxssfilter", "true") => (
-                "response.set.X-XSS-Protection".to_owned(),
-                Value::String("1; mode=block".to_owned()),
             ),
             ("framedeny" | "contenttypenosniff" | "browserxssfilter", _) => return Ok(()),
             _ => return Err(unsupported()),
@@ -505,6 +614,25 @@ fn headers(tree: &mut super::Tree, setting: &str, value: &str) -> Result<(), Str
         return tree.push(&path, value);
     }
     tree.set(&path, value)
+}
+
+/// The CORS settings of a Traefik `headers` middleware (`accessControl*`): a `cors` middleware
+/// of the same name, or `<name>-cors` next to it when the headers middleware sets headers too
+/// (see [`super::Scope::build`]).
+fn cors(draft: &mut Draft, name: &str, setting: &str, value: &str) -> Result<(), String> {
+    let tree = draft.cors.entry(name.to_owned()).or_default();
+    let (field, value) = match setting {
+        "accesscontrolallowcredentials" => ("allow_credentials", scalar(value)),
+        "accesscontrolallowheaders" => ("allowed_headers", list(value)),
+        "accesscontrolallowmethods" => ("allowed_methods", list(value)),
+        "accesscontrolalloworiginlist" => ("allowed_origins", list(value)),
+        "accesscontrolexposeheaders" => ("exposed_headers", list(value)),
+        "accesscontrolmaxage" => ("max_age", seconds(value)),
+        // `Vary: Origin` is always sent.
+        "addvaryheader" => return Ok(()),
+        _ => return Err(unsupported()),
+    };
+    tree.set(field, value)
 }
 
 /// A Traefik `retry` middleware, waiting to be moved onto services.

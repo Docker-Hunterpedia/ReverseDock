@@ -92,16 +92,37 @@ impl StateDir {
 
     /// Adds a history entry and removes the oldest ones beyond `keep`.
     pub fn record(&self, entry: &HistoryEntry, keep: usize) -> io::Result<PathBuf> {
-        let dir = self.history_dir();
+        let staged = self.stage_history(entry)?;
+        let path = staged.path().to_owned();
+        staged.commit()?;
+        self.prune_history(keep)?;
+        Ok(path)
+    }
+
+    /// Writes a history entry next to its place without adding it yet ([`stage`]).
+    pub fn stage_history(&self, entry: &HistoryEntry) -> io::Result<Staged> {
         let mut hasher = std::collections::hash_map::DefaultHasher::new();
         entry.source.to_string().hash(&mut hasher);
         entry.api.as_ref().map(Value::to_string).hash(&mut hasher);
-        let path = dir.join(format!(
+        let path = self.history_dir().join(format!(
             "{:013}-{:016x}.json",
             entry.applied_at_ms,
             hasher.finish()
         ));
-        write_atomic(&path, &serde_json::to_vec_pretty(entry)?)?;
+        stage(&path, &serde_json::to_vec_pretty(entry)?)
+    }
+
+    /// Writes a provider snapshot next to its place without replacing the stored one yet.
+    pub fn stage_snapshot(&self, snapshot: &Snapshot) -> io::Result<Staged> {
+        stage(
+            &self.snapshot_path(&snapshot.provider),
+            &serde_json::to_vec_pretty(snapshot)?,
+        )
+    }
+
+    /// Removes the oldest history entries beyond `keep`.
+    pub fn prune_history(&self, keep: usize) -> io::Result<()> {
+        let dir = self.history_dir();
         let mut names: Vec<PathBuf> = fs::read_dir(&dir)?
             .filter_map(Result::ok)
             .map(|e| e.path())
@@ -112,7 +133,7 @@ impl StateDir {
         for old in &names[..excess] {
             fs::remove_file(old)?;
         }
-        Ok(path)
+        Ok(())
     }
 
     /// History entries, oldest first.
@@ -132,8 +153,23 @@ impl StateDir {
 }
 
 /// Writes `bytes` to a temporary file next to `path`, syncs it and renames it into place, so
-/// readers see either the old or the new file. Files are readable by the owner only.
+/// readers see either the old or the new file. Files are readable by the owner only. A write
+/// that fails (a full disk) removes its temporary file and leaves `path` as it was.
 pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    stage(path, bytes)?.commit()
+}
+
+/// Writes `bytes` to the temporary file of `path` and syncs it, without replacing `path`:
+/// [`Staged::commit`] renames it into place, dropping the [`Staged`] removes it. A
+/// configuration change stages its stored copies first and commits them only after the data
+/// plane took the change, so a change that cannot be stored is refused before it is applied
+/// and one the data plane refuses leaves the stored copies untouched (ADR-0033).
+///
+/// # Errors
+///
+/// The directory cannot be created, or the temporary file cannot be written in full; nothing
+/// is left behind then.
+pub fn stage(path: &Path, bytes: &[u8]) -> io::Result<Staged> {
     let dir = path
         .parent()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no parent"))?;
@@ -142,14 +178,62 @@ pub fn write_atomic(path: &Path, bytes: &[u8]) -> io::Result<()> {
         .file_name()
         .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidInput, "path has no file name"))?;
     let tmp = dir.join(format!(".{}.tmp", file_name.to_string_lossy()));
+    let staged = Staged {
+        tmp,
+        path: path.to_owned(),
+        done: false,
+    };
     let mut options = fs::OpenOptions::new();
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
-    let mut file = options.open(&tmp)?;
+    let mut file = options.open(&staged.tmp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
-    fs::rename(&tmp, path)
+    Ok(staged)
+}
+
+/// A file written next to its place and not yet renamed into it; removed when dropped
+/// uncommitted.
+#[derive(Debug)]
+pub struct Staged {
+    tmp: PathBuf,
+    path: PathBuf,
+    done: bool,
+}
+
+impl Staged {
+    /// The file it will replace.
+    #[must_use]
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    /// Renames the staged file into place and syncs the directory. A rename needs no new
+    /// space, so this does not fail on a full disk.
+    ///
+    /// # Errors
+    ///
+    /// The rename failed; the staged file is removed and `path` is unchanged.
+    pub fn commit(mut self) -> io::Result<()> {
+        fs::rename(&self.tmp, &self.path)?;
+        self.done = true;
+        if let Some(dir) = self.path.parent()
+            && let Ok(dir) = fs::File::open(dir)
+        {
+            // Durability of the rename; the data itself was synced before.
+            let _ = dir.sync_all();
+        }
+        Ok(())
+    }
+}
+
+impl Drop for Staged {
+    fn drop(&mut self) {
+        if !self.done {
+            let _ = fs::remove_file(&self.tmp);
+        }
+    }
 }
 
 #[cfg(test)]
@@ -198,6 +282,45 @@ mod tests {
         };
         state.save_snapshot(&snapshot).unwrap();
         assert_eq!(state.load_snapshot("docker").unwrap(), Some(snapshot));
+    }
+
+    #[test]
+    fn a_staged_write_changes_nothing_until_committed() {
+        let dir = tempfile::tempdir().unwrap();
+        let state = StateDir::new(dir.path());
+        state.save_lkg(&serde_json::json!({ "a": 1 })).unwrap();
+        let staged = stage(&dir.path().join("state/lkg.json"), b"{\"a\": 2}").unwrap();
+        assert_eq!(
+            state.load_lkg().unwrap(),
+            Some(serde_json::json!({ "a": 1 }))
+        );
+        drop(staged);
+        assert_eq!(
+            state.load_lkg().unwrap(),
+            Some(serde_json::json!({ "a": 1 }))
+        );
+        let leftovers: Vec<_> = fs::read_dir(dir.path().join("state"))
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|e| e.file_name().to_string_lossy().ends_with(".tmp"))
+            .collect();
+        assert!(leftovers.is_empty(), "a dropped stage leaves no file");
+        stage(&dir.path().join("state/lkg.json"), b"{\"a\": 2}")
+            .unwrap()
+            .commit()
+            .unwrap();
+        assert_eq!(
+            state.load_lkg().unwrap(),
+            Some(serde_json::json!({ "a": 2 }))
+        );
+        let entry = entry(5, 5);
+        let staged = state.stage_history(&entry).unwrap();
+        assert!(
+            state.history().unwrap().is_empty(),
+            "not listed while staged"
+        );
+        staged.commit().unwrap();
+        assert_eq!(state.history().unwrap(), vec![entry]);
     }
 
     #[test]

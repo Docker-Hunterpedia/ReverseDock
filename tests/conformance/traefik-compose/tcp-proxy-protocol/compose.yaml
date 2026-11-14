@@ -1,0 +1,22 @@
+# Corpus case `tcp-proxy-protocol` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: TCP proxyprotocol.version, terminationdelay, TCP ipwhitelist, TCP inflightconn.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  traefik:
+    image: traefik:v3.7.19
+    command:
+      - --entrypoints.mail.address=:25
+      - --providers.docker.exposedbydefault=false
+  smtp:
+    image: example/smtp:3
+    expose: [25]
+    labels:
+      - traefik.enable=true
+      - traefik.tcp.routers.smtp.rule=HostSNI(`*`)
+      - traefik.tcp.routers.smtp.entrypoints=mail
+      - traefik.tcp.routers.smtp.middlewares=smtp-allow,smtp-conns
+      - traefik.tcp.middlewares.smtp-allow.ipwhitelist.sourcerange=203.0.113.0/24
+      - traefik.tcp.middlewares.smtp-conns.inflightconn.amount=50
+      - traefik.tcp.services.smtp.loadbalancer.server.port=25
+      - traefik.tcp.services.smtp.loadbalancer.proxyprotocol.version=2
+      - traefik.tcp.services.smtp.loadbalancer.terminationdelay=500

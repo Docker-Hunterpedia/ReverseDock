@@ -1,0 +1,31 @@
+{
+  "cmd": [
+    "run"
+  ],
+  "data_path": "/var/lib/rdock",
+  "entrypoint": [
+    "/usr/local/bin/rdock"
+  ],
+  "exposed_ports": [
+    "80",
+    "443"
+  ],
+  "generated_by": "python3 -I scripts/compat.py snapshot image (just compat)",
+  "healthcheck": {
+    "cmd": [
+      "/usr/local/bin/rdock",
+      "healthcheck"
+    ],
+    "options": [
+      "--interval=10s",
+      "--retries=3",
+      "--start-period=10s",
+      "--timeout=3s"
+    ]
+  },
+  "source": "Dockerfile.release, final stage; Dockerfile's final stage must state the same contract",
+  "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+  "surface": "image",
+  "uid": 65532,
+  "user": "nonroot:nonroot"
+}

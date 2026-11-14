@@ -1,0 +1,17 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "--static traefik.yml",
+    "DNS-01 with a lego provider (credentials referenced, not copied)",
+    "forwardedHeaders.trustedIPs",
+    "proxyProtocol.trustedIPs",
+    "file provider",
+    "metrics",
+    "api.dashboard"
+  ],
+  "diff": false,
+  "args": {
+    "full": true,
+    "static": "traefik.yml"
+  }
+}

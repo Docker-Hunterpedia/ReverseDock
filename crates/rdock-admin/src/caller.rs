@@ -417,6 +417,56 @@ async fn scope(
     }
 }
 
+/// Calls with an unsafe method that change nothing stored and are not refused when the audit
+/// log cannot be written (ADR-0033): ending one's own sessions and the steps of logging in
+/// (a full disk must not lock operators out of the read-only views that show it), and the dry
+/// runs.
+const UNGATED: [(&str, &str); 6] = [
+    ("POST", "/api/v1/auth/logout"),
+    ("POST", "/api/v1/auth/mfa"),
+    ("POST", "/api/v1/auth/reauth"),
+    ("DELETE", "/api/v1/auth/sessions/{id}"),
+    ("POST", "/api/v1/config/validate"),
+    ("POST", "/api/v1/routes/explain"),
+];
+
+/// Whether a call is a mutating one that [`audit_gate`] holds back while the audit log cannot
+/// take its record.
+pub(crate) fn is_gated(method: &Method, template: Option<&str>) -> bool {
+    if matches!(*method, Method::GET | Method::HEAD | Method::OPTIONS) {
+        return false;
+    }
+    let template = template.unwrap_or_default();
+    !UNGATED
+        .iter()
+        .any(|(m, path)| method.as_str() == *m && template == *path)
+}
+
+/// Refuses a mutating call with `507 Insufficient Storage` before it changes anything when
+/// its audit record could not be written (ADR-0033). Read-only calls are never held back.
+pub(crate) fn audit_gate(
+    state: &State,
+    caller: &Caller,
+    method: &Method,
+    template: Option<&str>,
+) -> Result<(), Box<Response>> {
+    if !is_gated(method, template) {
+        return Ok(());
+    }
+    state.audit.prepare().map_err(|err| {
+        state.audit.refused();
+        tracing::warn!(error = %err, actor = caller.name(), %method,
+            path = template.unwrap_or_default(),
+            "refused a mutating admin call: its audit record cannot be written");
+        Box::new(crate::routes::error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            &format!(
+                "the audit log cannot be written ({err}); changes are refused until it can, read-only calls still work"
+            ),
+        ))
+    })
+}
+
 pub(crate) async fn authenticate(
     Extract(state): Extract<Arc<State>>,
     mut request: Request,
@@ -450,6 +500,9 @@ pub(crate) async fn authenticate(
             if let Err(refused) =
                 scope(&state, &mut caller, &method, template.as_deref(), &path).await
             {
+                return *refused;
+            }
+            if let Err(refused) = audit_gate(&state, &caller, &method, template.as_deref()) {
                 return *refused;
             }
             request.extensions_mut().insert(caller.clone());

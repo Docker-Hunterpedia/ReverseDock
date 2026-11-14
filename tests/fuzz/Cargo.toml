@@ -21,15 +21,29 @@ pingora-core = { version = "0.9.1", default-features = false }
 pingora-http = "0.9.1"
 # The PROXY protocol parser rdock-proxy uses on network bytes (pinned like the main workspace).
 proxy-header = { version = "=0.1.3", default-features = false }
+# ACME: our parsing of a CA's answers and the renewal state (target `acme_answers`).
+rdock-acme = { path = "../../crates/rdock-acme" }
+# The admin API's request bodies and query strings (target `admin_input`).
+rdock-admin = { path = "../../crates/rdock-admin" }
 rdock-cache = { path = "../../crates/rdock-cache" }
+# Cluster bundles and messages, and the RESP reader (targets `cluster_protocol`, `resp_reader`).
+rdock-cluster = { path = "../../crates/rdock-cluster" }
 rdock-config = { path = "../../crates/rdock-config" }
 rdock-middleware = { path = "../../crates/rdock-middleware" }
+# `rdock migrate caddy`, Compose interpolation and `rdock migrate traefik` (targets
+# `migrate_caddy`, `compose_interpolation`); it brings the Docker provider's label translator
+# (target `docker_labels`).
+rdock-migrate = { path = "../../crates/rdock-migrate" }
 rdock-model = { path = "../../crates/rdock-model" }
+rdock-provider-docker = { path = "../../crates/providers/rdock-provider-docker" }
 # The HTTP/3 request mapping (decoding and validation, ADR-0032); built without the `http3` feature.
 rdock-proxy = { path = "../../crates/rdock-proxy" }
 rdock-rules = { path = "../../crates/rdock-rules" }
 rdock-tls = { path = "../../crates/rdock-tls" }
 serde_json = "1.0.154"
+# The NGINX parser of `rdock migrate nginx`, compiled in from its source file (`src/lib.rs`): the
+# migration crate itself would bring the Docker provider into this lock.
+thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["io-util", "rt", "time"] }
 
 [[bin]]
@@ -103,8 +117,78 @@ doc = false
 bench = false
 
 [[bin]]
+name = "nginx_parser"
+path = "fuzz_targets/nginx_parser.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
 name = "oidc_cookie"
 path = "fuzz_targets/oidc_cookie.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "rules_eval"
+path = "fuzz_targets/rules_eval.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "backend_response"
+path = "fuzz_targets/backend_response.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "acme_answers"
+path = "fuzz_targets/acme_answers.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "admin_input"
+path = "fuzz_targets/admin_input.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "cluster_protocol"
+path = "fuzz_targets/cluster_protocol.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "resp_reader"
+path = "fuzz_targets/resp_reader.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "migrate_caddy"
+path = "fuzz_targets/migrate_caddy.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "compose_interpolation"
+path = "fuzz_targets/compose_interpolation.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "docker_labels"
+path = "fuzz_targets/docker_labels.rs"
 test = false
 doc = false
 bench = false

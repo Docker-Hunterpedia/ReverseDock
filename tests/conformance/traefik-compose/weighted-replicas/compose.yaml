@@ -1,0 +1,26 @@
+# Corpus case `weighted-replicas` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: one service declared by two Compose services, server.weight, strategy.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  blue:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.release.rule=Host(`release.example.com`)
+      - traefik.http.routers.release.entrypoints=websecure
+      - traefik.http.routers.release.tls=true
+      - traefik.http.routers.release.service=release
+      - traefik.http.services.release.loadbalancer.server.weight=9
+      - traefik.http.services.release.loadbalancer.strategy=wrr
+  green:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.release.rule=Host(`release.example.com`)
+      - traefik.http.routers.release.entrypoints=websecure
+      - traefik.http.routers.release.tls=true
+      - traefik.http.routers.release.service=release
+      - traefik.http.services.release.loadbalancer.server.weight=1
+      - traefik.http.services.release.loadbalancer.strategy=wrr

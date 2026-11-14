@@ -1,0 +1,88 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `app` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "compose.interpolation.unset",
+      "hint": "pass `DOMAIN` with `--env-file FILE` (or `--process-env`)",
+      "level": "manual",
+      "message": "`${DOMAIN}` is not set and has no default; Compose uses an empty string",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "compose.interpolation.required",
+      "hint": "pass `RESOLVER` with `--env-file FILE` (or `--process-env`)",
+      "level": "manual",
+      "message": "`${RESOLVER}` is required and not set (Compose stops: set the resolver name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.tls.certresolver",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "output.invalid",
+      "level": "manual",
+      "message": "Host(``): `` is not a valid host name",
+      "target": "routes.app.match"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 3,
+    "items": 5,
+    "manual": 2,
+    "result": 1
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

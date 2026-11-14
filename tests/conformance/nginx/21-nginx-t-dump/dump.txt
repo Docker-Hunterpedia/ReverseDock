@@ -1,0 +1,16 @@
+nginx: the configuration file /etc/nginx/nginx.conf syntax is ok
+nginx: configuration file /etc/nginx/nginx.conf test is successful
+# configuration file /etc/nginx/nginx.conf:
+# Exercises: an `nginx -T` dump: includes resolved from the dump, absolute paths, without reading the disk.
+http {
+    include /etc/nginx/conf.d/*.conf;
+}
+
+# configuration file /etc/nginx/conf.d/dump.conf:
+server {
+    listen 80;
+    server_name dump.example.com;
+    location / {
+        proxy_pass http://dumped:8080;
+    }
+}

@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "errors status, service, query",
+    "a second service for the pages"
+  ],
+  "diff": false
+}

@@ -1,0 +1,12 @@
+# Corpus case `router-defaults` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: a router without entrypoints (approximate), a router without tls (approximate), a router without service on a one-service container.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.plain.rule=Host(`plain.example.com`)
+      - traefik.http.routers.plain.entrypoints=web

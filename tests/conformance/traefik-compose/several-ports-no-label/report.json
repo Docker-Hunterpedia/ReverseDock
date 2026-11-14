@@ -1,0 +1,87 @@
+{
+  "findings": [
+    {
+      "code": "compose.service.problem",
+      "hint": "set `rdock.port` or `rdock.services.<name>.port`",
+      "level": "manual",
+      "message": "service `app`: the container exposes 2 ports (3000, 9229); set which one to use",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.tls",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "output.invalid",
+      "level": "manual",
+      "message": "service `app` does not exist",
+      "target": "routes.app.service"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 3,
+    "items": 5,
+    "manual": 1,
+    "result": 1
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

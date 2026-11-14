@@ -1,0 +1,8 @@
+# Exercises: the forward_auth directive (Authelia), recognised in its expanded JSON form.
+app.example.net {
+	forward_auth authelia:9091 {
+		uri /api/authz/forward-auth
+		copy_headers Remote-User Remote-Groups
+	}
+	reverse_proxy app:8080
+}

@@ -1,0 +1,54 @@
+description: "Authentication options without an equivalent (digest auth, forward-auth extras, the basic-auth header field) are warnings with the reason."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.x.basicauth.headerfield: "X-User"
+      traefik.http.middlewares.x.digestauth.headerfield: "X-User"
+      traefik.http.middlewares.x.digestauth.realm: "staff"
+      traefik.http.middlewares.x.digestauth.removeheader: "true"
+      traefik.http.middlewares.x.digestauth.users: "alice:staff:0123456789abcdef0123456789abcdef"
+      traefik.http.middlewares.x.digestauth.usersfile: "/etc/users"
+      traefik.http.middlewares.x.forwardauth.addauthcookiestoresponse: "Session"
+      traefik.http.middlewares.x.forwardauth.authresponseheadersregex: "^X-"
+      traefik.http.middlewares.x.forwardauth.forwardbody: "true"
+      traefik.http.middlewares.x.forwardauth.headerfield: "X-User"
+      traefik.http.middlewares.x.forwardauth.maxbodysize: "1024"
+      traefik.http.middlewares.x.forwardauth.maxresponsebodysize: "1024"
+      traefik.http.middlewares.x.forwardauth.preservelocationheader: "true"
+      traefik.http.middlewares.x.forwardauth.preserverequestmethod: "true"
+      traefik.http.middlewares.x.forwardauth.tls.ca: "/ca.pem"
+      traefik.http.middlewares.x.forwardauth.tls.caoptional: "true"
+      traefik.http.middlewares.x.forwardauth.tls.cert: "/c.pem"
+      traefik.http.middlewares.x.forwardauth.tls.insecureskipverify: "true"
+      traefik.http.middlewares.x.forwardauth.tls.key: "/k.pem"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "traefik.http.middlewares.x.basicauth.headerfield\"]"
+    - "traefik.http.middlewares.x.digestauth.headerfield\"]"
+    - "traefik.http.middlewares.x.digestauth.realm\"]"
+    - "traefik.http.middlewares.x.digestauth.removeheader\"]"
+    - "traefik.http.middlewares.x.digestauth.users\"]"
+    - "traefik.http.middlewares.x.digestauth.usersfile\"]"
+    - "traefik.http.middlewares.x.forwardauth.addauthcookiestoresponse\"]"
+    - "traefik.http.middlewares.x.forwardauth.authresponseheadersregex\"]"
+    - "traefik.http.middlewares.x.forwardauth.forwardbody\"]"
+    - "traefik.http.middlewares.x.forwardauth.headerfield\"]"
+    - "traefik.http.middlewares.x.forwardauth.maxbodysize\"]"
+    - "traefik.http.middlewares.x.forwardauth.maxresponsebodysize\"]"
+    - "traefik.http.middlewares.x.forwardauth.preservelocationheader\"]"
+    - "traefik.http.middlewares.x.forwardauth.preserverequestmethod\"]"
+    - "traefik.http.middlewares.x.forwardauth.tls.ca\"]"
+    - "traefik.http.middlewares.x.forwardauth.tls.caoptional\"]"
+    - "traefik.http.middlewares.x.forwardauth.tls.cert\"]"
+    - "traefik.http.middlewares.x.forwardauth.tls.insecureskipverify\"]"
+    - "traefik.http.middlewares.x.forwardauth.tls.key\"]"

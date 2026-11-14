@@ -1,0 +1,7 @@
+# Exercises: basic_auth on a path with a bcrypt hash (kept, never plaintext); the route is split on the path.
+admin.example.com {
+	basic_auth /admin/* {
+		admin $2a$14$rdockExampleSaltValue.uKQ1v6JqgM2v0pZbxJm3Gq7Vb9Yh2xW
+	}
+	reverse_proxy dashboard:8000
+}

@@ -25,6 +25,8 @@ pub mod upstream;
 
 pub use compile::{CompileEnv, Compiled, compile};
 pub use gate::Mode;
+#[doc(hidden)]
+pub use proxy::fuzz_backend_response;
 pub use runtime::Runtime;
 pub use server::{
     ApplyError, DataPlane, InheritedSocket, ListenerHandle, ListenerStatus, random_key,

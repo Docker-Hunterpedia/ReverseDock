@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "headers accessControl* to cors",
+    "addVaryHeader",
+    "custom response header next to CORS"
+  ],
+  "diff": false
+}

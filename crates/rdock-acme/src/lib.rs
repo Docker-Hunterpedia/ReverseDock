@@ -2,6 +2,7 @@
 
 mod account;
 mod alerts;
+mod client;
 mod cluster;
 pub mod directory;
 pub mod dns;
@@ -13,12 +14,16 @@ mod manager;
 mod state;
 pub mod storage;
 
+#[doc(hidden)]
+pub use client::fuzz_retry_after;
 pub use cluster::{ClusterAcme, MEMBER_TTL};
 pub use issue::{AnswerSink, DnsChallenge, IssueError, Issued, LocalAnswers, OrderSpec, issue};
 pub use local_ca::{LocalCa, LocalCaError};
 pub use local_issuer::LocalIssuer;
 pub use manager::{Manager, Plan, Services};
 pub use state::CertStatus;
+#[doc(hidden)]
+pub use state::fuzz_ari_window;
 pub use storage::{CertMeta, Storage};
 
 #[cfg(test)]

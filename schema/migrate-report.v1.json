@@ -1,0 +1,776 @@
+{
+  "$defs": {
+    "Finding": {
+      "description": "One finding.",
+      "properties": {
+        "code": {
+          "description": "The kind of finding (a code of `x-rdock-codes`).",
+          "type": "string"
+        },
+        "hint": {
+          "description": "What to do, when something can be done.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "level": {
+          "$ref": "#/$defs/Level",
+          "description": "How faithfully the item was carried over."
+        },
+        "message": {
+          "description": "One line on what happened.",
+          "type": "string"
+        },
+        "security": {
+          "description": "The item is a security-relevant choice (for example Traefik's `exposedByDefault`).",
+          "type": "boolean"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The source item it accounts for; absent for a finding about the written result."
+        },
+        "target": {
+          "description": "The generated object, as a path in rdock.yaml (`routes.web`), when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "level",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ItemKind": {
+      "description": "What kind of thing a source item is.",
+      "oneOf": [
+        {
+          "const": "label",
+          "description": "A container label (`traefik.http.routers.web.rule`).",
+          "type": "string"
+        },
+        {
+          "const": "key",
+          "description": "A key of a configuration file, as a dotted path (`http.routers.web.rule`).",
+          "type": "string"
+        },
+        {
+          "const": "flag",
+          "description": "A command-line flag (`--entrypoints.web.address`).",
+          "type": "string"
+        },
+        {
+          "const": "env",
+          "description": "An environment variable (`TRAEFIK_ENTRYPOINTS_WEB_ADDRESS`).",
+          "type": "string"
+        },
+        {
+          "const": "object",
+          "description": "A whole file, or a Compose service as a whole.",
+          "type": "string"
+        },
+        {
+          "const": "directive",
+          "description": "A configuration directive (NGINX), named as written.",
+          "type": "string"
+        }
+      ]
+    },
+    "Level": {
+      "description": "How faithfully a source item was carried over.",
+      "oneOf": [
+        {
+          "const": "exact",
+          "description": "The same behaviour; the object is written.",
+          "type": "string"
+        },
+        {
+          "const": "approximate",
+          "description": "Written, with a stated difference.",
+          "type": "string"
+        },
+        {
+          "const": "manual",
+          "description": "Needs a decision: left out (or written disabled), and the report says what to do.",
+          "type": "string"
+        },
+        {
+          "const": "dropped",
+          "description": "No equivalent: left out, and the report says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "Source": {
+      "description": "Where a source item is.",
+      "properties": {
+        "file": {
+          "description": "The file it was read from (`-` for standard input).",
+          "type": "string"
+        },
+        "item": {
+          "description": "The item: a label key, a dotted file key, a flag, a variable name, an object name.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind",
+          "description": "What kind of item it is."
+        },
+        "line": {
+          "description": "The line, when known.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scope": {
+          "description": "The object it belongs to in the file: a Compose service, a static section.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "file",
+        "kind",
+        "item"
+      ],
+      "type": "object"
+    },
+    "SourceInfo": {
+      "description": "What was read.",
+      "properties": {
+        "checked_against": {
+          "description": "The version the translation was checked against, e.g. `Traefik v3.7`.",
+          "type": "string"
+        },
+        "files": {
+          "description": "The files read, in order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "description": "The other proxy: `traefik`, `caddy` or `nginx`.",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "checked_against",
+        "files"
+      ],
+      "type": "object"
+    },
+    "Summary": {
+      "description": "Counts.",
+      "properties": {
+        "approximate": {
+          "description": "Items carried over with a stated difference.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped": {
+          "description": "Items without an equivalent.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exact": {
+          "description": "Items carried over with the same behaviour.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "description": "Source items read; each is accounted for by exactly one finding.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "manual": {
+          "description": "Items that need a decision.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "description": "Findings about the written result (no source item), counted apart.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "exact",
+        "approximate",
+        "manual",
+        "dropped",
+        "result"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/migrate-report.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The report of one migration.",
+  "properties": {
+    "findings": {
+      "description": "Every finding: one per source item (in reading order), then the findings about the\nresult.",
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "type": "array"
+    },
+    "rdock_version": {
+      "description": "The rdock version that wrote it.",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceInfo",
+      "description": "What was read."
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary",
+      "description": "Counts by level."
+    },
+    "tool": {
+      "description": "The command, e.g. `rdock migrate traefik`.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The report format's version: 1.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "tool",
+    "rdock_version",
+    "source",
+    "summary",
+    "findings"
+  ],
+  "title": "rdock migrate report",
+  "type": "object",
+  "x-rdock-codes": [
+    {
+      "help": "None.",
+      "id": "caddy.config.exact",
+      "level": "exact",
+      "summary": "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) translated with the same behaviour."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "caddy.config.approximate",
+      "level": "approximate",
+      "summary": "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) translated with a stated difference (the message says which)."
+    },
+    {
+      "help": "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+      "id": "caddy.config.manual",
+      "level": "manual",
+      "summary": "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) that needs a decision: left out, or its routes written disabled (the message says why)."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "caddy.config.unsupported",
+      "level": "dropped",
+      "summary": "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) without an equivalent, left out (the message says why)."
+    },
+    {
+      "help": "Remove it to use ReverseDock's default.",
+      "id": "caddy.default.dial_timeout",
+      "level": "exact",
+      "summary": "Caddy's default dial timeout (3s) written explicitly as `timeouts.connect: 3s` (ReverseDock's default is 5s)."
+    },
+    {
+      "help": "None.",
+      "id": "caddy.default.host_header",
+      "level": "exact",
+      "summary": "Since 2.11 Caddy sends the upstream's address as `Host` to HTTPS backends: written as `pass_host_header: false`."
+    },
+    {
+      "help": "Remove it to use ReverseDock's default.",
+      "id": "caddy.default.lb_policy",
+      "level": "exact",
+      "summary": "Caddy's default selection policy `random` written explicitly (ReverseDock's default is `round_robin`)."
+    },
+    {
+      "help": "Raise `timeouts.read` on services with slow answers.",
+      "id": "caddy.default.response_timeout",
+      "level": "approximate",
+      "summary": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads."
+    },
+    {
+      "help": "None.",
+      "id": "caddy.handler.exact",
+      "level": "exact",
+      "summary": "A handler of a route translated with the same behaviour."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "caddy.handler.approximate",
+      "level": "approximate",
+      "summary": "A handler of a route translated with a stated difference (the message says which)."
+    },
+    {
+      "help": "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+      "id": "caddy.handler.manual",
+      "level": "manual",
+      "summary": "A handler of a route that needs a decision: left out, or its routes written disabled (the message says why)."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "caddy.handler.unsupported",
+      "level": "dropped",
+      "summary": "A handler of a route without an equivalent, left out (the message says why)."
+    },
+    {
+      "help": "None.",
+      "id": "caddy.matcher.exact",
+      "level": "exact",
+      "summary": "A matcher of a route translated with the same behaviour."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "caddy.matcher.approximate",
+      "level": "approximate",
+      "summary": "A matcher of a route translated with a stated difference (the message says which)."
+    },
+    {
+      "help": "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+      "id": "caddy.matcher.manual",
+      "level": "manual",
+      "summary": "A matcher of a route that needs a decision: left out, or its routes written disabled (the message says why)."
+    },
+    {
+      "help": "Replace what was not migrated, then remove `enabled: false`.",
+      "id": "caddy.route.disabled",
+      "level": "manual",
+      "summary": "A route written disabled (`enabled: false`) because a handler or matcher on its path was not migrated, so it never goes live without, say, its authentication."
+    },
+    {
+      "help": "Add a catch-all route if the empty answer mattered.",
+      "id": "caddy.route.unanswered",
+      "level": "approximate",
+      "summary": "Requests that no handler answers get an empty `200` from Caddy; ReverseDock answers `404`."
+    },
+    {
+      "help": "None.",
+      "id": "caddy.server.exact",
+      "level": "exact",
+      "summary": "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) translated with the same behaviour."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "caddy.server.approximate",
+      "level": "approximate",
+      "summary": "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) translated with a stated difference (the message says which)."
+    },
+    {
+      "help": "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+      "id": "caddy.server.manual",
+      "level": "manual",
+      "summary": "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) that needs a decision: left out, or its routes written disabled (the message says why)."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "caddy.server.unsupported",
+      "level": "dropped",
+      "summary": "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) without an equivalent, left out (the message says why)."
+    },
+    {
+      "help": "Set the variables the message names in ReverseDock's environment (or use `${file:…}` references).",
+      "id": "caddy.tls.credentials",
+      "level": "manual",
+      "summary": "A credential (a DNS provider token, an EAB key, an API key, an inline private key): never copied; the output refers to an environment variable."
+    },
+    {
+      "help": "None.",
+      "id": "caddy.tls.exact",
+      "level": "exact",
+      "summary": "A setting of the TLS app (certificates, automation policies, issuers) translated with the same behaviour."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "caddy.tls.approximate",
+      "level": "approximate",
+      "summary": "A setting of the TLS app (certificates, automation policies, issuers) translated with a stated difference (the message says which)."
+    },
+    {
+      "help": "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+      "id": "caddy.tls.manual",
+      "level": "manual",
+      "summary": "A setting of the TLS app (certificates, automation policies, issuers) that needs a decision: left out, or its routes written disabled (the message says why)."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "caddy.tls.unsupported",
+      "level": "dropped",
+      "summary": "A setting of the TLS app (certificates, automation policies, issuers) without an equivalent, left out (the message says why)."
+    },
+    {
+      "help": "To keep them on the stack, run ReverseDock with `providers.swarm` instead of migrating them.",
+      "id": "compose.deploy_labels",
+      "level": "approximate",
+      "summary": "`deploy.labels` (Swarm) were read as container labels."
+    },
+    {
+      "help": "Fix the reference; `$$` writes a literal `$`.",
+      "id": "compose.interpolation.invalid",
+      "level": "manual",
+      "summary": "A `${…}` reference that Compose cannot read."
+    },
+    {
+      "help": "Pass the variable with `--env-file` (or `--process-env`).",
+      "id": "compose.interpolation.required",
+      "level": "manual",
+      "summary": "A `${NAME?message}` reference whose variable is not set: Compose would refuse the file."
+    },
+    {
+      "help": "Pass the variables with `--env-file FILE` (Compose's `.env`), or `--process-env` to read this process's environment.",
+      "id": "compose.interpolation.unset",
+      "level": "manual",
+      "summary": "A `${NAME}` reference whose variable is not set: Compose would use an empty string."
+    },
+    {
+      "help": "None.",
+      "id": "compose.service",
+      "level": "exact",
+      "summary": "A Compose service with Traefik or ReverseDock labels, reachable by its service name."
+    },
+    {
+      "help": "Add `traefik.enable=true`, rerun with `--expose-by-default`, or migrate the static configuration (`--static`), which writes Traefik's setting explicitly.",
+      "id": "compose.service.not_exposed",
+      "level": "manual",
+      "summary": "A service with Traefik router labels and no `traefik.enable`: Traefik routes it (its `exposedByDefault` is `true`), ReverseDock does not."
+    },
+    {
+      "help": "Fix what the message names.",
+      "id": "compose.service.problem",
+      "level": "manual",
+      "summary": "A problem with a service as a whole (the message says which: several exposed ports, a network…)."
+    },
+    {
+      "help": "Traefik uses the port the image exposes, which a Compose file does not say: check it, or add `traefik.http.services.<name>.loadbalancer.server.port`.",
+      "id": "compose.service.port_assumed",
+      "level": "approximate",
+      "summary": "No `expose`, `ports` or port label: port 80 was assumed."
+    },
+    {
+      "help": "Replace its image with ReverseDock's and remove Traefik's flags (`rdock run` does not accept them).",
+      "id": "compose.service.traefik",
+      "level": "exact",
+      "summary": "The service that runs Traefik itself: its labels and static flags are read, the service is not routed."
+    },
+    {
+      "help": "Read the difference; the supported Traefik subset page lists them all.",
+      "id": "traefik.label.approximate",
+      "level": "approximate",
+      "summary": "A Traefik label translated with a stated difference (the coverage table's note)."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.label.exact",
+      "level": "exact",
+      "summary": "A Traefik label translated with the same behaviour."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.label.inactive",
+      "level": "exact",
+      "summary": "A label of a container that `traefik.enable=false` turns off: Traefik ignores it too."
+    },
+    {
+      "help": "Fix the value as the message says.",
+      "id": "traefik.label.invalid",
+      "level": "manual",
+      "summary": "A supported Traefik label whose value was refused."
+    },
+    {
+      "help": "Write the setting in rdock.yaml.",
+      "id": "traefik.label.manual",
+      "level": "manual",
+      "summary": "A Traefik label that needs a setting outside labels (the message says which)."
+    },
+    {
+      "help": "See `compose.service.not_exposed`.",
+      "id": "traefik.label.not_exposed",
+      "level": "manual",
+      "summary": "A label of a container nothing exposes (no `traefik.enable`): it was not migrated."
+    },
+    {
+      "help": "Fix what the message names; the object's other labels are then translated.",
+      "id": "traefik.label.object_ignored",
+      "level": "manual",
+      "summary": "A label of an object that was left out (the message says why: no port, an ambiguous service, a conflict…)."
+    },
+    {
+      "help": "Check its spelling against Traefik's reference.",
+      "id": "traefik.label.unknown",
+      "level": "dropped",
+      "summary": "A `traefik.*` label that is not a Traefik v3.7 label."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "traefik.label.unsupported",
+      "level": "dropped",
+      "summary": "A Traefik label without an equivalent (the message says why)."
+    },
+    {
+      "help": "Replace what was not migrated, then remove `enabled: false`.",
+      "id": "traefik.route.disabled",
+      "level": "manual",
+      "summary": "A route written disabled (`enabled: false`) because a middleware or service it uses was not migrated, so it never goes live without, say, its authentication."
+    },
+    {
+      "help": "None.",
+      "id": "rdock.label",
+      "level": "exact",
+      "summary": "An `rdock.*` label, read as it is."
+    },
+    {
+      "help": "Fix it as the message says.",
+      "id": "rdock.label.invalid",
+      "level": "manual",
+      "summary": "An `rdock.*` label that was refused."
+    },
+    {
+      "help": "Name the entry points, or set `defaults.listeners`.",
+      "id": "traefik.router.all_entrypoints",
+      "level": "approximate",
+      "summary": "A router without `entrypoints`: Traefik attaches it to every entry point, ReverseDock to `defaults.listeners`."
+    },
+    {
+      "help": "Keep the HTTPS default (recommended), or write `tls: off` on the route; with `--static`, the entry points decide and the route is written as Traefik serves it.",
+      "id": "traefik.router.plain_http",
+      "level": "approximate",
+      "summary": "A router without `tls`: Traefik serves it as plain HTTP (unless its entry point sets `http.tls`); the migrated route gets HTTPS with an automatic certificate and HTTP is redirected."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "traefik.file.approximate",
+      "level": "approximate",
+      "summary": "A key of a dynamic configuration file written with a stated difference."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.file.exact",
+      "level": "exact",
+      "summary": "A key of a dynamic configuration file translated with the same behaviour."
+    },
+    {
+      "help": "Write the setting in rdock.yaml.",
+      "id": "traefik.file.manual",
+      "level": "manual",
+      "summary": "A key of a dynamic configuration file that needs a decision (the message says which)."
+    },
+    {
+      "help": "Convert the file to YAML (the keys are the same), then run the migration again.",
+      "id": "traefik.file.toml",
+      "level": "manual",
+      "summary": "A TOML file: only YAML is read."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "traefik.file.unsupported",
+      "level": "dropped",
+      "summary": "A key of a dynamic configuration file without an equivalent."
+    },
+    {
+      "help": "Make the file readable by ReverseDock at the same path.",
+      "id": "traefik.file.users_file",
+      "level": "exact",
+      "summary": "`basicAuth.usersFile`: the same file is named, never read or copied."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "traefik.static.approximate",
+      "level": "approximate",
+      "summary": "A static setting written with a stated difference."
+    },
+    {
+      "help": "Set the variables the message names in ReverseDock's environment (or use `${file:…}` references).",
+      "id": "traefik.static.credentials",
+      "level": "manual",
+      "summary": "A credential (DNS provider, EAB key, provider password): never copied; the output refers to an environment variable."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.static.exact",
+      "level": "exact",
+      "summary": "A static setting translated with the same behaviour."
+    },
+    {
+      "help": "This is a security choice: every container with labels is routed. Set it to `false` and add `traefik.enable=true` where wanted, which is ReverseDock's default.",
+      "id": "traefik.static.expose_by_default",
+      "level": "exact",
+      "summary": "Traefik's `exposedByDefault` (default `true`) written explicitly as `expose_by_default`."
+    },
+    {
+      "help": "Write the setting in rdock.yaml.",
+      "id": "traefik.static.manual",
+      "level": "manual",
+      "summary": "A static setting that needs a decision (the message says which)."
+    },
+    {
+      "help": "Check its spelling against Traefik's reference.",
+      "id": "traefik.static.unknown",
+      "level": "dropped",
+      "summary": "A key that is not a Traefik v3.7 static option this tool knows."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "traefik.static.unsupported",
+      "level": "dropped",
+      "summary": "A static setting without an equivalent (the message says why)."
+    },
+    {
+      "help": "Remove `max_body` where you want no limit.",
+      "id": "nginx.default.body_limit",
+      "level": "exact",
+      "summary": "NGINX's default request body limit (`client_max_body_size 1m`) written explicitly as `max_body: 1MiB` (ReverseDock has no limit by default)."
+    },
+    {
+      "help": "Add the `hold_body` middleware where a backend needs the whole request body first.",
+      "id": "nginx.default.buffering",
+      "level": "approximate",
+      "summary": "NGINX buffers requests and responses by default (`proxy_buffering`, `proxy_request_buffering`); ReverseDock streams both."
+    },
+    {
+      "help": "Remove it to use ReverseDock's default.",
+      "id": "nginx.default.connect_timeout",
+      "level": "exact",
+      "summary": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) written explicitly as `timeouts.connect: 60s` (ReverseDock's default is 5s)."
+    },
+    {
+      "help": "Check `retries` on the services with several backends.",
+      "id": "nginx.default.next_upstream",
+      "level": "approximate",
+      "summary": "NGINX passes a request to the next server of an upstream after a connection error or timeout (`proxy_next_upstream error timeout`); written as `retries` on connection failures."
+    },
+    {
+      "help": "Check `health.passive` on the services with several backends.",
+      "id": "nginx.default.passive_health",
+      "level": "approximate",
+      "summary": "NGINX marks a server unavailable after one failure for 10s (`max_fails=1 fail_timeout=10s`); written as `health.passive`, whose ejection doubles on repeated failures."
+    },
+    {
+      "help": "Make the backend redirect to relative or public URLs.",
+      "id": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "summary": "NGINX rewrites `Location` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged."
+    },
+    {
+      "help": "Add a catch-all route if such requests mattered.",
+      "id": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "summary": "Requests for hosts no `server_name` lists go to the default server in NGINX; the migrated routes keep the default server's names, so ReverseDock answers them with `404`."
+    },
+    {
+      "help": "Name the backend's CA (`tls.ca_file`) or, for a backend with a self-signed certificate you accept, set `tls.verify: false` on its service.",
+      "id": "nginx.default.upstream_tls",
+      "level": "approximate",
+      "summary": "NGINX does not verify backend certificates by default (`proxy_ssl_verify off`); ReverseDock does, and the migration keeps that."
+    },
+    {
+      "help": "None.",
+      "id": "nginx.directive.exact",
+      "level": "exact",
+      "summary": "A directive translated with the same behaviour."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "nginx.directive.approximate",
+      "level": "approximate",
+      "summary": "A directive translated with a stated difference (the message says which)."
+    },
+    {
+      "help": "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+      "id": "nginx.directive.manual",
+      "level": "manual",
+      "summary": "A directive that needs a decision: left out, or its routes written disabled (the message says why)."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "nginx.directive.unsupported",
+      "level": "dropped",
+      "summary": "A directive without an equivalent, left out (the message says why)."
+    },
+    {
+      "help": "Check what it does and configure the equivalent by hand.",
+      "id": "nginx.directive.unknown",
+      "level": "dropped",
+      "summary": "A directive this tool does not know (a module outside the translated subset)."
+    },
+    {
+      "help": "None.",
+      "id": "nginx.include",
+      "level": "exact",
+      "summary": "An `include`: the files it names were read in its place."
+    },
+    {
+      "help": "Pass `--include-outside` to read files outside the directory tree, or migrate the file on its own.",
+      "id": "nginx.include.manual",
+      "level": "manual",
+      "summary": "An `include` that was not read (outside the main file's directory, missing, too deep or too many files)."
+    },
+    {
+      "help": "Translate the construct by hand as the hint says, then remove `enabled: false` from the affected routes.",
+      "id": "nginx.refused",
+      "level": "manual",
+      "summary": "A construct without a faithful translation (`if`, `map`, `set`, `rewrite … last`, named or nested locations, variables, scripting modules, `stream`, `mail`, caching, FastCGI): refused, and the routes it affects are written disabled."
+    },
+    {
+      "help": "Replace what was not migrated, then remove `enabled: false`.",
+      "id": "nginx.route.disabled",
+      "level": "manual",
+      "summary": "A route written disabled (`enabled: false`) because a directive of its location was not migrated, so it never goes live without, say, its authentication."
+    },
+    {
+      "help": "None.",
+      "id": "nginx.server.https_redirect",
+      "level": "approximate",
+      "summary": "A server that only redirects HTTP to HTTPS (`return 301 https://$host$request_uri`): ReverseDock does this by default (`defaults.redirect_http_to_https`), with 308 instead of 301 for methods other than GET."
+    },
+    {
+      "help": "Keep TLS 1.2 and later; clients that need older versions cannot connect.",
+      "id": "nginx.tls.weak",
+      "level": "manual",
+      "summary": "A TLS setting weaker than ReverseDock's floor (TLS 1.0 or 1.1): not written; the listener keeps `intermediate`."
+    },
+    {
+      "help": "Check it with `rdock validate` once the rest of the configuration is in place.",
+      "id": "output.invalid",
+      "level": "manual",
+      "summary": "The written configuration has a validation error on its own (for example a reference to an object in another file)."
+    },
+    {
+      "help": "Keep the labels on the containers.",
+      "id": "output.labels_live",
+      "level": "exact",
+      "summary": "With `--full` and a Compose file, the label routes are not written: the Docker provider reads the same labels at run time."
+    }
+  ],
+  "x-rdock-maturity": "beta"
+}

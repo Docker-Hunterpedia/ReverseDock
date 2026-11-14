@@ -5,6 +5,26 @@ export interface Diagnostic {
   path: string;
   message: string;
   hint?: string;
+  /** `deprecated`, `experimental_not_enabled`, … (ADR-0033). */
+  code?: string;
+}
+
+/** A feature below stable that the applied configuration uses (ADR-0033). */
+export interface FeatureUse {
+  feature: string;
+  level: "experimental" | "beta";
+  since: string;
+  summary: string;
+  paths: string[];
+}
+
+/** A deprecated element the applied configuration uses (ADR-0033). */
+export interface DeprecationUse {
+  element: string;
+  since: string;
+  removal: string;
+  replacement: string;
+  paths: string[];
 }
 
 export interface Status {
@@ -26,6 +46,8 @@ export interface Status {
     trigger: string;
     diagnostics: Diagnostic[];
   } | null;
+  features_in_use?: { experimental: FeatureUse[]; beta: FeatureUse[] };
+  deprecations_in_use?: DeprecationUse[];
 }
 
 /** "12 s ago", "5 min ago", "3 h ago", "2 d ago". */

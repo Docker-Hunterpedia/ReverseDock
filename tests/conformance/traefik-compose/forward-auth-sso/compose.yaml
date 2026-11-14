@@ -1,0 +1,25 @@
+# Corpus case `forward-auth-sso` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: forwardauth address, trustforwardheader, authresponseheaders, authrequestheaders, an SSO portal pattern.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  auth:
+    image: example/sso-portal:4
+    expose: [9091]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.auth.rule: Host(`auth.example.com`)
+      traefik.http.routers.auth.entrypoints: websecure
+      traefik.http.routers.auth.tls: "true"
+      traefik.http.middlewares.sso.forwardauth.address: http://auth:9091/api/verify?rd=https://auth.example.com/
+      traefik.http.middlewares.sso.forwardauth.trustForwardHeader: "true"
+      traefik.http.middlewares.sso.forwardauth.authResponseHeaders: Remote-User,Remote-Groups,Remote-Email
+      traefik.http.middlewares.sso.forwardauth.authRequestHeaders: Accept,Cookie
+  wiki:
+    image: example/wiki:2
+    expose: [3000]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.wiki.rule: Host(`wiki.example.com`)
+      traefik.http.routers.wiki.entrypoints: websecure
+      traefik.http.routers.wiki.tls: "true"
+      traefik.http.routers.wiki.middlewares: sso

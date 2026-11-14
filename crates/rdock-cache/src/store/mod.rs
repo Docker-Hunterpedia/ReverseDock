@@ -126,6 +126,8 @@ pub struct Store {
     backend: Backend,
     counters: Counters,
     metrics: Option<CacheMetrics>,
+    /// When a refused write was last logged.
+    write_error_logged: std::sync::Mutex<Option<std::time::Instant>>,
 }
 
 // `pingora::Result` carries errors boxed.
@@ -143,6 +145,7 @@ impl Store {
             backend: Backend::Memory(memory::Memory::new(max_size)),
             counters: Counters::default(),
             metrics,
+            write_error_logged: std::sync::Mutex::new(None),
         };
         store.report_size(0, 0);
         store
@@ -167,6 +170,7 @@ impl Store {
             backend: Backend::Disk(disk),
             counters: Counters::default(),
             metrics,
+            write_error_logged: std::sync::Mutex::new(None),
         };
         let dropped = walk.corrupt + walk.partial;
         store.counters.dropped.store(dropped, Ordering::Relaxed);
@@ -289,6 +293,27 @@ impl Store {
 
     pub(crate) fn note_stored(&self) {
         self.counters.stored.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// An object the disk refused to store (a full disk): the response is served all the
+    /// same, uncached (ADR-0033). Counted as `rdock_cache_dropped_total{reason="write_error"}`
+    /// and logged once a minute.
+    pub(crate) fn note_write_error(&self, error: &str) {
+        if let Some(m) = &self.metrics {
+            m.dropped
+                .with_label_values(&[&*self.name, "write_error"])
+                .inc();
+        }
+        let now = std::time::Instant::now();
+        let mut last = self
+            .write_error_logged
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        if last.is_none_or(|at| now.duration_since(at) >= std::time::Duration::from_secs(60)) {
+            *last = Some(now);
+            tracing::warn!(store = %self.name, %error,
+                "cannot store a cache object; responses are served uncached until the disk takes writes again (logged once a minute)");
+        }
     }
 
     pub(crate) fn note_evictions(&self, evicted: &[Evicted]) {

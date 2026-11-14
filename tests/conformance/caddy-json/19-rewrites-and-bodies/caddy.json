@@ -1,0 +1,120 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"rewrites.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "request_body",
+													"max_size": 10000000
+												}
+											]
+										},
+										{
+											"group": "group0",
+											"match": [
+												{
+													"path": [
+														"/about"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "rewrite",
+													"uri": "/about.html"
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "rewrite",
+													"strip_path_prefix": "/app"
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "rewrite",
+													"path_regexp": [
+														{
+															"find": "^/v([0-9]+)/",
+															"replace": "/api/v$1/"
+														}
+													]
+												}
+											]
+										},
+										{
+											"match": [
+												{
+													"path": [
+														"/forbidden/*"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "error",
+													"status_code": 403
+												}
+											]
+										},
+										{
+											"match": [
+												{
+													"path": [
+														"/hello"
+													]
+												}
+											],
+											"handle": [
+												{
+													"body": "Hello",
+													"handler": "static_response",
+													"status_code": 200
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "app:8080"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

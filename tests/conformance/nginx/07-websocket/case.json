@@ -1,0 +1,10 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "map idiom recognised",
+    "Upgrade and Connection are built in",
+    "proxy_http_version 1.1",
+    "proxy_read_timeout \u2192 timeouts.read"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (websocket.html, ngx_http_map_module) read 2026-11-14."
+}

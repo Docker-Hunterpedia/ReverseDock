@@ -6,9 +6,9 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Project status
 
-ReverseDock is in the **design phase**: the plan lives in [`docs/`](docs/README.md) and code starts with milestone **M0**. The most useful contributions right now:
+ReverseDock is an alpha: v0.1 to v0.9 are implemented (`0.9.0-alpha.1` is the latest release) and v1.0 "Stable" is implemented and is released as `1.0.0-rc.N` until an independent security review is done. The plan lives in [`docs/`](docs/README.md) and [the roadmap](docs/07-roadmap.md) says what has run and what is open. The most useful contributions right now:
 
-- review the [architecture](docs/05-architecture.md), [requirements](docs/04-requirements.md) and [roadmap](docs/07-roadmap.md) and open issues for mistakes or gaps;
+- review the [architecture](docs/05-architecture.md), the [threat model](docs/11-threat-model.md), [requirements](docs/04-requirements.md) and [roadmap](docs/07-roadmap.md) and open issues for mistakes or gaps;
 - verify facts in the [research](docs/02-research.md) against official sources;
 - contribute real-world Traefik label sets and Compose files for the compatibility suite (open a *Migration / compatibility gap* issue);
 - open a *Design proposal* for changes to the config model, label grammar or security model.
@@ -33,9 +33,9 @@ The workspace needs:
 
 - **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml` and installs itself. The minimum supported version is 1.89.
 - A **C compiler** and **CMake** for Pingora's native dependencies (`xcode-select --install && brew install cmake`, or `apt install build-essential cmake`).
-- **just**, **cargo-nextest**, **cargo-deny**, **actionlint** and **shellcheck** for the dev recipes (`brew install just cargo-nextest cargo-deny actionlint shellcheck`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just msrv` and `just docker` run the other two jobs.
-- **Node 24 + pnpm** (version in the root `package.json`) for the website in `apps/website` and, later, the dashboard. `just website` starts the docs locally; `just website-check` runs the `website` CI job. How to write pages: [apps/website/README.md](apps/website/README.md).
-- **Docker** for the image smoke test (`just docker`) and, later, the Pebble/toxiproxy/Docker-provider suites. The v0.1 end-to-end tests run with plain `cargo nextest`.
+- **just**, **cargo-nextest**, **cargo-deny**, **actionlint** and **shellcheck** for the dev recipes (`brew install just cargo-nextest cargo-deny actionlint shellcheck`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just compat` regenerates the compatibility snapshots in `schema/compat/`; `just msrv` and `just docker` run the other two jobs.
+- **Node 24 + pnpm** (version in the root `package.json`) for the website in `apps/website` and the dashboard in `apps/dashboard`. `just website` starts the docs locally; `just website-check` runs the `website` CI job. How to write pages: [apps/website/README.md](apps/website/README.md).
+- **Docker** for the image smoke test (`just docker`) and the Pebble, Toxiproxy and Docker-provider suites (`just chaos`). The other end-to-end tests run with plain `cargo nextest`.
 - Optional: `cargo install cargo-fuzz` and a nightly toolchain to run the fuzz targets in `tests/fuzz`.
 - Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.
 
@@ -60,6 +60,18 @@ Conventions for crates, errors, logging, features and tests are in [docs/06-repo
 3. A code owner approved the latest push, and every review conversation is resolved.
 
 Keep PRs focused on one change; under ~400 changed lines is easiest to review. Fill in the PR template: link the issue (`Closes #123`) and the requirement ID it implements (`B-NET-04`). The PR title becomes the commit message on `main`, so make it a good Conventional Commit.
+
+### When the compatibility gate fails
+
+The `compat` job ([ADR-0033](docs/decisions/0033-v1-0-stable.md), [docs/10-stability.md](docs/10-stability.md) §9) compares the public surfaces with the last release tag. `just compat-check` runs it locally (`git fetch --tags` first); `just compat-test` runs its own tests.
+
+- **"… is stale; run `just compat`"**: you changed a metric, a CLI flag, a JSON output, the access log, a problem type, an `RDOCK_*` variable, a label or the image. Run `just compat` (and `just schema` for the config schema or the API) and commit the files in `schema/compat/`; the diff shows reviewers what changed. This fails in every mode.
+- **`BREAKING` or `REVIEW` findings**: each names the element, the rule of the stability page it breaks and how to proceed. Before `1.0.0-rc.1` they only print (report mode); from then on they fail the job. In order of preference:
+  1. Keep the old form working and add the new one beside it (a new key, flag, field or metric instead of changing one).
+  2. Deprecate the old element in `crates/rdock-model/src/deprecation.rs` with its replacement; it can be removed in the next major once its period is over, and the gate then accepts the removal.
+  3. If the element is not really stable (a beta feature the maturity registry lists wrongly), fix its level in `crates/rdock-model/src/maturity.rs` in its own PR.
+  4. For a reviewed exception (a security fix under §5 of the stability page, a `REVIEW` finding that is not a break), add an entry to `schema/compat/exceptions.json` with the `surface`, `element` and `rule` the gate printed, a `reason` and the `release` that ships it, and label the PR `breaking-change` if it is a break. The entry expires once that release is the baseline.
+- **"shallow and no release tag"**: the checkout has no tags; locally `git fetch --tags --unshallow`.
 
 ## Documentation rules
 

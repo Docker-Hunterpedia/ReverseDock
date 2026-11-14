@@ -51,6 +51,9 @@ updates:
       # The fuzz crate shares the workspace's brotli line (see the root cargo block).
       - dependency-name: brotli
         update-types: ["version-update:semver-major"]
+  # Reads Dockerfile and Dockerfile.release (file names containing "dockerfile") and updates the tag
+  # and the digest of every `FROM image:tag@sha256:...` line together. The FROM lines are literal
+  # on purpose; scripts/pin-base-images.sh makes the first pin and `--verify` runs in the docs job.
   - package-ecosystem: docker
     directory: /
     schedule:

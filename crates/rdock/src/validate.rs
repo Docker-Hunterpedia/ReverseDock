@@ -10,11 +10,12 @@ use rdock_model::{Diagnostic, Severity};
 use rdock_proxy::{CompileEnv, Mode, compile};
 use serde::Serialize;
 
-use crate::{OutputFormat, Registry, ValidateArgs, print};
+use crate::{DeprecationsArg, OutputFormat, Registry, ValidateArgs, print};
 
-/// Result of validating one file, as printed by `--format json`.
-#[derive(Serialize)]
-struct FileReport {
+/// Result of validating one file, as printed by `--format json` (a list of these). Its JSON
+/// Schema is part of the CLI compatibility snapshot (`schema/compat/cli.json`).
+#[derive(Serialize, schemars::JsonSchema)]
+pub(crate) struct FileReport {
     file: String,
     valid: bool,
     errors: usize,
@@ -26,7 +27,7 @@ pub(crate) fn validate(args: &ValidateArgs, plugins: &Registry) -> anyhow::Resul
     let reports: Vec<FileReport> = args
         .files
         .iter()
-        .map(|file| report(file, args.strict, plugins))
+        .map(|file| report(file, args, plugins))
         .collect();
     match args.format {
         OutputFormat::Json => print(&format!("{}\n", serde_json::to_string_pretty(&reports)?))?,
@@ -123,10 +124,11 @@ fn read_vault(config: &rdock_model::Config) -> Vec<Diagnostic> {
     })
 }
 
-fn report(file: &Path, strict: bool, plugins: &Registry) -> FileReport {
+fn report(file: &Path, args: &ValidateArgs, plugins: &Registry) -> FileReport {
     let mut diagnostics = diagnostics(file, plugins);
-    if strict {
-        for d in &mut diagnostics {
+    for d in &mut diagnostics {
+        let deprecated = d.code.as_deref() == Some("deprecated");
+        if args.strict || (deprecated && args.deprecations == DeprecationsArg::Error) {
             d.severity = Severity::Error;
         }
     }

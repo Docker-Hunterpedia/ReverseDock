@@ -1,0 +1,8 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "grpc_pass \u2192 scheme h2c",
+    "proxy_pass to a Unix socket with a URI"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_grpc_module, ngx_http_proxy_module) read 2026-11-14."
+}

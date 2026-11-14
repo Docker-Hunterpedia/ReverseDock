@@ -245,6 +245,20 @@ impl Signals {
     }
 }
 
+/// Catches SIGXFSZ for the life of the process; its default action would end it.
+fn ignore_file_size_signal() {
+    match signal(SignalKind::from_raw(25)) {
+        Ok(mut xfsz) => {
+            tokio::spawn(async move {
+                while xfsz.recv().await.is_some() {
+                    tracing::debug!("a write went past the file-size limit (SIGXFSZ ignored)");
+                }
+            });
+        }
+        Err(err) => tracing::warn!(error = %err, "cannot catch SIGXFSZ"),
+    }
+}
+
 /// The data plane with its persistent sticky-cookie key and this process's spool for held
 /// request bodies (`spool/<pid>`).
 fn data_plane(
@@ -356,6 +370,10 @@ async fn serve(
 ) -> anyhow::Result<ExitCode> {
     // Before anything else: the default action of SIGHUP would end the process.
     let mut signals = Signals::install()?;
+    // A file-size limit (`RLIMIT_FSIZE`) must fail the write (`EFBIG`), which the disk-full
+    // rules handle like a full disk, instead of ending the proxy: SIGXFSZ is caught and
+    // dropped (ADR-0033).
+    ignore_file_size_signal();
     raise_open_file_limit();
     let start = if args.inherit {
         match crate::upgrade::inherit::receive() {
@@ -450,6 +468,7 @@ async fn serve(
     let (upgrade_tx, mut upgrades) = mpsc::channel::<crate::upgrade::Trigger>(1);
     engine.set_upgrades(upgrade_tx.clone());
     tokio::spawn(engine.clone().watch_thresholds());
+    tokio::spawn(engine.clone().watch_disk());
     if let Start::Inherited(inherited) = &mut start {
         // Built without accepting and without writers until the old process says `go`.
         plane.set_accepting(false);

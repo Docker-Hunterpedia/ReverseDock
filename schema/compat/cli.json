@@ -1,0 +1,3968 @@
+{
+  "commands": {
+    "audit": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "audit list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--limit": {
+          "defaults": [
+            "50"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "LIMIT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "audit verify": {
+      "args": {
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "backends": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "backends drain": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "BACKEND"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "backends list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "backends undrain": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "BACKEND"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "bans": {
+      "args": {},
+      "feature": "abuse",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "bans list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "abuse",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "bans remove": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "KEY"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--middleware": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "MIDDLEWARE"
+          ]
+        }
+      },
+      "feature": "abuse",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "cache": {
+      "args": {},
+      "feature": "http-cache",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "cache list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "http-cache",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "cache purge": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "STORE"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--all": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "ALL"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--prefix": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "PREFIX"
+          ]
+        },
+        "--tag": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "TAG"
+          ]
+        },
+        "--url": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "URL"
+          ]
+        }
+      },
+      "feature": "http-cache",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "config": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "config diff": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "config history": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "config rollback": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "ID"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "consumers": {
+      "args": {},
+      "feature": "consumers",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "consumers delete": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "consumers list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "consumers quota": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "consumers reset-quota": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--middleware": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "MIDDLEWARE"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "consumers set": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--group": {
+          "defaults": [],
+          "multiple": true,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "GROUPS"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control": {
+      "args": {},
+      "feature": "cluster",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "control instances": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control publish": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control revisions": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control revoke": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control rollback": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "REVISION"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control rollout": {
+      "args": {},
+      "feature": "cluster",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "control rollout abandon": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control rollout resume": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control rollout status": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control run": {
+      "args": {
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--log": {
+          "defaults": [
+            "info"
+          ],
+          "env": "RDOCK_LOG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "LOG"
+          ]
+        },
+        "--log-format": {
+          "defaults": [
+            "auto"
+          ],
+          "env": "RDOCK_LOG_FORMAT",
+          "multiple": false,
+          "possible_values": [
+            "auto",
+            "json",
+            "text"
+          ],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "LOG_FORMAT"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "control token": {
+      "args": {},
+      "feature": "cluster",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "control token create": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/control.yaml"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--ttl": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "TTL"
+          ]
+        }
+      },
+      "feature": "cluster",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "hash": {
+      "args": {
+        "--user": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "USER"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "healthcheck": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "keys": {
+      "args": {},
+      "feature": "consumers",
+      "has_subcommands": true,
+      "maturity": "beta"
+    },
+    "keys create": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "CONSUMER"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--days": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DAYS"
+          ]
+        },
+        "--note": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "NOTE"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "keys generate": {
+      "args": {},
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "keys hash": {
+      "args": {},
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "keys revoke": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "ID"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "consumers",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "migrate": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "migrate caddy": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "INPUT"
+          ]
+        },
+        "--full": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "FULL"
+          ]
+        },
+        "--output": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-o",
+          "takes_value": true,
+          "value_names": [
+            "OUTPUT"
+          ]
+        },
+        "--report": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--strict": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "STRICT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "migrate config": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "INPUT"
+          ]
+        },
+        "--diff": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "DIFF"
+          ]
+        },
+        "--output": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-o",
+          "takes_value": true,
+          "value_names": [
+            "OUTPUT"
+          ]
+        },
+        "--write": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "WRITE"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "migrate nginx": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "INPUT"
+          ]
+        },
+        "--full": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "FULL"
+          ]
+        },
+        "--include-outside": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "INCLUDE_OUTSIDE"
+          ]
+        },
+        "--output": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-o",
+          "takes_value": true,
+          "value_names": [
+            "OUTPUT"
+          ]
+        },
+        "--report": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--strict": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "STRICT"
+          ]
+        }
+      },
+      "feature": "migrate-nginx",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "migrate traefik": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "INPUT"
+          ]
+        },
+        "--env-file": {
+          "defaults": [],
+          "multiple": true,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--expose-by-default": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "EXPOSE_BY_DEFAULT"
+          ]
+        },
+        "--full": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "FULL"
+          ]
+        },
+        "--output": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-o",
+          "takes_value": true,
+          "value_names": [
+            "OUTPUT"
+          ]
+        },
+        "--process-env": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "PROCESS_ENV"
+          ]
+        },
+        "--report": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--static": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--strict": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "STRICT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "reload": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "routes": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "routes explain": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--client-ip": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "CLIENT_IP"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--header": {
+          "defaults": [],
+          "multiple": true,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "HEADERS"
+          ]
+        },
+        "--host": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "HOST"
+          ]
+        },
+        "--json": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "JSON"
+          ]
+        },
+        "--listener": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "LISTENER"
+          ]
+        },
+        "--method": {
+          "defaults": [
+            "GET"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "METHOD"
+          ]
+        },
+        "--path": {
+          "defaults": [
+            "/"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "PATH"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "run": {
+      "args": {
+        "--config": {
+          "defaults": [],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--log": {
+          "defaults": [
+            "info"
+          ],
+          "env": "RDOCK_LOG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "LOG"
+          ]
+        },
+        "--log-format": {
+          "defaults": [
+            "auto"
+          ],
+          "env": "RDOCK_LOG_FORMAT",
+          "multiple": false,
+          "possible_values": [
+            "auto",
+            "json",
+            "text"
+          ],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "LOG_FORMAT"
+          ]
+        },
+        "--no-watch": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "NO_WATCH"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "schema": {
+      "args": {
+        "--migrate-report": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "MIGRATE_REPORT"
+          ]
+        },
+        "--openapi": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "OPENAPI"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "status": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--json": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "JSON"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "tokens": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "tokens create": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--allow": {
+          "defaults": [],
+          "multiple": true,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ALLOWED_FROM"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--days": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DAYS"
+          ]
+        },
+        "--role": {
+          "defaults": [
+            "viewer"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ROLE"
+          ]
+        },
+        "--tenant": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "TENANT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "tokens list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "tokens revoke": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "ID"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "trust": {
+      "args": {
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--uninstall": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "UNINSTALL"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "upgrade": {
+      "args": {
+        "--allow-downgrade": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "ALLOW_DOWNGRADE"
+          ]
+        },
+        "--binary": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "BINARY"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "feature": "binary-upgrade",
+      "has_subcommands": false,
+      "maturity": "beta"
+    },
+    "users": {
+      "args": {},
+      "has_subcommands": true
+    },
+    "users add": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--role": {
+          "defaults": [
+            "viewer"
+          ],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ROLE"
+          ]
+        },
+        "--tenant": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "TENANT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "users list": {
+      "args": {
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "users passwd": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "users remove": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "users reset-mfa": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "users set": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "NAME"
+          ]
+        },
+        "--admin": {
+          "defaults": [],
+          "env": "RDOCK_ADMIN",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ADMIN"
+          ]
+        },
+        "--config": {
+          "defaults": [
+            "/etc/rdock/rdock.yaml"
+          ],
+          "env": "RDOCK_CONFIG",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "short": "-c",
+          "takes_value": true,
+          "value_names": [
+            "CONFIG"
+          ]
+        },
+        "--data-dir": {
+          "defaults": [
+            "/var/lib/rdock"
+          ],
+          "env": "RDOCK_DATA_DIR",
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DATA_DIR"
+          ]
+        },
+        "--disable": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "DISABLE"
+          ]
+        },
+        "--enable": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "ENABLE"
+          ]
+        },
+        "--no-tenant": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "NO_TENANT"
+          ]
+        },
+        "--role": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "ROLE"
+          ]
+        },
+        "--tenant": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "TENANT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "validate": {
+      "args": {
+        "#0": {
+          "defaults": [],
+          "multiple": true,
+          "possible_values": [],
+          "required": true,
+          "takes_value": true,
+          "value_names": [
+            "FILES"
+          ]
+        },
+        "--deprecations": {
+          "defaults": [
+            "warn"
+          ],
+          "multiple": false,
+          "possible_values": [
+            "warn",
+            "error"
+          ],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "DEPRECATIONS"
+          ]
+        },
+        "--format": {
+          "defaults": [
+            "text"
+          ],
+          "multiple": false,
+          "possible_values": [
+            "text",
+            "json"
+          ],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FORMAT"
+          ]
+        },
+        "--strict": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "STRICT"
+          ]
+        }
+      },
+      "has_subcommands": false
+    },
+    "version": {
+      "args": {
+        "--json": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "JSON"
+          ]
+        }
+      },
+      "has_subcommands": false
+    }
+  },
+  "exit_codes": {
+    "0": "success",
+    "1": "a failed check: invalid configuration, a broken audit chain, a proxy that is not ready",
+    "2": "an error: a usage error, an I/O error, an unreachable admin API"
+  },
+  "generated_by": "rdock schema --compat cli (just compat)",
+  "json_outputs": {
+    "migrate caddy --report": {
+      "$defs": {
+        "Finding": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "hint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "level": {
+              "$ref": "#/$defs/Level"
+            },
+            "message": {
+              "type": "string"
+            },
+            "security": {
+              "type": "boolean"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "level",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ItemKind": {
+          "oneOf": [
+            {
+              "const": "label",
+              "type": "string"
+            },
+            {
+              "const": "key",
+              "type": "string"
+            },
+            {
+              "const": "flag",
+              "type": "string"
+            },
+            {
+              "const": "env",
+              "type": "string"
+            },
+            {
+              "const": "object",
+              "type": "string"
+            },
+            {
+              "const": "directive",
+              "type": "string"
+            }
+          ]
+        },
+        "Level": {
+          "oneOf": [
+            {
+              "const": "exact",
+              "type": "string"
+            },
+            {
+              "const": "approximate",
+              "type": "string"
+            },
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "dropped",
+              "type": "string"
+            }
+          ]
+        },
+        "Source": {
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "item": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/ItemKind"
+            },
+            "line": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "file",
+            "kind",
+            "item"
+          ],
+          "type": "object"
+        },
+        "SourceInfo": {
+          "properties": {
+            "checked_against": {
+              "type": "string"
+            },
+            "files": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "checked_against",
+            "files"
+          ],
+          "type": "object"
+        },
+        "Summary": {
+          "properties": {
+            "approximate": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dropped": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "exact": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "items": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "manual": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "items",
+            "exact",
+            "approximate",
+            "manual",
+            "dropped",
+            "result"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "rdock_version": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceInfo"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "tool",
+        "rdock_version",
+        "source",
+        "summary",
+        "findings"
+      ],
+      "type": "object",
+      "x-rdock-maturity": "beta"
+    },
+    "migrate nginx --report": {
+      "$defs": {
+        "Finding": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "hint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "level": {
+              "$ref": "#/$defs/Level"
+            },
+            "message": {
+              "type": "string"
+            },
+            "security": {
+              "type": "boolean"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "level",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ItemKind": {
+          "oneOf": [
+            {
+              "const": "label",
+              "type": "string"
+            },
+            {
+              "const": "key",
+              "type": "string"
+            },
+            {
+              "const": "flag",
+              "type": "string"
+            },
+            {
+              "const": "env",
+              "type": "string"
+            },
+            {
+              "const": "object",
+              "type": "string"
+            },
+            {
+              "const": "directive",
+              "type": "string"
+            }
+          ]
+        },
+        "Level": {
+          "oneOf": [
+            {
+              "const": "exact",
+              "type": "string"
+            },
+            {
+              "const": "approximate",
+              "type": "string"
+            },
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "dropped",
+              "type": "string"
+            }
+          ]
+        },
+        "Source": {
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "item": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/ItemKind"
+            },
+            "line": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "file",
+            "kind",
+            "item"
+          ],
+          "type": "object"
+        },
+        "SourceInfo": {
+          "properties": {
+            "checked_against": {
+              "type": "string"
+            },
+            "files": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "checked_against",
+            "files"
+          ],
+          "type": "object"
+        },
+        "Summary": {
+          "properties": {
+            "approximate": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dropped": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "exact": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "items": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "manual": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "items",
+            "exact",
+            "approximate",
+            "manual",
+            "dropped",
+            "result"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "rdock_version": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceInfo"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "tool",
+        "rdock_version",
+        "source",
+        "summary",
+        "findings"
+      ],
+      "type": "object",
+      "x-rdock-maturity": "beta"
+    },
+    "migrate traefik --report": {
+      "$defs": {
+        "Finding": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "hint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "level": {
+              "$ref": "#/$defs/Level"
+            },
+            "message": {
+              "type": "string"
+            },
+            "security": {
+              "type": "boolean"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "level",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ItemKind": {
+          "oneOf": [
+            {
+              "const": "label",
+              "type": "string"
+            },
+            {
+              "const": "key",
+              "type": "string"
+            },
+            {
+              "const": "flag",
+              "type": "string"
+            },
+            {
+              "const": "env",
+              "type": "string"
+            },
+            {
+              "const": "object",
+              "type": "string"
+            },
+            {
+              "const": "directive",
+              "type": "string"
+            }
+          ]
+        },
+        "Level": {
+          "oneOf": [
+            {
+              "const": "exact",
+              "type": "string"
+            },
+            {
+              "const": "approximate",
+              "type": "string"
+            },
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "dropped",
+              "type": "string"
+            }
+          ]
+        },
+        "Source": {
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "item": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/ItemKind"
+            },
+            "line": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "file",
+            "kind",
+            "item"
+          ],
+          "type": "object"
+        },
+        "SourceInfo": {
+          "properties": {
+            "checked_against": {
+              "type": "string"
+            },
+            "files": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "checked_against",
+            "files"
+          ],
+          "type": "object"
+        },
+        "Summary": {
+          "properties": {
+            "approximate": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dropped": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "exact": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "items": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "manual": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "items",
+            "exact",
+            "approximate",
+            "manual",
+            "dropped",
+            "result"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "rdock_version": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceInfo"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "tool",
+        "rdock_version",
+        "source",
+        "summary",
+        "findings"
+      ],
+      "type": "object",
+      "x-rdock-maturity": "beta"
+    },
+    "routes explain --json": {
+      "description": "The admin API's answer as it is; its fields are checked with schema/openapi.json.",
+      "x-rdock-openapi": "POST /api/v1/routes/explain 200"
+    },
+    "status --json": {
+      "description": "The admin API's answer as it is; its fields are checked with schema/openapi.json.",
+      "x-rdock-openapi": "GET /api/v1/status 200"
+    },
+    "validate --format json": {
+      "$defs": {
+        "Diagnostic": {
+          "properties": {
+            "code": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "element": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "hint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "message": {
+              "type": "string"
+            },
+            "path": {
+              "type": "string"
+            },
+            "removal": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "replacement": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "severity": {
+              "$ref": "#/$defs/Severity"
+            },
+            "since": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "severity",
+            "path",
+            "message",
+            "hint"
+          ],
+          "type": "object"
+        },
+        "FileReport": {
+          "properties": {
+            "diagnostics": {
+              "items": {
+                "$ref": "#/$defs/Diagnostic"
+              },
+              "type": "array"
+            },
+            "errors": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "file": {
+              "type": "string"
+            },
+            "valid": {
+              "type": "boolean"
+            },
+            "warnings": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "file",
+            "valid",
+            "errors",
+            "warnings",
+            "diagnostics"
+          ],
+          "type": "object"
+        },
+        "Severity": {
+          "oneOf": [
+            {
+              "const": "error",
+              "type": "string"
+            },
+            {
+              "const": "warning",
+              "type": "string"
+            }
+          ]
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "items": {
+        "$ref": "#/$defs/FileReport"
+      },
+      "type": "array"
+    },
+    "version --json": {
+      "$defs": {
+        "FeatureInfo": {
+          "properties": {
+            "built": {
+              "type": "boolean"
+            },
+            "cargo_feature": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "id": {
+              "type": "string"
+            },
+            "level": {
+              "type": "string"
+            },
+            "locations": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "since": {
+              "type": "string"
+            },
+            "summary": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "level",
+            "since",
+            "summary",
+            "locations",
+            "built"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "commit": {
+          "type": "string"
+        },
+        "features": {
+          "items": {
+            "$ref": "#/$defs/FeatureInfo"
+          },
+          "type": "array"
+        },
+        "http3": {
+          "type": "boolean"
+        },
+        "plugin_api": {
+          "type": "string"
+        },
+        "plugins": {
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "rustc": {
+          "type": "string"
+        },
+        "schema_version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "target": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "wasm_abi": {
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "version",
+        "commit",
+        "rustc",
+        "target",
+        "plugin_api",
+        "plugins",
+        "wasm_abi",
+        "http3",
+        "schema_version",
+        "features"
+      ],
+      "type": "object"
+    }
+  },
+  "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+  "surface": "cli"
+}

@@ -872,6 +872,9 @@ impl rdock_admin::Control for ControlAdmin {
                     "error": message,
                     "diagnostics": [],
                 })),
+                Err(e @ rdock_control::Error::State(_)) => {
+                    ClusterPublish::NotStored(format!("{e}; the revision was not published"))
+                }
                 Err(e) => ClusterPublish::Invalid(e.to_string()),
             },
         )

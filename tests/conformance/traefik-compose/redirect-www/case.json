@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "redirectregex with $${{1}}",
+    "permanent"
+  ],
+  "diff": true
+}

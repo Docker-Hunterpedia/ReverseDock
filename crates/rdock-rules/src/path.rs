@@ -56,6 +56,82 @@ pub fn normalize(raw: &str) -> Result<NormalizedPath, PathError> {
     Ok(NormalizedPath { forwarded, routing })
 }
 
+/// Whether a request path is spelled so that a backend may resolve it outside the path that
+/// was routed: an encoded NUL (`%00`), a `.` or `..` segment with path parameters (`/..;/`,
+/// `/.;x/`, also with `%2E` or `%3B`), which servlet containers treat as the dot segment
+/// itself, or a segment that holds a `.` or `..` segment once an encoded `/` or `\` (`%2F`,
+/// `%5C`) or a raw `\` is read as a separator (`/..%2Fadmin`, `/a%2F..%2Fb`,
+/// `/public\..\admin`), as decoding and Windows servers do. The router does not decode `%2F`
+/// or `%5C` (they stay encoded for routing and are forwarded as sent), so such a request
+/// matches a `PathPrefix` it would leave on those backends. Encoded separators without a
+/// dot segment (`group%2Fproject`, `@scope%2Fname`) and a `;` elsewhere (`;jsessionid=`, a
+/// file name) are not. `security.paths.ambiguous` decides what happens to such a path.
+#[must_use]
+pub fn ambiguous(raw: &str) -> bool {
+    let bytes = raw.as_bytes();
+    if bytes
+        .windows(3)
+        .any(|w| w[0] == b'%' && w[1] == b'0' && w[2] == b'0')
+    {
+        return true;
+    }
+    let Ok(escaped) = normalize_escapes(raw) else {
+        // A truncated escape is refused by `normalize` anyway.
+        return false;
+    };
+    // Escapes are upper-cased by now: an encoded `/`, `\` and `;` are `%2F`, `%5C`, `%3B`.
+    escaped.split('/').any(|segment| {
+        let parts: Vec<&str> = split_separators(segment);
+        let several = parts.len() > 1;
+        parts.iter().any(|part| {
+            let (name, params) = match first_param(part) {
+                Some(at) => (&part[..at], true),
+                None => (*part, false),
+            };
+            (name == "." || name == "..") && (several || params)
+        })
+    })
+}
+
+/// Whether a request path has an encoded `/` or `\` (`%2F`, `%5C`, any case) or a raw `\`:
+/// what `security.paths.encoded_separators: reject` refuses.
+#[must_use]
+pub fn has_encoded_separator(raw: &str) -> bool {
+    raw.contains('\\')
+        || raw.as_bytes().windows(3).any(|w| {
+            w[0] == b'%'
+                && matches!(
+                    (w[1], w[2].to_ascii_uppercase()),
+                    (b'2', b'F') | (b'5', b'C')
+                )
+        })
+}
+
+/// A segment cut at encoded `/` and `\` and at raw `\`.
+fn split_separators(segment: &str) -> Vec<&str> {
+    let mut parts = Vec::new();
+    let mut rest = segment;
+    while let Some(at) = [rest.find("%2F"), rest.find("%5C"), rest.find('\\')]
+        .into_iter()
+        .flatten()
+        .min()
+    {
+        parts.push(&rest[..at]);
+        let width = if rest[at..].starts_with('\\') { 1 } else { 3 };
+        rest = &rest[at + width..];
+    }
+    parts.push(rest);
+    parts
+}
+
+/// Where the path parameters of a segment start (`;` or `%3B`).
+fn first_param(part: &str) -> Option<usize> {
+    [part.find(';'), part.find("%3B")]
+        .into_iter()
+        .flatten()
+        .min()
+}
+
 /// Whether the steps below would return `raw` unchanged for both forms: it starts with `/`,
 /// has no escapes, and no `.` or `..` segment and no empty segment except a trailing slash.
 fn already_normal(raw: &str) -> bool {
@@ -284,5 +360,75 @@ mod tests {
         assert_eq!(normalize("/a%zz"), Err(PathError::BadEscape));
         assert_eq!(normalize("/a#b"), Err(PathError::Fragment));
         assert_eq!(n("*"), ("*".into(), "*".into()));
+    }
+
+    #[test]
+    fn ambiguous_spellings_are_found() {
+        for path in [
+            "/public/..;/admin",
+            "/public/.;x/admin",
+            "/public/%2e%2E;/admin",
+            "/public/..%2Fadmin",
+            "/public/..%2fadmin",
+            "/public%2F..%2Fadmin",
+            "/a%2F..%2Fb",
+            "/public/%5C..%5Cadmin",
+            "/public/%2e%2e%5Cadmin",
+            "/public\\..\\admin",
+            "/public\\.\\x",
+            "/public/..%3B/admin",
+            "/public/..%3bx/admin",
+            "/a%2F..;x",
+            "/a%00",
+        ] {
+            assert!(ambiguous(path), "{path}");
+        }
+        for path in [
+            "/",
+            "/a/b;jsessionid=1",
+            "/a/..b;c",
+            "/a/%2e%2e/b",
+            "/foo%20bar",
+            "/%25",
+            "/a.;b",
+            "/a%3Bb",
+            "/nasty/a%26amp%3Bb.txt",
+            "/api/projects/group%2Fproject",
+            "/@scope%2Fname",
+            "/a%5Cb",
+            "/a\\b",
+            "/a%2F...%2Fb",
+            "/a%2F..b",
+        ] {
+            assert!(!ambiguous(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn encoded_separators_are_found() {
+        for path in ["/group%2Fproject", "/a%2fb", "/a%5Cb", "/a\\b"] {
+            assert!(has_encoded_separator(path), "{path}");
+        }
+        for path in ["/a/b", "/a%20b", "/a%3Bb", "/%25"] {
+            assert!(!has_encoded_separator(path), "{path}");
+        }
+    }
+
+    #[test]
+    fn encoded_separators_are_routed_and_forwarded_as_sent() {
+        // The router keeps `%2F` and `%5C` encoded, so routing and the backend see one
+        // segment; only a backend that decodes them sees two.
+        let p = normalize("/api/projects/group%2fproject").unwrap();
+        assert_eq!(p.forwarded, "/api/projects/group%2Fproject");
+        assert_eq!(p.routing, "/api/projects/group%2Fproject");
+        let p = normalize("/public%2F..%2Fadmin").unwrap();
+        assert_eq!(
+            p.routing, "/public%2F..%2Fadmin",
+            "no dot segment is removed"
+        );
+        assert!(
+            ambiguous("/public%2F..%2Fadmin"),
+            "which is why it is refused"
+        );
     }
 }

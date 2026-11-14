@@ -59,6 +59,51 @@ pub fn special(ip: IpAddr) -> Option<&'static str> {
     }
 }
 
+/// What kind of address `ip` is when it reaches the proxy's own machine or its link (the
+/// rule for objects from Docker and Swarm labels, which may reach private networks, where
+/// their containers are, but not these): unspecified or "this network" (`0.0.0.0/8`, `::`,
+/// which connect to the machine itself), loopback, link-local (`169.254.0.0/16`,
+/// `fe80::/10`) and the cloud metadata addresses of [`METADATA`]. IPv4-mapped and NAT64
+/// forms are judged as the IPv4 address they carry. `None` for any other address.
+#[must_use]
+pub fn local(ip: IpAddr) -> Option<&'static str> {
+    let ip = canonical(ip);
+    if METADATA.contains(&ip) {
+        return Some("a cloud metadata address");
+    }
+    match ip {
+        IpAddr::V4(v4) => {
+            if v4.is_unspecified() || v4.octets()[0] == 0 {
+                Some("unspecified or \"this network\" (0.0.0.0/8)")
+            } else if v4.is_loopback() {
+                Some("loopback (127.0.0.0/8)")
+            } else if v4.is_link_local() {
+                Some("link-local (169.254.0.0/16)")
+            } else {
+                None
+            }
+        }
+        IpAddr::V6(v6) => {
+            let seg = v6.segments();
+            if seg[..6] == [0x0064, 0xff9b, 0, 0, 0, 0] {
+                let [hi1, hi2] = seg[6].to_be_bytes();
+                let [lo1, lo2] = seg[7].to_be_bytes();
+                return local(IpAddr::V4(Ipv4Addr::new(hi1, hi2, lo1, lo2)))
+                    .map(|_| "NAT64 of a local address");
+            }
+            if v6.is_unspecified() {
+                Some("unspecified (::)")
+            } else if v6.is_loopback() {
+                Some("loopback (::1)")
+            } else if (seg[0] & 0xffc0) == 0xfe80 {
+                Some("link-local (fe80::/10)")
+            } else {
+                None
+            }
+        }
+    }
+}
+
 /// Whether `ip` is a globally routable unicast address (and not a metadata address).
 #[must_use]
 pub fn is_global_unicast(ip: IpAddr) -> bool {
@@ -138,6 +183,9 @@ pub enum BackendPolicy {
     GlobalOnly,
     /// Exactly these networks.
     Networks(Vec<IpNetwork>),
+    /// Anything but the proxy's own machine and link ([`local`]): objects from Docker and
+    /// Swarm labels unless `allow_local_backends` is set.
+    NotLocal,
 }
 
 impl BackendPolicy {
@@ -171,6 +219,8 @@ impl BackendPolicy {
                 }
                 None
             }
+            Self::NotLocal => local(ip)
+                .map(|kind| format!("`{ip}` is {kind}, which objects from labels cannot reach")),
         }
     }
 
@@ -320,6 +370,46 @@ mod tests {
         assert!(metadata.allows(ip("169.254.169.254")));
         assert!(BackendPolicy::GlobalOnly.allows(ip("8.8.8.8")));
         assert!(!BackendPolicy::GlobalOnly.allows(ip("::ffff:127.0.0.1")));
+    }
+
+    #[test]
+    fn labels_reach_private_networks_but_not_the_machine_or_its_link() {
+        for text in [
+            "0.0.0.0",
+            "0.1.2.3",
+            "127.0.0.1",
+            "127.1.2.3",
+            "169.254.169.254",
+            "169.254.0.1",
+            "100.100.100.200",
+            "168.63.129.16",
+            "::",
+            "::1",
+            "::ffff:127.0.0.1",
+            "::ffff:169.254.169.254",
+            "fe80::1",
+            "fd00:ec2::254",
+            "64:ff9b::7f00:1",
+        ] {
+            assert!(
+                !BackendPolicy::NotLocal.allows(ip(text)),
+                "{text} is refused"
+            );
+        }
+        for text in [
+            "10.0.0.5",
+            "172.17.0.2",
+            "192.168.1.10",
+            "100.64.0.1",
+            "fd12:3456::1",
+            "8.8.8.8",
+            "2001:4860:4860::8888",
+        ] {
+            assert!(
+                BackendPolicy::NotLocal.allows(ip(text)),
+                "{text} is allowed"
+            );
+        }
     }
 
     #[test]

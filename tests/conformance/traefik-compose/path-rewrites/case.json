@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "replacepathregex",
+    "replacepath",
+    "addprefix",
+    "Path and PathRegexp rules"
+  ],
+  "diff": true
+}

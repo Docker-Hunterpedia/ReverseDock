@@ -31,6 +31,10 @@ pub struct Runtime {
     pub client_ip: ClientIpPolicy,
     /// Request size limits.
     pub limits: Limits,
+    /// What happens to ambiguous request paths (`security.paths.ambiguous`).
+    pub ambiguous_paths: rdock_model::settings::AmbiguousPaths,
+    /// What happens to encoded separators in paths (`security.paths.encoded_separators`).
+    pub encoded_separators: rdock_model::settings::EncodedSeparators,
     /// Access log writer.
     pub access_log: Arc<AccessLog>,
     /// Certificates, served through the shared resolver.
@@ -72,6 +76,8 @@ impl Runtime {
             listeners: BTreeMap::new(),
             client_ip: ClientIpPolicy::default(),
             limits: Limits::default(),
+            ambiguous_paths: rdock_model::settings::AmbiguousPaths::default(),
+            encoded_separators: rdock_model::settings::EncodedSeparators::default(),
             access_log: Arc::new(AccessLog::new(&rdock_model::settings::AccessLog {
                 format: rdock_model::settings::LogFormat::Off,
                 redact: Vec::new(),
@@ -270,18 +276,23 @@ pub struct ServiceRuntime {
     pub pass_host_header: bool,
     /// Tiers, locality and Peak-EWMA settings (ADR-0031).
     pub selection: Selection,
-    /// For a tenant's service: the addresses it may reach. Every resolved address outside it
-    /// is left out of the members, so it is never connected to (requests, retries, mirrors and
-    /// health checks all pick from the members). `None`: any address.
+    /// For a tenant's service, or one from Docker or Swarm labels: the addresses it may reach.
+    /// Every resolved address outside it is left out of the members, so it is never connected
+    /// to (requests, retries, mirrors and health checks all pick from the members). `None`:
+    /// any address.
     pub allowed: Option<AddressGuard>,
 }
 
-/// The address policy of a tenant's service, compiled into it (the data plane does not know
-/// tenants, only this).
+/// The address policy of a tenant's service or one from labels, compiled into it (the data
+/// plane does not know tenants or providers, only this).
 #[derive(Debug, Clone)]
 pub struct AddressGuard {
     /// What may be reached.
     pub policy: Arc<rdock_model::addresses::BackendPolicy>,
+    /// Check only addresses a DNS name resolved to; IP literals pass. For labels: their
+    /// literals were checked when the labels were read, and the provider's own backends (a
+    /// container's address, `host_address` for host-network containers) are literals.
+    pub names_only: bool,
     /// `rdock_backend_addresses_refused_total{service}`, when metrics are on.
     pub refused: Option<rdock_observability::IntCounter>,
 }
@@ -620,8 +631,12 @@ impl ServiceRuntime {
             };
             if let Some(guard) = &self.allowed {
                 candidates.retain(|(candidate, _, _)| match candidate {
-                    Candidate::Tcp { host, addr } => guard.admits(&self.name, host, *addr),
-                    // Refused at validation; never reached through a tenant's service.
+                    Candidate::Tcp { host, addr } => {
+                        (guard.names_only && is_literal(host))
+                            || guard.admits(&self.name, host, *addr)
+                    }
+                    // Refused at validation and from labels; never reached through a guarded
+                    // service.
                     Candidate::Unix(_) => false,
                 });
             }
@@ -652,6 +667,14 @@ impl ServiceRuntime {
             .retain(&list.iter().map(|m| m.id.as_str()).collect());
         list.into()
     }
+}
+
+/// Whether a configured backend host is an IP literal (`10.0.0.5`, `[fd00::5]`), not a name.
+fn is_literal(host: &str) -> bool {
+    host.trim_start_matches('[')
+        .trim_end_matches(']')
+        .parse::<std::net::IpAddr>()
+        .is_ok()
 }
 
 /// The lowest priority tier (ADR-0031).

@@ -128,6 +128,8 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         listeners,
         client_ip: client_ip_policy(config, env.cloudflare),
         limits: config.security.limits,
+        ambiguous_paths: config.security.paths.ambiguous,
+        encoded_separators: config.security.paths.encoded_separators,
         access_log: access_log(config, env.previous),
         certificates: index,
         listener_certificates,
@@ -561,19 +563,62 @@ fn compile_service(
     })
 }
 
-/// The address policy of `name` when a tenant owns it (an API object under its prefix):
-/// compiled once here, so the data plane checks resolved addresses without knowing tenants.
+/// The address policy of `name`: a tenant's (an API object under its prefix), or, for an
+/// object from Docker or Swarm labels, [`label_policy`]. Compiled once here, so the data
+/// plane checks resolved addresses without knowing tenants or providers.
 fn address_guard(name: &str, config: &Config, env: &CompileEnv<'_>) -> Option<AddressGuard> {
+    if let Some(guard) = label_guard(name, config, env) {
+        return Some(guard);
+    }
     let bare = name.strip_suffix("@api")?;
     let (_, tenant) = rdock_model::tenant::owner(&config.tenants, bare)?;
     Some(AddressGuard {
         policy: Arc::new(rdock_model::addresses::BackendPolicy::of(
             &tenant.backend_networks,
         )),
+        names_only: false,
         refused: env
             .metrics
             .map(|m| m.backend_addresses_refused.with_label_values(&[name])),
     })
+}
+
+/// The guard of a service (HTTP, TCP or UDP) from labels: [`label_policy`] on the addresses
+/// its names resolve to.
+pub(crate) fn label_guard(
+    name: &str,
+    config: &Config,
+    env: &CompileEnv<'_>,
+) -> Option<AddressGuard> {
+    Some(AddressGuard {
+        policy: label_policy(name, config)?,
+        names_only: true,
+        refused: env
+            .metrics
+            .map(|m| m.backend_addresses_refused.with_label_values(&[name])),
+    })
+}
+
+/// For an object from Docker or Swarm labels (`name@docker`, `name@swarm`): no loopback,
+/// link-local, unspecified or cloud metadata address, wherever a name resolves (the labels
+/// already refused such literals and names like `localhost`); `None` when the provider's
+/// `allow_local_backends` is set, and for every other object.
+fn label_policy(name: &str, config: &Config) -> Option<Arc<rdock_model::addresses::BackendPolicy>> {
+    let providers = &config.providers;
+    let allowed = if name.ends_with("@docker") {
+        providers
+            .docker
+            .as_ref()
+            .is_some_and(|d| d.allow_local_backends)
+    } else if name.ends_with("@swarm") {
+        providers
+            .swarm
+            .as_ref()
+            .is_some_and(|s| s.allow_local_backends)
+    } else {
+        return None;
+    };
+    (!allowed).then(|| Arc::new(rdock_model::addresses::BackendPolicy::NotLocal))
 }
 
 fn peak_decay(service: &Service) -> std::time::Duration {
@@ -823,13 +868,35 @@ fn build_middlewares(
             })
             .collect(),
     };
+    // Middlewares from labels fetch through a client that never connects to the proxy's own
+    // machine or a link-local address (`forward_auth`, `jwt` keys, agents, `oidc`).
+    let label_env = BuildEnv {
+        service: build_env.service,
+        client: Arc::new(
+            env.client
+                .guarded(Arc::new(rdock_model::addresses::BackendPolicy::NotLocal)),
+        ),
+        plugins: build_env.plugins,
+        metrics: build_env.metrics,
+        consumers: build_env.consumers.clone(),
+        quotas: build_env.quotas,
+        route_hosts: build_env.route_hosts.clone(),
+        abuse: build_env.abuse,
+        shared_limits: build_env.shared_limits,
+        trusted_proxies: build_env.trusted_proxies.clone(),
+    };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
         if let Err(message) = check_label_root(config, name, middleware) {
             out.push(Diagnostic::error(path_key("middlewares", name), message));
             continue;
         }
-        match rdock_middleware::build(name, middleware, &build_env) {
+        let env = if label_policy(name, config).is_some() {
+            &label_env
+        } else {
+            &build_env
+        };
+        match rdock_middleware::build(name, middleware, env) {
             Ok(m) => {
                 built.insert(name.clone(), m);
             }
@@ -900,6 +967,13 @@ fn check_label_root(
     } else {
         return Ok(());
     };
+    // A link out of the root would serve any file the process can read: whoever writes into
+    // the root (the container) decides where it points.
+    if st.symlinks == rdock_model::middleware::SymlinkPolicy::All {
+        return Err(
+            "`symlinks: all` follows links out of the directory, so labels cannot set it; use `within_root` (or define the middleware in the configuration file)"
+            .to_owned());
+    }
     let root = std::fs::canonicalize(&st.root)
         .map_err(|e| format!("cannot read `{}`: {e}", st.root.display()))?;
     let inside = allowed
@@ -1571,5 +1645,28 @@ mod tests {
         assert!(!check(&swarm, "docs@swarm", &other));
         // The file's own middlewares are the operator's and are not restricted.
         assert!(check(&with_roots(&[]), "docs", &other));
+    }
+
+    #[test]
+    fn label_middlewares_cannot_follow_links_out_of_their_root() {
+        let base = tempfile::tempdir().unwrap();
+        let sites = base.path().join("sites");
+        std::fs::create_dir_all(sites.join("app")).unwrap();
+        let allowed = with_roots(&[&sites]);
+        let with = |symlinks: &str| -> Middleware {
+            serde_json::from_value(serde_json::json!({
+                "type": "static", "root": sites.join("app"), "symlinks": symlinks
+            }))
+            .unwrap()
+        };
+        let err = check_label_root(&allowed, "app@docker", &with("all")).unwrap_err();
+        assert!(
+            err.contains("`symlinks: all`") && err.contains("within_root"),
+            "{err}"
+        );
+        assert!(check_label_root(&allowed, "app@docker", &with("within_root")).is_ok());
+        assert!(check_label_root(&allowed, "app@docker", &with("none")).is_ok());
+        // The file's own middleware may.
+        assert!(check_label_root(&allowed, "app", &with("all")).is_ok());
     }
 }

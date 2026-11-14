@@ -1,0 +1,141 @@
+{
+  "findings": [
+    {
+      "code": "compose.service.traefik",
+      "hint": "replace the image with ReverseDock's and remove Traefik's flags: `rdock run` does not accept them",
+      "level": "exact",
+      "message": "the service runs Traefik (traefik:v3.7.19): its flags and `TRAEFIK_*` variables are read as static configuration",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.traefik",
+        "kind": "object",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.label.manual",
+      "hint": "set `admin.enabled: true`; remove these labels",
+      "level": "manual",
+      "message": "a router to Traefik's own API or dashboard (`…@internal`): ReverseDock's API and dashboard are on the admin listener (`admin`), not routed",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.dashboard.rule",
+        "kind": "label",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.label.manual",
+      "hint": "set `admin.enabled: true`; remove these labels",
+      "level": "manual",
+      "message": "a router to Traefik's own API or dashboard (`…@internal`): ReverseDock's API and dashboard are on the admin listener (`admin`), not routed",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.dashboard.service",
+        "kind": "label",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.label.manual",
+      "hint": "set `admin.enabled: true`; remove these labels",
+      "level": "manual",
+      "message": "a router to Traefik's own API or dashboard (`…@internal`): ReverseDock's API and dashboard are on the admin listener (`admin`), not routed",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.dashboard.entrypoints",
+        "kind": "label",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.label.manual",
+      "hint": "set `admin.enabled: true`; remove these labels",
+      "level": "manual",
+      "message": "a router to Traefik's own API or dashboard (`…@internal`): ReverseDock's API and dashboard are on the admin listener (`admin`), not routed",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.dashboard.middlewares",
+        "kind": "label",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`basic_auth.users` (bcrypt and argon2id; Apache MD5 and SHA-1 with a warning)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.dash-auth.basicauth.users",
+        "kind": "label",
+        "scope": "traefik"
+      },
+      "target": "middlewares.dash-auth"
+    },
+    {
+      "code": "traefik.static.manual",
+      "hint": "set `admin.enabled: true` and create a user with `rdock users add`",
+      "level": "manual",
+      "message": "ReverseDock's API and dashboard are on the admin listener (`admin`), with users and tokens; nothing is written",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--api.dashboard",
+        "kind": "flag",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.static.expose_by_default",
+      "level": "exact",
+      "message": "`providers.docker.expose_by_default: false`, as Traefik's `exposedByDefault`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--providers.docker.exposedbydefault",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "providers.docker.expose_by_default"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:443`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.websecure.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.websecure.address"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 5,
+    "items": 10,
+    "manual": 5,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

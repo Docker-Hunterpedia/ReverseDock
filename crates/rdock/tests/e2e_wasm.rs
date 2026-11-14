@@ -46,6 +46,7 @@ fn config(
 ) -> String {
     format!(
         r#"
+experimental: [wasm]
 listeners:
   web: {{ address: "127.0.0.1:{port}" }}
 defaults: {{ listeners: [web], tls: off }}

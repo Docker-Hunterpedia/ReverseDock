@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "compress encodings",
+    "includedContentTypes",
+    "minResponseBodyBytes",
+    "excludedContentTypes (none)"
+  ],
+  "diff": false
+}

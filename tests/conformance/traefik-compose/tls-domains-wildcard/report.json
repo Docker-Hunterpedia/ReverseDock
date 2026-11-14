@@ -1,0 +1,110 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `portal` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.portal",
+        "kind": "object",
+        "scope": "portal"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "portal"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.portal.rule",
+        "kind": "label",
+        "scope": "portal"
+      },
+      "target": "routes.portal"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.portal.entrypoints",
+        "kind": "label",
+        "scope": "portal"
+      },
+      "target": "routes.portal"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true`; certificates come from the one `acme` account; the resolver's name is not kept",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.portal.tls.certresolver",
+        "kind": "label",
+        "scope": "portal"
+      },
+      "target": "routes.portal"
+    },
+    {
+      "code": "traefik.label.manual",
+      "level": "manual",
+      "message": "a wildcard certificate needs the DNS-01 challenge: set `tls.dns_provider` on the route (or migrate the static configuration, whose DNS resolver then fills it in)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.portal.tls.domains[0].main",
+        "kind": "label",
+        "scope": "portal"
+      },
+      "target": "routes.portal.tls"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tls.domains`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.portal.tls.domains[0].sans",
+        "kind": "label",
+        "scope": "portal"
+      },
+      "target": "routes.portal"
+    },
+    {
+      "code": "output.invalid",
+      "level": "manual",
+      "message": "the wildcard `*.example.com` needs a DNS-01 certificate",
+      "target": "routes.portal.tls"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 5,
+    "items": 7,
+    "manual": 1,
+    "result": 1
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

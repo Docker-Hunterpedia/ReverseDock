@@ -5,7 +5,19 @@ use std::fmt;
 use serde::{Deserialize, Serialize};
 
 /// How serious a diagnostic is.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[derive(
+    Debug,
+    Clone,
+    Copy,
+    PartialEq,
+    Eq,
+    PartialOrd,
+    Ord,
+    Hash,
+    Serialize,
+    Deserialize,
+    schemars::JsonSchema,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum Severity {
     /// The configuration cannot be applied.
@@ -24,7 +36,7 @@ impl fmt::Display for Severity {
 }
 
 /// One finding about a configuration, located by a path such as `routes.app.service`.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct Diagnostic {
     /// Error or warning.
     pub severity: Severity,
@@ -34,6 +46,24 @@ pub struct Diagnostic {
     pub message: String,
     /// How to fix it, when known. May span several lines.
     pub hint: Option<String>,
+    /// A stable code for diagnostics that tools act on, e.g. `deprecated` or
+    /// `experimental_not_enabled` (ADR-0033). Absent for the others.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code: Option<String>,
+    /// For a deprecation: the deprecated element as the registry names it, e.g.
+    /// `observability.alerts.webhook` (also the `element` label of
+    /// `rdock_deprecated_config_in_use`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub element: Option<String>,
+    /// For a deprecation: the release that deprecated the element, e.g. `1.0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub since: Option<String>,
+    /// For a deprecation: the release that removes the element, e.g. `2.0`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub removal: Option<String>,
+    /// For a deprecation: what to use instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub replacement: Option<String>,
 }
 
 impl Diagnostic {
@@ -44,6 +74,11 @@ impl Diagnostic {
             path: path.into(),
             message: message.into(),
             hint: None,
+            code: None,
+            element: None,
+            since: None,
+            removal: None,
+            replacement: None,
         }
     }
 
@@ -54,7 +89,19 @@ impl Diagnostic {
             path: path.into(),
             message: message.into(),
             hint: None,
+            code: None,
+            element: None,
+            since: None,
+            removal: None,
+            replacement: None,
         }
+    }
+
+    /// Adds a stable code (see [`Diagnostic::code`]).
+    #[must_use]
+    pub fn with_code(mut self, code: impl Into<String>) -> Self {
+        self.code = Some(code.into());
+        self
     }
 
     /// Adds a hint.

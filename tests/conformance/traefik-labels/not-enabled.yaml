@@ -1,4 +1,4 @@
-description: "Containers are opt-in: no enable label, nothing exposed."
+description: "Containers are opt-in: no enable label, nothing exposed, and a warning says how to get Traefik's exposedByDefault."
 containers:
   - name: "db"
     labels:
@@ -7,4 +7,6 @@ containers:
       web: "172.18.0.2"
     ports:
       - 5432
-expect: {}
+expect:
+  diagnostics:
+    - "docker.db: the container has Traefik router labels but is not exposed: containers are not exposed by default"

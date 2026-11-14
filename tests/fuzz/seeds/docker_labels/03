@@ -1,0 +1,9 @@
+tcp
+traefik.enable=true
+traefik.tcp.routers.t.rule=HostSNI(`*`)
+traefik.tcp.routers.t.tls.passthrough=true
+
+udp
+traefik.enable=true
+traefik.udp.routers.u.entrypoints=dns
+traefik.udp.services.u.loadbalancer.server.port=53

@@ -1,0 +1,16 @@
+# CodeQL scans the code that ships. Test, fuzz and benchmark code is left out: its assertion
+# messages print fixture values (placeholder strings named "secret", certificate status
+# documents) that the cleartext-logging query reports, and none of it is in a release.
+paths-ignore:
+  - "**/tests/**"
+  - "**/benches/**"
+  - "benchmarks/**"
+  - "examples/**"
+
+# rdock ships no built-in credential or key. Rust unit tests live inside `src/` (`mod tests`),
+# where `paths-ignore` cannot reach them, and they are full of fixture passwords; this query
+# reported two of them as critical on its first run (2026-11-14) and nothing in shipped code.
+# Secrets committed by mistake are GitHub secret scanning's job, not this query's.
+query-filters:
+  - exclude:
+      id: rust/hard-coded-cryptographic-value

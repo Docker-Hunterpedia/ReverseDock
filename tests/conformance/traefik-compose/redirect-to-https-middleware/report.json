@@ -1,0 +1,141 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `shop` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.shop",
+        "kind": "object",
+        "scope": "shop"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "shop"
+      }
+    },
+    {
+      "code": "traefik.router.plain_http",
+      "hint": "migrate the static configuration too (`--static`, or the Traefik service in the same Compose file) to get the entry points' behaviour; or write `tls: off` on the route",
+      "level": "approximate",
+      "message": "router `shop-http` has no `tls`: Traefik serves it as plain HTTP unless its entry point sets `http.tls`; the route gets HTTPS with an automatic certificate and HTTP is redirected",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.shop-http.rule",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "routes.shop-http"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.shop-http.entrypoints",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "routes.shop-http"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.shop-http.middlewares",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "routes.shop-http"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`redirect.scheme`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.to-https.redirectscheme.scheme",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "middlewares.to-https"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`redirect.permanent`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.to-https.redirectscheme.permanent",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "middlewares.to-https"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.shop.rule",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "routes.shop"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.shop.entrypoints",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "routes.shop"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.shop.tls",
+        "kind": "label",
+        "scope": "shop"
+      },
+      "target": "routes.shop"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 8,
+    "items": 10,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

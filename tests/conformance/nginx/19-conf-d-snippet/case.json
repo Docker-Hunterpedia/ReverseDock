@@ -1,0 +1,9 @@
+{
+  "input": "site.conf",
+  "exercises": [
+    "a file without http",
+    "upstream with two servers (passive health and retries written)",
+    "a listener on another port"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_core_module, ngx_http_upstream_module) read 2026-11-14."
+}

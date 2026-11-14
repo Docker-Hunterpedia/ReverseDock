@@ -18,6 +18,47 @@ pub struct Security {
     pub client_ip_header: ClientIpHeader,
     /// Request size limits.
     pub limits: Limits,
+    /// Request paths that backends may read differently from the router.
+    pub paths: PathSecurity,
+}
+
+/// What rdock does with request paths whose meaning differs between servers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PathSecurity {
+    /// Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`),
+    /// a `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that
+    /// appears once an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` is read as a separator
+    /// (`..%2Fadmin`, `public\..\admin`). `reject` (default) answers `400`; `forward` routes
+    /// and forwards them as written.
+    pub ambiguous: AmbiguousPaths,
+    /// Paths with an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` that form no dot segment,
+    /// such as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and
+    /// forwards them as sent; `reject` answers `400` for every such path, for backends that
+    /// decode separators before their own access checks.
+    pub encoded_separators: EncodedSeparators,
+}
+
+/// The `security.paths.encoded_separators` choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EncodedSeparators {
+    /// Route and forward them as sent.
+    #[default]
+    Allow,
+    /// Answer `400`.
+    Reject,
+}
+
+/// The `security.paths.ambiguous` choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbiguousPaths {
+    /// Answer `400`.
+    #[default]
+    Reject,
+    /// Route and forward them as written.
+    Forward,
 }
 
 /// Sources of the client IP.
@@ -453,19 +494,51 @@ pub enum AlertRule {
     /// Admin security events: login lockouts, user and second-factor changes, tokens used
     /// from a new address.
     Security,
+    /// The data directory is running out of space (`rules.disk`).
+    Disk,
 }
 
-/// What raises alerts. Certificates, backends, config and security are on; the thresholds are
-/// off until set.
+/// What raises alerts. Certificates, backends, config, security and disk are on; the error-rate
+/// and latency thresholds are off until set.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
 #[serde(default, deny_unknown_fields)]
 pub struct AlertRules {
     /// Rules that are off.
     pub disabled: Vec<AlertRule>,
+    /// When free space in the data directory raises the `disk` alert.
+    pub disk: DiskRule,
     /// Alert when a service's 5xx share over the window is above this, in percent.
     pub error_rate: Option<ErrorRateRule>,
     /// Alert when a service's p99 over the window is above this.
     pub latency: Option<LatencyRule>,
+}
+
+/// Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the
+/// space left drops below either. A full disk never stops request handling, but the
+/// configuration API, mutating admin calls and certificate orders are refused until there is
+/// room. Default: 256 MiB, enough for several hundred certificate orders and configuration
+/// writes, and nothing by share. ReverseDock's data directory needs a fixed amount of room,
+/// not a share of the disk: 5 % (the warning level of the Prometheus node exporter's
+/// `NodeFilesystemAlmostOutOfSpace` alert, node-mixin `config.libsonnet`, checked 2026-11-14)
+/// is tens of gigabytes on a large disk and would fire while there is room for years of
+/// writes, so a share threshold is off unless set.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
+#[serde(default, deny_unknown_fields)]
+pub struct DiskRule {
+    /// Alert when less than this share of the file system is free, in percent (0–50; 0, the
+    /// default, turns this threshold off).
+    pub free_percent: u8,
+    /// Alert when fewer bytes than this are free (0 turns this threshold off).
+    pub free_bytes: crate::values::ByteSize,
+}
+
+impl Default for DiskRule {
+    fn default() -> Self {
+        Self {
+            free_percent: 0,
+            free_bytes: crate::values::ByteSize::mib(256),
+        }
+    }
 }
 
 /// A 5xx-share threshold.

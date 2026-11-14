@@ -348,3 +348,137 @@ fn peak_ewma_respects_weights_and_avoids_unhealthy_backends() {
         "health filters before the pick: {counts:?}"
     );
 }
+
+/// Panic mode (`when_all_down: fail_open`, the default): with no backend available, the
+/// backends that only passive ejection keeps out while their probes pass get the traffic; with
+/// none of those, every backend of the first tier; `fail_closed` refuses instead.
+#[test]
+fn panic_mode_prefers_ejected_backends_whose_checks_pass() {
+    use rdock_balancer::{EjectPolicy, ProbePolicy};
+    const PROBES: ProbePolicy = ProbePolicy {
+        healthy: 1,
+        unhealthy: 1,
+    };
+    const EJECT: EjectPolicy = EjectPolicy {
+        failures: 1,
+        window: Duration::from_secs(10),
+        ejection: Duration::from_secs(60),
+        jitter: Duration::ZERO,
+    };
+    let backends = format!(
+        r#"{{ address: "{A}" }}, {{ address: "{B}" }}, {{ address: "{C}" }}, {{ address: "{D}", backup: true }}"#
+    );
+    for (extra, fail_open) in [
+        (
+            "    health: { passive: { max_ejection_percent: 100 } }",
+            true,
+        ),
+        (
+            "    health: { when_all_down: fail_closed, passive: { max_ejection_percent: 100 } }",
+            false,
+        ),
+    ] {
+        let registry = rdock_balancer::Registry::default();
+        let rt = runtime(&config(&backends, extra), &registry);
+        let service = app(&rt);
+        let now = Instant::now();
+        let pick = || select(&service, RequestKey::default());
+        assert!(!pick().unwrap().panic);
+        // A fails its probes; B and C (and the backup D) are ejected by failed requests, but
+        // their probes pass: they are the likeliest to answer.
+        state(&service, A).probe(false, PROBES, now);
+        for id in [B, C, D] {
+            let ejected = service.pool.failure(&state(&service, id), EJECT, 100, now);
+            assert!(
+                matches!(ejected, rdock_balancer::Ejection::Ejected(_)),
+                "{id}"
+            );
+        }
+        if !fail_open {
+            assert!(pick().is_none(), "fail_closed: no backend, no request");
+            continue;
+        }
+        let counts = picks(&service, 200);
+        assert!(
+            counts.len() == 2 && counts.contains_key(B) && counts.contains_key(C),
+            "the first tier's backends whose checks pass: {counts:?}"
+        );
+        assert!(pick().unwrap().panic, "chosen in panic mode");
+        assert!(service.pool.in_panic());
+        // B and C fail their probes too: the backup tier's D is the one left that passes.
+        state(&service, B).probe(false, PROBES, now);
+        state(&service, C).probe(false, PROBES, now);
+        assert_eq!(
+            picks(&service, 50).keys().collect::<Vec<_>>(),
+            [&D.to_owned()]
+        );
+        // D fails too: every backend of the first tier, failing checks included, as in Envoy.
+        state(&service, D).probe(false, PROBES, now);
+        let counts = picks(&service, 300);
+        assert_eq!(counts.len(), 3, "A, B and C: {counts:?}");
+        assert!(!counts.contains_key(D), "the backup tier waits");
+        // Drained backends never get traffic, even in panic mode.
+        state(&service, A).set_drained(true);
+        assert!(!picks(&service, 100).contains_key(A));
+        // A backend that passes its checks again and is not ejected ends panic mode.
+        state(&service, A).set_drained(false);
+        state(&service, A).probe(true, PROBES, now);
+        let selected = pick().unwrap();
+        assert_eq!(selected.member.id, A);
+        assert!(!selected.panic);
+        assert!(!service.pool.in_panic());
+    }
+}
+
+/// A retry whose available backends were all tried goes to a backend that only passive
+/// ejection keeps out while its probes pass, instead of repeating the one that just failed;
+/// without active checks there is no such signal and the retry repeats the backend.
+#[test]
+fn a_retry_prefers_an_ejected_backend_whose_probes_pass() {
+    use rdock_balancer::{EjectPolicy, ProbePolicy};
+    const PROBES: ProbePolicy = ProbePolicy {
+        healthy: 1,
+        unhealthy: 1,
+    };
+    const EJECT: EjectPolicy = EjectPolicy {
+        failures: 1,
+        window: Duration::from_secs(10),
+        ejection: Duration::from_secs(60),
+        jitter: Duration::ZERO,
+    };
+    let backends = format!(r#"{{ address: "{A}" }}, {{ address: "{B}" }}, {{ address: "{C}" }}"#);
+    for (extra, active) in [
+        (
+            "    health: { active: { path: /healthz, interval: 10s }, passive: { max_ejection_percent: 100 } }",
+            true,
+        ),
+        (
+            "    health: { passive: { max_ejection_percent: 100 } }",
+            false,
+        ),
+    ] {
+        let registry = rdock_balancer::Registry::default();
+        let rt = runtime(&config(&backends, extra), &registry);
+        let service = app(&rt);
+        let now = Instant::now();
+        service.pool.failure(&state(&service, B), EJECT, 100, now);
+        state(&service, C).probe(false, PROBES, now);
+        let tried = [A.to_owned()];
+        let key = RequestKey {
+            tried: &tried,
+            ..RequestKey::default()
+        };
+        let retry = select(&service, key).unwrap();
+        if active {
+            assert_eq!(retry.member.id, B, "the ejected backend whose probes pass");
+            assert!(retry.panic);
+            assert!(
+                !service.pool.in_panic(),
+                "a retry's fallback is not panic mode"
+            );
+        } else {
+            assert_eq!(retry.member.id, A);
+            assert!(!retry.panic);
+        }
+    }
+}

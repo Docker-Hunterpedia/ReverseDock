@@ -324,7 +324,7 @@ fn unsupported_and_unsafe_labels_are_warnings() {
         &[
             ("traefik.enable", "true"),
             ("traefik.http.routers.x.rule", "Host(`x.example.com`)"),
-            ("traefik.http.middlewares.chain.chain.middlewares", "a,b"),
+            ("traefik.http.middlewares.p.plugin.demo.key", "v"),
             (
                 "traefik.http.middlewares.auth.basicauth.usersfile",
                 "/etc/passwd",
@@ -335,8 +335,11 @@ fn unsupported_and_unsafe_labels_are_warnings() {
     )]);
     let found = messages(&t);
     assert_eq!(found.len(), 4, "{found:?}");
-    assert!(found.iter().any(|m| m.contains("chain.chain.middlewares")
-        && m.contains("not in the supported Traefik label subset")));
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("p.plugin.demo.key") && m.contains("plugins do not run here"))
+    );
     assert!(
         found
             .iter()
@@ -502,4 +505,290 @@ fn native_tcp_labels_build_tcp_routes_that_pass_the_merged_validation() {
         merged.config.tcp_routes["pg@docker"].middlewares,
         ["office@docker"]
     );
+}
+
+/// A deprecated label is reported with the registry's facts, and a renamed one is read under
+/// its new name (ADR-0033). The registry's test entries rename `routes.<name>.rule` to
+/// `match`; no other test here uses that label, so turning them on for this process is safe.
+#[test]
+fn deprecated_labels_are_reported_and_renamed_ones_still_work() {
+    rdock_model::deprecation::enable_test_entries();
+    let t = run(&[container(
+        "api-1",
+        9,
+        &[8080],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.api.rule", "Host(`api.example.com`)"),
+            ("rdock.routes.api.service", "api"),
+            ("rdock.services.api.port", "8080"),
+        ],
+    )]);
+    let route = &t.fragment.routes["api"];
+    assert_eq!(
+        serde_json::to_value(&route.matcher).unwrap(),
+        serde_json::json!("Host(`api.example.com`)")
+    );
+    let deprecated: Vec<_> = t
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.as_deref() == Some("deprecated"))
+        .collect();
+    assert_eq!(deprecated.len(), 1, "{:?}", t.diagnostics);
+    assert!(
+        deprecated[0].path.ends_with("rdock.routes.api.rule\"]"),
+        "{}",
+        deprecated[0].path
+    );
+    assert_eq!(deprecated[0].removal.as_deref(), Some("2.0"));
+}
+
+#[test]
+fn labels_cannot_reach_the_proxys_own_machine_unless_allowed() {
+    let refused = [
+        "http://unix:///var/lib/rdock/admin.sock",
+        "http://127.0.0.1:2080",
+        "http://localhost:2080",
+        "http://[::1]:2080",
+        "http://169.254.169.254",
+        "http://2130706433:80",
+        "http://0.0.0.0:80",
+    ];
+    for url in refused {
+        let c = container(
+            "evil",
+            2,
+            &[80],
+            &[
+                ("traefik.enable", "true"),
+                ("traefik.http.routers.r.rule", "Host(`evil.test`)"),
+                ("traefik.http.services.s.loadbalancer.server.url", url),
+            ],
+        );
+        let t = run(std::slice::from_ref(&c));
+        assert!(!t.fragment.services.contains_key("s"), "{url}: {t:?}");
+        let found = messages(&t);
+        assert!(
+            found
+                .iter()
+                .any(|m| m.contains("allow_local_backends") || m.contains("not `host:port`")),
+            "{url}: {found:?}"
+        );
+    }
+    // The setting allows loopback, never a socket.
+    let allow = DockerProvider {
+        allow_local_backends: true,
+        ..DockerProvider::default()
+    };
+    let local = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`dev.test`)"),
+            (
+                "traefik.http.services.s.loadbalancer.server.url",
+                "http://127.0.0.1:8080",
+            ),
+        ],
+    );
+    let t = translate(std::slice::from_ref(&local), &allow);
+    assert_eq!(backends(&t, "s"), vec!["127.0.0.1:8080"]);
+    let socket = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`dev.test`)"),
+            (
+                "traefik.http.services.s.loadbalancer.server.url",
+                "http://unix:///run/x.sock",
+            ),
+        ],
+    );
+    assert!(
+        !translate(&[socket], &allow)
+            .fragment
+            .services
+            .contains_key("s")
+    );
+    // Middleware URLs too.
+    let auth = container(
+        "evil",
+        2,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`evil.test`)"),
+            ("traefik.http.routers.r.middlewares", "fa"),
+            (
+                "traefik.http.middlewares.fa.forwardauth.address",
+                "http://127.0.0.1:2080/api/v1/status",
+            ),
+        ],
+    );
+    let t = run(&[auth]);
+    assert!(!t.fragment.middlewares.contains_key("fa"), "{t:?}");
+    // A container's own address stays as it was.
+    let fine = container(
+        "app",
+        4,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`app.test`)"),
+            (
+                "traefik.http.middlewares.fa.forwardauth.address",
+                "http://auth.internal:9000/check",
+            ),
+            ("traefik.http.routers.r.middlewares", "fa"),
+        ],
+    );
+    let t = run(&[fine]);
+    assert!(t.fragment.middlewares.contains_key("fa"), "{t:?}");
+}
+
+#[test]
+fn middleware_urls_from_labels_are_judged_by_the_host_the_url_parser_sees() {
+    let refused = [
+        // `\` is `/` in special URLs, so the host is 127.0.0.1, not x.test.
+        "http://127.0.0.1\\@x.test/",
+        // Percent-encoded and fullwidth digits decode to 127.0.0.1.
+        "http://127.0.0.%31/",
+        "http://\u{ff11}\u{ff12}\u{ff17}.\u{ff10}.\u{ff10}.\u{ff11}/",
+        "http://0x7f.1/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[fe80::1]/",
+        "http://100.100.100.200/",
+        "http://LOCALHOST./",
+    ];
+    for url in refused {
+        let c = container(
+            "evil",
+            2,
+            &[80],
+            &[
+                ("traefik.enable", "true"),
+                ("traefik.http.routers.r.rule", "Host(`evil.test`)"),
+                ("traefik.http.routers.r.middlewares", "fa"),
+                ("traefik.http.middlewares.fa.forwardauth.address", url),
+            ],
+        );
+        let t = run(&[c]);
+        assert!(!t.fragment.middlewares.contains_key("fa"), "{url}: {t:?}");
+        assert!(
+            messages(&t)
+                .iter()
+                .any(|m| m.contains("allow_local_backends")),
+            "{url}: {:?}",
+            messages(&t)
+        );
+    }
+    // Values that are never fetched may name the machine (a development identity provider).
+    let c = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.routes.app.middlewares", "j"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.middlewares.j.type", "jwt"),
+            (
+                "rdock.middlewares.j.issuer",
+                "http://localhost:8080/realms/dev",
+            ),
+            ("rdock.middlewares.j.audiences", "[app]"),
+            ("rdock.middlewares.j.jwks_url", "https://idp.example/certs"),
+        ],
+    );
+    let t = run(&[c]);
+    assert!(
+        t.fragment.middlewares.contains_key("j"),
+        "{:?}",
+        messages(&t)
+    );
+    // A fetched key URL on the machine is not.
+    let c = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.middlewares.j.type", "jwt"),
+            ("rdock.middlewares.j.issuer", "any"),
+            ("rdock.middlewares.j.audiences", "[app]"),
+            (
+                "rdock.middlewares.j.jwks_url",
+                "http://127.0.0.%31:8080/certs",
+            ),
+        ],
+    );
+    let t = run(&[c]);
+    assert!(!t.fragment.middlewares.contains_key("j"), "{t:?}");
+    // A module file on the proxy's machine is never named from labels.
+    let c = container(
+        "evil",
+        2,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.middlewares.w.type", "wasm"),
+            ("rdock.middlewares.w.path", "/var/lib/rdock/x.wasm"),
+        ],
+    );
+    let t = run(&[c]);
+    assert!(!t.fragment.middlewares.contains_key("w"), "{t:?}");
+    assert!(
+        messages(&t).iter().any(|m| m.contains("`type: wasm`")),
+        "{:?}",
+        messages(&t)
+    );
+}
+
+#[test]
+fn labels_cannot_name_files_on_the_proxys_host() {
+    let c = container(
+        "app",
+        5,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.services.app.tls.key_file", "/etc/rdock/key.pem"),
+            ("rdock.middlewares.v.type", "validate"),
+            ("rdock.middlewares.v.openapi", "/etc/passwd"),
+            ("rdock.middlewares.j.jwks_file", "/etc/passwd"),
+        ],
+    );
+    let t = run(&[c]);
+    let found = messages(&t);
+    for field in ["key_file", "openapi", "jwks_file"] {
+        assert!(
+            found
+                .iter()
+                .any(|m| m.contains(&format!("`{field}` cannot be set from labels"))),
+            "{field}: {found:?}"
+        );
+    }
+    if let Some(service) = t.fragment.services.get("app") {
+        assert!(
+            service
+                .tls
+                .as_ref()
+                .is_none_or(|tls| tls.key_file.is_none())
+        );
+    }
 }

@@ -152,6 +152,13 @@ fn second_factor(state: &State, user: &str, code: &str) -> std::io::Result<bool>
 
 fn internal(err: &std::io::Error) -> Response {
     tracing::error!(error = %err, "cannot save the users file");
+    if rdock_config::disk::is_out_of_space(err) {
+        // ADR-0033: a change that cannot be stored is refused with nothing changed.
+        return error(
+            StatusCode::INSUFFICIENT_STORAGE,
+            "cannot save the user: the disk is full; nothing was changed",
+        );
+    }
     error(StatusCode::INTERNAL_SERVER_ERROR, "cannot save the user")
 }
 

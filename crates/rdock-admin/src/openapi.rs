@@ -29,6 +29,18 @@ const CONFIG_WORK: [&str; 8] = [
     "/api/v1/consumers/{name}/keys/{id}",
 ];
 
+/// Operations of features below stable in the maturity registry (ADR-0033), by path prefix.
+/// They carry `x-rdock-maturity`, `x-rdock-feature` and `x-rdock-since`, like the model's
+/// schemas, and the compatibility check (`scripts/compat.py`) exempts them from the promise.
+const OPERATION_FEATURES: [(&str, &str); 6] = [
+    ("/api/v1/abuse/", "abuse"),
+    ("/api/v1/cache", "http-cache"),
+    ("/api/v1/cluster/", "cluster"),
+    ("/api/v1/consumers", "consumers"),
+    ("/api/v1/quota", "consumers"),
+    ("/api/v1/upgrade", "binary-upgrade"),
+];
+
 /// A refusal or failure.
 #[derive(Serialize, ToSchema)]
 pub(crate) struct ErrorBody {
@@ -77,6 +89,9 @@ pub(crate) struct AuditRecord {
     config_after: Option<String>,
     /// The tenant of a tenant-scoped caller.
     tenant: Option<String>,
+    /// On a refusal: how many refusals of the same kind (action, reason, actor and client)
+    /// in the minute before it were counted but not written.
+    repeated: Option<u64>,
 }
 
 /// The OpenAPI document as pretty JSON with a final newline, built once.
@@ -102,7 +117,33 @@ fn document() -> Value {
     add_model(&mut document);
     add_security(&mut document);
     tidy_texts(&mut document);
+    crate::deprecated::mark(&mut document);
+    mark_maturity(&mut document);
     document
+}
+
+/// Marks the operations of features below stable (see [`OPERATION_FEATURES`]).
+fn mark_maturity(document: &mut Value) {
+    let Some(paths) = document["paths"].as_object_mut() else {
+        return;
+    };
+    for (path, item) in paths {
+        let Some(feature) = OPERATION_FEATURES
+            .iter()
+            .find(|(prefix, _)| path.starts_with(prefix))
+            .and_then(|(_, id)| rdock_model::maturity::feature(id))
+        else {
+            continue;
+        };
+        if feature.level == rdock_model::maturity::Level::Stable {
+            continue;
+        }
+        for operation in item.as_object_mut().into_iter().flat_map(Map::values_mut) {
+            operation["x-rdock-maturity"] = feature.level.as_str().into();
+            operation["x-rdock-feature"] = feature.id.into();
+            operation["x-rdock-since"] = feature.since.into();
+        }
+    }
 }
 
 /// The configuration model's JSON Schema, with its `$defs` moved to the components.
@@ -116,6 +157,9 @@ fn add_model(document: &mut Value) {
     if let Some(root) = model.as_object_mut() {
         root.remove("$schema");
         root.remove("$id");
+        // The registries are for the website; the API document keeps the per-key marks.
+        root.remove("x-rdock-features");
+        root.remove("x-rdock-deprecations");
     }
     let schemas = &mut document["components"]["schemas"];
     for (name, mut schema) in defs {
@@ -166,6 +210,10 @@ fn add_security(document: &mut Value) {
             "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next request is accepted" } },
             "content": error_content(),
         },
+        "AuditUnavailable": {
+            "description": "The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.",
+            "content": error_content(),
+        },
         "ConfigBusy": {
             "description": "More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.",
             "headers": { "Retry-After": { "schema": { "type": "integer" }, "description": "Seconds until the next write is accepted" } },
@@ -175,6 +223,20 @@ fn add_security(document: &mut Value) {
     let Some(paths) = document["paths"].as_object_mut() else {
         return;
     };
+    for (path, item) in paths.iter_mut() {
+        let Some(operations) = item.as_object_mut() else {
+            continue;
+        };
+        for (method, operation) in operations.iter_mut() {
+            let gated = http::Method::from_bytes(method.to_ascii_uppercase().as_bytes())
+                .is_ok_and(|m| crate::caller::is_gated(&m, Some(path)))
+                && path != "/api/v1/auth/login";
+            if gated && operation["responses"].get("507").is_none() {
+                operation["responses"]["507"] =
+                    json!({ "$ref": "#/components/responses/AuditUnavailable" });
+            }
+        }
+    }
     for (path, item) in paths {
         if PUBLIC.contains(&path.as_str()) {
             continue;
@@ -274,6 +336,28 @@ mod tests {
         assert!(
             committed == json(),
             "schema/openapi.json is out of date; run `just schema` and commit the result"
+        );
+    }
+
+    #[test]
+    fn operations_below_stable_are_marked() {
+        let document = document();
+        let paths = document["paths"].as_object().unwrap();
+        for (prefix, id) in OPERATION_FEATURES {
+            let feature = rdock_model::maturity::feature(id).unwrap();
+            assert_ne!(feature.level, rdock_model::maturity::Level::Stable, "{id}");
+            assert!(
+                paths.keys().any(|p| p.starts_with(prefix)),
+                "no operation under {prefix}"
+            );
+        }
+        let bans = &document["paths"]["/api/v1/abuse/bans"]["get"];
+        assert_eq!(bans["x-rdock-maturity"], "beta");
+        assert_eq!(bans["x-rdock-feature"], "abuse");
+        assert!(
+            document["paths"]["/api/v1/status"]["get"]
+                .get("x-rdock-maturity")
+                .is_none()
         );
     }
 

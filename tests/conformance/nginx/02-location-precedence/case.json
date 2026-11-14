@@ -1,0 +1,11 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "= exact",
+    "^~ above regexes unless a longer plain prefix matches",
+    "~ and ~* in file order",
+    "longest plain prefix",
+    "the trailing-slash redirect for prefix locations that proxy"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_core_module, location) read 2026-11-14."
+}

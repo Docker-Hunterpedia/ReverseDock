@@ -2,7 +2,7 @@
 title: services
 description: "Backend pools that routes send traffic to."
 sidebar:
-  order: 20
+  order: 21
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -29,13 +29,13 @@ Backend servers. Set this, `split` or `respond`.
 
 Only used when no primary backend is available: the same as `priority: 1`.
 
-### `services.<name>.backends[].for_zones`
+### `services.<name>.backends[].for_zones` <Status maturity="beta" />
 
 **Type:** list of `string`
 
 Zones whose proxies should use this backend under `locality: { mode: prefer }`, instead of its own `zone` (Kubernetes topology hints, `hints.forZones`).
 
-### `services.<name>.backends[].priority`
+### `services.<name>.backends[].priority` <Status maturity="beta" />
 
 **Type:** `integer`
 
@@ -47,13 +47,13 @@ Priority tier from 0 (the default, used first) to 7. See the service's `failover
 
 Relative share of traffic.
 
-### `services.<name>.backends[].zone`
+### `services.<name>.backends[].zone` <Status maturity="beta" />
 
 **Type:** `string`
 
 The zone the backend runs in, e.g. `eu-west-1a`, for `locality: { mode: prefer }`.
 
-## `services.<name>.failover`
+## `services.<name>.failover` <Status maturity="beta" />
 
 **Type:** `strict` · `spill` · **Default:** `strict`
 
@@ -189,7 +189,7 @@ Failures within `window` that eject a backend.
 
 Largest share of the pool ejected at once, in percent.
 
-#### `services.<name>.health.passive.outlier`
+#### `services.<name>.health.passive.outlier` <Status maturity="beta" />
 
 **Type:** object
 
@@ -285,8 +285,8 @@ A backend that becomes healthy again ramps up its weight: a duration such as `30
 
 What happens when no backend is healthy.
 
-- `fail_open`: Send to every backend anyway: a broken health check must not cause an outage.
-- `fail_closed`: Answer `503`.
+- `fail_open`: Panic mode: route anyway, first to backends that only passive ejection keeps out while their active checks pass, else to every backend of the first tier (UDP: every backend). A broken health check must not cause an outage.
+- `fail_closed`: Answer `503` (UDP: drop new sessions).
 
 ## `services.<name>.hedge`
 
@@ -316,7 +316,7 @@ Attempts in flight at most, the first included.
 
 How a backend is chosen for each request.
 
-### `services.<name>.load_balancer.decay`
+### `services.<name>.load_balancer.decay` <Status maturity="beta" />
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration)
 
@@ -328,7 +328,7 @@ How a backend is chosen for each request.
 
 Header or cookie name for `header_hash` and `cookie_hash`.
 
-### `services.<name>.load_balancer.measure`
+### `services.<name>.load_balancer.measure` <Status maturity="beta" />
 
 **Type:** `first_byte` · `last_byte`
 
@@ -351,9 +351,9 @@ Selection policy.
 - `ip_hash`: Consistent hash of the client IP (Traefik's `hrw`).
 - `header_hash`: Consistent hash of a request header (`hash_on`).
 - `cookie_hash`: Consistent hash of a cookie (`hash_on`).
-- `peak_ewma`: Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a latency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).
+- `peak_ewma` <Status maturity="beta" />: Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a latency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).
 
-## `services.<name>.locality`
+## `services.<name>.locality` <Status maturity="beta" />
 
 **Type:** object
 
@@ -380,7 +380,7 @@ Requests in flight to one backend; a backend at the limit gets no more until one
 
 Requests in flight across the pool; more are answered `503` (circuit breaker).
 
-## `services.<name>.overprovisioning`
+## `services.<name>.overprovisioning` <Status maturity="beta" />
 
 **Type:** [`Factor`](/docs/reference/configuration/#factor)
 
@@ -392,7 +392,7 @@ With `failover: spill`: how much more than its share each tier can carry. Defaul
 
 Forward the client's `Host` header (otherwise the backend address is used).
 
-## `services.<name>.respond`
+## `services.<name>.respond` <Status maturity="beta" />
 
 **Type:** object
 
@@ -428,7 +428,7 @@ Retries in flight may be at most this share of the requests in flight, in percen
 
 Failures that are retried.
 
-### `services.<name>.retries.per_try_timeout`
+### `services.<name>.retries.per_try_timeout` <Status maturity="beta" />
 
 **Type:** [`Duration`](/docs/reference/configuration/#duration)
 

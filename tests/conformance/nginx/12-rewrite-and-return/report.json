@@ -1,0 +1,274 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name rewrite.example.com",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a redirect (301) for paths matching `^/old-blog/(.*)$`, as its own route above the location's",
+      "source": {
+        "file": "nginx.conf",
+        "item": "rewrite ^/old-blog/(.*)$ /blog/$1 permanent",
+        "kind": "directive",
+        "line": 6
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /blog/",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a redirect (302) for paths matching `^/blog/legacy/(.*)$`, as its own route above the location's",
+      "source": {
+        "file": "nginx.conf",
+        "item": "rewrite ^/blog/legacy/(.*)$ https://archive.example.com/$1 redirect",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://blog:2368",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /app/",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`rewrite … break` → a `rewrite` middleware (the whole path is replaced, the query kept, as NGINX does)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "rewrite ^/app/(.*)$ /$1 break",
+        "kind": "directive",
+        "line": 13
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the URI in `proxy_pass` is ignored after `rewrite … break`, as in NGINX",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://app:8080/ignored/",
+        "kind": "directive",
+        "line": 14
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /moved",
+        "kind": "directive",
+        "line": 16
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "redirect to `new.example.com` with the path and query kept",
+      "source": {
+        "file": "nginx.conf",
+        "item": "return 301 https://new.example.com$request_uri",
+        "kind": "directive",
+        "line": 17
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "exact match → `Path` at the highest location priority",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location = /gone",
+        "kind": "directive",
+        "line": 19
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a fixed answer with status 410 (`respond`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "return 410",
+        "kind": "directive",
+        "line": 20
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "exact match → `Path` at the highest location priority",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location = /hello",
+        "kind": "directive",
+        "line": 22
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "serve the text from a backend or a static file",
+      "level": "manual",
+      "message": "`return 200` with a body (`hello`) has no equivalent (a fixed-status service answers without a body)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "return 200 \"hello\"",
+        "kind": "directive",
+        "line": 23
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /loop/",
+        "kind": "directive",
+        "line": 25
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "write the target as its own route",
+      "level": "manual",
+      "message": "a `rewrite` that re-runs location matching (`last`, no flag) or a second `rewrite … break` has no faithful translation: ReverseDock picks a route once",
+      "source": {
+        "file": "nginx.conf",
+        "item": "rewrite ^/loop/(.*)$ /blog/$1 last",
+        "kind": "directive",
+        "line": 26
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `rewrite-example-com-hello` is written disabled (`enabled: false`): a `return` with a body has no equivalent",
+      "security": true,
+      "target": "routes.rewrite-example-com-hello"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `rewrite-example-com-loop` is written disabled (`enabled: false`): a `rewrite` was not migrated; no `root`: NGINX would serve its default `html` directory",
+      "security": true,
+      "target": "routes.rewrite-example-com-loop"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 17,
+    "items": 19,
+    "manual": 2,
+    "result": 7
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

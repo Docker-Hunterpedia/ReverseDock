@@ -29,6 +29,7 @@ rdock-acme.workspace = true
 ring.workspace = true
 rustls.workspace = true
 rustls-pki-types.workspace = true
+rustix.workspace = true
 serde_json.workspace = true
 tempfile.workspace = true
 tokio.workspace = true

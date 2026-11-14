@@ -1,0 +1,207 @@
+{
+  "findings": [
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Method`",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/match/0/method",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.approximate",
+      "level": "approximate",
+      "message": "`remote_ip` matches the connection's address; `ClientIP` matches the client address resolved through `security.trusted_proxies` (the same unless trusted proxies are set)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/match/0/not/0/remote_ip",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`!(…)`",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/match/0/not",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "a fixed answer with status 403 (`respond`)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`PathRegexp` (RE2 and ReverseDock's engine share the syntax used); captures used in placeholders are reported where they are used",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/1/match/0/path_regexp",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "a fixed answer with status 410 (`respond`)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/1/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Header`/`HeaderRegexp` (`*` wildcards as regular expressions; a null list as a missing header)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/2/match/0/header",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/2/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.matcher.manual",
+      "hint": "rewrite it with Host, Path, Header, Query, Method and ClientIP matchers",
+      "level": "manual",
+      "message": "a CEL expression matcher has no equivalent",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/3/match/0/expression",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/3/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/4/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.default.dial_timeout",
+      "level": "exact",
+      "message": "Caddy's default dial timeout (3s) is written as `timeouts.connect: 3s` on each service (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "caddy.default.response_timeout",
+      "level": "approximate",
+      "message": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads (raise it on services with slow answers)"
+    },
+    {
+      "code": "caddy.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `api-example-org-4` is written disabled (`enabled: false`): a matcher at `/apps/http/servers/srv0/routes/0/handle/0/routes/3/match` could not be translated",
+      "security": true,
+      "target": "routes.api-example-org-4"
+    },
+    {
+      "code": "caddy.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `api-example-org-5` is written disabled (`enabled: false`): follows a matcher at `/apps/http/servers/srv0/routes/0/handle/0/routes/3/match` that could not be translated",
+      "security": true,
+      "target": "routes.api-example-org-5"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 12,
+    "items": 14,
+    "manual": 1,
+    "result": 4
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

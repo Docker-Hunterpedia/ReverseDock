@@ -13,6 +13,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - `${NAME}`, `${env:NAME}` and `${file:/path}` insert environment variables and file contents; secret fields keep the reference instead of the value.
 - Add `# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json` at the top of the file for completion and checks in your editor.
 - Settings marked **planned** are accepted by `rdock validate` with a warning and refused by `rdock run` until their release.
+- Settings marked **beta** or **experimental** are below stable ([maturity levels](/docs/project/maturity/)); an experimental one must be named under `experimental`. Settings marked **deprecated** keep working until their removal release ([deprecations](/docs/project/deprecations/)). Unmarked settings are stable.
 
 ## Sections
 
@@ -24,6 +25,7 @@ ReverseDock reads one YAML or JSON file, `/etc/rdock/rdock.yaml` by default (`--
 - [`consumers`](/docs/reference/configuration/consumers/): API clients and users that requests are attributed to, with their API keys (stored
 - [`control`](/docs/reference/configuration/control/): The control plane's own settings, read only by `rdock control run`.
 - [`defaults`](/docs/reference/configuration/defaults/): Defaults applied to routes that do not set a value.
+- [`experimental`](/docs/reference/configuration/experimental/): Experimental features this configuration uses on purpose (ADR-0033), e.g.
 - [`geoip`](/docs/reference/configuration/geoip/): GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
 - [`lifecycle`](/docs/reference/configuration/lifecycle/): Start-up and shutdown behaviour.
 - [`listeners`](/docs/reference/configuration/listeners/): Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)

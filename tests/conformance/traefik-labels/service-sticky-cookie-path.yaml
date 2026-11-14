@@ -1,0 +1,23 @@
+description: "sticky=true, the cookie's path and its max age (seconds)."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.services.app.loadbalancer.sticky: "true"
+      traefik.http.services.app.loadbalancer.sticky.cookie.path: "/shop"
+      traefik.http.services.app.loadbalancer.sticky.cookie.maxage: "3600"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app:
+      sticky:
+        cookie:
+          name: "rdock_sticky"
+          path: "/shop"
+          max_age: "1h"

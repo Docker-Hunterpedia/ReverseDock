@@ -1,0 +1,28 @@
+{
+  "about": "A recorded exchange for test_harness.py: the services of the corpus case security-headers as `docker compose config --format json` prints them (abridged), and one answer of each proxy as whoami and the proxies return it. Written by hand from whoami's documented output format; not captured from a live run.",
+  "services": {
+    "blog": {
+      "image": "traefik/whoami:v1.12.0",
+      "labels": {
+        "traefik.enable": "true",
+        "traefik.http.routers.blog.rule": "Host(`blog.example.com`)",
+        "traefik.http.routers.blog.entrypoints": "websecure",
+        "traefik.http.routers.blog.tls": "true",
+        "traefik.http.routers.blog.middlewares": "secure-headers",
+        "traefik.http.middlewares.secure-headers.headers.stsSeconds": "31536000",
+        "traefik.http.middlewares.secure-headers.headers.frameDeny": "true",
+        "traefik.http.middlewares.secure-headers.headers.customResponseHeaders.X-Served-By": "edge"
+      }
+    }
+  },
+  "traefik": {
+    "status": 200,
+    "headers": {"strict-transport-security": "max-age=31536000", "x-frame-options": "DENY", "x-served-by": "edge", "content-type": "text/plain; charset=utf-8"},
+    "body": "Hostname: blog\nIP: 127.0.0.1\nIP: 172.18.0.3\nRemoteAddr: 172.18.0.2:41234\nGET / HTTP/1.1\nHost: blog.example.com\nUser-Agent: rdock-traefik-diff\nAccept-Encoding: gzip\nX-Forwarded-For: 172.18.0.1\nX-Forwarded-Host: blog.example.com\nX-Forwarded-Port: 443\nX-Forwarded-Proto: https\nX-Forwarded-Server: 0f1e2d3c4b5a\nX-Real-Ip: 172.18.0.1\n"
+  },
+  "rdock": {
+    "status": 200,
+    "headers": {"strict-transport-security": "max-age=31536000", "x-frame-options": "DENY", "x-served-by": "edge", "content-type": "text/plain; charset=utf-8"},
+    "body": "Hostname: blog\nIP: 127.0.0.1\nIP: 172.18.0.3\nRemoteAddr: 172.18.0.4:51234\nGET / HTTP/1.1\nHost: blog.example.com\nUser-Agent: rdock-traefik-diff\nX-Forwarded-For: 172.18.0.1\nX-Forwarded-Host: blog.example.com\nX-Forwarded-Proto: https\n"
+  }
+}

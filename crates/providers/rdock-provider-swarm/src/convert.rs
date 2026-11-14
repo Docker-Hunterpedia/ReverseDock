@@ -52,6 +52,7 @@ pub fn translate(
         // a task on `host` has no attachment and is reported as on no network.
         host_address: IpAddr::from([127, 0, 0, 1]),
         proxy_networks,
+        allow_local_backends: provider.allow_local_backends,
     };
     let mut diagnostics = Vec::new();
     let workloads = workloads(inventory, provider, &settings, &mut diagnostics);

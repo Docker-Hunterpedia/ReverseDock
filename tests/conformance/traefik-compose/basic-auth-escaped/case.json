@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "basicauth.users with $$ escapes",
+    "basicauth.realm",
+    "basicauth.removeheader"
+  ],
+  "diff": true
+}

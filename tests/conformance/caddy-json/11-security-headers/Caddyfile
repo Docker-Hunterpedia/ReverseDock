@@ -1,0 +1,11 @@
+# Exercises: header with set and delete (deferred), a header for one path, and a placeholder value (manual).
+blog.example.com {
+	header {
+		Strict-Transport-Security "max-age=31536000; includeSubDomains"
+		X-Frame-Options DENY
+		-Server
+	}
+	header /assets/* Cache-Control "public, max-age=86400"
+	header /debug/* X-Request-Host {host}
+	reverse_proxy blog:2368
+}

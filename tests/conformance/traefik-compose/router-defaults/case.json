@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "a router without entrypoints (approximate)",
+    "a router without tls (approximate)",
+    "a router without service on a one-service container"
+  ],
+  "diff": false
+}

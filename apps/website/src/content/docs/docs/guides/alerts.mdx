@@ -1,6 +1,6 @@
 ---
 title: Get alerts
-description: Send alerts about certificates, backends, error rates, latency, rejected configurations and admin security events to Slack, Discord, Mattermost, signed webhooks or e-mail.
+description: Send alerts about certificates, backends, error rates, latency, rejected configurations, admin security events and a full disk to Slack, Discord, Mattermost, signed webhooks or e-mail.
 sidebar:
   order: 13
 ---
@@ -17,6 +17,7 @@ rdock raises an alert when something needs a person <Status since="v0.5" />, sen
 | `latency` | a service's p99 over the window is above the threshold (off until set) | it drops below |
 | `config` | a configuration is rejected (the previous one keeps running) | a configuration is applied |
 | `security` | repeated failed admin logins, admin users created, changed or deleted, two-step verification turned off, an API token used from a new address | |
+| `disk` | the data directory has less than `rules.disk.free_bytes` (256 MiB) free, or less than `free_percent` when you set one (off by default) | there is room again |
 
 A firing alert is sent once and again at most every `min_interval` (15 minutes) while it lasts. Delivery runs beside the proxy, never on a request: from a bounded queue, with up to three attempts about 1 s and 3 s apart, 5 seconds per attempt, and no redirects followed.
 
@@ -53,7 +54,7 @@ observability:
 ```
 
 - **`slack`**, **`discord`** and **`slack_compatible`** (Discord's `/slack` endpoint, Mattermost, Rocket.Chat) post one line such as `[FIRING] Backend 10.0.0.5:8080 of service shop is down: failed its health checks`. Discord messages allow no mentions, so a host name can never ping `@everyone`.
-- **`webhook`** posts JSON with `type` (`rdock.alert.firing` or `rdock.alert.resolved`), `timestamp` and `alert` (`rule`, `key`, `state`, `summary`, `details`). With a `whsec_…` `secret` it is signed with [Standard Webhooks](https://www.standardwebhooks.com/) (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which their libraries verify; `token` adds `Authorization: Bearer`. The v0.3 `alerts.webhook` keeps working as a channel named `webhook`, with the same fields as before at the top level.
+- **`webhook`** posts JSON with `type` (`rdock.alert.firing` or `rdock.alert.resolved`), `timestamp` and `alert` (`rule`, `key`, `state`, `summary`, `details`). With a `whsec_…` `secret` it is signed with [Standard Webhooks](https://www.standardwebhooks.com/) (`webhook-id`, `webhook-timestamp`, `webhook-signature`), which their libraries verify; `token` adds `Authorization: Bearer`. The v0.3 `alerts.webhook` keeps working as a channel named `webhook`, with the same fields as before at the top level; it is [deprecated](/docs/project/deprecations/) since 1.0 and goes in 2.0, and `rdock migrate config` turns it into a `type: webhook` channel.
 - **`smtp`** sends e-mail with STARTTLS (port 587, default) or implicit TLS (`tls: implicit`, port 465); `tls: none` is accepted only for a relay on the same machine.
 - `rules` on a channel limits it to those rules.
 - URLs, secrets, tokens and passwords are secrets: write them as `${file:…}` or `${env:…}`; `rdock validate` warns about a webhook URL written in the file.

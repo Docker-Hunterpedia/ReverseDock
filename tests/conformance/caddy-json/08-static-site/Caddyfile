@@ -1,0 +1,6 @@
+# Exercises: root, encode and file_server for a static site.
+docs.example.com {
+	root * /srv/docs
+	encode zstd gzip
+	file_server
+}

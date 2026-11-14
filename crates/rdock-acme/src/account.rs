@@ -15,6 +15,8 @@ use crate::storage::Storage;
 #[derive(Default)]
 pub(crate) struct Accounts {
     cache: HashMap<String, Account>,
+    /// The `Retry-After` each CA last asked for, by directory URL.
+    hints: HashMap<String, crate::client::RetryHint>,
 }
 
 impl Accounts {
@@ -30,9 +32,10 @@ impl Accounts {
         if let Some(account) = self.cache.get(&directory) {
             return Ok(account.clone());
         }
-        let builder = || match &acme.ca_root {
-            Some(root) => Account::builder_with_root(root),
-            None => Account::builder(),
+        let hint = self.hints.entry(directory.clone()).or_default().clone();
+        let builder = || -> Result<instant_acme::AccountBuilder, instant_acme::Error> {
+            let client = crate::client::TimedClient::new(acme.ca_root.as_deref(), hint.clone())?;
+            Ok(Account::builder_with_http(Box::new(client)))
         };
         if let Some(credentials) = storage.load_account(&directory).await? {
             let account = builder()?.from_credentials(credentials).await?;
@@ -94,6 +97,16 @@ impl Accounts {
         let _ = storage.store().release(&lease).await;
         self.cache.insert(directory, account.clone());
         Ok(account)
+    }
+}
+
+impl Accounts {
+    /// When the CA of `directory` asked to be contacted again (`Retry-After` on a `429` or
+    /// `503`), if that is still ahead; asking clears it.
+    pub fn retry_after(&self, directory: &str) -> Option<std::time::SystemTime> {
+        self.hints
+            .get(directory)
+            .and_then(crate::client::RetryHint::take)
     }
 }
 

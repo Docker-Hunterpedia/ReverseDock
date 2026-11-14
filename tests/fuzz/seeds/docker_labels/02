@@ -1,0 +1,3 @@
+hidden
+traefik.http.routers.h.rule=Host(`h.test`)
+rdock.host=h.test

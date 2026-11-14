@@ -1,5 +1,17 @@
-# Fuzzing: the differential HTTP/1 framing target, the rule parser and the configuration loader.
-# Weekly, on changes to parsers or the data plane, and on demand. Not a required check.
+# Fuzzing (cargo-fuzz, libFuzzer): every target in tests/fuzz. Weekly for 30 minutes per
+# target, 2 minutes on pull requests that touch code a target reaches, and on demand. Not a
+# required check.
+#
+# Budget: 21 targets × (30 min fuzzing + about 12 min to install cargo-fuzz and build) ≈ 15
+# runner-hours a week, all on standard GitHub-hosted runners, which are free for public
+# repositories (https://docs.github.com/en/billing/concepts/product-billing/github-actions,
+# read 2026-11-14). The Free plan runs 20 jobs at once and a job may run 6 hours
+# (https://docs.github.com/en/actions/reference/limits, read 2026-11-14), so the weekly run
+# takes about an hour of wall time and `timeout-minutes` stays far below the job limit.
+#
+# Corpus: each target's corpus is kept in the Actions cache between runs. Every run restores
+# it; only the scheduled run on `main` minimises and saves it, so a pull request (whose caches
+# are scoped to its own ref anyway) can never write the corpus later runs start from.
 name: fuzz
 
 on:
@@ -9,13 +21,20 @@ on:
     inputs:
       seconds:
         description: Seconds per target
-        default: "600"
+        default: "1800"
   pull_request:
     paths:
       - "crates/rdock-rules/**"
       - "crates/rdock-config/**"
       - "crates/rdock-proxy/**"
       - "crates/rdock-cache/**"
+      - "crates/rdock-tls/**"
+      - "crates/rdock-middleware/**"
+      - "crates/rdock-acme/**"
+      - "crates/rdock-admin/**"
+      - "crates/rdock-cluster/**"
+      - "crates/rdock-migrate/**"
+      - "crates/providers/rdock-provider-docker/**"
       - "crates/rdock-model/src/json_patch.rs"
       - "crates/rdock-model/src/json_patch/**"
       - "tests/fuzz/**"
@@ -31,13 +50,35 @@ concurrency:
 jobs:
   fuzz:
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    timeout-minutes: 75
     strategy:
       fail-fast: false
       matrix:
-        target: [h1_framing, rules_parser, config_loader, jwt_verify, proxy_header, clienthello, tls_fingerprint, disk_cache_header, json_patch, oidc_cookie, http3_request]
+        target:
+          - h1_framing
+          - rules_parser
+          - rules_eval
+          - config_loader
+          - jwt_verify
+          - proxy_header
+          - clienthello
+          - tls_fingerprint
+          - disk_cache_header
+          - json_patch
+          - oidc_cookie
+          - http3_request
+          - nginx_parser
+          - backend_response
+          - acme_answers
+          - admin_input
+          - cluster_protocol
+          - resp_reader
+          - migrate_caddy
+          - compose_interpolation
+          - docker_labels
     env:
-      SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'pull_request' && '120') || '600' }}
+      SECONDS_PER_TARGET: ${{ github.event.inputs.seconds || (github.event_name == 'pull_request' && '120') || '1800' }}
+      SAVE_CORPUS: ${{ github.event_name == 'schedule' && github.ref == 'refs/heads/main' }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -46,9 +87,15 @@ jobs:
         run: |
           rustup toolchain install nightly --profile minimal
           cargo +nightly install cargo-fuzz --locked --version 0.13.2
-      - name: Replay the seed corpus on stable
+      - name: Replay the seed corpus and the mutation smoke tests on stable
         working-directory: tests/fuzz
         run: cargo test --locked
+      - name: Restore the corpus of earlier scheduled runs
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tests/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
+          restore-keys: fuzz-corpus-${{ matrix.target }}-
       - name: Fuzz ${{ matrix.target }}
         working-directory: tests/fuzz
         run: |
@@ -57,6 +104,18 @@ jobs:
           cargo +nightly fuzz run --fuzz-dir . "$TARGET" corpus/"$TARGET" -- -max_total_time="$SECONDS_PER_TARGET" -rss_limit_mb=2048
         env:
           TARGET: ${{ matrix.target }}
+      - name: Minimise the corpus (scheduled runs on main)
+        if: env.SAVE_CORPUS == 'true'
+        working-directory: tests/fuzz
+        run: cargo +nightly fuzz cmin --fuzz-dir . "$TARGET" corpus/"$TARGET"
+        env:
+          TARGET: ${{ matrix.target }}
+      - name: Save the corpus (scheduled runs on main)
+        if: env.SAVE_CORPUS == 'true'
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: tests/fuzz/corpus/${{ matrix.target }}
+          key: fuzz-corpus-${{ matrix.target }}-${{ github.run_id }}
       - name: Keep crashing inputs
         if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2

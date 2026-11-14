@@ -2,7 +2,7 @@
 title: listeners
 description: "Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS) are used."
 sidebar:
-  order: 11
+  order: 12
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -17,7 +17,7 @@ Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`,
 
 Address to bind, e.g. `:443` or `127.0.0.1:8080`.
 
-## `listeners.<name>.http2`
+## `listeners.<name>.http2` <Status maturity="beta" />
 
 **Type:** object
 
@@ -71,11 +71,11 @@ Streams a client may reset before rdock accepted them, at once (the HTTP/2 Rapid
 
 Response data buffered per stream for a client that reads slowly. Default 400KiB (h2's); 16KiB to 16MiB.
 
-## `listeners.<name>.http3`
+## `listeners.<name>.http3` <Status maturity="experimental" />
 
 **Type:** object
 
-HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032): the listener then also owns the UDP socket of its address. Needs a build with the `http3` cargo feature; off by default.
+HTTP/3 over QUIC on the same address, `https` listeners only (ADR-0032): the listener then also owns the UDP socket of its address. Experimental: `enabled: true` needs `http3` under `experimental` and a build with the `http3` cargo feature; off by default.
 
 ### `listeners.<name>.http3.advertise`
 
@@ -260,9 +260,9 @@ Protocol. Inferred when omitted: `https` if `tls` is set, otherwise `http`.
 - `http`: Plain HTTP/1.1 and h2c.
 - `https`: HTTP over TLS (HTTP/1.1 and HTTP/2).
 - `tcp`: Raw TCP, optionally with TLS termination or SNI passthrough.
-- `udp`: UDP datagrams, relayed per client address (a session) to a UDP service.
+- `udp` <Status maturity="beta" />: UDP datagrams, relayed per client address (a session) to a UDP service.
 
-## `listeners.<name>.proxy_protocol`
+## `listeners.<name>.proxy_protocol` <Status maturity="beta" />
 
 **Type:** object
 
@@ -284,7 +284,7 @@ Also accept connections from `trusted` sources that send no header. Off by defau
 
 Sources allowed to send a PROXY header, as IP addresses or CIDR networks. Others are rejected when they send one.
 
-## `listeners.<name>.sessions`
+## `listeners.<name>.sessions` <Status maturity="beta" />
 
 **Type:** object
 
@@ -302,7 +302,7 @@ Sessions of the whole listener. Default 4096: Envoy caps UDP sessions per cluste
 
 Sessions per client IP address (any source port). Default 64, so one source (or one forged address) can take at most 1/64 of the listener's default budget; a resolver that forwards many parallel queries from one address may need more. `unlimited` removes the cap.
 
-## `listeners.<name>.socket`
+## `listeners.<name>.socket` <Status maturity="beta" />
 
 **Type:** object
 
@@ -457,7 +457,7 @@ Also trust Cloudflare's CA for global Authenticated Origin Pulls.
 - `required`: Every connection needs a valid certificate.
 - `optional`: A certificate is optional; routes can demand one with the `client_cert` middleware.
 
-### `listeners.<name>.tls.fingerprint`
+### `listeners.<name>.tls.fingerprint` <Status maturity="beta" />
 
 **Type:** object
 
@@ -487,7 +487,7 @@ A request header that carries the JA3 value (needs `ja3: true`).
 
 JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.
 
-### `listeners.<name>.tls.max_handshakes`
+### `listeners.<name>.tls.max_handshakes` <Status maturity="beta" />
 
 **Type:** `integer`
 
@@ -506,7 +506,7 @@ TLS versions and cipher suites.
 - `modern`: TLS 1.3 only.
 - `intermediate`: TLS 1.2 and 1.3 with forward-secret AEAD ciphers (Mozilla "intermediate").
 
-### `listeners.<name>.tls.session_cache`
+### `listeners.<name>.tls.session_cache` <Status maturity="beta" />
 
 **Type:** object
 
@@ -518,7 +518,7 @@ Sessions kept in memory for resumption by session ID (TLS 1.2, and TLS 1.3 when 
 
 Sessions kept (0 turns the cache off). Default 256, rustls's default.
 
-### `listeners.<name>.tls.tickets`
+### `listeners.<name>.tls.tickets` <Status maturity="beta" />
 
 **Type:** object
 

@@ -119,9 +119,10 @@ The ones with a status get the [built-in error page](/docs/guides/error-pages-an
 
 If the client goes away, nothing is sent; the access log records the request.
 
-A request is sent again on a new connection only when it is idempotent, its body can be
+A request is sent again on another connection only when it is idempotent, its body can be
 replayed, nothing has been sent to the client yet, and it failed because a reused keep-alive
-connection to the backend was closed. Configurable [retries](/docs/guides/backends/#retries) <Status since="v0.4" /> add connect failures, resets, timeouts and 502/503/504 answers.
+connection to the backend was closed or reset (also when writing the request failed with
+`EPIPE` or `ECONNRESET`; timeouts are not such a failure). Configurable [retries](/docs/guides/backends/#retries) <Status since="v0.4" /> add connect failures, resets, timeouts and 502/503/504 answers.
 
 ## Defaults
 

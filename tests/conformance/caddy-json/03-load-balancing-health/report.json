@@ -1,0 +1,68 @@
+{
+  "findings": [
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.approximate",
+      "level": "approximate",
+      "message": "`response_header_timeout` → `timeouts.read: 30s`, which also bounds each wait for response data; retrying another upstream → `retries: { attempts: 2, on: [connect] }`; Caddy's time-bounded retrying (`try_duration`, `try_interval`) has no equivalent; active health checks with Caddy's defaults written explicitly (30s, 5s, one pass, one failure); passive health checks: 3 failure(s) within 30s eject a backend for 30s; ReverseDock doubles the ejection for each ejection in a row and never ejects more than half the pool; `reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 3,
+    "items": 4,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

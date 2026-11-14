@@ -31,6 +31,12 @@ use serde::{Deserialize, Serialize};
 /// A lock older than this is left over from a process that died.
 const STALE_LOCK: Duration = Duration::from_secs(30);
 
+/// Free space an order needs before it is placed: the journal (about 2 KiB), the chain and key
+/// twice (in `next/` and in place, about 8 KiB each with an RSA key), `meta.json` (about 1 KiB)
+/// and the temporary file of each, rounded up to whole 4 KiB blocks, about 64 KiB, with a
+/// sixteen-fold margin for the file system's own needs.
+pub const CERT_ROOM: u64 = 1024 * 1024;
+
 /// What is stored next to a certificate (`meta.json`). Everything after `profile` was added
 /// in v0.9 (ADR-0031) so that every instance of a cluster takes the same renewal decision;
 /// older files lack it and are completed when the certificate is next renewed.
@@ -251,6 +257,21 @@ impl Storage {
     #[must_use]
     pub fn is_local(&self) -> bool {
         self.root.is_some()
+    }
+
+    /// Checks, before an order is placed, that the directory has room for what the order
+    /// will store ([`CERT_ROOM`]): an order whose certificate cannot be stored would use up the
+    /// CA's rate limits for nothing (ADR-0033). A cluster store is not on this file system
+    /// and is not checked.
+    ///
+    /// # Errors
+    ///
+    /// Less room than [`CERT_ROOM`], or the free space cannot be read.
+    pub fn check_room(&self) -> Result<(), rdock_config::disk::NoRoom> {
+        match &self.root {
+            Some(root) => rdock_config::disk::check_room(root, CERT_ROOM).map(|_| ()),
+            None => Ok(()),
+        }
     }
 
     /// The stored account for `directory`, if any, with its version.
@@ -535,10 +556,16 @@ fn write_atomic(path: &Path, bytes: &[u8], mode: u32) -> io::Result<()> {
     options.write(true).create(true).truncate(true);
     #[cfg(unix)]
     std::os::unix::fs::OpenOptionsExt::mode(&mut options, mode);
-    let mut file = options.open(&tmp)?;
-    file.write_all(bytes)?;
-    file.sync_all()?;
-    fs::rename(&tmp, path)
+    let written = options.open(&tmp).and_then(|mut file| {
+        file.write_all(bytes)?;
+        file.sync_all()
+    });
+    if let Err(err) = written.and_then(|()| fs::rename(&tmp, path)) {
+        // A full disk leaves no half-written temporary file behind.
+        let _ = fs::remove_file(&tmp);
+        return Err(err);
+    }
+    Ok(())
 }
 
 #[cfg(test)]

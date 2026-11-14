@@ -1,0 +1,325 @@
+{
+  "findings": [
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`basic_auth.remove_header`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.middlewares.auth.basicAuth.removeHeader",
+        "kind": "key"
+      },
+      "target": "middlewares.auth"
+    },
+    {
+      "code": "traefik.file.users_file",
+      "level": "exact",
+      "message": "`basic_auth.users_file`: the same file, named and never read or copied",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.middlewares.auth.basicAuth.usersFile",
+        "kind": "key"
+      },
+      "target": "middlewares.auth.users_file"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.routers.app.entryPoints",
+        "kind": "key"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.routers.app.middlewares",
+        "kind": "key"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.routers.app.rule",
+        "kind": "key"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`service`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.routers.app.service",
+        "kind": "key"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true`; certificates come from the one `acme` account; the resolver's name is not kept",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.routers.app.tls.certResolver",
+        "kind": "key"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "`timeouts.connect` of the services that use it",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.serversTransports.internal-ca.forwardingTimeouts.dialTimeout",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.file.approximate",
+      "level": "approximate",
+      "message": "`timeouts.read`: the longest wait for any response data, not only for the headers",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.serversTransports.internal-ca.forwardingTimeouts.responseHeaderTimeout",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "`tls.ca_file` of the services that use it",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.serversTransports.internal-ca.rootCAs",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "`tls.server_name` of the services that use it",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.serversTransports.internal-ca.serverName",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.file.approximate",
+      "level": "approximate",
+      "message": "a target of `split`: requests are shared by weight, but the order of picks is not Traefik's smooth weighted round robin",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.canary.weighted.services[0].name",
+        "kind": "key"
+      },
+      "target": "services.canary.split"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "the target's `weight`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.canary.weighted.services[0].weight",
+        "kind": "key"
+      },
+      "target": "services.canary.split"
+    },
+    {
+      "code": "traefik.file.approximate",
+      "level": "approximate",
+      "message": "a target of `split`: requests are shared by weight, but the order of picks is not Traefik's smooth weighted round robin",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.canary.weighted.services[1].name",
+        "kind": "key"
+      },
+      "target": "services.canary.split"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "the target's `weight`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.canary.weighted.services[1].weight",
+        "kind": "key"
+      },
+      "target": "services.canary.split"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "backend `10.0.1.20:8080`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.next.loadBalancer.servers[0].url",
+        "kind": "key"
+      },
+      "target": "services.next"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "backend `10.0.1.10:8443`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.stable.loadBalancer.servers[0].url",
+        "kind": "key"
+      },
+      "target": "services.stable"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "the backend's `weight`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.stable.loadBalancer.servers[0].weight",
+        "kind": "key"
+      },
+      "target": "services.stable"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "backend `10.0.1.11:8443`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.stable.loadBalancer.servers[1].url",
+        "kind": "key"
+      },
+      "target": "services.stable"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "the settings of servers transport `internal-ca` are written on the service",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "http.services.stable.loadBalancer.serversTransport",
+        "kind": "key"
+      },
+      "target": "services.stable"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.listeners`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tcp.routers.db.entryPoints",
+        "kind": "key"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.match` (`HostSNI`, `HostSNIRegexp`, `ALPN`, `ClientIP`)",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tcp.routers.db.rule",
+        "kind": "key"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.service`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tcp.routers.db.service",
+        "kind": "key"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.tls.passthrough`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tcp.routers.db.tls.passthrough",
+        "kind": "key"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "a backend",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tcp.services.db.loadBalancer.servers[0].address",
+        "kind": "key"
+      },
+      "target": "tcp_services.db"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "a certificate, served for the names it holds",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tls.certificates[0].certFile",
+        "kind": "key"
+      },
+      "target": "certificates.cert-0"
+    },
+    {
+      "code": "traefik.file.exact",
+      "level": "exact",
+      "message": "the certificate's key",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tls.certificates[0].keyFile",
+        "kind": "key"
+      },
+      "target": "certificates.cert-0"
+    },
+    {
+      "code": "traefik.file.manual",
+      "level": "manual",
+      "message": "TLS options are listener settings here: set `listeners.<name>.tls.policy` (`modern` or `intermediate`) and `client_auth`",
+      "source": {
+        "file": "dynamic.yml",
+        "item": "tls.options.default.minVersion",
+        "kind": "key"
+      }
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "dynamic.yml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 4,
+    "dropped": 0,
+    "exact": 23,
+    "items": 28,
+    "manual": 1,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

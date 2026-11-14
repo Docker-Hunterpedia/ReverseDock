@@ -1,0 +1,12 @@
+# Corpus case `interpolation-unset` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: an unset ${{VAR}} without a default (manual), ${{VAR:?message}} (manual).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: Host(`${DOMAIN}`)
+      traefik.http.routers.app.entrypoints: websecure
+      traefik.http.routers.app.tls.certresolver: ${RESOLVER:?set the resolver name}

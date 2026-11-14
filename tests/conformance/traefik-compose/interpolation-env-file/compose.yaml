@@ -1,0 +1,12 @@
+# Corpus case `interpolation-env-file` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: ${{VAR}}, ${{VAR:-default}}, $VAR, --env-file.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:${WHOAMI_TAG:-v1.12.0}
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`${SUBDOMAIN:-app}.${DOMAIN}`)
+      - traefik.http.routers.app.entrypoints=websecure
+      - traefik.http.routers.app.tls.certresolver=$RESOLVER

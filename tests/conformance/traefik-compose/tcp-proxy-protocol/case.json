@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "TCP proxyprotocol.version",
+    "terminationdelay",
+    "TCP ipwhitelist",
+    "TCP inflightconn"
+  ],
+  "diff": false
+}

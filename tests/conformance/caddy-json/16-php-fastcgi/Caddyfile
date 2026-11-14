@@ -1,0 +1,6 @@
+# Exercises: php_fastcgi (FastCGI and file matchers have no equivalent): every route on its path written disabled.
+php.example.com {
+	root * /var/www/html
+	php_fastcgi unix//run/php/php-fpm.sock
+	file_server
+}

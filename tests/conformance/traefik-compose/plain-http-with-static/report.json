@@ -1,0 +1,104 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `app` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "compose.service.traefik",
+      "hint": "replace the image with ReverseDock's and remove Traefik's flags: `rdock run` does not accept them",
+      "level": "exact",
+      "message": "the service runs Traefik (traefik:v3.7.19): its flags and `TRAEFIK_*` variables are read as static configuration",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.traefik",
+        "kind": "object",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:80`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.web.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.web.address"
+    },
+    {
+      "code": "traefik.static.expose_by_default",
+      "level": "exact",
+      "message": "`providers.docker.expose_by_default: false`, as Traefik's `exposedByDefault`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--providers.docker.exposedbydefault",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "providers.docker.expose_by_default"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 7,
+    "items": 7,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

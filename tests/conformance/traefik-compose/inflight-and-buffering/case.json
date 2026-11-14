@@ -1,0 +1,12 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "inflightreq.amount",
+    "inflightreq requestHeaderName",
+    "buffering (manual)"
+  ],
+  "diff": false,
+  "expect_invalid": [
+    "middleware `limit-body` does not exist"
+  ]
+}

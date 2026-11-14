@@ -87,7 +87,7 @@ rdock-tls.workspace = true
 # `OwnedFd`; `fs` for opening the new binary without following a link. Already in the tree through tempfile, cap-std and others; 1.1.6 fixes
 # RUSTSEC-2026-0486 (xattr functions, not used here). Apache-2.0 WITH LLVM-exception OR
 # Apache-2.0 OR MIT (checked 2026-11-13).
-rustix = { version = "1.1.6", default-features = false, features = ["std", "fs", "net", "process"] }
+rustix = { workspace = true, features = ["net"] }
 base64.workspace = true
 thiserror.workspace = true
 sd-notify.workspace = true
@@ -95,6 +95,7 @@ mimalloc = { workspace = true, optional = true }
 tikv-jemallocator = { workspace = true, optional = true }
 stats_alloc = { workspace = true, optional = true }
 nix.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 tokio.workspace = true
@@ -118,6 +119,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 jsonschema.workspace = true
 rdock-testkit.workspace = true
+regex.workspace = true
 rdock-wasm = { workspace = true, features = ["testing"] }
 ring.workspace = true
 rustls.workspace = true

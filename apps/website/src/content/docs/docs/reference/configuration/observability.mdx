@@ -2,7 +2,7 @@
 title: observability
 description: "Logs, metrics and traces."
 sidebar:
-  order: 14
+  order: 15
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -39,7 +39,7 @@ Header names whose values are replaced by `***`.
 
 Share of successful requests (status below 400) that are logged, from 0 to 1. Errors and failed requests are always logged.
 
-## `observability.alerts`
+## `observability.alerts` <Status maturity="beta" />
 
 **Type:** object · **Default:** see the fields below
 
@@ -63,7 +63,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -85,7 +85,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -107,7 +107,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -129,7 +129,7 @@ Allow private, loopback and link-local addresses (an internal relay).
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -181,7 +181,7 @@ Port: 587 for STARTTLS, 465 for implicit TLS.
 
 #### `observability.alerts.channels.<name>.rules`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Only these rules; all when empty.
 
@@ -215,15 +215,33 @@ The same alert is sent again at most this often while it keeps firing.
 
 ### `observability.alerts.rules`
 
-**Type:** object · **Default:** `{"disabled":[],"error_rate":null,"latency":null}`
+**Type:** object · **Default:** see the fields below
 
 What raises an alert.
 
 #### `observability.alerts.rules.disabled`
 
-**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security`
+**Type:** list of `certificates` · `backends` · `error_rate` · `latency` · `config` · `security` · `disk`
 
 Rules that are off.
+
+#### `observability.alerts.rules.disk`
+
+**Type:** object · **Default:** `{"free_bytes":"256MiB","free_percent":0}`
+
+When free space in the data directory raises the `disk` alert.
+
+#### `observability.alerts.rules.disk.free_bytes`
+
+**Type:** [`ByteSize`](/docs/reference/configuration/#bytesize) · **Default:** `256MiB`
+
+Alert when fewer bytes than this are free (0 turns this threshold off).
+
+#### `observability.alerts.rules.disk.free_percent`
+
+**Type:** `integer` · **Default:** `0`
+
+Alert when less than this share of the file system is free, in percent (0–50; 0, the default, turns this threshold off).
 
 #### `observability.alerts.rules.error_rate`
 
@@ -273,11 +291,12 @@ The p99 above which a service alerts.
 
 Window (1m–15m).
 
-### `observability.alerts.webhook`
+### `observability.alerts.webhook` <Status deprecated="1.0" />
 
 **Type:** object
 
 Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.
+ Deprecated since 1.0, removed in 2.0: use a channel under `observability.alerts.channels` with `type: webhook`.
 
 #### `observability.alerts.webhook.timeout`
 
@@ -297,7 +316,7 @@ Bearer token sent in `Authorization`. Write it as a `${file:…}` or `${env:…}
 
 `https://` URL (`http://` only for loopback addresses).
 
-## `observability.metering`
+## `observability.metering` <Status maturity="beta" />
 
 **Type:** object
 

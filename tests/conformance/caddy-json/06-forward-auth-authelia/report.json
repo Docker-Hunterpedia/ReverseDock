@@ -1,0 +1,90 @@
+{
+  "findings": [
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.approximate",
+      "level": "approximate",
+      "message": "the expanded `forward_auth` directive → a `forward_auth` middleware asking `http://authelia:9091/api/authz/forward-auth`; the authentication service gets `Host` set to its own address (Caddy passes the client's) and no request body",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/1",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.default.dial_timeout",
+      "level": "exact",
+      "message": "Caddy's default dial timeout (3s) is written as `timeouts.connect: 3s` on each service (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "caddy.default.response_timeout",
+      "level": "approximate",
+      "message": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads (raise it on services with slow answers)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 4,
+    "items": 5,
+    "manual": 0,
+    "result": 2
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

@@ -1,0 +1,103 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"blog.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"match": [
+												{
+													"path": [
+														"/assets/*"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "headers",
+													"response": {
+														"set": {
+															"Cache-Control": [
+																"public, max-age=86400"
+															]
+														}
+													}
+												}
+											]
+										},
+										{
+											"match": [
+												{
+													"path": [
+														"/debug/*"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "headers",
+													"response": {
+														"set": {
+															"X-Request-Host": [
+																"{http.request.host}"
+															]
+														}
+													}
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "headers",
+													"response": {
+														"deferred": true,
+														"delete": [
+															"Server"
+														],
+														"set": {
+															"Strict-Transport-Security": [
+																"max-age=31536000; includeSubDomains"
+															],
+															"X-Frame-Options": [
+																"DENY"
+															]
+														}
+													}
+												},
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "blog:2368"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

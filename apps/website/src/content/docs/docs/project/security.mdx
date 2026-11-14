@@ -2,7 +2,7 @@
 title: Security
 description: How to report a vulnerability in ReverseDock privately, what to expect, and how releases are signed.
 sidebar:
-  order: 5
+  order: 4.5
 ---
 
 ReverseDock sits in front of other people's infrastructure, so security reports have the highest priority. The full policy is [SECURITY.md](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/SECURITY.md) on GitHub.
@@ -33,7 +33,7 @@ You are kept informed, the disclosure date is agreed with you, a CVE is requeste
 
 ## Supported versions
 
-During 0.x only the latest minor release receives fixes. From 1.0, the two most recent minor releases are supported.
+During 0.x, and for `-rc` pre-releases, only the latest release receives fixes. From 1.0, the two most recent minor releases of the current major are supported, and after a new major the last minor of the previous one for six months. The full policy is on [Stability and support](/docs/project/stability/#support).
 
 ## Scope
 
@@ -47,9 +47,14 @@ The project will not pursue or support legal action against anyone who researche
 
 ## Signed releases
 
-Every release publishes `SHA256SUMS` with a keyless cosign signature, an SPDX SBOM, and GitHub build-provenance attestations for each archive. Container images are signed and attested too. [Verify a download](/docs/install/verify/) shows the commands.
+Every release publishes `SHA256SUMS` (archives and SBOMs) with a keyless cosign signature, one SPDX SBOM per archive read from the binary, and GitHub build-provenance and SBOM attestations for each archive. Container images are signed, with a provenance attestation and an SBOM attestation per platform. The weekly rebuild-and-compare job reports whether the binary is reproducible; ReverseDock does not claim that it is. [Verify a download](/docs/install/verify/) shows the commands.
+
+## How the project tests itself
+
+The [threat model](/docs/project/threat-model/) lists what is protected, from whom, the threats per surface with their mitigations and tests, and the risks that remain. In short: 21 fuzz targets on every parser that reads outside bytes, end-to-end security suites, Clippy with panics denied, Semgrep and CodeQL, `cargo deny` for advisories, dependency review, an image scan and OpenSSF Scorecard. No independent audit has been done yet; the final 1.0 waits for one.
 
 ## Related
 
+- [Threat model](/docs/project/threat-model/)
 - [Security model](/docs/concepts/security-model/)
 - [Production checklist](/docs/operations/production-checklist/)

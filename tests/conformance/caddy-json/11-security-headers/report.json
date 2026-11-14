@@ -1,0 +1,141 @@
+{
+  "findings": [
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "Caddy matches paths case-insensitively: written as a case-insensitive `PathRegexp` (or `Path`/`PathPrefix` when the pattern has no letters)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/match/0/path",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.approximate",
+      "level": "approximate",
+      "message": "a response header set without deferral: Caddy sets it before the next handler, so a header the backend also sends keeps both values; ReverseDock replaces the backend's value; header operations → a `headers` middleware",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "Caddy matches paths case-insensitively: written as a case-insensitive `PathRegexp` (or `Path`/`PathPrefix` when the pattern has no letters)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/1/match/0/path",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.manual",
+      "level": "manual",
+      "message": "`X-Request-Host: {http.request.host}` uses a placeholder, which ReverseDock does not evaluate in header values; a response header set without deferral: Caddy sets it before the next handler, so a header the backend also sends keeps both values; ReverseDock replaces the backend's value",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/1/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "header operations → a `headers` middleware",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/2/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/2/handle/1",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.default.dial_timeout",
+      "level": "exact",
+      "message": "Caddy's default dial timeout (3s) is written as `timeouts.connect: 3s` on each service (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "caddy.default.response_timeout",
+      "level": "approximate",
+      "message": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads (raise it on services with slow answers)"
+    },
+    {
+      "code": "caddy.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `blog-example-com-debug` is written disabled (`enabled: false`): `X-Request-Host: {http.request.host}` uses a placeholder, which ReverseDock does not evaluate in header values",
+      "security": true,
+      "target": "routes.blog-example-com-debug"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 7,
+    "items": 9,
+    "manual": 1,
+    "result": 3
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

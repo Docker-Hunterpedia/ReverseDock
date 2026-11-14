@@ -1,0 +1,152 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `db` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.db",
+        "kind": "object",
+        "scope": "db"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "db"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.listeners`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.routers.db.entrypoints",
+        "kind": "label",
+        "scope": "db"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.match` (`HostSNI`, `HostSNIRegexp`, `ALPN`, `ClientIP`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.routers.db.rule",
+        "kind": "label",
+        "scope": "db"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`tcp_routes.<r>.tls.passthrough`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.routers.db.tls.passthrough",
+        "kind": "label",
+        "scope": "db"
+      },
+      "target": "tcp_routes.db"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the backend's port",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.tcp.services.db.loadbalancer.server.port",
+        "kind": "label",
+        "scope": "db"
+      },
+      "target": "tcp_services.db"
+    },
+    {
+      "code": "compose.service.traefik",
+      "hint": "replace the image with ReverseDock's and remove Traefik's flags: `rdock run` does not accept them",
+      "level": "exact",
+      "message": "the service runs Traefik (traefik:v3.7.19): its flags and `TRAEFIK_*` variables are read as static configuration",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.traefik",
+        "kind": "object",
+        "scope": "traefik"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:80`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.web.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.web.address"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:443`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.websecure.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.websecure.address"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:5432`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--entrypoints.postgres.address",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "listeners.postgres.address"
+    },
+    {
+      "code": "traefik.static.expose_by_default",
+      "level": "exact",
+      "message": "`providers.docker.expose_by_default: false`, as Traefik's `exposedByDefault`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "--providers.docker.exposedbydefault",
+        "kind": "flag",
+        "scope": "traefik"
+      },
+      "target": "providers.docker.expose_by_default"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 11,
+    "items": 11,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

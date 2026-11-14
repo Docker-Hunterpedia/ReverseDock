@@ -1,0 +1,26 @@
+# Corpus case `error-pages` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: errors status, service, query, a second service for the pages.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.app.entrypoints=websecure
+      - traefik.http.routers.app.tls=true
+      - traefik.http.routers.app.middlewares=pages
+      - traefik.http.middlewares.pages.errors.status=500-599
+      - traefik.http.middlewares.pages.errors.service=error-pages
+      - traefik.http.middlewares.pages.errors.query=/{status}.html
+  pages:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.pages.rule=Host(`pages.example.com`)
+      - traefik.http.routers.pages.entrypoints=websecure
+      - traefik.http.routers.pages.tls=true
+      - traefik.http.routers.pages.service=error-pages
+      - traefik.http.services.error-pages.loadbalancer.server.port=80

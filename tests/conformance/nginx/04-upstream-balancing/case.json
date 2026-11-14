@@ -1,0 +1,11 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "upstream \u2192 services",
+    "least_conn, ip_hash, hash $cookie_*",
+    "weight, backup, down",
+    "max_fails/fail_timeout \u2192 passive health",
+    "the default Host ($proxy_host = the upstream name, approximate)"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_upstream_module) read 2026-11-14."
+}

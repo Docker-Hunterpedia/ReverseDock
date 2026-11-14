@@ -1,0 +1,112 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"api.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"group": "group2",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "static_response",
+																	"status_code": 200
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/health"
+													]
+												}
+											]
+										},
+										{
+											"group": "group2",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "rewrite",
+																	"strip_path_prefix": "/v1"
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "api-v1:9000"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											],
+											"match": [
+												{
+													"path": [
+														"/v1/*"
+													]
+												}
+											]
+										},
+										{
+											"group": "group2",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "static_response",
+																	"status_code": 404
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,40 @@
+description: "Exact options not shown elsewhere: redirect port and permanence, the basic-auth realm and header removal, forward-auth request headers, retries of non-idempotent methods, health check method, port and followRedirects=false."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "retry"
+      traefik.http.middlewares.toport.redirectscheme.scheme: "https"
+      traefik.http.middlewares.toport.redirectscheme.port: "8443"
+      traefik.http.middlewares.moved.redirectregex.regex: "^http://old.example.com/(.*)"
+      traefik.http.middlewares.moved.redirectregex.replacement: "https://new.example.com/${1}"
+      traefik.http.middlewares.moved.redirectregex.permanent: "true"
+      traefik.http.middlewares.retry.retry.attempts: "2"
+      traefik.http.middlewares.retry.retry.retrynonidempotentmethod: "true"
+      traefik.http.middlewares.auth.basicauth.users: "alice:$2y$05$abcdefghijklmnopqrstuu5Lr1G6eJNlZtuVPWTn4lHBJDU2P8m8a"
+      traefik.http.middlewares.auth.basicauth.realm: "staff"
+      traefik.http.middlewares.auth.basicauth.removeheader: "true"
+      traefik.http.middlewares.sso.forwardauth.address: "http://auth:9091/verify"
+      traefik.http.middlewares.sso.forwardauth.authrequestheaders: "Cookie, Accept"
+      traefik.http.services.app.loadbalancer.healthcheck.path: "/health"
+      traefik.http.services.app.loadbalancer.healthcheck.method: "head"
+      traefik.http.services.app.loadbalancer.healthcheck.port: "8081"
+      traefik.http.services.app.loadbalancer.healthcheck.followredirects: "false"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: { middlewares: [] }
+  services:
+    app:
+      retries: { attempts: 1, retry_non_idempotent: true }
+      health:
+        active: { path: "/health", method: "HEAD", port: 8081 }
+  middlewares:
+    toport: { type: "redirect", scheme: "https", port: 8443 }
+    moved: { type: "redirect", permanent: true }
+    auth: { type: "basic_auth", realm: "staff", remove_header: true }
+    sso: { type: "forward_auth", request_headers: ["Cookie", "Accept"] }

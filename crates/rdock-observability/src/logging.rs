@@ -25,9 +25,14 @@ pub fn init_logging(format: LogFormat, filter: &str) -> Result<(), String> {
         LogFormat::Text => false,
         LogFormat::Auto => !std::io::stderr().is_terminal(),
     };
+    // A log line that cannot be written (standard error redirected to a file on a full disk)
+    // is dropped. With internal-error logging on, the subscriber reports it with `eprintln!`,
+    // which panics when standard error cannot be written either: a full disk took the proxy
+    // down (found by the chaos suite, ADR-0033).
     let builder = tracing_subscriber::fmt()
         .with_env_filter(filter)
         .with_writer(std::io::stderr)
+        .log_internal_errors(false)
         .with_target(true);
     let result = if json {
         builder.json().flatten_event(true).try_init()

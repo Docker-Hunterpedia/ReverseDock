@@ -1,0 +1,121 @@
+# Benchmarks of all five proxies on a free GitHub-hosted runner (ADR-0033, "Benchmarks"; H-ENG-01).
+# One job, one machine: ReverseDock, NGINX, HAProxy, Caddy and Traefik one after the other in the
+# scenarios below, each with its default and its tuned configuration (benchmarks/README.md), the
+# proxy pinned to 2 of the runner's 4 vCPUs and the backend and k6 on the other 2
+# (benchmarks/compose.pinned.yaml), plus `direct` (k6 straight to the backend) as the ceiling.
+# Every TLS scenario checks that each proxy negotiated the same protocol, TLS version and cipher
+# suite (TLS parity), and the job fails when one did not. The report states what a hosted runner
+# cannot show and what a dedicated three-machine run would add (benchmarks/hosted_report.py). It
+# gates nothing else; the nightly regression check is bench.yml.
+name: bench-report
+
+on:
+  schedule:
+    - cron: "17 2 * * 0"
+  workflow_dispatch:
+    inputs:
+      scenarios:
+        description: Scenarios, separated by spaces (single tls tls-new h2 slow large huge tls-ramped)
+        default: "single tls tls-new h2"
+      configs:
+        description: Configurations, separated by spaces (default tuned)
+        default: "default tuned"
+      rates:
+        description: Target rates in req/s for the kept-alive scenarios
+        default: "2500 5000 10000"
+      new_connection_rates:
+        description: Target rates in req/s for tls-new (a handshake per request)
+        default: "500 1000 2000"
+      duration:
+        description: Time at each rate
+        default: 30s
+
+permissions:
+  contents: read
+
+concurrency:
+  group: bench-report-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  bench-report:
+    name: bench-report
+    runs-on: ubuntu-24.04
+    timeout-minutes: 240
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Report tests
+        run: python3 -I benchmarks/test_reports.py
+      - name: Build the image
+        run: docker build --build-arg "RDOCK_BUILD_COMMIT=${GITHUB_SHA}" --tag rdock:bench .
+      - name: Pull the pinned images and print the digests they resolved to
+        working-directory: benchmarks
+        run: |
+          docker compose --profile '*' pull --quiet --ignore-buildable --ignore-pull-failures || true
+          {
+            echo "## Images"
+            echo
+            echo '```text'
+            for image in $(docker compose --profile '*' config --images | sort -u); do
+              echo "$image $(docker image inspect --format '{{join .RepoDigests " "}}' "$image" 2>/dev/null || echo '(not pulled)')"
+            done
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: Machine
+        run: |
+          {
+            echo "## Machine"
+            echo
+            echo '```text'
+            echo "$(nproc) vCPUs, $(free -g | awk '/^Mem:/ {print $2}') GiB, kernel $(uname -r), commit ${GITHUB_SHA::12}"
+            lscpu | grep -E '^(Model name|Thread\(s\) per core|Core\(s\) per socket|Socket\(s\)|Hypervisor vendor|NUMA node\(s\)):'
+            echo '```'
+          } | tee -a "$GITHUB_STEP_SUMMARY"
+      - name: All proxies, every scenario, default and tuned
+        working-directory: benchmarks
+        env:
+          SCENARIOS: ${{ inputs.scenarios || 'single tls tls-new h2' }}
+          CONFIG_NAMES: ${{ inputs.configs || 'default tuned' }}
+          KEPT_ALIVE_RATES: ${{ inputs.rates || '2500 5000 10000' }}
+          NEW_CONNECTION_RATES: ${{ inputs.new_connection_rates || '500 1000 2000' }}
+          DURATION: ${{ inputs.duration || '30s' }}
+          PROXIES: direct rdock nginx haproxy caddy traefik
+          VERSION: ci
+          PIN: "1"
+          CPU_STAT: "1"
+        run: |
+          failed=0
+          for config in $CONFIG_NAMES; do
+            for scenario in $SCENARIOS; do
+              rates=$KEPT_ALIVE_RATES
+              [ "$scenario" = tls-new ] && rates=$NEW_CONNECTION_RATES
+              echo "::group::$scenario ($config)"
+              status=0
+              CONFIG=$config SCENARIO=$scenario RATES=$rates ./run.sh || status=$?
+              if [ "$status" = 3 ]; then
+                echo "::error::$scenario ($config): a proxy did not negotiate what TLS parity requires (see its report)"
+                failed=1
+              elif [ "$status" != 0 ]; then
+                echo "::error::$scenario ($config) failed with exit code $status"
+                failed=1
+              fi
+              echo "::endgroup::"
+            done
+          done
+          exit "$failed"
+      - name: Report
+        if: always()
+        working-directory: benchmarks
+        run: |
+          mkdir -p results/ci
+          python3 -I hosted_report.py results/ci > results/ci/hosted-report.md
+          cat results/ci/hosted-report.md >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        if: always()
+        with:
+          name: bench-report-${{ github.run_id }}
+          path: benchmarks/results/ci/
+          if-no-files-found: ignore
+          retention-days: 90

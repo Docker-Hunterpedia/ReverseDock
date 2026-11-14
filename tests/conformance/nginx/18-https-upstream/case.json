@@ -1,0 +1,8 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "upstream TLS verification kept on (security finding)",
+    "proxy_ssl_verify on, trusted certificate, proxy_ssl_name"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_proxy_module (proxy_ssl_*)) read 2026-11-14."
+}

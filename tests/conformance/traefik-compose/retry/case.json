@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "retry attempts (moved to the service)",
+    "retry.status",
+    "retry.initialInterval (none)"
+  ],
+  "diff": false
+}

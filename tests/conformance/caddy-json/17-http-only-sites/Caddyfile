@@ -1,0 +1,12 @@
+# Exercises: an http:// site (plain HTTP, no certificate), a site on another port, disable_redirects.
+{
+	auto_https disable_redirects
+}
+
+http://intranet.example.com {
+	reverse_proxy intranet:80
+}
+
+:8080 {
+	respond /ping 200
+}

@@ -1,0 +1,136 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `upload` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.upload",
+        "kind": "object",
+        "scope": "upload"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "upload"
+      }
+    },
+    {
+      "code": "traefik.label.manual",
+      "level": "manual",
+      "message": "set `max_body` on the routes in rdock.yaml (or `rdock.routes.<name>.max_body`); the label is ignored",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.limit-body.buffering.maxRequestBodyBytes",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "middlewares.limit-body"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`in_flight.amount`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.one-at-a-time.inflightreq.amount",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "middlewares.one-at-a-time"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`in_flight.key: header:<Name>`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.one-at-a-time.inflightreq.sourcecriterion.requestheadername",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "middlewares.one-at-a-time"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.upload.entrypoints",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "routes.upload"
+    },
+    {
+      "code": "traefik.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `upload` is written disabled (`enabled: false`): it uses middleware `limit-body`, which was not migrated (see its findings)",
+      "security": true,
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.upload.middlewares",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "routes.upload"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.upload.rule",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "routes.upload"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.upload.tls",
+        "kind": "label",
+        "scope": "upload"
+      },
+      "target": "routes.upload"
+    },
+    {
+      "code": "output.invalid",
+      "level": "manual",
+      "message": "middleware `limit-body` does not exist",
+      "target": "routes.upload.middlewares[1]"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 6,
+    "items": 9,
+    "manual": 2,
+    "result": 1
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

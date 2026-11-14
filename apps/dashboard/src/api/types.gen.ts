@@ -22,6 +22,11 @@ export type AuditRecord = {
     method: string;
     prev: string;
     reason?: string | null;
+    /**
+     * On a refusal: how many refusals of the same kind (action, reason, actor and client)
+     * in the minute before it were counted but not written.
+     */
+    repeated?: number | null;
     resource?: string | null;
     result: AuditResult;
     seq: number;
@@ -1016,17 +1021,21 @@ export type RdockAlertChannel = {
 /**
  * A kind of alert.
  */
-export type RdockAlertRule = 'certificates' | 'backends' | 'error_rate' | 'latency' | 'config' | 'security';
+export type RdockAlertRule = 'certificates' | 'backends' | 'error_rate' | 'latency' | 'config' | 'security' | 'disk';
 
 /**
- * What raises alerts. Certificates, backends, config and security are on; the thresholds are
- * off until set.
+ * What raises alerts. Certificates, backends, config, security and disk are on; the error-rate
+ * and latency thresholds are off until set.
  */
 export type RdockAlertRules = {
     /**
      * Rules that are off.
      */
     disabled?: Array<RdockAlertRule>;
+    /**
+     * When free space in the data directory raises the `disk` alert.
+     */
+    disk?: RdockDiskRule;
     /**
      * Alert when a service's 5xx share over the window is above this, in percent.
      */
@@ -1057,12 +1066,21 @@ export type RdockAlerts = {
     rules?: RdockAlertRules;
     /**
      * Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.
+     *
+     * Deprecated since 1.0, removed in 2.0: use a channel under `observability.alerts.channels` with `type: webhook`.
+     *
+     * @deprecated
      */
     webhook?: RdockWebhook | null;
     [key: string]: unknown | {
         [key: string]: RdockAlertChannel;
     } | RdockDuration | RdockAlertRules | RdockWebhook | null | undefined;
 };
+
+/**
+ * The `security.paths.ambiguous` choices.
+ */
+export type RdockAmbiguousPaths = 'reject' | 'forward';
 
 /**
  * What an authenticating middleware does with a request that carries no credential.
@@ -1540,6 +1558,13 @@ export type RdockConfig = {
      */
     defaults?: RdockDefaults;
     /**
+     * Experimental features this configuration uses on purpose (ADR-0033), e.g.
+     * `[wasm, http3]`. A configuration that uses an experimental feature without naming it
+     * here is refused: experimental features may change or be removed in any release and are
+     * not covered by the stability promise.
+     */
+    experimental?: Array<'wasm' | 'http3'>;
+    /**
      * GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
      * database is bundled or downloaded.
      */
@@ -1644,7 +1669,7 @@ export type RdockConfig = {
         [key: string]: RdockCertificate;
     } | RdockCluster | null | {
         [key: string]: RdockConsumer;
-    } | RdockControlPlane | null | RdockDefaults | RdockGeoIp | null | RdockLifecycle | {
+    } | RdockControlPlane | null | RdockDefaults | Array<'wasm' | 'http3'> | RdockGeoIp | null | RdockLifecycle | {
         [key: string]: RdockListener;
     } | RdockLocality | null | {
         [key: string]: RdockMiddleware;
@@ -1807,6 +1832,29 @@ export type RdockDigitalOceanProvider = {
 };
 
 /**
+ * Free-space thresholds of the data directory (ADR-0033): the `disk` alert fires when the
+ * space left drops below either. A full disk never stops request handling, but the
+ * configuration API, mutating admin calls and certificate orders are refused until there is
+ * room. Default: 256 MiB, enough for several hundred certificate orders and configuration
+ * writes, and nothing by share. ReverseDock's data directory needs a fixed amount of room,
+ * not a share of the disk: 5 % (the warning level of the Prometheus node exporter's
+ * `NodeFilesystemAlmostOutOfSpace` alert, node-mixin `config.libsonnet`, checked 2026-11-14)
+ * is tens of gigabytes on a large disk and would fire while there is room for years of
+ * writes, so a share threshold is off unless set.
+ */
+export type RdockDiskRule = {
+    /**
+     * Alert when fewer bytes than this are free (0 turns this threshold off).
+     */
+    free_bytes?: RdockByteSize;
+    /**
+     * Alert when less than this share of the file system is free, in percent (0–50; 0, the
+     * default, turns this threshold off).
+     */
+    free_percent?: number;
+};
+
+/**
  * A DNS provider for DNS-01 challenges.
  */
 export type RdockDnsProvider = {
@@ -1847,6 +1895,14 @@ export type RdockDnsTransport = 'tcp' | 'udp';
  */
 export type RdockDockerProvider = {
     /**
+     * Let labels name a backend or a middleware URL on the proxy's own machine (loopback,
+     * `localhost`, unspecified) or a link-local or cloud metadata address. Off by default: a
+     * container could otherwise publish ReverseDock's admin listener or other local services.
+     * Names from labels are checked again whenever they resolve; private networks are
+     * always allowed.
+     */
+    allow_local_backends?: boolean;
+    /**
      * Docker Engine API endpoint. Read-only access is enough; a socket proxy is recommended.
      */
     endpoint?: RdockEndpoint;
@@ -1878,9 +1934,9 @@ export type RdockDockerProvider = {
      * Also read `traefik.*` labels (supported subset).
      */
     traefik_labels?: boolean;
-    [key: string]: unknown | RdockEndpoint | {
+    [key: string]: unknown | boolean | RdockEndpoint | {
         [key: string]: string;
-    } | boolean | string | string | null | Array<string> | undefined;
+    } | string | string | null | Array<string> | undefined;
 };
 
 /**
@@ -1892,6 +1948,11 @@ export type RdockDrainLimit = RdockDuration | 'unlimited';
  * Duration made of numbers with units: ms, s, m, h, d.
  */
 export type RdockDuration = string;
+
+/**
+ * The `security.paths.encoded_separators` choices.
+ */
+export type RdockEncodedSeparators = 'allow' | 'reject';
 
 export type RdockEndpoint = string;
 
@@ -2499,9 +2560,9 @@ export type RdockListener = {
      */
     http2?: RdockListenerHttp2 | null;
     /**
-     * HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
-     * the listener then also owns the UDP socket of its address. Needs a build with the
-     * `http3` cargo feature; off by default.
+     * HTTP/3 over QUIC on the same address, `https` listeners only (ADR-0032): the listener
+     * then also owns the UDP socket of its address. Experimental: `enabled: true` needs
+     * `http3` under `experimental` and a build with the `http3` cargo feature; off by default.
      */
     http3?: RdockListenerHttp3 | null;
     /**
@@ -2594,8 +2655,8 @@ export type RdockListenerHttp2 = {
 };
 
 /**
- * HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
- * nothing is unlimited.
+ * HTTP/3 settings of an `https` listener (ADR-0032). Every limit is bounded; nothing is
+ * unlimited.
  */
 export type RdockListenerHttp3 = {
     /**
@@ -4564,6 +4625,28 @@ export type RdockPathParameters = {
 };
 
 /**
+ * What rdock does with request paths whose meaning differs between servers.
+ */
+export type RdockPathSecurity = {
+    /**
+     * Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`),
+     * a `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that
+     * appears once an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` is read as a separator
+     * (`..%2Fadmin`, `public\..\admin`). `reject` (default) answers `400`; `forward` routes
+     * and forwards them as written.
+     */
+    ambiguous?: RdockAmbiguousPaths;
+    /**
+     * Paths with an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` that form no dot segment,
+     * such as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and
+     * forwards them as sent; `reject` answers `400` for every such path, for backends that
+     * decode separators before their own access checks.
+     */
+    encoded_separators?: RdockEncodedSeparators;
+    [key: string]: unknown | RdockAmbiguousPaths | RdockEncodedSeparators | undefined;
+};
+
+/**
  * A route's class for load shedding by `admission` (H-LB-04).
  */
 export type RdockPriorityClass = 'critical' | 'normal' | 'sheddable';
@@ -5032,10 +5115,14 @@ export type RdockSecurity = {
      */
     limits?: RdockLimits;
     /**
+     * Request paths that backends may read differently from the router.
+     */
+    paths?: RdockPathSecurity;
+    /**
      * Proxies whose forwarded headers are believed. Headers from anyone else are replaced.
      */
     trusted_proxies?: Array<RdockTrustedProxy>;
-    [key: string]: unknown | RdockClientIpHeader | RdockLimits | Array<RdockTrustedProxy> | undefined;
+    [key: string]: unknown | RdockClientIpHeader | RdockLimits | RdockPathSecurity | Array<RdockTrustedProxy> | undefined;
 };
 
 /**
@@ -5383,6 +5470,14 @@ export type RdockSwarmEndpointMode = 'tasks' | 'vip';
  */
 export type RdockSwarmProvider = {
     /**
+     * Let labels name a backend or a middleware URL on the proxy's own machine (loopback,
+     * `localhost`, unspecified) or a link-local or cloud metadata address. Off by default: a
+     * service could otherwise publish ReverseDock's admin listener or other local services.
+     * Names from labels are checked again whenever they resolve; private networks are
+     * always allowed.
+     */
+    allow_local_backends?: boolean;
+    /**
      * Docker Engine API endpoint of a manager node.
      */
     endpoint?: RdockEndpoint;
@@ -5414,7 +5509,7 @@ export type RdockSwarmProvider = {
      * Also read `traefik.*` labels (supported subset).
      */
     traefik_labels?: boolean;
-    [key: string]: unknown | RdockEndpoint | RdockSwarmEndpointMode | boolean | string | null | RdockDuration | Array<string> | undefined;
+    [key: string]: unknown | boolean | RdockEndpoint | RdockSwarmEndpointMode | string | null | RdockDuration | Array<string> | undefined;
 };
 
 /**
@@ -6295,6 +6390,10 @@ export type RemoveBanErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type RemoveBanError = RemoveBanErrors[keyof RemoveBanErrors];
@@ -6526,6 +6625,10 @@ export type ChangePasswordErrors = {
      * Too many password hashes at once
      */
     503: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ChangePasswordError = ChangePasswordErrors[keyof ChangePasswordErrors];
@@ -6600,6 +6703,10 @@ export type NewRecoveryCodesErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type NewRecoveryCodesError = NewRecoveryCodesErrors[keyof NewRecoveryCodesErrors];
@@ -6759,6 +6866,10 @@ export type UnenrolErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type UnenrolError = UnenrolErrors[keyof UnenrolErrors];
@@ -6796,6 +6907,10 @@ export type EnrolErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type EnrolError = EnrolErrors[keyof EnrolErrors];
@@ -6835,6 +6950,10 @@ export type ConfirmErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ConfirmError = ConfirmErrors[keyof ConfirmErrors];
@@ -6909,6 +7028,10 @@ export type DrainErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type DrainError = DrainErrors[keyof DrainErrors];
@@ -6948,6 +7071,10 @@ export type UndrainErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type UndrainError = UndrainErrors[keyof UndrainErrors];
@@ -7035,6 +7162,10 @@ export type PurgeCacheErrors = {
      * The store failed
      */
     500: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type PurgeCacheError = PurgeCacheErrors[keyof PurgeCacheErrors];
@@ -7112,6 +7243,10 @@ export type RenewErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type RenewError = RenewErrors[keyof RenewErrors];
@@ -7193,6 +7328,10 @@ export type RevokeClusterInstanceErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type RevokeClusterInstanceError = RevokeClusterInstanceErrors[keyof RevokeClusterInstanceErrors];
@@ -7279,6 +7418,10 @@ export type PublishClusterRevisionErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type PublishClusterRevisionError = PublishClusterRevisionErrors[keyof PublishClusterRevisionErrors];
@@ -7359,6 +7502,10 @@ export type AbandonClusterRolloutErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type AbandonClusterRolloutError = AbandonClusterRolloutErrors[keyof AbandonClusterRolloutErrors];
@@ -7402,6 +7549,10 @@ export type ResumeClusterRolloutErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ResumeClusterRolloutError = ResumeClusterRolloutErrors[keyof ResumeClusterRolloutErrors];
@@ -7443,6 +7594,10 @@ export type CreateJoinTokenErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type CreateJoinTokenError = CreateJoinTokenErrors[keyof CreateJoinTokenErrors];
@@ -7578,6 +7733,10 @@ export type PatchApiErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type PatchApiError = PatchApiErrors[keyof PatchApiErrors];
@@ -7635,6 +7794,10 @@ export type PutApiErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type PutApiError = PutApiErrors[keyof PutApiErrors];
@@ -7758,6 +7921,10 @@ export type ImportErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ImportError = ImportErrors[keyof ImportErrors];
@@ -7803,6 +7970,10 @@ export type ReloadErrors = {
      * Shutting down
      */
     503: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ReloadError = ReloadErrors[keyof ReloadErrors];
@@ -7862,6 +8033,10 @@ export type RollbackErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type RollbackError = RollbackErrors[keyof RollbackErrors];
@@ -7992,6 +8167,10 @@ export type DeleteConsumerErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type DeleteConsumerError = DeleteConsumerErrors[keyof DeleteConsumerErrors];
@@ -8092,6 +8271,10 @@ export type PutConsumerErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type PutConsumerError = PutConsumerErrors[keyof PutConsumerErrors];
@@ -8152,6 +8335,10 @@ export type CreateConsumerKeyErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type CreateConsumerKeyError = CreateConsumerKeyErrors[keyof CreateConsumerKeyErrors];
@@ -8210,6 +8397,10 @@ export type RevokeConsumerKeyErrors = {
      * More than 5 configuration writes or dry runs a second across all callers (bursts of 10); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type RevokeConsumerKeyError = RevokeConsumerKeyErrors[keyof RevokeConsumerKeyErrors];
@@ -8536,6 +8727,10 @@ export type ResetQuotaErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ResetQuotaError = ResetQuotaErrors[keyof ResetQuotaErrors];
@@ -8674,6 +8869,10 @@ export type SetupErrors = {
      * Too many attempts; see `Retry-After`
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type SetupError = SetupErrors[keyof SetupErrors];
@@ -8785,6 +8984,10 @@ export type CreateTokenErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type CreateTokenError = CreateTokenErrors[keyof CreateTokenErrors];
@@ -8827,6 +9030,10 @@ export type RevokeTokenErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type RevokeTokenError = RevokeTokenErrors[keyof RevokeTokenErrors];
@@ -8875,6 +9082,10 @@ export type UpgradeErrors = {
     500: {
         [key: string]: unknown;
     };
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type UpgradeError = UpgradeErrors[keyof UpgradeErrors];
@@ -8955,6 +9166,10 @@ export type CreateUserErrors = {
      * Too many password hashes at once
      */
     503: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type CreateUserError = CreateUserErrors[keyof CreateUserErrors];
@@ -9001,6 +9216,10 @@ export type DeleteUserErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type DeleteUserError = DeleteUserErrors[keyof DeleteUserErrors];
@@ -9051,6 +9270,10 @@ export type ChangeUserErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type ChangeUserError = ChangeUserErrors[keyof ChangeUserErrors];
@@ -9149,6 +9372,10 @@ export type DeleteObjectErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type DeleteObjectError = DeleteObjectErrors[keyof DeleteObjectErrors];
@@ -9257,6 +9484,10 @@ export type PutObjectErrors = {
      * More than 20 requests a second from this caller (token, user or socket; bursts of 100); try again after `Retry-After` seconds.
      */
     429: ErrorBody;
+    /**
+     * The change was refused before it was made because its audit record could not be written, typically a full disk; read-only calls still work (ADR-0033). For configuration writes, also: the configuration's stored copy could not be written.
+     */
+    507: ErrorBody;
 };
 
 export type PutObjectError = PutObjectErrors[keyof PutObjectErrors];

@@ -1,0 +1,24 @@
+description: "compress encodings (in order of preference), included content types and minimum size."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.gz.compress.encodings: "Gzip, br"
+      traefik.http.middlewares.gz.compress.includedcontenttypes: "text/html,application/json"
+      traefik.http.middlewares.gz.compress.minresponsebodybytes: "2048"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    gz:
+      type: "compress"
+      algorithms: ["gzip", "br"]
+      content_types: ["text/html", "application/json"]
+      min_size: "2KiB"

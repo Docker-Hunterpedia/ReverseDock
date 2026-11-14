@@ -516,7 +516,12 @@ pub fn write_private(path: &Path, bytes: &[u8]) -> io::Result<()> {
         match result {
             // A delete elsewhere removed the directory once it was empty: make it again.
             Err(e) if e.kind() == io::ErrorKind::NotFound && attempts < 5 => {}
-            other => return other,
+            Err(e) => {
+                // A full disk leaves no half-written temporary file behind (ADR-0033).
+                let _ = fs::remove_file(&tmp);
+                return Err(e);
+            }
+            Ok(()) => return Ok(()),
         }
     }
 }

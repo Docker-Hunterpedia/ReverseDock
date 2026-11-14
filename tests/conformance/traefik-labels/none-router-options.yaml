@@ -1,0 +1,28 @@
+description: "Router options without an equivalent (observability, the v2 rule syntax) and per-router TLS options are warnings with the reason."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.observability.accesslogs: "false"
+      traefik.http.routers.app.observability.metrics: "false"
+      traefik.http.routers.app.observability.traceverbosity: "detailed"
+      traefik.http.routers.app.observability.tracing: "false"
+      traefik.http.routers.app.rulesyntax: "v2"
+      traefik.http.routers.app.tls.options: "modern"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "traefik.http.routers.app.observability.accesslogs\"]"
+    - "traefik.http.routers.app.observability.metrics\"]"
+    - "traefik.http.routers.app.observability.traceverbosity\"]"
+    - "traefik.http.routers.app.observability.tracing\"]"
+    - "traefik.http.routers.app.rulesyntax\"]"
+    - "traefik.http.routers.app.tls.options\"]"

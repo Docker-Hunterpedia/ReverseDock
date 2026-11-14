@@ -1,0 +1,278 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name admin.example.com",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `basic_auth` with this realm",
+      "source": {
+        "file": "nginx.conf",
+        "item": "auth_basic \"Admin area\"",
+        "kind": "directive",
+        "line": 6
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `basic_auth.users_file`: the file is named, never read (bcrypt and argon2id hashes; `$apr1$` and `{SHA}` are accepted with a warning)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "auth_basic_user_file /etc/nginx/htpasswd",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`allow …; deny all;` → `ip_allow` (403 for others, as NGINX)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "allow 10.0.0.0/8",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`allow …; deny all;` → `ip_allow` (403 for others, as NGINX)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "allow 192.168.1.0/24",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`allow …; deny all;` → `ip_allow` (403 for others, as NGINX)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "deny all",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://admin:9000",
+        "kind": "directive",
+        "line": 13
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /public/",
+        "kind": "directive",
+        "line": 15
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "no authentication here, as `auth_basic off`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "auth_basic off",
+        "kind": "directive",
+        "line": 16
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`deny …; [allow all;]` → `ip_deny` (403, as NGINX)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "deny 203.0.113.0/24",
+        "kind": "directive",
+        "line": 17
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://admin:9000",
+        "kind": "directive",
+        "line": 18
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /mixed/",
+        "kind": "directive",
+        "line": 20
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "split it into an `ip_allow` and an `ip_deny` middleware if that keeps its meaning",
+      "level": "manual",
+      "message": "a mixed `allow`/`deny` list (not `allow …; deny all;` or `deny …; allow all;`) has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "deny 10.0.0.1",
+        "kind": "directive",
+        "line": 21
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "split it into an `ip_allow` and an `ip_deny` middleware if that keeps its meaning",
+      "level": "manual",
+      "message": "a mixed `allow`/`deny` list (not `allow …; deny all;` or `deny …; allow all;`) has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "allow 10.0.0.0/8",
+        "kind": "directive",
+        "line": 22
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "split it into an `ip_allow` and an `ip_deny` middleware if that keeps its meaning",
+      "level": "manual",
+      "message": "a mixed `allow`/`deny` list (not `allow …; deny all;` or `deny …; allow all;`) has no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "deny all",
+        "kind": "directive",
+        "line": 23
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://admin:9000",
+        "kind": "directive",
+        "line": 24
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `admin-example-com-mixed` is written disabled (`enabled: false`): its `allow`/`deny` rules were not migrated",
+      "security": true,
+      "target": "routes.admin-example-com-mixed"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 17,
+    "items": 20,
+    "manual": 3,
+    "result": 6
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

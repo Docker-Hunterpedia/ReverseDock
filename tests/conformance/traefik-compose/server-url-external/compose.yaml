@@ -1,0 +1,12 @@
+# Corpus case `server-url-external` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: server.url to a backend outside the project.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  legacy:
+    image: traefik/whoami:v1.12.0
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.legacy.rule: Host(`legacy.example.com`)
+      traefik.http.routers.legacy.entrypoints: websecure
+      traefik.http.routers.legacy.tls: "true"
+      traefik.http.services.legacy.loadbalancer.server.url: https://10.20.0.5:8443

@@ -1,0 +1,128 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `admin` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.admin",
+        "kind": "object",
+        "scope": "admin"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "admin"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.admin.rule",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "routes.admin"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.admin.entrypoints",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "routes.admin"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.admin.tls",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "routes.admin"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.admin.middlewares",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "routes.admin"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`basic_auth.users` (bcrypt and argon2id; Apache MD5 and SHA-1 with a warning)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.admin-auth.basicauth.users",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "middlewares.admin-auth"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`basic_auth.realm`; the Basic challenge also names the charset credentials are decoded with (`charset=\"UTF-8\"`, RFC 7617 §2.1); Traefik's names the realm only. Clients treat both as a challenge for the realm",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.admin-auth.basicauth.realm",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "middlewares.admin-auth"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`basic_auth.remove_header`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.admin-auth.basicauth.removeheader",
+        "kind": "label",
+        "scope": "admin"
+      },
+      "target": "middlewares.admin-auth"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 7,
+    "items": 9,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

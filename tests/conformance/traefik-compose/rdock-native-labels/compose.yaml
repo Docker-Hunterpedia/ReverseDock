@@ -1,0 +1,12 @@
+# Corpus case `rdock-native-labels` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: rdock.* shorthand next to Traefik labels.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - rdock.enable=true
+      - rdock.host=app.example.com
+      - rdock.middlewares=gz
+      - traefik.http.middlewares.gz.compress=true

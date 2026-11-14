@@ -3,9 +3,11 @@
 //! bcrypt and argon2id are slow on purpose, and browsers send the credentials with every
 //! request, so successful checks are remembered for a few minutes under a keyed hash of the
 //! user name and password. Verification runs on the blocking thread pool so it never stalls the
-//! proxy's workers, at most [`MAX_VERIFYING`] at a time across every `basic_auth` middleware:
-//! a request that finds them all busy waits up to [`VERIFY_WAIT`], then gets `503` with
-//! `Retry-After`. A hash whose cost is above the ceilings of [`rdock_model::password`] is
+//! proxy's workers, at most [`MAX_VERIFYING`] at a time across every `basic_auth` middleware
+//! and [`PER_CLIENT`] at a time per client (an IPv4 address or an IPv6 /64), whose requests
+//! wait for a turn up to [`VERIFY_WAIT`] and then get `429` (not counted as a failed login): a request that finds every slot busy
+//! waits up to [`VERIFY_WAIT`], then gets `503` with `Retry-After`. A user name that does not exist is verified against a configured
+//! hash and refused, so the answer takes as long as for a real user's wrong password. A hash whose cost is above the ceilings of [`rdock_model::password`] is
 //! refused when the middleware is built, from `users` and from `users_file` alike.
 
 use std::collections::{HashMap, VecDeque};
@@ -50,6 +52,86 @@ pub(crate) struct BasicAuth {
     cache: Arc<Cache>,
     /// The verification slots: the process-wide ones (a test may give its own).
     slots: Arc<tokio::sync::Semaphore>,
+    /// A configured hash, verified for names that are not users so that an unknown name
+    /// costs what a known one does and timing does not tell them apart.
+    decoy: Arc<str>,
+    /// [`PER_CLIENT`] verifications at a time per client (an IPv4 address or an IPv6 /64):
+    /// the process-wide turns (a test may give its own).
+    verifying: Arc<Turns>,
+}
+
+/// Verifications one client (an IPv4 address or an IPv6 /64) may run at once. Two, not one:
+/// several people behind one NAT logging in at the same moment are verified side by side
+/// instead of queueing past [`VERIFY_WAIT`]. Not per (client, user): user names are the
+/// caller's choice (unknown ones are verified against a decoy), so that would let one client
+/// take every slot again. The bound: one client runs at most `PER_CLIENT` of the
+/// `MAX_VERIFYING` slots, so it guesses at most two passwords per verification time (around
+/// 0.3 s for the usual argon2id and bcrypt costs) and others keep the remaining slots.
+pub const PER_CLIENT: usize = 2;
+
+/// Per-client turns for verification, shared by every `basic_auth` middleware: a client runs
+/// at most [`PER_CLIENT`] verifications at once, so one client cannot hold every slot.
+#[derive(Debug, Default)]
+struct Turns(Mutex<HashMap<String, TurnEntry>>);
+
+/// A client's turns and how many requests have or wait for one; the entry goes when that
+/// count does, whichever way a request ends (verified, timed out or cancelled).
+#[derive(Debug)]
+struct TurnEntry {
+    semaphore: Arc<tokio::sync::Semaphore>,
+    users: usize,
+}
+
+fn verifying() -> &'static Arc<Turns> {
+    static VERIFYING: std::sync::OnceLock<Arc<Turns>> = std::sync::OnceLock::new();
+    VERIFYING.get_or_init(Arc::default)
+}
+
+/// A request's registration with a client's turns, and its turn once it has one. Dropping it
+/// gives the turn back and removes the entry when no other request has or waits for one.
+struct Turn {
+    turns: Arc<Turns>,
+    key: String,
+    permit: Option<tokio::sync::OwnedSemaphorePermit>,
+}
+
+impl Turn {
+    /// Waits up to `wait` for one of `key`'s turns.
+    async fn take(turns: &Arc<Turns>, key: String, wait: Duration) -> Option<Self> {
+        let semaphore = {
+            let mut map = turns.0.lock().unwrap_or_else(PoisonError::into_inner);
+            let entry = map.entry(key.clone()).or_insert_with(|| TurnEntry {
+                semaphore: Arc::new(tokio::sync::Semaphore::new(PER_CLIENT)),
+                users: 0,
+            });
+            entry.users += 1;
+            entry.semaphore.clone()
+        };
+        // Registered before waiting, so a timeout or a cancelled request unregisters too.
+        let mut turn = Self {
+            turns: turns.clone(),
+            key,
+            permit: None,
+        };
+        turn.permit = tokio::time::timeout(wait, semaphore.acquire_owned())
+            .await
+            .ok()?
+            .ok();
+        turn.permit.is_some().then_some(turn)
+    }
+}
+
+impl Drop for Turn {
+    fn drop(&mut self) {
+        drop(self.permit.take());
+        let mut map = self.turns.0.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some(entry) = map.get_mut(&self.key) {
+            entry.users = entry.users.saturating_sub(1);
+            if entry.users == 0 {
+                map.remove(&self.key);
+            }
+        }
+    }
 }
 
 impl BasicAuth {
@@ -77,6 +159,10 @@ impl BasicAuth {
         }
         let mut names: Vec<&String> = users.keys().collect();
         names.sort();
+        let decoy: Arc<str> = names
+            .first()
+            .and_then(|user| users.get(*user))
+            .map_or_else(|| Arc::from(""), |hash| Arc::from(hash.as_str()));
         for user in names {
             if let Some(problem) = users
                 .get(user)
@@ -98,6 +184,8 @@ impl BasicAuth {
             remove_header: config.remove_header,
             cache: Arc::new(Cache::default()),
             slots: slots().clone(),
+            decoy,
+            verifying: verifying().clone(),
         })
     }
 
@@ -142,14 +230,37 @@ impl Middleware for BasicAuth {
         let Some((user, password)) = credentials(req) else {
             return self.unauthorized();
         };
-        let Some(hash) = self.users.get(&user).cloned() else {
-            cx.auth_failed = true;
-            return self.unauthorized();
+        // An unknown name is checked against a configured hash and refused whatever the
+        // result, so it takes as long as a wrong password for a real user.
+        let (hash, known) = match self.users.get(&user) {
+            Some(hash) => (hash.clone(), true),
+            None => (self.decoy.to_string(), false),
         };
         let key = self.cache.key(&user, &password, &hash);
-        let valid = if self.cache.contains(key, Instant::now()) {
-            true
+        let valid = if let Some(valid) = self.cache.get(key, Instant::now()) {
+            valid
         } else {
+            // At most `PER_CLIENT` verifications at a time per client: a client that floods
+            // wrong passwords waits behind its own requests instead of taking every slot from
+            // everyone else. Waiting too long is not a failed login: nothing was checked, so
+            // it does not count towards an `auth_failure` ban.
+            let Some(turn) = Turn::take(
+                &self.verifying,
+                crate::limits::client_ip_key(cx.client_ip),
+                VERIFY_WAIT,
+            )
+            .await
+            else {
+                return Flow::Reply(
+                    Reply::problem(crate::ProblemKind::RateLimited)
+                        .header(http::header::RETRY_AFTER, HeaderValue::from_static("1")),
+                );
+            };
+            // The request before it in the turn may have verified the same credentials.
+            if let Some(valid) = self.cache.get(key, Instant::now()) {
+                drop(turn);
+                return self.finish(req, cx, user, valid);
+            }
             let Ok(Ok(slot)) =
                 tokio::time::timeout(VERIFY_WAIT, self.slots.clone().acquire_owned()).await
             else {
@@ -161,15 +272,24 @@ impl Middleware for BasicAuth {
             };
             let checked = tokio::task::spawn_blocking(move || {
                 let _slot = slot;
+                let _turn = turn;
                 hashes::verify(&password, &hash)
             })
             .await
-            .unwrap_or(false);
+            .unwrap_or(false)
+                && known;
+            // Only successes are remembered: failures from a flood would push them out.
             if checked {
                 self.cache.insert(key, Instant::now());
             }
             checked
         };
+        self.finish(req, cx, user, valid)
+    }
+}
+
+impl BasicAuth {
+    fn finish(&self, req: &mut RequestHeader, cx: &mut Context, user: String, valid: bool) -> Flow {
         if !valid {
             cx.auth_failed = true;
             return self.unauthorized();
@@ -205,12 +325,19 @@ impl Cache {
             | u128::from(self.hashers.1.hash_one(input))
     }
 
-    fn contains(&self, key: u128, now: Instant) -> bool {
+    /// `Some(true)` for credentials verified recently (only successes are remembered).
+    fn get(&self, key: u128, now: Instant) -> Option<bool> {
         let guard = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         guard
             .0
             .get(&key)
             .is_some_and(|added| now.duration_since(*added) < CACHE_TTL)
+            .then_some(true)
+    }
+
+    #[cfg(test)]
+    fn contains(&self, key: u128, now: Instant) -> bool {
+        self.get(key, now) == Some(true)
     }
 
     fn insert(&self, key: u128, now: Instant) {
@@ -352,6 +479,154 @@ mod tests {
             };
             assert_eq!(reply.status, 401);
             assert_eq!(mw.slots.available_permits(), total, "slots come back");
+        });
+    }
+
+    #[test]
+    fn unknown_users_cost_a_verification_and_are_refused() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let hash = bcrypt::hash("s3cret", 4).unwrap();
+            let mut mw = auth(&[&format!("alice:{hash}")], false);
+            mw.slots = Arc::new(tokio::sync::Semaphore::new(1));
+            mw.verifying = Arc::default();
+            // With the only slot held, an unknown name waits for it like a known one: it is
+            // verified, not answered at once.
+            let held = mw.slots.clone().acquire_owned().await.unwrap();
+            let value = basic("mallory", "s3cret");
+            let mut req = request("GET", "/", &[("authorization", &value)]);
+            let Flow::Reply(reply) = mw.request(&mut req, &mut cx()).await else {
+                panic!("no slot: 503")
+            };
+            assert_eq!(
+                reply.status, 503,
+                "the unknown name took the verification path"
+            );
+            drop(held);
+            // Alice's password under another name is still refused.
+            let Flow::Reply(reply) = mw.request(&mut req, &mut cx()).await else {
+                panic!("401")
+            };
+            assert_eq!(reply.status, 401);
+        });
+    }
+
+    #[test]
+    fn one_client_cannot_take_every_verification_slot() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let hash = bcrypt::hash("s3cret", 4).unwrap();
+            let mut mw = auth(&[&format!("alice:{hash}")], false);
+            mw.verifying = Arc::default();
+            // Verifications of this client are running (any address of its /64), as many as
+            // it may run at once.
+            let mut flooding = cx();
+            flooding.client_ip = "2001:db8:1:2::7".parse().unwrap();
+            let mut busy = Vec::new();
+            for _ in 0..PER_CLIENT {
+                busy.push(
+                    Turn::take(
+                        &mw.verifying,
+                        "2001:db8:1:2::/64".to_owned(),
+                        Duration::ZERO,
+                    )
+                    .await
+                    .unwrap(),
+                );
+            }
+            let value = basic("alice", "s3cret");
+            let mut req = request("GET", "/", &[("authorization", &value)]);
+            let started = Instant::now();
+            let Flow::Reply(reply) = mw.request(&mut req, &mut flooding).await else {
+                panic!("429 while its own verifications run")
+            };
+            assert_eq!(reply.status, 429);
+            assert!(
+                !flooding.auth_failed,
+                "waiting for a turn is not a failed login (no abuse-ban contribution)"
+            );
+            assert!(
+                started.elapsed() >= VERIFY_WAIT,
+                "it waited for its turn first"
+            );
+            // Another client is verified meanwhile.
+            assert_eq!(mw.request(&mut req, &mut cx()).await, Flow::Next);
+            drop(busy);
+            let mut later = cx();
+            later.client_ip = "2001:db8:1:2::8".parse().unwrap();
+            mw.cache = Arc::new(Cache::default());
+            assert_eq!(mw.request(&mut req, &mut later).await, Flow::Next);
+            assert!(
+                mw.verifying.0.lock().unwrap().is_empty(),
+                "turns are given back"
+            );
+        });
+    }
+
+    #[test]
+    fn turns_are_given_back_however_a_wait_ends() {
+        let runtime = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .unwrap();
+        runtime.block_on(async {
+            let turns: Arc<Turns> = Arc::default();
+            let key = || "203.0.113.7".to_owned();
+            let take = |wait| Turn::take(&turns, key(), wait);
+            // Two at once for one client; a third waits and times out.
+            let first = take(Duration::ZERO).await.unwrap();
+            let second = take(Duration::ZERO).await.unwrap();
+            assert!(take(Duration::from_millis(10)).await.is_none());
+            // The holders finish in either order: nothing is left.
+            drop(first);
+            drop(second);
+            assert!(turns.0.lock().unwrap().is_empty());
+            // A waiter that times out while the holder runs, then the holder finishes.
+            let holder = take(Duration::ZERO).await.unwrap();
+            let other = take(Duration::ZERO).await.unwrap();
+            let waiter = tokio::spawn({
+                let turns = turns.clone();
+                async move {
+                    Turn::take(&turns, key(), Duration::from_millis(20))
+                        .await
+                        .is_none()
+                }
+            });
+            assert!(waiter.await.unwrap());
+            drop(holder);
+            drop(other);
+            assert!(turns.0.lock().unwrap().is_empty());
+            // A waiter whose request is cancelled.
+            let a = take(Duration::ZERO).await.unwrap();
+            let b = take(Duration::ZERO).await.unwrap();
+            let cancelled = tokio::spawn({
+                let turns = turns.clone();
+                async move {
+                    Turn::take(&turns, key(), Duration::from_secs(30))
+                        .await
+                        .is_some()
+                }
+            });
+            // Poll until it waits (registered), up to a deadline.
+            let deadline = Instant::now() + Duration::from_secs(10);
+            while turns.0.lock().unwrap()[&key()].users < 3 {
+                assert!(Instant::now() < deadline, "the waiter registers");
+                tokio::time::sleep(Duration::from_millis(5)).await;
+            }
+            cancelled.abort();
+            let _ = cancelled.await;
+            drop(a);
+            drop(b);
+            assert!(turns.0.lock().unwrap().is_empty());
         });
     }
 

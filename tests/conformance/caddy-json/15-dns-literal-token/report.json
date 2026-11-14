@@ -1,0 +1,130 @@
+{
+  "findings": [
+    {
+      "code": "caddy.tls.credentials",
+      "hint": "set CF_API_TOKEN in ReverseDock's environment (or use `${file:…}` references)",
+      "level": "manual",
+      "message": "DNS-01 with `cloudflare` → `acme.dns_providers.cloudflare` (type `cloudflare`); credentials are never copied: the output reads them from `CF_API_TOKEN`",
+      "security": true,
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/0/issuers/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.tls.exact",
+      "level": "exact",
+      "message": "applies to files.example.com",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.tls.credentials",
+      "hint": "set DO_AUTH_TOKEN in ReverseDock's environment (or use `${file:…}` references)",
+      "level": "manual",
+      "message": "DNS-01 with `digitalocean` → `acme.dns_providers.digitalocean` (type `digitalocean`); credentials are never copied: the output reads them from `DO_AUTH_TOKEN`",
+      "security": true,
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/1/issuers/0",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.tls.exact",
+      "level": "exact",
+      "message": "translated",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/tls/automation/policies/1",
+        "kind": "key",
+        "scope": "tls"
+      },
+      "target": "acme"
+    },
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:443` → listener `websecure` (HTTPS)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`root`: the directory of the `file_server` that follows",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.approximate",
+      "level": "approximate",
+      "message": "directory listings (`browse`) are on; the page and its template differ; `file_server` → a `static` middleware; ReverseDock does not serve files and directories whose name starts with `.` (Caddy serves them unless hidden)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/1",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 6,
+    "items": 9,
+    "manual": 2,
+    "result": 0
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

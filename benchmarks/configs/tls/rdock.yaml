@@ -1,6 +1,9 @@
 # ReverseDock: HTTPS on one listener, one route, one backend, no access log.
+# TLS parity (README "TLS parity"): TLS 1.3 only (`policy: modern`). rustls offers HTTP/2 and
+# HTTP/1.1 by ALPN, X25519 first among its key exchange groups, and follows the client's cipher
+# suite order; neither is configurable, so the other proxies are set to match.
 listeners:
-  web: { address: ":8080", tls: {} }
+  web: { address: ":8080", tls: { policy: modern } }
 defaults: { listeners: [web], tls: off }
 certificates:
   bench: { cert_file: /certs/cert.pem, key_file: /certs/key.pem }

@@ -1,0 +1,13 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "${{VAR}}",
+    "${{VAR:-default}}",
+    "$VAR",
+    "--env-file"
+  ],
+  "diff": false,
+  "args": {
+    "env_file": "vars.env"
+  }
+}

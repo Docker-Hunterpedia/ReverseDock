@@ -1,0 +1,65 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"www.example.org"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "web-a:80"
+														},
+														{
+															"dial": "web-b:80"
+														}
+													],
+													"flush_interval": -1,
+													"headers": {
+														"request": {
+															"set": {
+																"X-App-Name": [
+																	"shop"
+																],
+																"X-Real-IP": [
+																	"{http.request.remote.host}"
+																]
+															}
+														},
+														"response": {
+															"delete": [
+																"Server"
+															]
+														}
+													}
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

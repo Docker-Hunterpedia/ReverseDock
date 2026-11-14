@@ -1,6 +1,10 @@
 # Traefik: one entry point and the file provider; access logs are off by default.
+# HTTP/2 (TLS scenarios only): 100 concurrent streams per connection like the other proxies
+# (Traefik's default is 250).
 entryPoints:
-  web: { address: ":8080" }
+  web:
+    address: ":8080"
+    http2: { maxConcurrentStreams: 100 }
 providers:
   file: { filename: /etc/traefik/dynamic.yml }
 log: { level: ERROR }

@@ -1,0 +1,141 @@
+{
+  "findings": [
+    {
+      "code": "caddy.server.approximate",
+      "level": "approximate",
+      "message": "the HTTP-to-HTTPS redirect is off: `defaults.redirect_http_to_https: false` (global, with `--full`)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/automatic_https",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:80` → listener `web`",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/listen",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "`Host` (case-insensitive; `*` is one label in both)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/match/0/host",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "its routes are flattened into the enclosing routes, in order",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "`reverse_proxy` → a service",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv0/routes/0/handle/0/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv0"
+      },
+      "target": "services"
+    },
+    {
+      "code": "caddy.server.approximate",
+      "level": "approximate",
+      "message": "the HTTP-to-HTTPS redirect is off: `defaults.redirect_http_to_https: false` (global, with `--full`)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv1/automatic_https",
+        "kind": "key",
+        "scope": "srv1"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "caddy.server.exact",
+      "level": "exact",
+      "message": "`:8080` → listener `http-8080`",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv1/listen",
+        "kind": "key",
+        "scope": "srv1"
+      },
+      "target": "listeners"
+    },
+    {
+      "code": "caddy.matcher.exact",
+      "level": "exact",
+      "message": "Caddy matches paths case-insensitively: written as a case-insensitive `PathRegexp` (or `Path`/`PathPrefix` when the pattern has no letters)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv1/routes/0/match/0/path",
+        "kind": "key",
+        "scope": "srv1"
+      }
+    },
+    {
+      "code": "caddy.handler.exact",
+      "level": "exact",
+      "message": "a fixed answer with status 200 (`respond`)",
+      "source": {
+        "file": "caddy.json",
+        "item": "/apps/http/servers/srv1/routes/0/handle/0",
+        "kind": "key",
+        "scope": "srv1"
+      }
+    },
+    {
+      "code": "caddy.default.dial_timeout",
+      "level": "exact",
+      "message": "Caddy's default dial timeout (3s) is written as `timeouts.connect: 3s` on each service (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "caddy.default.response_timeout",
+      "level": "approximate",
+      "message": "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads (raise it on services with slow answers)"
+    },
+    {
+      "code": "caddy.route.unanswered",
+      "level": "approximate",
+      "message": "requests that no handler answers (for example a path a site does not handle) get an empty `200` from Caddy; ReverseDock answers `404`"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Caddy v2.11.9",
+    "files": [
+      "caddy.json"
+    ],
+    "kind": "caddy"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 7,
+    "items": 9,
+    "manual": 0,
+    "result": 3
+  },
+  "tool": "rdock migrate caddy",
+  "version": 1
+}

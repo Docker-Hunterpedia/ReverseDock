@@ -1,0 +1,12 @@
+# Traefik, tuned: the same as ../traefik.yml, on purpose. Traefik's documentation (read
+# 2026-11-14) names no throughput settings, and its defaults already match the other proxies
+# here: idle connections per backend `serversTransport.maxIdleConnsPerHost` 200
+# (https://doc.traefik.io/traefik/reference/install-configuration/configuration-options/), no
+# request limit per client connection (`transport.keepAliveMaxRequests` 0), access log off.
+entryPoints:
+  web:
+    address: ":8080"
+    http2: { maxConcurrentStreams: 100 }
+providers:
+  file: { filename: /etc/traefik/dynamic.yml }
+log: { level: ERROR }

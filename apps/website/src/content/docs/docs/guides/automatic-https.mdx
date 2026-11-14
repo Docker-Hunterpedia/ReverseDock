@@ -79,16 +79,20 @@ Let's Encrypt offers profiles: `classic` (90 days, moving to 64 days in 2027 and
 - **ARI** (RFC 9773): ReverseDock asks the CA for its suggested renewal window and renews at a random time inside it. Such renewals are exempt from Let's Encrypt's rate limits ([rate limits](https://letsencrypt.org/docs/rate-limits/), checked 2026-10-28).
 - **Without ARI**, it renews with a third of the lifetime left, whatever the lifetime.
 - **Failures** are retried after 1 minute, then 2, 4 … up to 24 hours. After a failure against Let's Encrypt, the next attempt is rehearsed on staging first, so a broken setup does not use up production limits.
-- **A CA outage** never stops serving: the stored certificate is used until it expires.
+- **A CA outage** never stops serving: the stored certificate is used until it expires. A `Retry-After` on a `429` or `503` answer is waited out, and each request to the CA has a 30-second deadline, so a CA that hangs fails the attempt instead of holding up other certificates.
+- **No room, no order**: while the storage directory has less than 1 MiB free, no order is placed (the certificate could not be stored and the order would use up rate limits); the attempt fails with "not ordering" and is retried. See [Failure behaviour](/docs/operations/failure-behaviour/).
 
-`rdock status` lists every automatic certificate with its expiry, planned renewal and last error. Metrics: `rdock_cert_expiry_timestamp_seconds`, `rdock_cert_renewal_failures_total` and `rdock_acme_orders_total`. After 3 failures in a row, or with less than 7 days left, a warning is logged and, if set, a webhook receives the event:
+`rdock status` lists every automatic certificate with its expiry, planned renewal and last error. Metrics: `rdock_cert_expiry_timestamp_seconds`, `rdock_cert_renewal_failures_total` and `rdock_acme_orders_total`. After 3 failures in a row, or with less than 7 days left, a warning is logged and, if set, an [alert channel](/docs/guides/alerts/) receives the event:
 
 ```yaml title="rdock.yaml (excerpt)"
 observability:
   alerts:
-    webhook:
-      url: https://alerts.example.com/rdock
-      token: "${file:/run/secrets/alert_token}"
+    channels:
+      ops:
+        type: webhook
+        url: "${file:/run/secrets/alert_url}"
+        token: "${file:/run/secrets/alert_token}"
+        rules: [certificates]
 ```
 
 ## Storage
@@ -98,6 +102,15 @@ Accounts and certificates live in `$RDOCK_DATA_DIR/acme` (or `acme.storage`): `a
 ## Try it safely first
 
 Set `acme: { staging: true }` while you set things up: certificates come from Let's Encrypt's staging CA, which browsers do not trust, but its limits are much higher. Remove it when everything works; the production certificates follow within seconds.
+
+## How fast the first certificate comes
+
+The 1.0 goal is valid HTTPS within 60 seconds of `docker compose up` on a fresh server whose DNS already points at it. Two checks measure it on the [`https` example](https://github.com/Docker-Hunterpedia/ReverseDock/tree/main/deploy/docker/examples/https): one ReverseDock container and one application container with the labels `rdock.enable=true` and `rdock.host`.
+
+- **In CI:** the `https-60s` workflow builds the release image and runs the example against Pebble, Let's Encrypt's test CA, with Pebble's random validation delay of up to 15 seconds left on. It times `docker compose up -d` to the first answer whose certificate Pebble issued, prints the time and fails above 60 seconds. Image pulls are timed separately.
+- **On a real server:** `scripts/https-60s-vps.sh run --domain <name>` does the same against Let's Encrypt staging, or production with `--production`. A second machine can run `probe` at the same time to see the result from outside.
+
+Neither has run yet, so no measured time is published here.
 
 ## Related
 

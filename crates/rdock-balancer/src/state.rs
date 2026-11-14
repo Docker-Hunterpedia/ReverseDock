@@ -70,6 +70,12 @@ impl BackendState {
         self.health().start_trial(now);
     }
 
+    /// Makes the request just sent in panic mode the trial of this backend if it is ejected:
+    /// its success ends the ejection, its failure ejects it again for longer.
+    pub fn start_panic_trial(&self, now: Instant) {
+        self.health().start_panic_trial(now);
+    }
+
     /// Records a probe result; returns the new verdict when it changed (`true` = healthy).
     pub fn probe(&self, ok: bool, policy: ProbePolicy, now: Instant) -> Option<bool> {
         self.health().probe(ok, policy, now)
@@ -120,6 +126,12 @@ impl BackendState {
         self.health().is_ejected()
     }
 
+    /// Whether only passive ejection keeps the backend out now: its active checks (if any)
+    /// pass and it has not asked for a pause with `Retry-After`.
+    pub fn passes_checks(&self, now: Instant) -> bool {
+        self.health().passes_checks(now)
+    }
+
     /// Why the backend gets no requests now (health, ejection, `Retry-After`, drain); `None`
     /// when it may get them.
     pub fn exclusion(&self, now: Instant) -> Option<String> {
@@ -157,6 +169,8 @@ pub struct Pool {
     backends: RwLock<HashMap<String, Arc<BackendState>>>,
     in_flight: Arc<AtomicU32>,
     retries: Arc<AtomicU32>,
+    /// Whether the last selection had no available backend and routed in panic mode.
+    panic: AtomicBool,
 }
 
 /// Retries in flight that are always allowed, whatever the budget (Envoy's
@@ -228,6 +242,17 @@ impl Pool {
                     && b.availability(now) == Availability::Up
                     && b.ramp(slow_start, now).is_none()
             })
+    }
+
+    /// Records whether the latest selection routed in panic mode (no backend available);
+    /// `true` when that changed, so the caller logs entering and leaving the state once.
+    pub fn set_panic(&self, panic: bool) -> bool {
+        self.panic.swap(panic, Ordering::Relaxed) != panic
+    }
+
+    /// Whether the latest selection routed in panic mode.
+    pub fn in_panic(&self) -> bool {
+        self.panic.load(Ordering::Relaxed)
     }
 
     /// Requests in flight to any backend of the pool.

@@ -1,0 +1,198 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `auth` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.auth",
+        "kind": "object",
+        "scope": "auth"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "auth"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`forward_auth.address`; an auth service that cannot be reached gives `502` (Traefik: `500`); the auth request times out after 5s",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.sso.forwardauth.address",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "middlewares.sso"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`forward_auth.request_headers`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.sso.forwardauth.authRequestHeaders",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "middlewares.sso"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`forward_auth.copy_headers`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.sso.forwardauth.authResponseHeaders",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "middlewares.sso"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`forward_auth.trust_forward_header`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.sso.forwardauth.trustForwardHeader",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "middlewares.sso"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.auth.entrypoints",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "routes.auth"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.auth.rule",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "routes.auth"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.auth.tls",
+        "kind": "label",
+        "scope": "auth"
+      },
+      "target": "routes.auth"
+    },
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `wiki` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.wiki",
+        "kind": "object",
+        "scope": "wiki"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "wiki"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.wiki.entrypoints",
+        "kind": "label",
+        "scope": "wiki"
+      },
+      "target": "routes.wiki"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.wiki.middlewares",
+        "kind": "label",
+        "scope": "wiki"
+      },
+      "target": "routes.wiki"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.wiki.rule",
+        "kind": "label",
+        "scope": "wiki"
+      },
+      "target": "routes.wiki"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.wiki.tls",
+        "kind": "label",
+        "scope": "wiki"
+      },
+      "target": "routes.wiki"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 0,
+    "exact": 12,
+    "items": 15,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

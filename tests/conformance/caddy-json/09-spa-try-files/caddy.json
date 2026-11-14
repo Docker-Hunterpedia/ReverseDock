@@ -1,0 +1,108 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"app.example.dev"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "vars",
+													"root": "/srv/app"
+												}
+											]
+										},
+										{
+											"group": "group2",
+											"match": [
+												{
+													"path": [
+														"/api/*"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "api:4000"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										},
+										{
+											"group": "group2",
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"group": "group0",
+															"match": [
+																{
+																	"file": {
+																		"try_files": [
+																			"{http.request.uri.path}",
+																			"/index.html"
+																		]
+																	}
+																}
+															],
+															"handle": [
+																{
+																	"handler": "rewrite",
+																	"uri": "{http.matchers.file.relative}"
+																}
+															]
+														},
+														{
+															"handle": [
+																{
+																	"handler": "file_server",
+																	"hide": [
+																		"./Caddyfile"
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,152 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `api` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.api",
+        "kind": "object",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`rate_limit.average`; without `burst`, the burst is `average` (Traefik: 1)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.global.ratelimit.average",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.global"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`rate_limit.average`; without `burst`, the burst is `average` (Traefik: 1)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.per-key.ratelimit.average",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.per-key"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`rate_limit.burst`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.per-key.ratelimit.burst",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.per-key"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`rate_limit.period`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.per-key.ratelimit.period",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.per-key"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`rate_limit.key: header:<Name>`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.per-key.ratelimit.sourcecriterion.requestheadername",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.per-key"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.entrypoints",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.middlewares",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.rule",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.tls",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 0,
+    "exact": 8,
+    "items": 11,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

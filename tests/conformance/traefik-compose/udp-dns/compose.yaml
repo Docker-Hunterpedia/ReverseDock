@@ -1,0 +1,16 @@
+# Corpus case `udp-dns` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: UDP router entrypoints and service, UDP server.port, a UDP entry point.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  traefik:
+    image: traefik:v3.7.19
+    command:
+      - --entrypoints.dns.address=:53/udp
+      - --providers.docker.exposedbydefault=false
+  dns:
+    image: example/dns:1
+    labels:
+      traefik.enable: "true"
+      traefik.udp.routers.dns.entrypoints: dns
+      traefik.udp.routers.dns.service: dns
+      traefik.udp.services.dns.loadbalancer.server.port: "53"

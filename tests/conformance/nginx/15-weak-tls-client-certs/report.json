@@ -1,0 +1,181 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `websecure`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 443 ssl",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name legacy.example.com",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `certificates.legacy` (the files are named, never read)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_certificate /etc/ssl/legacy/cert.pem",
+        "kind": "directive",
+        "line": 6
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `certificates.legacy.key_file` (never read)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_certificate_key /etc/ssl/legacy/key.pem",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.tls.weak",
+      "hint": "keep TLS 1.2 and later; clients that need older versions cannot connect",
+      "level": "manual",
+      "message": "`TLSv1`, `TLSv1.1` are weaker than ReverseDock's floor (TLS 1.2) and not written; the listeners keep `intermediate`",
+      "security": true,
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_protocols TLSv1 TLSv1.1 TLSv1.2",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "cipher lists: TLS settings are two presets here (`intermediate`, `modern`, Mozilla's lists); the listeners keep `intermediate`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_ciphers HIGH:!aNULL:!MD5",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `tls.client_auth.ca_files`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_client_certificate /etc/ssl/legacy/clients-ca.pem",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "client certificates `required` → `tls.client_auth` on the listener (per listener here, per server in NGINX)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_verify_client on",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://legacy:8080",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 9,
+    "items": 12,
+    "manual": 1,
+    "result": 5
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

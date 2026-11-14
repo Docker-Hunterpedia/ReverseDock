@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "redirectscheme scheme and permanent",
+    "plain-HTTP router on web",
+    "websecure router"
+  ],
+  "diff": true
+}

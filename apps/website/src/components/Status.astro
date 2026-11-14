@@ -1,17 +1,43 @@
 ---
 /**
- * When a feature became available, or when it is planned (ADR-0017: the docs never present
- * planned features as shipped). Both take a milestone such as `v0.1`.
+ * A feature's status. `since` and `planned` take a milestone such as `v0.1` (ADR-0017: the docs
+ * never present planned features as shipped). `feature` names an entry of the maturity registry
+ * (ADR-0033) and shows its level from `src/data/maturity.json`, which `scripts/gen-stability.ts`
+ * generates from the schema; `maturity` is the level itself, as the generated reference writes
+ * it; `deprecated` takes the release that deprecated a setting.
  */
 import release from '../data/release.json';
+import maturity from '../data/maturity.json';
 
 interface Props {
   since?: string;
   planned?: string;
+  feature?: string;
+  maturity?: 'stable' | 'beta' | 'experimental';
+  deprecated?: string;
 }
-const { since, planned } = Astro.props;
-if (!since && !planned) throw new Error('<Status> needs `since` or `planned`');
-const kind = since ? 'shipped' : planned === release.next ? 'next' : 'planned';
-const label = since ? `since ${since}` : `planned for ${planned}`;
+const props = Astro.props;
+let kind: string;
+let label: string;
+let title: string | undefined;
+if (props.deprecated) {
+  kind = 'deprecated';
+  label = `deprecated since ${props.deprecated}`;
+} else if (props.feature || props.maturity) {
+  const entry = props.feature ? maturity.features.find((f) => f.id === props.feature) : undefined;
+  if (props.feature && !entry) throw new Error(`<Status feature="${props.feature}"> is not in the maturity registry`);
+  const level = entry?.level ?? props.maturity!;
+  kind = level;
+  label = level;
+  title = entry ? `${entry.summary} (since ${entry.since})` : undefined;
+} else if (props.since) {
+  kind = 'shipped';
+  label = `since ${props.since}`;
+} else if (props.planned) {
+  kind = props.planned === release.next ? 'next' : 'planned';
+  label = `planned for ${props.planned}`;
+} else {
+  throw new Error('<Status> needs `since`, `planned`, `feature`, `maturity` or `deprecated`');
+}
 ---
-<span class={`rd-status rd-status--${kind}`}>{label}</span>
+<span class={`rd-status rd-status--${kind}`} title={title}>{label}</span>

@@ -67,6 +67,28 @@ struct State {
     validation_delay: Duration,
     lifetime: Duration,
     failures: Vec<String>,
+    /// How the CA's port behaves (the chaos suite).
+    mode: CaMode,
+    /// The next new-order requests answered with an error: how many, status, `Retry-After`.
+    fail_orders: Option<(usize, u16, Option<u64>)>,
+    /// HTTP requests received.
+    requests: u64,
+    /// TCP connections accepted.
+    connections: u64,
+    /// The tasks serving open connections, cut when the mode changes.
+    open: Vec<tokio::task::JoinHandle<()>>,
+}
+
+/// How the fake CA's port behaves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CaMode {
+    /// Answers.
+    #[default]
+    Up,
+    /// Accepts and closes at once (a CA that is down behind a load balancer).
+    Down,
+    /// Accepts and never answers (a CA that hangs).
+    Hang,
 }
 
 /// A running fake ACME CA.
@@ -133,13 +155,34 @@ impl FakeAcme {
                 let Ok((tcp, _)) = listener.accept().await else {
                     continue;
                 };
+                let mode = {
+                    let mut state = lock(&shared);
+                    state.connections += 1;
+                    state.mode
+                };
+                match mode {
+                    CaMode::Up => {}
+                    CaMode::Down => {
+                        drop(tcp);
+                        continue;
+                    }
+                    CaMode::Hang => {
+                        let task = tokio::spawn(async move {
+                            let _held = tcp;
+                            tokio::time::sleep(Duration::from_secs(3600)).await;
+                        });
+                        lock(&shared).open.push(task);
+                        continue;
+                    }
+                }
                 let (acceptor, state, issuer, base) = (
                     acceptor.clone(),
                     shared.clone(),
                     issuer.clone(),
                     base.clone(),
                 );
-                tokio::spawn(async move {
+                let registry = state.clone();
+                let task = tokio::spawn(async move {
                     let Ok(tls) = acceptor.accept(tcp).await else {
                         return;
                     };
@@ -155,6 +198,9 @@ impl FakeAcme {
                         .serve_connection(TokioIo::new(tls), service)
                         .await;
                 });
+                let mut held = lock(&registry);
+                held.open.retain(|t| !t.is_finished());
+                held.open.push(task);
             }
         });
         let root_pem = tls_ca.pem();
@@ -207,6 +253,32 @@ impl FakeAcme {
     /// Lifetime of the certificates issued from now on (default 90 days).
     pub fn set_lifetime(&self, lifetime: Duration) {
         lock(&self.state).lifetime = lifetime;
+    }
+
+    /// How the CA's port behaves from now on; the connections open now are cut, as when
+    /// the CA goes away.
+    pub fn set_mode(&self, mode: CaMode) {
+        let mut state = lock(&self.state);
+        state.mode = mode;
+        for task in state.open.drain(..) {
+            task.abort();
+        }
+    }
+
+    /// Answers the next `count` new-order requests with `status` (a `429` or `503` with
+    /// `Retry-After: retry_after` seconds when given, as a rate-limited or overloaded CA does).
+    pub fn fail_new_orders(&self, count: usize, status: u16, retry_after: Option<u64>) {
+        lock(&self.state).fail_orders = Some((count, status, retry_after));
+    }
+
+    /// HTTP requests the CA received so far.
+    pub fn requests(&self) -> u64 {
+        lock(&self.state).requests
+    }
+
+    /// TCP connections the CA accepted so far (whatever its mode).
+    pub fn connections(&self) -> u64 {
+        lock(&self.state).connections
     }
 
     /// Replaces the addresses validation reaches.
@@ -323,6 +395,7 @@ async fn handle(
     let path = request.uri().path().to_owned();
     let method = request.method().clone();
     let nonce = next_nonce(state);
+    lock(state).requests += 1;
     if path == "/dir" {
         return reply(
             StatusCode::OK,
@@ -375,6 +448,30 @@ async fn handle(
                 &json!({ "status": "valid", "contact": payload["contact"] }),
                 Some(format!("{base}/account/{id}")),
             )
+        }
+        ["order", "new"] if s.fail_orders.is_some_and(|(n, _, _)| n > 0) => {
+            let Some((count, status, retry_after)) = s.fail_orders else {
+                unreachable!()
+            };
+            s.fail_orders = Some((count - 1, status, retry_after));
+            let status = StatusCode::from_u16(status).unwrap();
+            let kind = if status == StatusCode::TOO_MANY_REQUESTS {
+                "urn:ietf:params:acme:error:rateLimited"
+            } else {
+                "urn:ietf:params:acme:error:serverInternal"
+            };
+            let mut response = reply(
+                status,
+                nonce,
+                &json!({ "type": kind, "detail": "the fake CA refuses this order", "status": status.as_u16() }),
+                None,
+            );
+            if let Some(seconds) = retry_after {
+                response
+                    .headers_mut()
+                    .insert("retry-after", seconds.to_string().parse().unwrap());
+            }
+            response
         }
         ["order", "new"] => {
             let account: usize = protected["kid"]

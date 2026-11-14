@@ -65,3 +65,8 @@ header.header {
 .rd-status--shipped { color: var(--rd-ok-text); background: color-mix(in srgb, var(--rd-ok) 14%, transparent); }
 .rd-status--next { color: var(--rd-accent-text); background: var(--rd-accent-soft); }
 .rd-status--planned { color: var(--rd-text-3); border: 1px solid var(--rd-border); }
+/* Maturity levels and deprecations (ADR-0033). */
+.rd-status--stable { color: var(--rd-ok-text); border: 1px solid currentColor; }
+.rd-status--beta { color: var(--rd-info); border: 1px solid currentColor; }
+.rd-status--experimental { color: var(--rd-warn); border: 1px solid currentColor; }
+.rd-status--deprecated { color: var(--rd-danger); border: 1px solid currentColor; }

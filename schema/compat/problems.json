@@ -1,0 +1,128 @@
+{
+  "generated_by": "rdock schema --compat problems (just compat)",
+  "problems": {
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-gateway": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 502
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#bad-request": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 400
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#banned": {
+      "feature": "abuse",
+      "maturity": "beta",
+      "status": 403
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#expectation-failed": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 417
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#forbidden": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 403
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#gateway-timeout": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 504
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#headers-too-large": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 431
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#identity-provider-unavailable": {
+      "feature": "oidc",
+      "maturity": "beta",
+      "status": 503
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#internal-error": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 500
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#login-failed": {
+      "feature": "oidc",
+      "maturity": "beta",
+      "status": 401
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#maintenance": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 503
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#method-not-allowed": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 405
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#not-found": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 404
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#overloaded": {
+      "feature": "admission-control",
+      "maturity": "beta",
+      "status": 503
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#patch-failed": {
+      "feature": "validation-and-transformation",
+      "maturity": "beta",
+      "status": 422
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#payload-too-large": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 413
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#quota-exceeded": {
+      "feature": "consumers",
+      "maturity": "beta",
+      "status": 429
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#rate-limited": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 429
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#request-timeout": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 408
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#service-unavailable": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 503
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#unauthenticated": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 401
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#unsupported-media-type": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 415
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#uri-too-long": {
+      "feature": "problem-types",
+      "maturity": "stable",
+      "status": 414
+    },
+    "https://reversedock.oday-bakkour.com/docs/reference/problems/#validation-failed": {
+      "feature": "validation-and-transformation",
+      "maturity": "beta",
+      "status": 400
+    }
+  },
+  "stability": "docs/10-stability.md; compared with the last release tag by scripts/compat.py",
+  "surface": "problems",
+  "untyped": "A status without a kind of its own is `about:blank` with the reason phrase as its title (RFC 9457 §4.2.1)."
+}

@@ -1,0 +1,212 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `blog` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.blog",
+        "kind": "object",
+        "scope": "blog"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "blog"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.blog.rule",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "routes.blog"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.blog.entrypoints",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "routes.blog"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.blog.tls",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "routes.blog"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.blog.middlewares",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "routes.blog"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`hsts.max_age`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.stsSeconds",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`hsts.include_subdomains`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.stsIncludeSubdomains",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`hsts.preload`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.stsPreload",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `X-Frame-Options: DENY`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.frameDeny",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `X-Frame-Options` (overrides `framedeny`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.customFrameOptionsValue",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `X-Content-Type-Options: nosniff`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.contentTypeNosniff",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `X-XSS-Protection: 1; mode=block`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.browserXssFilter",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `Referrer-Policy`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.referrerPolicy",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `Content-Security-Policy`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.contentSecurityPolicy",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` of `Permissions-Policy`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.secure-headers.headers.permissionsPolicy",
+        "kind": "label",
+        "scope": "blog"
+      },
+      "target": "middlewares.secure-headers"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 15,
+    "items": 16,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

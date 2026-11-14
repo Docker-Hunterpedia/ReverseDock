@@ -1,0 +1,12 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "TRAEFIK_* environment variables",
+    "an unset exposedByDefault (Traefik's default true, written explicitly)",
+    "credential variable names only"
+  ],
+  "diff": false,
+  "args": {
+    "full": true
+  }
+}

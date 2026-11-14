@@ -25,20 +25,23 @@ When several certificates cover a name, the one that expires last is used. ALPN 
 
 ## 3. HTTP parsing
 
-Pingora parses the request. Its parser rejects conflicting `Content-Length`, invalid `Transfer-Encoding` and other framing that could be used for request smuggling, and re-frames every body it forwards. rdock adds two checks at the connection level for HTTP/1: the complete request headers must arrive within `timeouts.request_header`, counted from their first byte, and a bare LF line ending in the headers closes the connection.
+Pingora parses the request. Its parser rejects conflicting `Content-Length`, invalid `Transfer-Encoding` and other framing that could be used for request smuggling, and re-frames every body it forwards. rdock adds two checks at the connection level for HTTP/1: the complete request headers must arrive within `timeouts.request_header`, counted from their first byte, and a bare LF line ending in the headers closes the connection. The bare-LF check covers the header block that starts each read from the client; a pipelined second request in the same read is parsed by Pingora alone, and rdock writes every request to the backend again with CRLF.
 
 Then ReverseDock's own hooks run, in this order.
 
 ## 4. Early checks (`early_request_filter`)
 
 - The listener's `read`, `write` and `idle` timeouts are applied to the connection.
+- Fields the client names in `Connection` are removed with the nomination itself (RFC 9110 §7.6.1), before rdock adds its own headers, so a client cannot have `X-Real-IP`, `X-Request-ID` or identity headers removed on the way to the backend.
 - The **client IP** is resolved: the TCP peer, or, when the peer is in `security.trusted_proxies`, the address taken from the forwarding headers (see [Behind a proxy](/docs/guides/behind-a-proxy/)).
 - The **request ID** is taken from `X-Request-ID` when a trusted proxy sent a valid one, otherwise a new UUIDv7 is created.
 - **Limits** from `security.limits`: a request target over `max_uri_bytes` gets 414; more than `max_headers` headers or more than `max_header_bytes` of request line and headers gets 431; a `Content-Length` over `max_body_bytes` gets 413.
-- HTTP/1.1 without `Host` gets 400; an `Expect` other than `100-continue` gets 417.
+- HTTP/1.1 without `Host` gets 400, and so does a `Host` that is not `host[:port]` (a path, query, space or other character outside a host name, or a non-numeric port); an `Expect` other than `100-continue`, in any `Expect` field, gets 417.
+- A WebSocket handshake (`Upgrade: websocket`) that declares a body gets 400. Any other `Upgrade` value does not make the request a stream: Pingora removes it, and the body is held and checked like any other.
 
 ## 5. Router (`request_filter`)
 
+- A path a backend may resolve outside the routed path gets 400 unless `security.paths.ambiguous: forward` is set: an encoded NUL (`%00`), a `.` or `..` segment with parameters (`/..;/`, `/..%3B/`), or a `.` or `..` segment that appears once `%2F`, `%5C` or a raw `\` is read as a separator (`/..%2Fadmin`, `/a%2F..%2Fb`). Other encoded separators (`/projects/group%2Fproject`, `/@scope%2Fname`) are routed as one segment and forwarded as sent; `security.paths.encoded_separators: reject` refuses them too, for backends that decode them before their own access checks.
 - The path is **normalised**: unreserved escapes decoded, other escapes upper-cased, dot segments and `//` removed. An invalid escape gets 400. The normalised path is what the backend receives.
 - The listener's routes are tried in priority order and the first match wins (see [Routing and priority](/docs/concepts/routing-and-priority/)).
 - No match: on a plain listener, while `defaults.redirect_http_to_https` is on (the default), a host that has a route on an HTTPS listener gets the automatic redirect to HTTPS (301 for GET, 308 otherwise). Any other request gets the 404 page.
@@ -70,7 +73,7 @@ The service's balancer picks a backend: smooth weighted round-robin, or weighted
 ## 10. Errors (`fail_to_connect`, `error_while_proxy`, `fail_to_proxy`)
 
 - A connection that cannot be opened is counted in `rdock_upstream_errors_total` with `kind` `connect` or `timeout`.
-- v0.1 retries only one case, Pingora's built-in retry when a pooled connection was closed by the backend, and only for idempotent methods whose body can be replayed and when nothing was sent to the client yet. Configurable retries are planned for v0.4.
+- A request that fails on a reused pooled connection (closed or reset by the backend, a read or write error such as `EPIPE`) is sent again on another connection when it is idempotent, its body can be replayed and nothing was sent to the client yet, even with retries off; it does not count against the backend. This happens once per request (a second such failure follows `retries`), and the replayed body is counted against `max_body` afresh. Configurable [retries](/docs/guides/backends/#retries) add connect failures, resets, timeouts and 502/503/504 answers.
 - Timeouts towards the backend become 504, other backend failures 502. If nothing was written to the client yet, the error page is sent: an `errors` page when a middleware of the route covers the status, otherwise ReverseDock's page with the request ID, as HTML or JSON depending on `Accept`. 503 and 429 pages carry `Retry-After`.
 
 ## 11. Access log and metrics (`logging`)
@@ -85,7 +88,7 @@ Requests that Pingora's parser rejects never reach the hooks, so they have no ac
 |---|---|
 | 301, 308 | Router: automatic redirect to HTTPS |
 | 301, 302, 307, 308 | `redirect` middleware |
-| 400 | Early checks (no `Host`), router (invalid path), path middlewares |
+| 400 | Early checks (no or invalid `Host`, a WebSocket handshake with a body), router (invalid or ambiguous path), path middlewares |
 | 401 | `basic_auth`; `forward_auth` passes the auth service's status |
 | 403 | `ip_allow`, `ip_deny` |
 | 404 | Router: no route matched |
