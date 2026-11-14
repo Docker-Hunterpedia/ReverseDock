@@ -138,5 +138,19 @@
     "what": "HTTP/3 to backends (scheme: h3)",
     "value": true,
     "fixture": "routes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    scheme: h3\n    backends: [{ address: \"127.0.0.1:443\" }]\n"
+  },
+  {
+    "path": "listeners.<name>.tls.max_handshakes",
+    "planned": "a later version",
+    "what": "A bound on concurrent TLS handshakes of a tcp listener (tls.max_handshakes)",
+    "value": true,
+    "fixture": "listeners:\n  raw: { address: \":5432\", protocol: tcp, tls: { max_handshakes: 8 } }\n"
+  },
+  {
+    "path": "listeners.<name>.http3.enabled",
+    "planned": "a later version",
+    "what": "TLS fingerprints of HTTP/3 connections (tls.fingerprint with http3)",
+    "value": true,
+    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: { fingerprint: {} }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   }
 ]

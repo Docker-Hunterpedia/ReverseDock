@@ -493,6 +493,10 @@ JA4 (FoxIO, BSD 3-Clause). Default on when `fingerprint` is set.
 
 `https` listeners: TLS handshakes in progress at once. While the bound is reached, new connections wait in the listen backlog instead of taking CPU from established ones. Unset: no bound (ADR-0031).
 
+:::note[Planned for a later version]
+A bound on concurrent TLS handshakes of a tcp listener (tls.max_handshakes): accepted by `rdock validate` with a warning, refused by `rdock run` until a later version.
+:::
+
 ### `listeners.<name>.tls.policy`
 
 **Type:** `modern` · `intermediate` · **Default:** `intermediate`

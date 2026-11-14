@@ -62,10 +62,24 @@ Released in 0.8.0-alpha.1, together with v0.7 ([ADR-0030](https://github.com/Doc
 
 **Left open after v0.8:** full request pre-buffering (and so the request head reaches the backend before an agent or `validate` verdict on the body, a Pingora 0.9.1 limitation); background refresh for `stale-while-revalidate`; gRPC and SPOP agents; publishing the Terraform provider to the registries (it needs its own repository and a signing key); the `Date` rewrite; a dashboard page for consumers, keys and quotas; OIDC back-channel logout and early session revocation. The CI jobs `http-cache`, `openbao`, `oidc-dex`, `wasm`, `waf-example` and `terraform-provider` are not yet required checks, and the 2-CPU benchmark that ADR-0030 asks for has not been run. No soak, no benchmark and no multi-node lab were run for 0.8.0-alpha.1; the evidence is the CI described above.
 
-## v0.9 to v1.0
+## v0.9: Scale <Status planned="v0.9" />
 
-- **v0.9:** a control plane for several instances, distributed rate limits, zero-downtime binary upgrades, experimental HTTP/3.
-- **v1.0:** stability and deprecation guarantees, a third-party security audit, migration guides, benchmarks.
+Implemented and not released yet ([ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md), [ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)); the badges in these docs say "planned for v0.9" until the release:
+
+- **Upgrades and sockets:** [replace the binary in place](/docs/guides/upgrades/) without refusing a connection (Linux), [socket, runtime and HTTP/2 settings](/docs/guides/sockets-and-threads/), TLS session tickets shared between listeners, a host index for routing.
+- **Balancing:** `peak_ewma`, [outlier detection](/docs/guides/backends/), slow start, priority tiers, zones, a per-try timeout.
+- **Edge security:** [TLS client fingerprints](/docs/guides/client-fingerprints/) (JA4), [GeoIP](/docs/guides/geoip/), [abuse protection](/docs/guides/abuse-protection/) with bans, identity rules on client certificates including SPIFFE.
+- **Cluster:** a [control plane](/docs/guides/cluster/) that rolls configuration out to several instances with a canary and rollback, [certificates ordered once](/docs/guides/shared-certificates/) across instances, [rate limits and quotas shared](/docs/guides/rate-limiting/) between instances, a Cluster page in the dashboard.
+- **Multi-tenant:** [admission control](/docs/guides/admission/) with priority classes and [tenants](/docs/guides/tenants/) that scope API users and tokens.
+- **HTTP/3** ([guide](/docs/guides/http3/)) is **experimental** and **not in the release binaries or images**: build with `--features http3` to use it.
+
+**Not measured to the milestone's criteria:** the 24-hour soak at target request rate and the 8-CPU and dedicated-hardware numbers are open. A weekly soak of about 5 hours on a free hosted runner stands in for the soak and had not completed a full run when this was written; only smoke runs on a shared sandbox exist. HTTP/3 is tested against curl in CI but not against the h3i suite. A run of the binary upgrade under real systemd is untested.
+
+**Refused as planned or left open:** hedged requests, automatic rollback of a rollout on health, a cluster-wide `in_flight` count, a highly available control plane, tenant-owned listeners and certificates, a tenant label on core metrics, HTTP/3 to backends, 0-RTT, connection migration, WebTransport and WebSocket over HTTP/3, the SPIFFE Workload API, bot verification, CPU pinning, and migrating UDP sessions across an upgrade. See the [roadmap in the repository](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/07-roadmap.md) for the full list.
+
+## v1.0
+
+Stability and deprecation guarantees, a third-party security audit, migration guides, benchmarks.
 
 ## Out of scope for 1.0
 

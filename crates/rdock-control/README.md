@@ -24,3 +24,9 @@ tokens, audit log and dashboard without any other crate depending on `rdock-admi
 
 The control plane is not in the request path: data planes keep serving their last bundle while
 it is away.
+
+Every member of the store reads every key in it (the ACME account key and each certificate's
+private key); writes are limited per key class, and a revoked instance is shut out from then
+on without anything it read being taken back (ADR-0031, "As implemented (review fixes)"). One
+control plane is active at a time; a highly available one is planned. Implemented in v0.9 and
+unreleased.

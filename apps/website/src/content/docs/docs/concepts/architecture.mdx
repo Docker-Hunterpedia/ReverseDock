@@ -48,13 +48,14 @@ The workspace has one binary and a set of library crates. Crates for later miles
 | `rdock-proxy` | Compilation into a runtime snapshot, listeners and accept loops, the `ProxyHttp` hooks, router, forwarding headers, error pages, backend selection and DNS refresh |
 | `rdock-tls` | Certificate loading, the SNI index (exact name, one-label wildcard, default) and TLS policies |
 | `rdock-middleware` | The built-in middlewares, from `headers` to `maintenance` |
-| `rdock-balancer` | Smooth weighted round-robin and weighted random |
-| `rdock-limits` | Token buckets with bounded key counts, used by `rate_limit` |
+| `rdock-balancer` | Backend selection policies (weighted round-robin and random, least requests, power of two choices, consistent hashing, `peak_ewma` <Status planned="v0.9" />), health, outlier detection <Status planned="v0.9" /> and priority tiers <Status planned="v0.9" /> |
+| `rdock-limits` | Token buckets with bounded key counts, used by `rate_limit`; quotas, shared budgets for `scope: cluster` <Status planned="v0.9" />, abuse counters <Status planned="v0.9" /> and the adaptive limits of `admission` <Status planned="v0.9" /> |
 | `rdock-observability` | Application logs, the access log with redaction, Prometheus metrics |
 | `rdock-admin` | The admin listener: `/healthz`, `/readyz`, `/metrics`, `/api/v1/status`, `/api/v1/config/reload` |
 | `rdock-testkit` | Test backends, certificates and a client for the end-to-end suites |
 | `rdock-acme`, `rdock-cloudflare`, `rdock-migrate`, `providers/*` | Placeholders for automatic certificates <Status since="v0.3" />, Cloudflare integration <Status since="v0.3" />, `rdock migrate traefik` <Status since="v0.2" /> and the Docker <Status since="v0.2" />, Swarm <Status since="v0.6" /> and Kubernetes <Status since="v0.7" /> providers (the Kubernetes provider passes the upstream Gateway API conformance suite in CI on kind) |
 | `rdock-cache`, `rdock-plugin-api`, `rdock-credentials`, `rdock-wasm` | The HTTP cache <Status since="v0.8" />, the API native plugins are written against <Status since="v0.8" />, the formats of API tokens and API keys <Status since="v0.8" />, and WASM plugins <Status since="v0.8" /> (experimental: the wasmtime host is compiled only with `--features wasm`, so the release binaries and images do not run WASM plugins) |
+| `rdock-cluster`, `rdock-control` | The cluster protocol, the shared store with leases and the data-plane agent, and the control plane that `rdock control run` starts (cluster CA, join tokens, revisions, rollout) <Status planned="v0.9" />; the [cluster guide](/docs/guides/cluster/) describes them |
 
 Dependencies point one way: `rdock` depends on `rdock-admin` and `rdock-proxy`; `rdock-proxy` depends on `rdock-config`, `rdock-model`, `rdock-rules`, `rdock-tls`, `rdock-middleware`, `rdock-balancer` and `rdock-observability`. Nothing in the data plane depends on `rdock-admin`.
 

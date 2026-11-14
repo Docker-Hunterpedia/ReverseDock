@@ -72,13 +72,13 @@ The workbook phases are a research snapshot. Where [04-requirements.md](04-requi
 
 | Capability | Workbook | ReverseDock | Why |
 |---|:-:|:-:|---|
-| HTTP/3 / QUIC frontend | P2 | P3 (v0.9, experimental) | Pingora has no h3; needs a BoringSSL variant and an h3→h2c hop (ADR-0006) |
+| HTTP/3 / QUIC frontend | P2 | P3 (v0.9, experimental) | Pingora has no h3; ingress on `quinn` and `h3` as a Pingora custom session, experimental, behind the `http3` feature, implemented in v0.9 (ADR-0032 supersedes ADR-0006) |
 | ACME TLS-ALPN-01 | P1 | P0 (v0.3) | Needed when :80 is not reachable (Cloudflare Tunnel, port 80 blocked) |
 | Local development CA | P1 | P0 (v0.3) | Part of the Caddy-class HTTPS promise |
 | Client / upstream mTLS | P1 | P1 (v0.4, M-TLS-01) | Unchanged; identity *policies* and SPIFFE are P3 (H-SEC-05) |
 | JWT verification / JWKS | P1 | P1 (v0.4, M-SEC-01) | Unchanged; OIDC login and API keys are P2 (F-GW-01) |
 | Regex / header / method routing | P1 | P0 (v0.1, B-NET-04) | The Traefik rule grammar must be complete for label compatibility in v0.2 |
-| Zero-downtime binary upgrade | P2 | P3 (v0.9, H-PERF-04) | Requires the supervisor/worker model (ADR-0008) |
+| Zero-downtime binary upgrade | P2 | P3 (v0.9, H-PERF-04) | Peer handover of the listening sockets, no permanent supervisor (ADR-0031 supersedes ADR-0008); implemented in v0.9 |
 | Forward auth middleware | P1 | P0 (v0.1, B-SEC-12) | Authelia/Authentik setups are the norm on Dokploy/Coolify |
 | Safe retries | P1 | P1 (v0.4) but transport-only | Status-code retries wait for an upstream Pingora hook (ADR-0010) |
 

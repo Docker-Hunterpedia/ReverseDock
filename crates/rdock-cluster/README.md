@@ -24,3 +24,10 @@ disagree by more than the margin between a renewal and the expiry can both belie
 lease. A fenced write checks the lease file before it writes, which does not stop a writer
 paused between the check and the write. Caddy's certmagic documents the same limits for its
 file storage. Keep clocks synchronised; the control plane's store enforces fencing.
+
+## Status
+
+Implemented in v0.9 and unreleased (ADR-0031). The cluster protocol is version 1; no release has
+carried it. The Redis backend is tested against the testkit's RESP server only, not against a
+real Redis or Valkey. One active control plane serves the store; a highly available one is
+planned.
