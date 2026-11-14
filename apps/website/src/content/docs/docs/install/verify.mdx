@@ -15,7 +15,7 @@ Every release is built and signed by the [release workflow](https://github.com/D
 | `ghcr.io/docker-hunterpedia/rdock:<version>` | Keyless cosign signature; provenance attestation |
 | the image's SBOM | One SBOM attestation per platform, in the registry |
 
-The SBOM of an archive is read from the binary inside it, not from the source tree: the build embeds the exact list of crates with cargo-auditable, and the release fails if an SBOM lists none. The JavaScript libraries bundled into the embedded dashboard are not listed. Releases up to `0.9.0-alpha.1` predate this: they carry one unsigned SBOM of the source tree, `rdock-<version>.spdx.json`.
+The SBOM of an archive is read from the binary inside it, not from the source tree: the build embeds the exact list of crates with cargo-auditable, and the release fails if an SBOM lists none. The JavaScript libraries bundled into the embedded dashboard are not listed. `1.0.0-rc.1` is the first release built this way. Releases up to `0.9.0-alpha.1` predate it: they carry one unsigned SBOM of the source tree, `rdock-<version>.spdx.json`, and no SBOM attestations.
 
 ## What you need
 
@@ -28,7 +28,7 @@ The SBOM of an archive is read from the binary inside it, not from the source tr
 Download the archive for your platform, `SHA256SUMS` and `SHA256SUMS.sigstore.json` from the [release page](https://github.com/Docker-Hunterpedia/ReverseDock/releases) into one directory:
 
 ```sh
-VERSION=0.9.0-alpha.1
+VERSION=1.0.0-rc.1
 TARGET=x86_64-unknown-linux-musl
 BASE="https://github.com/Docker-Hunterpedia/ReverseDock/releases/download/v$VERSION"
 curl -fsSLO "$BASE/rdock-$VERSION-$TARGET.tar.gz"
@@ -57,7 +57,7 @@ sha256sum --ignore-missing -c SHA256SUMS      # macOS: shasum -a 256 --ignore-mi
 ```
 
 ```text
-rdock-0.9.0-alpha.1-x86_64-unknown-linux-musl.tar.gz: OK
+rdock-1.0.0-rc.1-x86_64-unknown-linux-musl.tar.gz: OK
 ```
 
 **3. The archive was built by GitHub Actions from this repository:**
@@ -68,9 +68,10 @@ gh attestation verify "rdock-$VERSION-$TARGET.tar.gz" --repo Docker-Hunterpedia/
 
 The command exits with status 0 when the attestation matches, and prints the workflow and commit that built the file.
 
-**4. The SBOM belongs to that archive.** (Releases up to `0.9.0-alpha.1` have no per-archive SBOM and no SBOM attestation: skip this step for them.) Step 2 already checks the SBOM file when it is in the same directory, because `SHA256SUMS` lists it. To check its attestation too (the predicate type carries the SPDX version of the file):
+**4. The SBOM belongs to that archive.** (From `1.0.0-rc.1` on; releases up to `0.9.0-alpha.1` have no per-archive SBOM and no SBOM attestation: skip this step for them.) Step 2 already checks the SBOM file when it is in the same directory, because `SHA256SUMS` lists it. To check its attestation too (the predicate type carries the SPDX version of the file):
 
 ```sh
+curl -fsSLO "$BASE/rdock-$VERSION-$TARGET.spdx.json"
 gh attestation verify "rdock-$VERSION-$TARGET.tar.gz" --repo Docker-Hunterpedia/ReverseDock \
   --predicate-type "https://spdx.dev/Document/v$(jq -r .spdxVersion "rdock-$VERSION-$TARGET.spdx.json" | cut -d- -f2)"
 ```
@@ -82,7 +83,7 @@ If any step fails, do not run the binary. Download it again from the release pag
 The image is signed by digest with cosign, using the same workflow identity:
 
 ```sh
-cosign verify ghcr.io/docker-hunterpedia/rdock:0.9.0-alpha.1 \
+cosign verify ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1 \
   --certificate-oidc-issuer https://token.actions.githubusercontent.com \
   --certificate-identity-regexp '^https://github.com/Docker-Hunterpedia/ReverseDock/\.github/workflows/release\.yml@refs/tags/v'
 ```
@@ -90,26 +91,26 @@ cosign verify ghcr.io/docker-hunterpedia/rdock:0.9.0-alpha.1 \
 cosign lists the checks it performed and prints the signature payload with the image digest. Check the build-provenance attestation too:
 
 ```sh
-gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:0.9.0-alpha.1 --repo Docker-Hunterpedia/ReverseDock
+gh attestation verify oci://ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1 --repo Docker-Hunterpedia/ReverseDock
 ```
 
 The SBOM of the image is attested to the manifest digest of each platform, not to the tag. Look the digest up, then verify (SPDX 2.3 is what the release workflow writes today):
 
 ```sh
-digest=$(docker buildx imagetools inspect --raw ghcr.io/docker-hunterpedia/rdock:0.9.0-alpha.1 |
+digest=$(docker buildx imagetools inspect --raw ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1 |
   jq -r '.manifests[] | select(.platform.os == "linux" and .platform.architecture == "amd64") | .digest')
 gh attestation verify "oci://ghcr.io/docker-hunterpedia/rdock@$digest" --repo Docker-Hunterpedia/ReverseDock \
   --predicate-type https://spdx.dev/Document/v2.3
 ```
 
-This works from the first release built after the SBOM change; earlier images have no SBOM attestation, so use a version from the release page that says it has one.
+This works from `1.0.0-rc.1` on; images up to `0.9.0-alpha.1` have no SBOM attestation.
 
 Tags are never overwritten once published, but a tag is still a name. The `latest` tag moves only to the highest stable version: a patch for an older minor and a pre-release never take it. To be certain you deploy what you verified, use the digest that `cosign verify` printed:
 
 ```yaml title="compose.yaml (excerpt)"
 services:
   rdock:
-    image: ghcr.io/docker-hunterpedia/rdock:0.9.0-alpha.1@sha256:<digest>
+    image: ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1@sha256:<digest>
 ```
 
 ## Related

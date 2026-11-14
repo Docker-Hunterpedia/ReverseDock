@@ -1,7 +1,7 @@
 # ReverseDock threat model
 
 - Status: living document, first written 2026-11-14 (v1.0 step 8, [ADR-0033](decisions/0033-v1-0-stable.md))
-- Tree: `0.9.0-alpha.1` plus the v1.0 work on branch `main` (release builds: default features `docker`, `swarm`, `kubernetes`, `mimalloc`; **not** `wasm`, `http3`, `fault-injection`, `alloc-count`, `jemalloc`)
+- Tree: `1.0.0-rc.1`, that is `0.9.0-alpha.1` plus the v1.0 work (release builds: default features `docker`, `swarm`, `kubernetes`, `mimalloc`; **not** `wasm`, `http3`, `fault-injection`, `alloc-count`, `jemalloc`)
 - Audience: an external security auditor, first; contributors changing a surface listed here, second
 
 This document says what ReverseDock protects, from whom, where the trust boundaries are, and for each entry point which threats were considered, what mitigates them **with the code and the test that proves it**, what is left (residual risk) and what is out of scope. Every claim names a file or a test so that it can be checked; a mitigation without a test is marked **untested**. It complements, and does not replace, the control table in [architecture §15](05-architecture.md#15-security-model), the [ASVS 5.0 Level 2 review of the admin surface](security/asvs-5.0-l2-admin.md) (v0.5), the review notes in [ADR-0025](decisions/0025-admin-limits-and-review-fixes.md), [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md) (v0.8 security review, 2026-11-12), [ADR-0031](decisions/0031-v0-9-scale.md) and [ADR-0032](decisions/0032-http3-on-quinn-and-h3.md) (v0.9 reviews), and the smuggling catalogue in [research/v0.1-security.md](research/v0.1-security.md).

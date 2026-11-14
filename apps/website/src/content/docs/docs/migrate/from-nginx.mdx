@@ -347,7 +347,7 @@ ReverseDock walks `X-Forwarded-For` from the right and skips trusted addresses, 
 
 ## `rdock migrate nginx`
 
-<Status planned="v1.0" /> <Status feature="migrate-nginx" /> `rdock migrate nginx` reads an NGINX configuration and writes rdock.yaml with a [report](/docs/reference/migrate-report/) that accounts for **every directive**: exact, approximate (with the difference), manual (with what to do) or dropped (with why). It ships as beta ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)): the translation may change in a minor release, with a note.
+<Status since="v1.0" /> <Status feature="migrate-nginx" /> `rdock migrate nginx` reads an NGINX configuration and writes rdock.yaml with a [report](/docs/reference/migrate-report/) that accounts for **every directive**: exact, approximate (with the difference), manual (with what to do) or dropped (with why). It ships as beta ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)): the translation may change in a minor release, with a note.
 
 ```sh
 # The routes, services and middlewares of nginx.conf and the files it includes:

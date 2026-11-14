@@ -6,7 +6,7 @@ ReverseDock sits in front of other people's infrastructure, so we treat security
 
 | Version | Supported |
 |---|---|
-| `0.x` (alpha pre-releases, currently `0.9.0-alpha.1`) and `-rc` pre-releases | Latest release only |
+| `0.x` (alpha pre-releases) and `-rc` pre-releases (currently `1.0.0-rc.1`) | Latest release only |
 | `1.x` and later | The two most recent minor releases of the current major |
 | The previous major, after a new major | Its last minor release, for six months |
 
@@ -68,7 +68,7 @@ We will not pursue or support legal action against anyone who researches and rep
 
 ## Verifying releases
 
-Every release publishes, for each archive `rdock-<version>-<target>.tar.gz`, an SPDX SBOM `rdock-<version>-<target>.spdx.json` read from the binary inside it (not from the source tree), and `SHA256SUMS` over the archives and the SBOMs with a keyless cosign signature. Each archive has GitHub build-provenance and SBOM attestations. The image `ghcr.io/docker-hunterpedia/rdock:<version>` is signed with cosign, has a provenance attestation, and one SBOM attestation per platform. Releases up to `0.9.0-alpha.1` predate this: they have one unsigned SBOM of the source tree, `rdock-<version>.spdx.json`, and no SBOM attestations.
+Every release publishes, for each archive `rdock-<version>-<target>.tar.gz`, an SPDX SBOM `rdock-<version>-<target>.spdx.json` read from the binary inside it (not from the source tree), and `SHA256SUMS` over the archives and the SBOMs with a keyless cosign signature. Each archive has GitHub build-provenance and SBOM attestations. The image `ghcr.io/docker-hunterpedia/rdock:<version>` is signed with cosign, has a provenance attestation, and one SBOM attestation per platform. `1.0.0-rc.1` is the first release built this way; releases up to `0.9.0-alpha.1` predate it: they have one unsigned SBOM of the source tree, `rdock-<version>.spdx.json`, and no SBOM attestations.
 
 ```bash
 # 1. The checksums file was signed by this repository's release workflow
