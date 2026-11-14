@@ -244,7 +244,13 @@ impl Admin {
     }
 
     fn socket(&self, method: &str, path: &str, body: &Value) -> (u16, Value) {
-        let body = body.to_string();
+        // No body for `null`: a handler that does not read the body would close the socket with
+        // unread bytes, and the kernel then resets it, which can cut off the response.
+        let body = if body.is_null() {
+            String::new()
+        } else {
+            body.to_string()
+        };
         let mut stream =
             std::os::unix::net::UnixStream::connect(self.dir.path().join("admin.sock")).unwrap();
         write!(
