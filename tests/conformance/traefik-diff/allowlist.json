@@ -1,5 +1,5 @@
 {
-  "about": "Documented differences between Traefik v3.7 and rdock that the differential test accepts (tests/conformance/traefik-diff/harness.py, ADR-0033). Each entry needs a reason and a source; additions are reviewed like any other change of the documented Traefik subset (docs/10-stability.md). `field` is a regular expression over the compared fields (status, backend, seen.path, seen.header.<name>, response.header.<name>); `option` names the coverage-table row whose stated difference the entry covers; `when` narrows it to values.",
+  "about": "Documented differences between Traefik v3.7 and rdock that the differential test accepts (tests/conformance/traefik-diff/harness.py, ADR-0033). Each entry needs a reason and a source; additions are reviewed like any other change of the documented Traefik subset (docs/10-stability.md). `field` is a regular expression over the compared fields (status, backend, seen.path, seen.header.<name>, response.header.<name>); `option` names the coverage-table row whose stated difference the entry covers; `when` narrows it to values (`*` any, `re:<pattern>` a regular expression over the whole value). Entries without `option` are about answers the proxy writes itself, not about a label.",
   "differences": [
     {
       "id": "tls-certificate-source",
@@ -26,9 +26,32 @@
       "id": "ratelimit-default-burst",
       "option": "traefik.http.middlewares.<name>.ratelimit.average",
       "field": "status",
-      "when": { "traefik": "429", "rdock": "200" },
+      "when": {
+        "traefik": "429",
+        "rdock": "200"
+      },
       "reason": "Without `burst`, rdock's burst is `average` and Traefik's is 1, so Traefik refuses a quick second request that rdock admits. The cases set `burst` where the matrix could reach the limit.",
       "source": "https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/ratelimit/ (read 2026-11-14); apps/website/src/content/docs/docs/migrate/from-traefik.mdx"
+    },
+    {
+      "id": "own-404-nosniff",
+      "field": "response\\.header\\.x-content-type-options",
+      "when": {
+        "traefik": "nosniff",
+        "rdock": "None"
+      },
+      "reason": "A request no router matches is answered by the proxy itself. Traefik writes its 404 with Go's http.Error, which sets `X-Content-Type-Options: nosniff`; rdock's own 404 carries no such header. The status agrees; only this header of the proxy's own answer differs. First seen in the run of 2026-11-14 (16 of 61 requests).",
+      "source": "https://pkg.go.dev/net/http#Error (read 2026-11-14); the traefik-diff run of commit ebbddb9"
+    },
+    {
+      "id": "basic-auth-challenge-charset",
+      "field": "response\\.header\\.www-authenticate",
+      "when": {
+        "traefik": "re:Basic realm=\"[^\"]*\"",
+        "rdock": "re:Basic realm=\"[^\"]*\", charset=\"UTF-8\""
+      },
+      "reason": "rdock's Basic challenge names the charset it decodes credentials with (RFC 7617 section 2.1); Traefik's challenge has the realm only. Clients treat both as a Basic challenge for the realm.",
+      "source": "https://www.rfc-editor.org/rfc/rfc7617#section-2.1 (read 2026-11-14); crates/rdock-middleware/src/auth.rs"
     }
   ]
 }

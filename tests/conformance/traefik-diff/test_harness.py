@@ -192,6 +192,13 @@ class Project(unittest.TestCase):
         self.assertIn("/work/certs:/certs:ro", services["rdock"]["volumes"])
         self.assertIn("/work/certs:/certs:ro", services["traefik"]["volumes"])
 
+    def test_allow_list_values_match_exactly_by_pattern_or_any(self):
+        self.assertTrue(harness.value_matches("*", None))
+        self.assertTrue(harness.value_matches("nosniff", "nosniff"))
+        self.assertFalse(harness.value_matches("nosniff", None))
+        self.assertTrue(harness.value_matches('re:Basic realm="[^"]*"', 'Basic realm="Staff"'))
+        self.assertFalse(harness.value_matches('re:Basic realm="[^"]*"', 'Basic realm="Staff", charset="UTF-8"'))
+
     def test_the_proxy_image_is_told_from_the_backend_image(self):
         for image in ["traefik", "traefik:v3.7.19", "docker.io/library/traefik:v3.7", "traefik@sha256:aa94"]:
             self.assertTrue(harness.is_traefik_image(image), image)

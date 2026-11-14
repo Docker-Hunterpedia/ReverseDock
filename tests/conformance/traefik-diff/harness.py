@@ -306,6 +306,17 @@ def compare(case, request, traefik, rdock, allowlist):
     return differences
 
 
+def value_matches(expected, actual):
+    """`*` is any value, `re:<pattern>` a regular expression over the whole value, anything
+    else the exact value."""
+    expected = str(expected)
+    if expected == "*":
+        return True
+    if expected.startswith("re:"):
+        return re.fullmatch(expected[3:], str(actual)) is not None
+    return expected == str(actual)
+
+
 def allowed(case, request, field, traefik, rdock, allowlist):
     for entry in allowlist:
         if entry.get("cases", ["*"]) != ["*"] and case not in entry["cases"]:
@@ -316,9 +327,9 @@ def allowed(case, request, field, traefik, rdock, allowlist):
         if method and request["method"] != method:
             continue
         when = entry.get("when", {})
-        if "traefik" in when and when["traefik"] != "*" and str(when["traefik"]) != str(traefik):
+        if "traefik" in when and not value_matches(when["traefik"], traefik):
             continue
-        if "rdock" in when and when["rdock"] != "*" and str(when["rdock"]) != str(rdock):
+        if "rdock" in when and not value_matches(when["rdock"], rdock):
             continue
         return entry
     return None
