@@ -55,6 +55,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
+          config-file: .github/codeql/codeql-config.yml
       - name: Build the Go modules
         if: matrix.language == 'go'
         run: |
