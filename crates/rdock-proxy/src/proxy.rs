@@ -8,7 +8,7 @@ use std::time::{Duration, Instant, SystemTime};
 use arc_swap::ArcSwap;
 use async_trait::async_trait;
 use bytes::Bytes;
-use http::{HeaderValue, Version};
+use http::{HeaderName, HeaderValue, Version};
 use pingora::http::{RequestHeader, ResponseHeader};
 use pingora::modules::http::HttpModules;
 use pingora::protocols::http::bridge::grpc_web::GrpcWebCtx;
@@ -537,12 +537,28 @@ impl RdockProxy {
         {
             return Err(status_error(400, "HTTP/1.1 request without Host"));
         }
+        // RFC 9112 §3.2: a `Host` that is not `host [":" port]` is answered 400. Routing,
+        // `X-Forwarded-Host` and the backend would otherwise see a value that is not a host.
+        let host = match req.headers.get(http::header::HOST) {
+            Some(value) => Some(value.to_str().ok().unwrap_or("\u{0}")),
+            None => req.uri.authority().map(http::uri::Authority::as_str),
+        };
+        if host.is_some_and(|h| !valid_authority(h)) {
+            return Err(status_error(400, "invalid Host"));
+        }
+        // A WebSocket handshake carries no body (RFC 6455 §4.1). Its body would pass the
+        // body-holding middlewares unseen, since an upgrade is a stream, yet reach a backend
+        // that declines the upgrade as an ordinary request body.
+        if is_websocket_handshake(req) && declares_body(req) {
+            return Err(status_error(400, "WebSocket handshake with a request body"));
+        }
         // RFC 9110 §10.1.1: only `100-continue` is defined; anything else (including obfuscated
         // spellings a backend might still honour) is refused.
         if req
             .headers
-            .get(http::header::EXPECT)
-            .is_some_and(|v| !v.as_bytes().eq_ignore_ascii_case(b"100-continue"))
+            .get_all(http::header::EXPECT)
+            .iter()
+            .any(|v| !v.as_bytes().eq_ignore_ascii_case(b"100-continue"))
         {
             return Err(status_error(417, "unsupported Expect"));
         }
@@ -987,6 +1003,7 @@ impl ProxyHttp for RdockProxy {
             .client_addr()
             .and_then(pingora::protocols::l4::socket::SocketAddr::as_inet)
             .map(std::net::SocketAddr::ip);
+        strip_connection_nominations(session.req_header_mut());
         let req = session.req_header();
         ctx.authority = req
             .headers
@@ -1039,6 +1056,16 @@ impl ProxyHttp for RdockProxy {
         if let Some(reply) = self.built_in_answer(listener, session.req_header()) {
             self.reply(session, ctx, reply, None).await?;
             return Ok(true);
+        }
+        if runtime.ambiguous_paths == rdock_model::settings::AmbiguousPaths::Reject
+            && rdock_rules::path::ambiguous(session.req_header().uri.path())
+        {
+            return Err(status_error(400, "ambiguous request path"));
+        }
+        if runtime.encoded_separators == rdock_model::settings::EncodedSeparators::Reject
+            && rdock_rules::path::has_encoded_separator(session.req_header().uri.path())
+        {
+            return Err(status_error(400, "encoded separator in the request path"));
         }
         let normalized = rdock_rules::path::normalize(session.req_header().uri.path())
             .map_err(|_| status_error(400, "invalid request path"))?;
@@ -1377,6 +1404,7 @@ impl ProxyHttp for RdockProxy {
                 backend_authority(service.scheme, candidate),
             )?;
         }
+        join_cookies(upstream_request);
         if let Some(trace) = &ctx.trace {
             trace.inject(upstream_request);
         }
@@ -1657,10 +1685,12 @@ impl ProxyHttp for RdockProxy {
             return e;
         }
         if client_reused
-            && matches!(e.retry, pingora::RetryType::ReusedOnly)
             && session.req_header().method.is_idempotent()
+            && pooled_connection_failed(&e)
         {
-            e.retry.decide_reuse(true);
+            // Bounded by Pingora's `max_retries` (set in `listener.rs`): each attempt takes
+            // another pooled connection or opens a new one.
+            e.set_retry(true);
             return e;
         }
         let kind = if matches!(
@@ -2206,8 +2236,183 @@ fn per_try_timeout(
     (retryable && upstream::has_untried(service, &ctx.tried)).then_some(per_try)
 }
 
+/// Whether `e` is a connection-level failure of an upstream connection, the kind a pooled
+/// keep-alive connection the backend closed while it sat idle produces: Pingora's own
+/// "reused only" verdict (the connection closed or reset while the response headers were
+/// read), or a closed connection, or an operating-system read or write error (`EPIPE`,
+/// `ECONNRESET`) at any point before the response. Timeouts and TLS errors are not.
+fn pooled_connection_failed(e: &Error) -> bool {
+    if e.esource() != &ErrorSource::Upstream {
+        return false;
+    }
+    if matches!(e.retry, pingora::RetryType::ReusedOnly) {
+        return true;
+    }
+    match e.etype() {
+        ErrorType::ConnectionClosed => true,
+        ErrorType::ReadError | ErrorType::WriteError => e
+            .root_cause()
+            .downcast_ref::<std::io::Error>()
+            .is_some_and(|io| io.raw_os_error().is_some()),
+        _ => false,
+    }
+}
+
+/// Whether a request is a protocol upgrade as Pingora forwards one: `CONNECT`, or an HTTP/1.1
+/// WebSocket handshake (`Upgrade: websocket`). Pingora removes any other `Upgrade` before the
+/// backend sees the request, and reads the body of such a request like any other, so it is
+/// held and inspected like any other.
 fn is_upgrade(req: &RequestHeader) -> bool {
-    req.headers.contains_key(http::header::UPGRADE) || req.method == http::Method::CONNECT
+    req.method == http::Method::CONNECT || is_websocket_handshake(req)
+}
+
+/// The same test as Pingora's `is_websocket_upgrade_request` (0.9.1, `proxy_common.rs`).
+fn is_websocket_handshake(req: &RequestHeader) -> bool {
+    req.version == Version::HTTP_11
+        && req
+            .headers
+            .get(http::header::UPGRADE)
+            .is_some_and(|v| v.as_bytes().eq_ignore_ascii_case(b"websocket"))
+}
+
+/// Joins several `Cookie` fields into one with `"; "`. HTTP/2 clients may split cookies into
+/// fields of their own, which must be joined before an HTTP/1.1 hop (RFC 9113 §8.2.3); a
+/// backend that reads only the first field would otherwise see other cookies than rdock's
+/// middlewares did. One field, or a value that is not text, is left as it is.
+fn join_cookies(req: &mut RequestHeader) {
+    let fields = req.headers.get_all(http::header::COOKIE);
+    if fields.iter().nth(1).is_none() {
+        return;
+    }
+    let parts: Option<Vec<&str>> = fields.iter().map(|v| v.to_str().ok()).collect();
+    let Some(joined) = parts.map(|p| p.join("; ")) else {
+        return;
+    };
+    if let Ok(value) = HeaderValue::from_str(&joined) {
+        let _ = req.insert_header(http::header::COOKIE, value);
+    }
+}
+
+/// `Connection` options that are not header names rdock may act on early: the standard
+/// connection options, hop-by-hop and framing fields (Pingora handles them), and the names
+/// Pingora refuses to see nominated (it answers 400 for those, which must stay so).
+const CONNECTION_KEPT: [&str; 13] = [
+    "close",
+    // Framing: Pingora reads the body by it; left to its sanitizer as before.
+    "content-length",
+    "keep-alive",
+    "upgrade",
+    "te",
+    "trailer",
+    "transfer-encoding",
+    "proxy-connection",
+    "http2-settings",
+    "host",
+    "x-forwarded-for",
+    "x-forwarded-host",
+    "x-forwarded-proto",
+];
+
+/// Most `Connection` options Pingora accepts (`MAX_CONNECTION_NOMINATIONS`, 0.9.1); a header
+/// with more is left for it to refuse.
+const MAX_NOMINATIONS: usize = 10;
+
+/// Removes the client's own fields that its `Connection` header nominates, and the
+/// nominations with them, before rdock writes its headers (RFC 9110 §7.6.1). Pingora removes
+/// nominated fields only after the request phase, from the request rdock has already
+/// decorated, so a client could otherwise have `X-Real-IP`, `X-Request-Id`, identity or
+/// fingerprint headers that rdock sets removed on the way to the backend. Options that are
+/// not plain header names, the standard ones and the ones Pingora refuses are left for
+/// Pingora.
+fn strip_connection_nominations(req: &mut RequestHeader) {
+    if !req.headers.contains_key(http::header::CONNECTION) {
+        return;
+    }
+    let tokens: Vec<String> = req
+        .headers
+        .get_all(http::header::CONNECTION)
+        .iter()
+        .flat_map(|v| v.as_bytes().split(|b| *b == b','))
+        .map(|t| String::from_utf8_lossy(t.trim_ascii()).into_owned())
+        .filter(|t| !t.is_empty())
+        .collect();
+    if tokens.len() >= MAX_NOMINATIONS {
+        return;
+    }
+    let mut kept = Vec::new();
+    let mut stripped = false;
+    for token in tokens {
+        let lower = token.to_ascii_lowercase();
+        let name = (!CONNECTION_KEPT.contains(&lower.as_str()))
+            .then(|| HeaderName::from_bytes(lower.as_bytes()).ok())
+            .flatten();
+        match name {
+            Some(name) => {
+                req.remove_header(&name);
+                stripped = true;
+            }
+            None => kept.push(token),
+        }
+    }
+    if !stripped {
+        return;
+    }
+    req.remove_header(&http::header::CONNECTION);
+    if !kept.is_empty()
+        && let Ok(value) = HeaderValue::from_str(&kept.join(", "))
+    {
+        let _ = req.insert_header(http::header::CONNECTION, value);
+    }
+}
+
+/// Whether `authority` is `host [":" port]` (RFC 9112 §3.2, RFC 3986 §3.2.2): an IPv6
+/// literal in brackets, or a name of letters, digits, `-`, `.` and `_` (container and service
+/// names use `_`), with an optional numeric port. An empty value is left to the `Host` checks
+/// above. Percent-encoded names, userinfo, paths and everything else are refused.
+fn valid_authority(authority: &str) -> bool {
+    if authority.is_empty() {
+        return true;
+    }
+    let (host, port) = if let Some(rest) = authority.strip_prefix('[') {
+        let Some((literal, after)) = rest.split_once(']') else {
+            return false;
+        };
+        if literal.parse::<std::net::Ipv6Addr>().is_err() {
+            return false;
+        }
+        match after {
+            "" => return true,
+            _ => match after.strip_prefix(':') {
+                Some(port) => ("", port),
+                None => return false,
+            },
+        }
+    } else {
+        match authority.split_once(':') {
+            Some((host, port)) => (host, port),
+            None => (authority, ""),
+        }
+    };
+    let host_ok = host
+        .bytes()
+        .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'));
+    let port_ok = port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit());
+    host_ok && port_ok && (!host.is_empty() || authority.starts_with('['))
+}
+
+/// Whether a request declares a body (a `Content-Length` above zero, or any
+/// `Transfer-Encoding`).
+fn declares_body(req: &RequestHeader) -> bool {
+    req.headers.contains_key(http::header::TRANSFER_ENCODING)
+        || req
+            .headers
+            .get_all(http::header::CONTENT_LENGTH)
+            .iter()
+            .any(|v| {
+                v.as_bytes()
+                    .iter()
+                    .any(|b| b.is_ascii_digit() && *b != b'0')
+            })
 }
 
 /// Longest pause a backend's `Retry-After` can cause.
@@ -2399,6 +2604,181 @@ mod tests {
         let mut gone = Error::new(ErrorType::ConnectionClosed);
         gone.esource = ErrorSource::Downstream;
         assert_eq!(error_status(&gone), 0);
+    }
+
+    fn head(method: &str, headers: &[(&str, &str)]) -> RequestHeader {
+        let mut req = RequestHeader::build(method, b"/", None).unwrap();
+        for (name, value) in headers {
+            req.append_header((*name).to_owned(), *value).unwrap();
+        }
+        req
+    }
+
+    fn checked(headers: &[(&str, &str)]) -> Option<u16> {
+        let req = head("POST", headers);
+        RdockProxy::check_request(&Runtime::empty(), &req)
+            .err()
+            .map(|e| error_status(&e))
+    }
+
+    #[test]
+    fn only_websocket_handshakes_and_connect_are_upgrades() {
+        assert!(is_upgrade(&head("GET", &[("upgrade", "websocket")])));
+        assert!(is_upgrade(&head("GET", &[("upgrade", "WebSocket")])));
+        assert!(is_upgrade(&head("CONNECT", &[])));
+        // Pingora strips these and forwards the request, body and all.
+        assert!(!is_upgrade(&head("POST", &[("upgrade", "x")])));
+        assert!(!is_upgrade(&head("POST", &[("upgrade", "h2c")])));
+        let mut h10 = head("GET", &[("upgrade", "websocket")]);
+        h10.set_version(Version::HTTP_10);
+        assert!(!is_upgrade(&h10));
+    }
+
+    #[test]
+    fn websocket_handshakes_with_a_body_are_refused() {
+        let ws = [("host", "a.test"), ("upgrade", "websocket")];
+        assert_eq!(checked(&ws), None);
+        assert_eq!(checked(&[ws[0], ws[1], ("content-length", "0")]), None);
+        assert_eq!(
+            checked(&[ws[0], ws[1], ("content-length", "12")]),
+            Some(400)
+        );
+        assert_eq!(
+            checked(&[ws[0], ws[1], ("transfer-encoding", "chunked")]),
+            Some(400)
+        );
+        assert_eq!(
+            checked(&[ws[0], ("upgrade", "x"), ("content-length", "12")]),
+            None,
+            "not an upgrade: its body is held like any other"
+        );
+    }
+
+    #[test]
+    fn host_must_be_a_host_and_port() {
+        for good in [
+            "a.test",
+            "A.Test.",
+            "a.test:8080",
+            "my_service",
+            "192.0.2.1:80",
+            "[2001:db8::1]",
+            "[::1]:443",
+            "a.test:",
+        ] {
+            assert_eq!(checked(&[("host", good)]), None, "{good}");
+        }
+        for bad in [
+            "a/b.example.com",
+            "a?b.example.com",
+            "a\\b.example.com",
+            "a b",
+            "a%2eb",
+            "a#b",
+            "u@a.test",
+            "a.test:80:80",
+            "a.test:http",
+            "a.test:123456",
+            "[zz::1]",
+            "[::1]x",
+            "::1",
+        ] {
+            assert_eq!(checked(&[("host", bad)]), Some(400), "{bad}");
+        }
+    }
+
+    #[test]
+    fn connection_cannot_remove_headers_rdock_sets_later() {
+        let mut req = head(
+            "GET",
+            &[
+                ("connection", "keep-alive, X-Real-IP, x-request-id"),
+                ("connection", "X-Consumer-Name"),
+                ("x-real-ip", "203.0.113.9"),
+                ("x-custom", "kept"),
+            ],
+        );
+        strip_connection_nominations(&mut req);
+        // The client's own nominated fields go now, as RFC 9110 asks; the nominations go with
+        // them, so Pingora does not remove what rdock writes afterwards.
+        assert!(req.headers.get("x-real-ip").is_none());
+        assert_eq!(
+            req.headers.get_all("connection").iter().collect::<Vec<_>>(),
+            vec!["keep-alive"]
+        );
+        assert!(req.headers.get("x-custom").is_some());
+        // Nominations Pingora refuses are left for it to refuse.
+        let mut protected = head("GET", &[("connection", "X-Forwarded-For, X-Real-IP")]);
+        strip_connection_nominations(&mut protected);
+        assert_eq!(protected.headers["connection"], "X-Forwarded-For");
+        let mut malformed = head("GET", &[("connection", "\"X-Real-IP\"")]);
+        strip_connection_nominations(&mut malformed);
+        assert_eq!(malformed.headers["connection"], "\"X-Real-IP\"");
+        let mut none = head("GET", &[("connection", "close")]);
+        strip_connection_nominations(&mut none);
+        assert_eq!(none.headers["connection"], "close");
+    }
+
+    #[test]
+    fn every_expect_field_is_checked() {
+        let host = ("host", "a.test");
+        assert_eq!(checked(&[host, ("expect", "100-continue")]), None);
+        assert_eq!(
+            checked(&[host, ("expect", "100-continue"), ("expect", "foo")]),
+            Some(417)
+        );
+    }
+
+    #[test]
+    fn split_cookie_fields_are_joined() {
+        let mut req = head("GET", &[("cookie", "a=1"), ("cookie", "b=2")]);
+        join_cookies(&mut req);
+        assert_eq!(
+            req.headers.get_all("cookie").iter().collect::<Vec<_>>(),
+            vec!["a=1; b=2"]
+        );
+        let mut one = head("GET", &[("cookie", "a=1; b=2")]);
+        join_cookies(&mut one);
+        assert_eq!(one.headers["cookie"], "a=1; b=2");
+    }
+
+    #[test]
+    fn connection_failures_of_pooled_connections_are_recognised() {
+        let up = |etype: ErrorType, cause: Option<std::io::Error>| {
+            let mut e = match cause {
+                Some(io) => *Error::because(etype, "x", io),
+                None => *Error::new(etype),
+            };
+            e.esource = ErrorSource::Upstream;
+            e
+        };
+        let pipe = || Some(std::io::Error::from_raw_os_error(32));
+        // The CI failure: EPIPE while writing the body to a reused connection.
+        assert!(pooled_connection_failed(&up(ErrorType::WriteError, pipe())));
+        assert!(pooled_connection_failed(&up(ErrorType::ReadError, pipe())));
+        assert!(pooled_connection_failed(&up(
+            ErrorType::ConnectionClosed,
+            None
+        )));
+        let mut reused_only = up(ErrorType::ReadError, None);
+        reused_only.retry = pingora::RetryType::ReusedOnly;
+        assert!(pooled_connection_failed(&reused_only));
+        // Not connection failures: timeouts, TLS-level read errors, the client's side.
+        assert!(!pooled_connection_failed(&up(
+            ErrorType::ReadTimedout,
+            None
+        )));
+        assert!(!pooled_connection_failed(&up(
+            ErrorType::WriteTimedout,
+            None
+        )));
+        assert!(!pooled_connection_failed(&up(
+            ErrorType::ReadError,
+            Some(std::io::Error::other("tls"))
+        )));
+        let mut downstream = up(ErrorType::WriteError, pipe());
+        downstream.esource = ErrorSource::Downstream;
+        assert!(!pooled_connection_failed(&downstream));
     }
 
     #[test]

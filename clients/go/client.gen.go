@@ -255,7 +255,11 @@ type AuditRecord struct {
 	Method       string  `json:"method"`
 	Prev         string  `json:"prev"`
 	Reason       *string `json:"reason,omitempty"`
-	Resource     *string `json:"resource,omitempty"`
+
+	// Repeated On a refusal: how many refusals of the same kind (action, reason, actor and client)
+	// in the minute before it were counted but not written.
+	Repeated *int64  `json:"repeated,omitempty"`
+	Resource *string `json:"resource,omitempty"`
 
 	// Result How an audited action ended.
 	Result AuditResult `json:"result"`

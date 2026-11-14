@@ -31,6 +31,10 @@ pub struct Runtime {
     pub client_ip: ClientIpPolicy,
     /// Request size limits.
     pub limits: Limits,
+    /// What happens to ambiguous request paths (`security.paths.ambiguous`).
+    pub ambiguous_paths: rdock_model::settings::AmbiguousPaths,
+    /// What happens to encoded separators in paths (`security.paths.encoded_separators`).
+    pub encoded_separators: rdock_model::settings::EncodedSeparators,
     /// Access log writer.
     pub access_log: Arc<AccessLog>,
     /// Certificates, served through the shared resolver.
@@ -72,6 +76,8 @@ impl Runtime {
             listeners: BTreeMap::new(),
             client_ip: ClientIpPolicy::default(),
             limits: Limits::default(),
+            ambiguous_paths: rdock_model::settings::AmbiguousPaths::default(),
+            encoded_separators: rdock_model::settings::EncodedSeparators::default(),
             access_log: Arc::new(AccessLog::new(&rdock_model::settings::AccessLog {
                 format: rdock_model::settings::LogFormat::Off,
                 redact: Vec::new(),

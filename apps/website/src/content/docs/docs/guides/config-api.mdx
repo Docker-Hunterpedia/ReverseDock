@@ -22,7 +22,9 @@ api http://localhost/api/v1/config          # everything in use, with the owner 
 api -i http://localhost/api/v1/config/api   # only the API's objects; note the ETag header
 ```
 
-Secret values written in place are shown as `***`, and basic-auth `users` entries as `name:***`; `${file:…}` and `${env:…}` references are shown as written <Status since="v0.5" />. Writing a document back with `***` keeps the current secret, so you can read, edit and save without retyping secrets; a `***` where there is no current value is refused with `422`.
+Secret values written in place are shown as `***`, and basic-auth `users` entries as `name:***`; `${file:…}` and `${env:…}` references are shown as written <Status since="v0.5" />. Writing a document back with `***` keeps the current secret, so you can read, edit and save without retyping secrets; a `***` where there is no current value is refused with `422`, and so is a `***` in an object whose other settings changed (write the secret again when you change, say, an `issuer`).
+
+Operators cannot add or change objects that act with the proxy's own authority; those writes get `422` with the object and the reason, and need an admin or the configuration file: a `unix://` backend, a `static` or `wasm` middleware, a field that names a file (`file`, `openapi`, `*_file`) or a `${…}` reference. Objects an operator leaves unchanged are not checked.
 
 ## Change, always with If-Match
 

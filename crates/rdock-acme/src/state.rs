@@ -17,6 +17,67 @@ const ARI_MAX_RECHECK: Duration = Duration::from_secs(24 * 3600);
 /// When fetching renewal information fails, try again after this long.
 const ARI_RETRY_AFTER_ERROR: Duration = Duration::from_secs(3600);
 
+/// The failure back-off of certificates no longer asked for, so a name that leaves the plan
+/// and comes back (a crash-looping container's route) does not start over at once with a new
+/// order: each return would otherwise place one, and the CA's limits on failed validations
+/// and new orders would soon refuse every certificate of the account. Bounded by
+/// [`Backoffs::MAX`] entries and [`Backoffs::KEEP`] each.
+#[derive(Debug, Default)]
+pub(crate) struct Backoffs {
+    entries: std::collections::BTreeMap<Vec<String>, Kept>,
+}
+
+/// A kept back-off: failures, when to try again, the last error, and when it was kept.
+type Kept = (u32, Option<Instant>, Option<String>, Instant);
+
+impl Backoffs {
+    /// Entries kept at most.
+    pub const MAX: usize = 4096;
+    /// How long an entry is kept.
+    pub const KEEP: Duration = Duration::from_secs(24 * 3600);
+
+    /// Remembers the back-off of `state` when it has failures.
+    pub fn keep(&mut self, names: Vec<String>, state: &CertState) {
+        if state.failures == 0 {
+            return;
+        }
+        let now = Instant::now();
+        self.entries
+            .retain(|_, (_, _, _, at)| now.duration_since(*at) < Self::KEEP);
+        if self.entries.len() >= Self::MAX
+            && let Some(oldest) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, (_, _, _, at))| *at)
+                .map(|(k, _)| k.clone())
+        {
+            self.entries.remove(&oldest);
+        }
+        self.entries.insert(
+            names,
+            (
+                state.failures,
+                state.retry_at,
+                state.last_error.clone(),
+                now,
+            ),
+        );
+    }
+
+    /// A new state for `names`, with the back-off it had when it left the plan.
+    pub fn restore(&mut self, names: &[String]) -> CertState {
+        let mut state = CertState::default();
+        if let Some((failures, retry_at, last_error, at)) = self.entries.remove(names)
+            && at.elapsed() < Self::KEEP
+        {
+            state.failures = failures;
+            state.retry_at = retry_at;
+            state.last_error = last_error;
+        }
+        state
+    }
+}
+
 /// One certificate the configuration asks for.
 #[derive(Debug, Default)]
 pub(crate) struct CertState {
@@ -292,6 +353,26 @@ mod tests {
         state.apply_window(i64::MIN, i64::MIN + 1, Duration::ZERO, f64::NAN);
         assert!(state.ari_renew_at.is_some_and(|at| at <= i64::MIN + 1));
         let _ = state.due(i64::MAX);
+    }
+
+    #[test]
+    fn a_name_that_leaves_and_returns_keeps_its_back_off() {
+        let names = vec!["flaky.example".to_owned()];
+        let mut state = CertState::default();
+        state.fail("validation failed".into());
+        state.fail("validation failed".into());
+        let retry_at = state.retry_at.unwrap();
+        assert!(retry_at > Instant::now());
+        let mut backoffs = Backoffs::default();
+        backoffs.keep(names.clone(), &state);
+        let back = backoffs.restore(&names);
+        assert_eq!(back.failures, 2);
+        assert_eq!(back.retry_at, Some(retry_at));
+        assert!(!back.due(0), "not ordered again at once");
+        // A name that never failed, or was restored already, starts fresh.
+        assert_eq!(backoffs.restore(&names).failures, 0);
+        backoffs.keep(names.clone(), &CertState::default());
+        assert_eq!(backoffs.restore(&names).failures, 0);
     }
 
     #[test]

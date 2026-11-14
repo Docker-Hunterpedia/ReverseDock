@@ -128,6 +128,15 @@
               "null"
             ]
           },
+          "repeated": {
+            "description": "On a refusal: how many refusals of the same kind (action, reason, actor and client)\nin the minute before it were counted but not written.",
+            "format": "int64",
+            "minimum": 0,
+            "type": [
+              "integer",
+              "null"
+            ]
+          },
           "resource": {
             "type": [
               "string",
@@ -2214,6 +2223,21 @@
         },
         "type": "object"
       },
+      "rdock.AmbiguousPaths": {
+        "description": "The `security.paths.ambiguous` choices.",
+        "oneOf": [
+          {
+            "const": "reject",
+            "description": "Answer `400`.",
+            "type": "string"
+          },
+          {
+            "const": "forward",
+            "description": "Route and forward them as written.",
+            "type": "string"
+          }
+        ]
+      },
       "rdock.Anonymous": {
         "description": "What an authenticating middleware does with a request that carries no credential.",
         "oneOf": [
@@ -3257,6 +3281,10 @@
                 "max_uri_bytes": "8KiB",
                 "upstream_idle_connections": 4096
               },
+              "paths": {
+                "ambiguous": "reject",
+                "encoded_separators": "allow"
+              },
               "trusted_proxies": []
             },
             "description": "Client IP trust and request limits."
@@ -3806,6 +3834,11 @@
           "^x-": {}
         },
         "properties": {
+          "allow_local_backends": {
+            "default": false,
+            "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`) or a link-local address (cloud metadata services). Off by default: a\ncontainer could otherwise publish ReverseDock's admin listener or other local services.",
+            "type": "boolean"
+          },
           "endpoint": {
             "$ref": "#/components/schemas/rdock.Endpoint",
             "default": "unix:///var/run/docker.sock",
@@ -3877,6 +3910,21 @@
         ],
         "pattern": "^([0-9]+(ms|s|m|h|d))+$",
         "type": "string"
+      },
+      "rdock.EncodedSeparators": {
+        "description": "The `security.paths.encoded_separators` choices.",
+        "oneOf": [
+          {
+            "const": "allow",
+            "description": "Route and forward them as sent.",
+            "type": "string"
+          },
+          {
+            "const": "reject",
+            "description": "Answer `400`.",
+            "type": "string"
+          }
+        ]
       },
       "rdock.Endpoint": {
         "examples": [
@@ -8750,6 +8798,26 @@
         ],
         "type": "object"
       },
+      "rdock.PathSecurity": {
+        "additionalProperties": false,
+        "description": "What rdock does with request paths whose meaning differs between servers.",
+        "patternProperties": {
+          "^x-": {}
+        },
+        "properties": {
+          "ambiguous": {
+            "$ref": "#/components/schemas/rdock.AmbiguousPaths",
+            "default": "reject",
+            "description": "Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`),\na `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that\nappears once an encoded `/` or `\\` (`%2F`, `%5C`) or a raw `\\` is read as a separator\n(`..%2Fadmin`, `public\\..\\admin`). `reject` (default) answers `400`; `forward` routes\nand forwards them as written."
+          },
+          "encoded_separators": {
+            "$ref": "#/components/schemas/rdock.EncodedSeparators",
+            "default": "allow",
+            "description": "Paths with an encoded `/` or `\\` (`%2F`, `%5C`) or a raw `\\` that form no dot segment,\nsuch as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and\nforwards them as sent; `reject` answers `400` for every such path, for backends that\ndecode separators before their own access checks."
+          }
+        },
+        "type": "object"
+      },
       "rdock.PriorityClass": {
         "description": "A route's class for load shedding by `admission` (H-LB-04).",
         "oneOf": [
@@ -9690,6 +9758,14 @@
             },
             "description": "Request size limits."
           },
+          "paths": {
+            "$ref": "#/components/schemas/rdock.PathSecurity",
+            "default": {
+              "ambiguous": "reject",
+              "encoded_separators": "allow"
+            },
+            "description": "Request paths that backends may read differently from the router."
+          },
           "trusted_proxies": {
             "default": [],
             "description": "Proxies whose forwarded headers are believed. Headers from anyone else are replaced.",
@@ -10313,6 +10389,11 @@
           "^x-": {}
         },
         "properties": {
+          "allow_local_backends": {
+            "default": false,
+            "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`) or a link-local address (cloud metadata services). Off by default: a\nservice could otherwise publish ReverseDock's admin listener or other local services.",
+            "type": "boolean"
+          },
           "endpoint": {
             "$ref": "#/components/schemas/rdock.Endpoint",
             "default": "unix:///var/run/docker.sock",

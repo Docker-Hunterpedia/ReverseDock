@@ -105,6 +105,7 @@ impl Manager {
             services,
             accounts: Accounts::default(),
             certs: BTreeMap::new(),
+            backoff: crate::state::Backoffs::default(),
             lock: None,
             status: status.clone(),
             holder: String::new(),
@@ -155,6 +156,8 @@ struct Worker {
     services: Services,
     accounts: Accounts,
     certs: BTreeMap<Vec<String>, CertState>,
+    /// The failure back-off of certificates that left the plan, restored when they return.
+    backoff: crate::state::Backoffs,
     lock: Option<StorageLock>,
     status: Arc<Mutex<Vec<CertStatus>>>,
     /// The holder name in leases: the cluster instance, or `local-<pid>`.
@@ -231,7 +234,9 @@ impl Worker {
         let next_look = Instant::now() + MAX_SLEEP;
         let storage = self.storage(plan);
         if plan.requests.is_empty() {
-            self.certs.clear();
+            for (names, state) in std::mem::take(&mut self.certs) {
+                self.backoff.keep(names, &state);
+            }
             self.lock = None;
             self.publish();
             return next_look;
@@ -263,8 +268,17 @@ impl Worker {
     /// Forgets certificates no longer asked for and (re)loads stored ones whenever their
     /// metadata changed: the first time, and after another instance stored a new one.
     async fn load(&mut self, plan: &Plan, storage: &Storage) {
-        self.certs
-            .retain(|names, _| plan.requests.iter().any(|r| &r.names == names));
+        let gone: Vec<Vec<String>> = self
+            .certs
+            .keys()
+            .filter(|names| !plan.requests.iter().any(|r| &r.names == *names))
+            .cloned()
+            .collect();
+        for names in gone {
+            if let Some(state) = self.certs.remove(&names) {
+                self.backoff.keep(names, &state);
+            }
+        }
         for request in &plan.requests {
             let Some(first) = request.names.first() else {
                 continue;
@@ -276,7 +290,11 @@ impl Worker {
                     continue;
                 }
             };
-            let state = self.certs.entry(request.names.clone()).or_default();
+            let backoff = &mut self.backoff;
+            let state = self
+                .certs
+                .entry(request.names.clone())
+                .or_insert_with_key(|names| backoff.restore(names));
             if state.loaded_from_disk && state.meta_version == version {
                 continue;
             }

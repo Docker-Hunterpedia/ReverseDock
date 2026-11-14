@@ -542,3 +542,147 @@ fn deprecated_labels_are_reported_and_renamed_ones_still_work() {
     );
     assert_eq!(deprecated[0].removal.as_deref(), Some("2.0"));
 }
+
+#[test]
+fn labels_cannot_reach_the_proxys_own_machine_unless_allowed() {
+    let refused = [
+        "http://unix:///var/lib/rdock/admin.sock",
+        "http://127.0.0.1:2080",
+        "http://localhost:2080",
+        "http://[::1]:2080",
+        "http://169.254.169.254",
+        "http://2130706433:80",
+        "http://0.0.0.0:80",
+    ];
+    for url in refused {
+        let c = container(
+            "evil",
+            2,
+            &[80],
+            &[
+                ("traefik.enable", "true"),
+                ("traefik.http.routers.r.rule", "Host(`evil.test`)"),
+                ("traefik.http.services.s.loadbalancer.server.url", url),
+            ],
+        );
+        let t = run(std::slice::from_ref(&c));
+        assert!(!t.fragment.services.contains_key("s"), "{url}: {t:?}");
+        let found = messages(&t);
+        assert!(
+            found
+                .iter()
+                .any(|m| m.contains("allow_local_backends") || m.contains("not `host:port`")),
+            "{url}: {found:?}"
+        );
+    }
+    // The setting allows loopback, never a socket.
+    let allow = DockerProvider {
+        allow_local_backends: true,
+        ..DockerProvider::default()
+    };
+    let local = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`dev.test`)"),
+            (
+                "traefik.http.services.s.loadbalancer.server.url",
+                "http://127.0.0.1:8080",
+            ),
+        ],
+    );
+    let t = translate(std::slice::from_ref(&local), &allow);
+    assert_eq!(backends(&t, "s"), vec!["127.0.0.1:8080"]);
+    let socket = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`dev.test`)"),
+            (
+                "traefik.http.services.s.loadbalancer.server.url",
+                "http://unix:///run/x.sock",
+            ),
+        ],
+    );
+    assert!(
+        !translate(&[socket], &allow)
+            .fragment
+            .services
+            .contains_key("s")
+    );
+    // Middleware URLs too.
+    let auth = container(
+        "evil",
+        2,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`evil.test`)"),
+            ("traefik.http.routers.r.middlewares", "fa"),
+            (
+                "traefik.http.middlewares.fa.forwardauth.address",
+                "http://127.0.0.1:2080/api/v1/status",
+            ),
+        ],
+    );
+    let t = run(&[auth]);
+    assert!(!t.fragment.middlewares.contains_key("fa"), "{t:?}");
+    // A container's own address stays as it was.
+    let fine = container(
+        "app",
+        4,
+        &[80],
+        &[
+            ("traefik.enable", "true"),
+            ("traefik.http.routers.r.rule", "Host(`app.test`)"),
+            (
+                "traefik.http.middlewares.fa.forwardauth.address",
+                "http://auth.internal:9000/check",
+            ),
+            ("traefik.http.routers.r.middlewares", "fa"),
+        ],
+    );
+    let t = run(&[fine]);
+    assert!(t.fragment.middlewares.contains_key("fa"), "{t:?}");
+}
+
+#[test]
+fn labels_cannot_name_files_on_the_proxys_host() {
+    let c = container(
+        "app",
+        5,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.services.app.tls.key_file", "/etc/rdock/key.pem"),
+            ("rdock.middlewares.v.type", "validate"),
+            ("rdock.middlewares.v.openapi", "/etc/passwd"),
+            ("rdock.middlewares.j.jwks_file", "/etc/passwd"),
+        ],
+    );
+    let t = run(&[c]);
+    let found = messages(&t);
+    for field in ["key_file", "openapi", "jwks_file"] {
+        assert!(
+            found
+                .iter()
+                .any(|m| m.contains(&format!("`{field}` cannot be set from labels"))),
+            "{field}: {found:?}"
+        );
+    }
+    if let Some(service) = t.fragment.services.get("app") {
+        assert!(
+            service
+                .tls
+                .as_ref()
+                .is_none_or(|tls| tls.key_file.is_none())
+        );
+    }
+}

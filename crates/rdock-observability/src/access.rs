@@ -224,13 +224,37 @@ fn write_lines(receiver: &Receiver<Vec<u8>>) {
     }
 }
 
+/// `text` with `"`, `\` and control characters escaped, so a client's method or path cannot
+/// end the quoted part of a text line and add fields of its own.
+fn quoted(text: &str) -> std::borrow::Cow<'_, str> {
+    if !text
+        .chars()
+        .any(|c| c == '"' || c == '\\' || c.is_control())
+    {
+        return std::borrow::Cow::Borrowed(text);
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    for c in text.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if c.is_control() => {
+                let _ =
+                    std::fmt::Write::write_fmt(&mut out, format_args!("\\x{:02x}", u32::from(c)));
+            }
+            c => out.push(c),
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn text_line(r: &AccessRecord) -> String {
     let line = format!(
         "{} {} \"{} {} {}\" {} {} {:.1}ms route={} service={} upstream={} id={}",
         r.ts,
         r.client_ip,
-        r.method,
-        r.path,
+        quoted(&r.method),
+        quoted(&r.path),
         r.proto,
         r.status,
         r.bytes_out,
@@ -319,6 +343,17 @@ mod tests {
             ..AccessRecord::default()
         });
         assert!(line.contains("\"GET / HTTP/1.1\" 200"), "{line}");
+        let forged = text_line(&AccessRecord {
+            method: "GET".into(),
+            path: "/a\" 200 0 0.0ms route=admin \"x".into(),
+            proto: "HTTP/2.0".into(),
+            status: 404,
+            ..AccessRecord::default()
+        });
+        assert!(
+            forged.contains("\"GET /a\\\" 200 0 0.0ms route=admin \\\"x HTTP/2.0\" 404"),
+            "{forged}"
+        );
     }
 
     #[test]

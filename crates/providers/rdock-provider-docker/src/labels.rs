@@ -120,6 +120,22 @@ pub struct Settings<'a> {
     /// Networks ReverseDock's own container is on, when it runs in one that could be found
     /// (Swarm): a container on several networks is reached on the one it shares with them.
     pub proxy_networks: Option<&'a BTreeSet<String>>,
+    /// Let labels name loopback and link-local addresses (`allow_local_backends`).
+    pub allow_local_backends: bool,
+}
+
+/// Loopback, unspecified and link-local addresses (IPv4-mapped IPv6 as IPv4).
+fn is_local(ip: IpAddr) -> bool {
+    let ip = match ip {
+        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
+        IpAddr::V4(_) => ip,
+    };
+    match ip {
+        IpAddr::V4(v4) => v4.is_loopback() || v4.is_unspecified() || v4.is_link_local(),
+        IpAddr::V6(v6) => {
+            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80
+        }
+    }
 }
 
 impl<'a> Settings<'a> {
@@ -134,6 +150,7 @@ impl<'a> Settings<'a> {
             entrypoints: &provider.entrypoints,
             host_address: provider.host_address,
             proxy_networks: None,
+            allow_local_backends: provider.allow_local_backends,
         }
     }
 }
@@ -586,10 +603,80 @@ impl<'a> Scope<'a> {
             }
         }
         for (name, tree) in std::mem::take(&mut draft.middlewares) {
-            match decode::<Middleware>(tree.into_value()) {
+            let value = tree.into_value();
+            if let Some(refusal) = self.local_url_refusal(&value, "") {
+                self.warn_object("middleware", &name, &refusal);
+                continue;
+            }
+            match decode::<Middleware>(value) {
                 Ok(middleware) => pools.add_middleware(self, name, middleware, fragment),
                 Err(err) => self.warn_object("middleware", &name, &err),
             }
+        }
+    }
+
+    /// Why a backend address a label names (`server.url`) may not be used: anything but
+    /// `host:port` (a `unix://` socket on the proxy's machine is refused always), or, unless
+    /// `allow_local_backends` is set, the proxy's own machine or a link-local address (cloud
+    /// metadata services), which a container must not publish through ReverseDock.
+    fn local_backend_refusal(&self, address: &str) -> Option<String> {
+        if address.contains("://") || address.starts_with('/') {
+            return Some(format!(
+                "`{address}` is not `host:port`; labels can only name a network backend"
+            ));
+        }
+        let host = match address.strip_prefix('[') {
+            Some(rest) => rest.split_once(']').map_or(rest, |(h, _)| h),
+            None => address.rsplit_once(':').map_or(address, |(h, _)| h),
+        };
+        self.local_host_refusal(host)
+    }
+
+    fn local_host_refusal(&self, host: &str) -> Option<String> {
+        if self.settings.allow_local_backends {
+            return None;
+        }
+        let local = match host.parse::<IpAddr>() {
+            Ok(ip) => is_local(ip),
+            Err(_) => {
+                rdock_model::addresses::is_loopback_name(host)
+                    || rdock_model::addresses::looks_numeric(host)
+            }
+        };
+        local.then(|| {
+            let setting = match self.settings.platform {
+                Platform::Docker => "providers.docker.allow_local_backends",
+                Platform::Swarm => "providers.swarm.allow_local_backends",
+            };
+            format!(
+                "`{host}` is the proxy's own machine, a link-local or a numeric address, which labels cannot reach; set `{setting}: true` to allow it"
+            )
+        })
+    }
+
+    /// The first URL or address in a middleware from labels that points at the proxy's own
+    /// machine or a link-local address (`forward_auth.address`, `jwt.jwks_url`, …).
+    fn local_url_refusal(&self, value: &serde_json::Value, key: &str) -> Option<String> {
+        match value {
+            serde_json::Value::Object(map) => map
+                .iter()
+                .find_map(|(k, child)| self.local_url_refusal(child, k)),
+            serde_json::Value::Array(items) => items
+                .iter()
+                .find_map(|child| self.local_url_refusal(child, key)),
+            serde_json::Value::String(text)
+                if key == "address" || key == "url" || key == "issuer" || key.ends_with("_url") =>
+            {
+                let (_, rest) = text.split_once("://")?;
+                let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
+                let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
+                let host = match authority.strip_prefix('[') {
+                    Some(rest) => rest.split_once(']').map_or(rest, |(h, _)| h),
+                    None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
+                };
+                self.local_host_refusal(host)
+            }
+            _ => None,
         }
     }
 
@@ -765,6 +852,10 @@ impl<'a> Scope<'a> {
     ) -> Option<(T, Backend)> {
         let weight = draft.weight.unwrap_or(1);
         let (address, healthy) = if let Some(address) = draft.address {
+            if let Some(refusal) = self.local_backend_refusal(&address) {
+                self.warn_object("service", name, &refusal);
+                return None;
+            }
             (address, true)
         } else {
             let port = self.port(name, draft.port)?;

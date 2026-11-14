@@ -89,6 +89,9 @@ pub(crate) struct AuditRecord {
     config_after: Option<String>,
     /// The tenant of a tenant-scoped caller.
     tenant: Option<String>,
+    /// On a refusal: how many refusals of the same kind (action, reason, actor and client)
+    /// in the minute before it were counted but not written.
+    repeated: Option<u64>,
 }
 
 /// The OpenAPI document as pretty JSON with a final newline, built once.

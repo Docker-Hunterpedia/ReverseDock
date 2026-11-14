@@ -339,7 +339,11 @@ impl Remote {
         };
         let mut req = RequestHeader::build(http::Method::GET, target.as_bytes(), None)
             .map_err(|e| e.to_string())?;
-        let host = self.url.host_str().unwrap_or_default().to_owned();
+        // `url` leaves out the scheme's default port, so this is the authority as it should be.
+        let host = match self.url.port() {
+            Some(port) => format!("{}:{port}", self.url.host_str().unwrap_or_default()),
+            None => self.url.host_str().unwrap_or_default().to_owned(),
+        };
         req.insert_header(http::header::HOST, host)
             .map_err(|e| e.to_string())?;
         req.insert_header(http::header::ACCEPT, "application/json")

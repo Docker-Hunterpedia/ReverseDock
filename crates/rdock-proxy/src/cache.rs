@@ -209,15 +209,31 @@ pub(crate) fn cache_key(
 ) -> CacheKey {
     let req = session.req_header();
     let headers = cc.policy.key_header_values(&req.headers);
+    // The backend sees the client's spelling of the authority and the forwarding headers
+    // (routing ignores port, case and a trailing dot; a trusted proxy's values are kept), and
+    // may build URLs from them, so they are keyed as the backend gets them, in lower case
+    // (host names and schemes are case-insensitive).
+    let forwarded: Vec<(&str, Option<Vec<u8>>)> = FORWARDED_KEYED
+        .iter()
+        .map(|name| {
+            let value = req
+                .headers
+                .get(*name)
+                .map(|v| v.as_bytes().to_ascii_lowercase());
+            (*name, value)
+        })
+        .collect();
     let header_refs: Vec<(&str, Option<&[u8]>)> = headers
         .iter()
         .map(|(n, v)| (n.as_str(), v.as_deref()))
+        .chain(forwarded.iter().map(|(n, v)| (*n, v.as_deref())))
         .collect();
+    let authority = key_authority(req, host);
     let parts = key::KeyParts {
         store: cc.policy.store.name(),
         route,
         scheme: if tls { "https" } else { "http" },
-        host,
+        host: &authority,
         path: req.uri.path(),
         query: &cc.key_query,
         method: key::method_class(&req.method),
@@ -225,6 +241,21 @@ pub(crate) fn cache_key(
         consumer,
     };
     CacheKey::new(key::primary(&parts), route)
+}
+
+/// Forwarding headers that are part of every cache key, with the values the backend gets.
+const FORWARDED_KEYED: [&str; 3] = ["x-forwarded-proto", "x-forwarded-host", "x-forwarded-port"];
+
+/// The authority as the client sent it (lower case, port and trailing dot kept), or the
+/// routing host when the request has none.
+fn key_authority(req: &RequestHeader, host: &str) -> String {
+    req.headers
+        .get(http::header::HOST)
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| req.uri.authority().map(http::uri::Authority::as_str))
+        .filter(|a| !a.is_empty())
+        .unwrap_or(host)
+        .to_ascii_lowercase()
 }
 
 /// Marks a miss: no stored response, or none for this request's `Vary` fields.

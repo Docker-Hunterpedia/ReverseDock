@@ -53,6 +53,10 @@ pub struct DockerProvider {
     /// serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a
     /// container cannot read ReverseDock's own files.
     pub static_roots: Vec<PathBuf>,
+    /// Let labels name a backend or a middleware URL on the proxy's own machine (loopback,
+    /// `localhost`) or a link-local address (cloud metadata services). Off by default: a
+    /// container could otherwise publish ReverseDock's admin listener or other local services.
+    pub allow_local_backends: bool,
 }
 
 impl Default for DockerProvider {
@@ -65,6 +69,7 @@ impl Default for DockerProvider {
             entrypoints: BTreeMap::new(),
             host_address: IpAddr::V4(Ipv4Addr::LOCALHOST),
             static_roots: Vec::new(),
+            allow_local_backends: false,
         }
     }
 }
@@ -97,6 +102,10 @@ pub struct SwarmProvider {
     /// may serve (`rdock.static.root`). Empty, the default, refuses every such middleware, so a
     /// service cannot read ReverseDock's own files (ADR-0027).
     pub static_roots: Vec<PathBuf>,
+    /// Let labels name a backend or a middleware URL on the proxy's own machine (loopback,
+    /// `localhost`) or a link-local address (cloud metadata services). Off by default: a
+    /// service could otherwise publish ReverseDock's admin listener or other local services.
+    pub allow_local_backends: bool,
 }
 
 impl Default for SwarmProvider {
@@ -109,6 +118,7 @@ impl Default for SwarmProvider {
             endpoint_mode: SwarmEndpointMode::Tasks,
             poll_interval: Duration::from_secs(5),
             static_roots: Vec::new(),
+            allow_local_backends: false,
         }
     }
 }

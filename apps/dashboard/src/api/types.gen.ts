@@ -22,6 +22,11 @@ export type AuditRecord = {
     method: string;
     prev: string;
     reason?: string | null;
+    /**
+     * On a refusal: how many refusals of the same kind (action, reason, actor and client)
+     * in the minute before it were counted but not written.
+     */
+    repeated?: number | null;
     resource?: string | null;
     result: AuditResult;
     seq: number;
@@ -1073,6 +1078,11 @@ export type RdockAlerts = {
 };
 
 /**
+ * The `security.paths.ambiguous` choices.
+ */
+export type RdockAmbiguousPaths = 'reject' | 'forward';
+
+/**
  * What an authenticating middleware does with a request that carries no credential.
  */
 export type RdockAnonymous = 'deny' | 'allow';
@@ -1885,6 +1895,12 @@ export type RdockDnsTransport = 'tcp' | 'udp';
  */
 export type RdockDockerProvider = {
     /**
+     * Let labels name a backend or a middleware URL on the proxy's own machine (loopback,
+     * `localhost`) or a link-local address (cloud metadata services). Off by default: a
+     * container could otherwise publish ReverseDock's admin listener or other local services.
+     */
+    allow_local_backends?: boolean;
+    /**
      * Docker Engine API endpoint. Read-only access is enough; a socket proxy is recommended.
      */
     endpoint?: RdockEndpoint;
@@ -1916,9 +1932,9 @@ export type RdockDockerProvider = {
      * Also read `traefik.*` labels (supported subset).
      */
     traefik_labels?: boolean;
-    [key: string]: unknown | RdockEndpoint | {
+    [key: string]: unknown | boolean | RdockEndpoint | {
         [key: string]: string;
-    } | boolean | string | string | null | Array<string> | undefined;
+    } | string | string | null | Array<string> | undefined;
 };
 
 /**
@@ -1930,6 +1946,11 @@ export type RdockDrainLimit = RdockDuration | 'unlimited';
  * Duration made of numbers with units: ms, s, m, h, d.
  */
 export type RdockDuration = string;
+
+/**
+ * The `security.paths.encoded_separators` choices.
+ */
+export type RdockEncodedSeparators = 'allow' | 'reject';
 
 export type RdockEndpoint = string;
 
@@ -4602,6 +4623,28 @@ export type RdockPathParameters = {
 };
 
 /**
+ * What rdock does with request paths whose meaning differs between servers.
+ */
+export type RdockPathSecurity = {
+    /**
+     * Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`),
+     * a `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that
+     * appears once an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` is read as a separator
+     * (`..%2Fadmin`, `public\..\admin`). `reject` (default) answers `400`; `forward` routes
+     * and forwards them as written.
+     */
+    ambiguous?: RdockAmbiguousPaths;
+    /**
+     * Paths with an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` that form no dot segment,
+     * such as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and
+     * forwards them as sent; `reject` answers `400` for every such path, for backends that
+     * decode separators before their own access checks.
+     */
+    encoded_separators?: RdockEncodedSeparators;
+    [key: string]: unknown | RdockAmbiguousPaths | RdockEncodedSeparators | undefined;
+};
+
+/**
  * A route's class for load shedding by `admission` (H-LB-04).
  */
 export type RdockPriorityClass = 'critical' | 'normal' | 'sheddable';
@@ -5070,10 +5113,14 @@ export type RdockSecurity = {
      */
     limits?: RdockLimits;
     /**
+     * Request paths that backends may read differently from the router.
+     */
+    paths?: RdockPathSecurity;
+    /**
      * Proxies whose forwarded headers are believed. Headers from anyone else are replaced.
      */
     trusted_proxies?: Array<RdockTrustedProxy>;
-    [key: string]: unknown | RdockClientIpHeader | RdockLimits | Array<RdockTrustedProxy> | undefined;
+    [key: string]: unknown | RdockClientIpHeader | RdockLimits | RdockPathSecurity | Array<RdockTrustedProxy> | undefined;
 };
 
 /**
@@ -5421,6 +5468,12 @@ export type RdockSwarmEndpointMode = 'tasks' | 'vip';
  */
 export type RdockSwarmProvider = {
     /**
+     * Let labels name a backend or a middleware URL on the proxy's own machine (loopback,
+     * `localhost`) or a link-local address (cloud metadata services). Off by default: a
+     * service could otherwise publish ReverseDock's admin listener or other local services.
+     */
+    allow_local_backends?: boolean;
+    /**
      * Docker Engine API endpoint of a manager node.
      */
     endpoint?: RdockEndpoint;
@@ -5452,7 +5505,7 @@ export type RdockSwarmProvider = {
      * Also read `traefik.*` labels (supported subset).
      */
     traefik_labels?: boolean;
-    [key: string]: unknown | RdockEndpoint | RdockSwarmEndpointMode | boolean | string | null | RdockDuration | Array<string> | undefined;
+    [key: string]: unknown | boolean | RdockEndpoint | RdockSwarmEndpointMode | string | null | RdockDuration | Array<string> | undefined;
 };
 
 /**

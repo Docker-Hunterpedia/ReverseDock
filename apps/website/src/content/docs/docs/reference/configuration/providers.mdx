@@ -17,6 +17,12 @@ Dynamic configuration sources (file, Docker, Swarm, Kubernetes).
 
 Docker containers and their labels.
 
+### `providers.docker.allow_local_backends`
+
+**Type:** `boolean` · **Default:** `false`
+
+Let labels name a backend or a middleware URL on the proxy's own machine (loopback, `localhost`) or a link-local address (cloud metadata services). Off by default: a container could otherwise publish ReverseDock's admin listener or other local services.
+
 ### `providers.docker.endpoint`
 
 **Type:** [`Endpoint`](/docs/reference/configuration/#endpoint) · **Default:** `unix:///var/run/docker.sock`
@@ -218,6 +224,12 @@ Namespaces whose objects are watched; all namespaces when empty. Cluster-scoped 
 **Type:** object
 
 Docker Swarm services and their `deploy.labels`.
+
+### `providers.swarm.allow_local_backends`
+
+**Type:** `boolean` · **Default:** `false`
+
+Let labels name a backend or a middleware URL on the proxy's own machine (loopback, `localhost`) or a link-local address (cloud metadata services). Off by default: a service could otherwise publish ReverseDock's admin listener or other local services.
 
 ### `providers.swarm.endpoint`
 

@@ -128,6 +128,8 @@ pub fn compile(config: &Config, env: &CompileEnv<'_>) -> Compiled {
         listeners,
         client_ip: client_ip_policy(config, env.cloudflare),
         limits: config.security.limits,
+        ambiguous_paths: config.security.paths.ambiguous,
+        encoded_separators: config.security.paths.encoded_separators,
         access_log: access_log(config, env.previous),
         certificates: index,
         listener_certificates,
@@ -900,6 +902,13 @@ fn check_label_root(
     } else {
         return Ok(());
     };
+    // A link out of the root would serve any file the process can read: whoever writes into
+    // the root (the container) decides where it points.
+    if st.symlinks == rdock_model::middleware::SymlinkPolicy::All {
+        return Err(
+            "`symlinks: all` follows links out of the directory, so labels cannot set it; use `within_root` (or define the middleware in the configuration file)"
+            .to_owned());
+    }
     let root = std::fs::canonicalize(&st.root)
         .map_err(|e| format!("cannot read `{}`: {e}", st.root.display()))?;
     let inside = allowed
@@ -1571,5 +1580,28 @@ mod tests {
         assert!(!check(&swarm, "docs@swarm", &other));
         // The file's own middlewares are the operator's and are not restricted.
         assert!(check(&with_roots(&[]), "docs", &other));
+    }
+
+    #[test]
+    fn label_middlewares_cannot_follow_links_out_of_their_root() {
+        let base = tempfile::tempdir().unwrap();
+        let sites = base.path().join("sites");
+        std::fs::create_dir_all(sites.join("app")).unwrap();
+        let allowed = with_roots(&[&sites]);
+        let with = |symlinks: &str| -> Middleware {
+            serde_json::from_value(serde_json::json!({
+                "type": "static", "root": sites.join("app"), "symlinks": symlinks
+            }))
+            .unwrap()
+        };
+        let err = check_label_root(&allowed, "app@docker", &with("all")).unwrap_err();
+        assert!(
+            err.contains("`symlinks: all`") && err.contains("within_root"),
+            "{err}"
+        );
+        assert!(check_label_root(&allowed, "app@docker", &with("within_root")).is_ok());
+        assert!(check_label_root(&allowed, "app@docker", &with("none")).is_ok());
+        // The file's own middleware may.
+        assert!(check_label_root(&allowed, "app", &with("all")).is_ok());
     }
 }

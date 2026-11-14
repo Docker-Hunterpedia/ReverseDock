@@ -114,7 +114,10 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
         "backends" | "split" => Err(format!(
             "`{field}` cannot be set from labels; the container is the backend"
         )),
-        _ => service.tree.set(field, scalar(value)),
+        _ => {
+            no_file(field)?;
+            service.tree.set(field, scalar(value))
+        }
     }
 }
 
@@ -181,13 +184,20 @@ fn udp_service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Resul
     }
 }
 
-fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
+/// Refuses a field that names a file on the proxy's host (`file`, `openapi`, `*_file`, such
+/// as `users_file`, `jwks_file`, `session.key_file` or a service's `tls.key_file`).
+fn no_file(field: &str) -> Result<(), String> {
     let last = field.rsplit('.').next().unwrap_or(field);
-    if FILE_FIELDS.contains(&last) {
+    if FILE_FIELDS.contains(&last) || last == "openapi" || last.ends_with("_file") {
         return Err(format!(
             "`{last}` cannot be set from labels: a container must not name files on the proxy's host"
         ));
     }
+    Ok(())
+}
+
+fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
+    no_file(field)?;
     let value = if field == "type" {
         Value::String(value.to_owned())
     } else {

@@ -247,6 +247,8 @@ struct Stream {
     receiver: broadcast::Receiver<Arc<Entry>>,
     pending: VecDeque<Event>,
     filter: Filter,
+    /// Whether the caller may read admin (audit) records: unscoped administrators only.
+    audit: bool,
     checked: Instant,
     credentials: (Method, HeaderMap, Option<Transport>, Option<Peer>),
     watching: Watching,
@@ -263,7 +265,9 @@ impl Stream {
             let recheck_at = self.checked + RECHECK;
             tokio::select! {
                 received = self.receiver.recv() => match received {
-                    Ok(entry) if self.filter.keeps(&entry) => return Some(event(&entry)),
+                    Ok(entry) if keeps(&self.filter, self.audit, &entry) => {
+                        return Some(event(&entry));
+                    }
                     Ok(_) => {}
                     Err(broadcast::error::RecvError::Lagged(missed)) => {
                         self.watching.0.lagged.fetch_add(missed, Ordering::Relaxed);
@@ -273,16 +277,28 @@ impl Stream {
                 },
                 () = tokio::time::sleep_until(recheck_at.into()) => {
                     let (method, headers, transport, peer) = &self.credentials;
-                    let still = identify(&self.state, method, headers, *transport, *peer)
-                        .is_ok_and(|caller| need(&caller, Access::Viewer).is_ok());
-                    if !still {
-                        return None;
-                    }
+                    let caller = identify(&self.state, method, headers, *transport, *peer)
+                        .ok()
+                        .filter(|caller| need(caller, Access::Viewer).is_ok());
+                    let caller = caller?;
+                    self.audit = reads_audit(&caller);
                     self.checked = Instant::now();
                 }
             }
         }
     }
+}
+
+/// Whether `caller` may read admin records (the audit log as it is written): only
+/// administrators read the audit log (ADR-0024), and a tenant's caller only its own records,
+/// which the stream cannot tell apart.
+fn reads_audit(caller: &Caller) -> bool {
+    caller.access() >= Access::Admin && caller.scope().is_none()
+}
+
+/// Whether a stream keeps `entry`: its filter, and admin records only for [`reads_audit`].
+fn keeps(filter: &Filter, audit: bool, entry: &Entry) -> bool {
+    (audit || entry.value["type"] != "admin") && filter.keeps(entry)
 }
 
 fn last_event_id(headers: &HeaderMap) -> Option<u64> {
@@ -313,11 +329,17 @@ fn open(
         );
     };
     let receiver = hub.sender.subscribe();
+    let audit = reads_audit(caller);
     let mut pending = VecDeque::new();
     if let Some(id) = last_event_id(&request.1) {
         match hub.after(id) {
             Some(entries) => {
-                pending.extend(entries.iter().filter(|e| filter.keeps(e)).map(|e| event(e)));
+                pending.extend(
+                    entries
+                        .iter()
+                        .filter(|e| keeps(&filter, audit, e))
+                        .map(|e| event(e)),
+                );
             }
             None => pending.push_back(
                 Event::default()
@@ -326,11 +348,19 @@ fn open(
             ),
         }
     }
+    // The stream's rechecks must not count as activity: an open tab would otherwise keep an
+    // idle session alive past its idle timeout.
+    let mut request = request;
+    request.1.insert(
+        crate::sessions::BACKGROUND_HEADER,
+        HeaderValue::from_static("1"),
+    );
     let stream = Stream {
         state: state.clone(),
         receiver,
         pending,
         filter,
+        audit,
         checked: Instant::now(),
         credentials: request,
         watching: hub.watch(),
@@ -425,6 +455,28 @@ mod tests {
             text: value.to_string(),
             value,
         }
+    }
+
+    #[test]
+    fn admin_records_reach_administrators_only() {
+        let record = entry(
+            1,
+            serde_json::json!({ "type": "admin", "action": "user.create", "actor": "ann" }),
+        );
+        let reload = entry(2, serde_json::json!({ "type": "reload" }));
+        let all = Filter::default();
+        assert!(
+            !keeps(&all, false, &record),
+            "a viewer or operator never sees it"
+        );
+        assert!(keeps(&all, false, &reload));
+        assert!(keeps(&all, true, &record));
+        let only_admin: Filter =
+            serde_json::from_value(serde_json::json!({ "type": "admin" })).unwrap();
+        assert!(
+            !keeps(&only_admin, false, &record),
+            "not by asking for the type"
+        );
     }
 
     #[test]

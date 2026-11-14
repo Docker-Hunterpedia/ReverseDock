@@ -116,7 +116,14 @@ impl Middleware for Cors {
     }
 
     async fn response(&self, resp: &mut ResponseHeader, cx: &mut Context) {
+        // With a list of origins the answer depends on `Origin` whether or not this one is
+        // allowed, so a shared cache in front must key on it (Fetch standard, "CORS protocol
+        // and HTTP caches").
+        let varies = !self.origins.is_empty();
         let Some(origin) = cx.cors_origin.clone() else {
+            if varies {
+                let _ = resp.append_header(http::header::VARY, HeaderValue::from_static("Origin"));
+            }
             return;
         };
         let wildcard = origin.as_bytes() == b"*";
@@ -130,7 +137,7 @@ impl Middleware for Cors {
         if let Some(expose) = &self.expose {
             let _ = resp.insert_header(http::header::ACCESS_CONTROL_EXPOSE_HEADERS, expose.clone());
         }
-        if !wildcard {
+        if !wildcard || varies {
             let _ = resp.append_header(http::header::VARY, HeaderValue::from_static("Origin"));
         }
     }
@@ -151,6 +158,30 @@ mod tests {
             max_age: Some(rdock_model::values::Duration::from_secs(600)),
         })
         .unwrap()
+    }
+
+    #[test]
+    fn vary_origin_is_sent_whenever_the_answer_depends_on_it() {
+        let mw = cors(&["https://app.example.com"], false);
+        for origin in [None, Some("https://evil.example")] {
+            let headers: Vec<(&str, &str)> =
+                origin.map(|o| vec![("origin", o)]).unwrap_or_default();
+            let mut req = request("GET", "/", &headers);
+            let mut c = cx();
+            assert_eq!(block_on(mw.request(&mut req, &mut c)), Flow::Next);
+            let mut resp = ResponseHeader::build(200, None).unwrap();
+            block_on(mw.response(&mut resp, &mut c));
+            assert_eq!(header(&resp.headers, "vary"), Some("Origin"), "{origin:?}");
+            assert_eq!(header(&resp.headers, "access-control-allow-origin"), None);
+        }
+        // Only `*`: the same answer for everyone, no `Vary`.
+        let any = cors(&["*"], false);
+        let mut req = request("GET", "/", &[("origin", "https://x.example")]);
+        let mut c = cx();
+        assert_eq!(block_on(any.request(&mut req, &mut c)), Flow::Next);
+        let mut resp = ResponseHeader::build(200, None).unwrap();
+        block_on(any.response(&mut resp, &mut c));
+        assert_eq!(header(&resp.headers, "vary"), None);
     }
 
     #[test]

@@ -282,6 +282,10 @@
           "max_uri_bytes": "8KiB",
           "upstream_idle_connections": 4096
         },
+        "paths": {
+          "ambiguous": "reject",
+          "encoded_separators": "allow"
+        },
         "trusted_proxies": []
       }
     },
@@ -1920,6 +1924,21 @@
         "^x-": {}
       }
     },
+    "AmbiguousPaths": {
+      "description": "The `security.paths.ambiguous` choices.",
+      "oneOf": [
+        {
+          "description": "Answer `400`.",
+          "type": "string",
+          "const": "reject"
+        },
+        {
+          "description": "Route and forward them as written.",
+          "type": "string",
+          "const": "forward"
+        }
+      ]
+    },
     "Anonymous": {
       "description": "What an authenticating middleware does with a request that carries no credential.",
       "oneOf": [
@@ -3138,6 +3157,11 @@
       "description": "Docker provider.",
       "type": "object",
       "properties": {
+        "allow_local_backends": {
+          "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`) or a link-local address (cloud metadata services). Off by default: a\ncontainer could otherwise publish ReverseDock's admin listener or other local services.",
+          "type": "boolean",
+          "default": false
+        },
         "endpoint": {
           "description": "Docker Engine API endpoint. Read-only access is enough; a socket proxy is recommended.",
           "$ref": "#/$defs/Endpoint",
@@ -3212,6 +3236,21 @@
         "1h30m"
       ],
       "pattern": "^([0-9]+(ms|s|m|h|d))+$"
+    },
+    "EncodedSeparators": {
+      "description": "The `security.paths.encoded_separators` choices.",
+      "oneOf": [
+        {
+          "description": "Route and forward them as sent.",
+          "type": "string",
+          "const": "allow"
+        },
+        {
+          "description": "Answer `400`.",
+          "type": "string",
+          "const": "reject"
+        }
+      ]
     },
     "Endpoint": {
       "type": "string",
@@ -8085,6 +8124,26 @@
         "schema"
       ]
     },
+    "PathSecurity": {
+      "description": "What rdock does with request paths whose meaning differs between servers.",
+      "type": "object",
+      "properties": {
+        "ambiguous": {
+          "description": "Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`),\na `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that\nappears once an encoded `/` or `\\` (`%2F`, `%5C`) or a raw `\\` is read as a separator\n(`..%2Fadmin`, `public\\..\\admin`). `reject` (default) answers `400`; `forward` routes\nand forwards them as written.",
+          "$ref": "#/$defs/AmbiguousPaths",
+          "default": "reject"
+        },
+        "encoded_separators": {
+          "description": "Paths with an encoded `/` or `\\` (`%2F`, `%5C`) or a raw `\\` that form no dot segment,\nsuch as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and\nforwards them as sent; `reject` answers `400` for every such path, for backends that\ndecode separators before their own access checks.",
+          "$ref": "#/$defs/EncodedSeparators",
+          "default": "allow"
+        }
+      },
+      "additionalProperties": false,
+      "patternProperties": {
+        "^x-": {}
+      }
+    },
     "PriorityClass": {
       "description": "A route's class for load shedding by `admission` (H-LB-04).",
       "oneOf": [
@@ -9022,6 +9081,14 @@
             "upstream_idle_connections": 4096
           }
         },
+        "paths": {
+          "description": "Request paths that backends may read differently from the router.",
+          "$ref": "#/$defs/PathSecurity",
+          "default": {
+            "ambiguous": "reject",
+            "encoded_separators": "allow"
+          }
+        },
         "trusted_proxies": {
           "description": "Proxies whose forwarded headers are believed. Headers from anyone else are replaced.",
           "type": "array",
@@ -9645,6 +9712,11 @@
       "description": "Docker Swarm provider.",
       "type": "object",
       "properties": {
+        "allow_local_backends": {
+          "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`) or a link-local address (cloud metadata services). Off by default: a\nservice could otherwise publish ReverseDock's admin listener or other local services.",
+          "type": "boolean",
+          "default": false
+        },
         "endpoint": {
           "description": "Docker Engine API endpoint of a manager node.",
           "$ref": "#/$defs/Endpoint",

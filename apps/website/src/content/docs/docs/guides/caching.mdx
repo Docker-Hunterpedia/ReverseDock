@@ -142,7 +142,7 @@ Each of those defaults can be turned around for a route, explicitly, with its ri
 | `statuses` | the list above | Your own list, for example to add `302`. `206` and `304` are refused. |
 | `set_cookie` | `refuse` | `strip` stores such responses without `Set-Cookie` (the client that filled the cache still gets its cookie). Risk: a page that depends on the cookie is shared. |
 | `authorization` | `refuse` | `store` stores responses to requests with `Authorization` like any other. Risk: one credential's answer served to another. |
-| `request_directives` | `honour` | `ignore`: clients cannot force origin fetches with `no-cache` or `max-age=0`. `only-if-cached` is always honoured. |
+| `request_directives` | `honour` | `ignore`: clients cannot force origin fetches with `no-cache` or `max-age=0`. `only-if-cached` is always honoured. Any client can also invalidate a URL with an unsafe method its route allows (RFC 9111 §4.4). |
 | `lock.enabled` | `true` | `false`: every miss goes to the origin, even for the same key at once. |
 | `tags.keep` | `false` | `true` passes the tag headers on to clients. |
 | `cache_status` | `true` | `false` hides `Cache-Status`. |
@@ -161,9 +161,11 @@ answers from the store or with `504 Gateway Timeout`, and never contacts the ori
 
 ## The key
 
-A stored response is selected by the store, the **route**, the scheme, the host (lower case,
-without the port), the path as it is forwarded (after normalisation and the route's rewrites),
-the query string and the method (`HEAD` shares `GET`'s). The components are length-framed, so
+A stored response is selected by the store, the **route**, the scheme, the authority as the
+client sent it (lower case, with its port and any trailing dot: the backend sees it and may
+build links from it), the `X-Forwarded-Proto`, `-Host` and `-Port` values the backend gets,
+the path as it is forwarded (after normalisation and the route's rewrites), the query string
+and the method (`HEAD` shares `GET`'s). The components are length-framed, so
 no two different requests can produce the same key. Two routes that share a store never see
 each other's objects.
 

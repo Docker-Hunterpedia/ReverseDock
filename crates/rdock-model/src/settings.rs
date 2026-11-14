@@ -18,6 +18,47 @@ pub struct Security {
     pub client_ip_header: ClientIpHeader,
     /// Request size limits.
     pub limits: Limits,
+    /// Request paths that backends may read differently from the router.
+    pub paths: PathSecurity,
+}
+
+/// What rdock does with request paths whose meaning differs between servers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(default)]
+pub struct PathSecurity {
+    /// Paths a backend may resolve outside the path that was routed: an encoded NUL (`%00`),
+    /// a `.` or `..` segment with parameters (`..;`, `..%3B`), or a `.` or `..` segment that
+    /// appears once an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` is read as a separator
+    /// (`..%2Fadmin`, `public\..\admin`). `reject` (default) answers `400`; `forward` routes
+    /// and forwards them as written.
+    pub ambiguous: AmbiguousPaths,
+    /// Paths with an encoded `/` or `\` (`%2F`, `%5C`) or a raw `\` that form no dot segment,
+    /// such as `/projects/group%2Fproject` or `/@scope%2Fname`. `allow` (default) routes and
+    /// forwards them as sent; `reject` answers `400` for every such path, for backends that
+    /// decode separators before their own access checks.
+    pub encoded_separators: EncodedSeparators,
+}
+
+/// The `security.paths.encoded_separators` choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum EncodedSeparators {
+    /// Route and forward them as sent.
+    #[default]
+    Allow,
+    /// Answer `400`.
+    Reject,
+}
+
+/// The `security.paths.ambiguous` choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Default, Serialize, Deserialize, JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum AmbiguousPaths {
+    /// Answer `400`.
+    #[default]
+    Reject,
+    /// Route and forward them as written.
+    Forward,
 }
 
 /// Sources of the client IP.

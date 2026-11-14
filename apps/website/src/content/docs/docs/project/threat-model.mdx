@@ -57,21 +57,21 @@ The data plane never calls the admin side or a provider while serving a request.
 
 ## Threats and mitigations, by surface
 
-- **HTTP parsing**: request smuggling (conflicting lengths, obfuscated `Transfer-Encoding`, bare LF, the upgrade sequence), header syntax, path encoding that routes one way and forwards another, oversized and slow requests. Pingora's parser plus rdock's own checks; the smuggling catalogue is replayed end to end and a differential fuzz target checks that what is forwarded is exactly one request.
+- **HTTP parsing**: request smuggling (conflicting lengths, obfuscated `Transfer-Encoding`, bare LF, the upgrade sequence), header syntax (including `Host` values that are not host names), path encoding that routes one way and forwards another (spellings that resolve outside the routed path, such as `/..;/` and `..%2F`, are refused by default; other encoded separators only on request), bodies hidden behind an `Upgrade` header, `Connection` nominations of headers rdock sets, oversized and slow requests. Pingora's parser plus rdock's own checks; the smuggling catalogue is replayed end to end and a differential fuzz target checks that what is forwarded is exactly one request.
 - **HTTP/2**: reset floods and slow readers are bounded by per-listener limits and tested; CONTINUATION and HPACK floods rely on the `h2` crate and have no test of ours.
 - **TLS**: rdock's own ClientHello parser is bounded and fuzzed; session tickets never resume across listeners of different client-authentication classes; ACME validation certificates are never served to ordinary clients.
 - **Forwarding**: client addresses and PROXY-protocol headers are trusted only from configured sources; client copies of identity headers are removed before authentication middlewares set theirs.
 - **Backend responses**: connection-specific headers are removed, a backend's `Retry-After` pause is capped, and when no backend is available rdock routes in panic mode instead of failing.
-- **Providers**: containers are not exposed by default; labels cannot read secrets; Kubernetes cross-namespace references need a `ReferenceGrant`.
-- **Admin surface**: no default credentials, rate-limited logins that hide which users exist, TOTP codes usable once, roles on every operation, CSRF protection, a `Host` allow-list, secrets masked in every answer, conditional configuration writes, limits that keep admin floods away from the data plane, and an audit record reserved before every change.
-- **ACME**: hostile `Retry-After` values and renewal windows are clamped, stored records are integrity-checked, keys are written `0600`, DNS hooks run without a shell, and failures back off up to a day.
+- **Providers**: containers are not exposed by default; labels cannot read secrets or name files, cannot reach the proxy's own machine (sockets, loopback, link-local) without an opt-in, and cannot follow links out of `static_roots`; Kubernetes cross-namespace references need a `ReferenceGrant`.
+- **Admin surface**: no default credentials, rate-limited logins that hide which users exist, TOTP codes usable once, roles on every operation, CSRF protection, a `Host` allow-list, secrets masked in every answer and kept only in unchanged objects, operators kept from objects that act with the process's authority (sockets, files, references), audit records on the events stream for admins only, conditional configuration writes, limits that keep admin floods away from the data plane, an audit record reserved before every change, and refusals of unknown callers coalesced so they cannot fill the disk.
+- **ACME**: hostile `Retry-After` values and renewal windows are clamped, stored records are integrity-checked, keys are written `0600`, DNS hooks run without a shell, and failures back off up to a day, also when a name leaves the configuration and comes back.
 - **Cluster**: join tokens are single-use with an expiry, bundles are checked against their cluster, revision and SHA-256 digest, and store writes are fenced by leases.
 
 ## Risks that remain
 
 - An I/O error other than lack of space between an admin change and its audit record can lose that record; the loss is counted and the next change writes a gap record first.
-- The audit chain is not keyed: whoever can write its files can rewrite the tail. Forwarding to a remote syslog server over TLS is the tamper-resistant copy.
-- Once a container is exposed, its labels can name any hostname and cause certificate orders for it. Keep `expose_by_default` off on hosts with untrusted containers and use a socket proxy.
+- The audit chain is not keyed: whoever can write its files can rewrite or cut the tail, and `rdock audit verify` cannot tell. Forwarding to a remote syslog server over TLS is the tamper-resistant copy.
+- Once a container is exposed, its labels can name any hostname and cause certificate orders for it, and a label URL whose DNS name resolves to the proxy's own machine is not caught. Keep `expose_by_default` off on hosts with untrusted containers and use a socket proxy.
 - Client certificates are not checked for revocation; use short-lived certificates.
 - Stateless OIDC sessions cannot be ended early; keep their lifetime short.
 - A compromised control plane controls every data plane.

@@ -20,7 +20,7 @@ pub(crate) const MAX_KEYS: usize = 65_536;
 /// requests share one bucket (Traefik does the same for `requestHeaderName`).
 pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> Vec<u8> {
     match key {
-        RateLimitKey::ClientIp => cx.client_ip.to_string().into_bytes(),
+        RateLimitKey::ClientIp => client_ip_key(cx.client_ip).into_bytes(),
         RateLimitKey::Route => cx.route.as_bytes().to_vec(),
         RateLimitKey::Header(name) => req
             .headers
@@ -42,7 +42,7 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
         // Requests without a consumer are counted per client IP, apart from every consumer.
         RateLimitKey::Consumer => match &cx.consumer {
             Some(consumer) => [b"c:", consumer.key().as_bytes()].concat(),
-            None => format!("ip:{}", cx.client_ip).into_bytes(),
+            None => crate::abuse::client_key(cx.client_ip).into_bytes(),
         },
         // A consumer's primary group; a consumer without one on its own, no consumer per IP.
         RateLimitKey::Group => match &cx.consumer {
@@ -50,14 +50,22 @@ pub(crate) fn key_of(key: &RateLimitKey, req: &RequestHeader, cx: &Context) -> V
                 Some(group) => [b"g:", group.as_bytes()].concat(),
                 None => [b"c:", consumer.key().as_bytes()].concat(),
             },
-            None => format!("ip:{}", cx.client_ip).into_bytes(),
+            None => crate::abuse::client_key(cx.client_ip).into_bytes(),
         },
         // Connections without a fingerprint are counted per client IP, apart from every JA4.
         RateLimitKey::Ja4 => match cx.fingerprint.as_ref().and_then(|f| f.ja4.as_deref()) {
             Some(ja4) => [b"j:", ja4.as_bytes()].concat(),
-            None => format!("ip:{}", cx.client_ip).into_bytes(),
+            None => crate::abuse::client_key(cx.client_ip).into_bytes(),
         },
     }
+}
+
+/// The client part of a key: an IPv4 address, or the /64 of an IPv6 address (one subscriber
+/// usually holds a whole /64, RFC 6177, so a key per address is evaded by changing address
+/// and evicts other clients' entries); IPv4-mapped IPv6 counts as IPv4.
+pub(crate) fn client_ip_key(ip: std::net::IpAddr) -> String {
+    let key = crate::abuse::client_key(ip);
+    key.strip_prefix("ip:").map_or(key.clone(), str::to_owned)
 }
 
 /// The value of cookie `name`.
@@ -172,6 +180,40 @@ impl Throttle {
 mod tests {
     use super::*;
     use crate::test_support::{block_on, cx, request};
+
+    #[test]
+    fn ipv6_clients_are_keyed_by_their_64() {
+        let req = request("GET", "/", &[]);
+        let mut a = cx();
+        a.client_ip = "2001:db8:1:2::1".parse().unwrap();
+        let mut b = cx();
+        b.client_ip = "2001:db8:1:2:ffff::9".parse().unwrap();
+        let mut other = cx();
+        other.client_ip = "2001:db8:1:3::1".parse().unwrap();
+        for kind in [
+            RateLimitKey::ClientIp,
+            RateLimitKey::Consumer,
+            RateLimitKey::Group,
+            RateLimitKey::Ja4,
+        ] {
+            assert_eq!(key_of(&kind, &req, &a), key_of(&kind, &req, &b), "{kind:?}");
+            assert_ne!(
+                key_of(&kind, &req, &a),
+                key_of(&kind, &req, &other),
+                "{kind:?}"
+            );
+        }
+        assert_eq!(
+            key_of(&RateLimitKey::ClientIp, &req, &a),
+            b"2001:db8:1:2::/64"
+        );
+        let mut mapped = cx();
+        mapped.client_ip = "::ffff:192.0.2.10".parse().unwrap();
+        assert_eq!(
+            key_of(&RateLimitKey::ClientIp, &req, &mapped),
+            b"192.0.2.10"
+        );
+    }
 
     #[test]
     fn keys_cover_every_kind() {
