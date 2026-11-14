@@ -44,7 +44,7 @@ const cell = (text: string) =>
     .replaceAll('|', '\\|')
     .replace(/\n/g, ' ');
 const where = (f: Feature) =>
-  f.locations.length === 0 ? 'outside the configuration file' : f.locations.map((l) => `\`${l.replace('*', '<name>')}\``).join(', ');
+  f.locations.length === 0 ? 'outside the configuration file' : f.locations.map((l) => `\`${l.replaceAll('*', '<name>')}\``).join(', ');
 
 function table(level: Feature['level']): string {
   const rows = features.filter((f) => f.level === level);
