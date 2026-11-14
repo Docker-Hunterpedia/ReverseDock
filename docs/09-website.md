@@ -72,7 +72,7 @@ The sidebar groups pages by what the reader wants to do. Pages for features that
 4. Cutover procedure: run in parallel on another port, compare responses, switch, roll back
 5. Checklist
 
-Guides: **from NGINX** (directives → keys, `location` matching → rules) · **from Traefik** (file provider now; labels with `rdock migrate traefik` in v0.2) · **from Caddy** (Caddyfile → YAML) · **from Nginx Proxy Manager** (UI hosts → YAML) · later from HAProxy.
+Guides: **from NGINX** (directives → keys, `location` matching → rules) · **from Traefik** (file provider, labels and `rdock migrate traefik`) · **from Caddy** (adapted JSON → YAML with `rdock migrate caddy`) · **from ingress-nginx** · later (not written): from Nginx Proxy Manager (UI hosts → YAML) and from HAProxy.
 
 **Reference** (generated pages are marked ⚙)
 - ⚙ Configuration: one page per top-level section, with types, defaults, examples and "since vX.Y"

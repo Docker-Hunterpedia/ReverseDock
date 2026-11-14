@@ -5,7 +5,7 @@ sidebar:
   order: 3
 ---
 
-ReverseDock keeps serving when the things around it fail. This page says what happens in each case, the recovery bounds that the chaos suite proves on every pull request, and the metrics and alerts that tell you about it.
+ReverseDock keeps serving when the things around it fail. This page says what happens in each case, the recovery bounds that the chaos suite asserts, and the metrics and alerts that tell you about it. The suite's rootless variants run in the project's required checks; the variants that need a real tmpfs, Docker or Pebble run in a separate job that is not a required check and has not run yet.
 
 The chaos suite drives steady client load through the proxy for the whole of each scenario, injects the fault, heals it, and requires **zero failed requests**, the stated recovery bound, a consistent data directory and an intact audit chain (`rdock audit verify`). Its tests are in `crates/rdock/tests/chaos_*.rs`; see [Stability and support](/docs/project/stability/) for what the project promises.
 
@@ -38,7 +38,7 @@ Request handling never waits for or depends on a write. A full disk degrades per
 
 - **Requests**: served. The disk cache serves responses uncached while it cannot store them. A request body that must be held and cannot be spooled stays in memory up to 1 MiB. Logs that cannot be written are dropped.
 - **Configuration API writes and rollbacks**: refused with `507 Insufficient Storage` when their history entry or stored copy cannot be written. Nothing changes, in memory or on disk. A reload of the configuration file still applies, because the file is its own stored copy.
-- **Admin changes**: every call that changes something first reserves room for its audit record. Without room it is refused with `507` before it changes anything, so no change is ever made unaudited. Logging in, logging out and every read-only call keep working, so you can still see what is going on.
+- **Admin changes**: every call that changes something first reserves room for its audit record. Without room it is refused with `507` before it changes anything, so no change is made unaudited. On Linux the room is reserved with `fallocate`; on other systems (macOS, for development) only the free-space check applies. Logging in, logging out and every read-only call keep working, so you can still see what is going on.
 - **Certificates**: no ACME order is placed while the storage directory has less than 1 MiB free, because the certificate could not be stored and the order would use up the CA's rate limits. The current certificate keeps serving and the order is retried with the backoff.
 - **Quota counters and ban lists** stay in memory and are written when there is room again.
 - **Recovery**: when space returns, writes succeed again within seconds, without a restart. A restart on a full disk starts on what is stored.
@@ -79,3 +79,5 @@ A rejected configuration changes nothing: the previous one keeps serving. Rollba
 | `rdock_config_reloads_total` | Reloads, applied and rejected |
 
 Alerts: `disk`, `certificates`, `backends` and `config` are on by default; send them to a channel as [Alerts](/docs/guides/alerts/) describes. `rdock status` shows the providers' state, the certificates and the data directory's free space.
+
+**Not tested:** a cluster rollout that is abandoned under load, and a CA that only the instance holding the certificate lease cannot reach.

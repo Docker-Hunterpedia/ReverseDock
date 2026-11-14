@@ -450,7 +450,7 @@ ReverseDock has no separate prefix and regex passes. Every route has one priorit
 | `location ~ \.php$` | ``PathRegexp(`\.php$`)``; unanchored, so add `^` or `$` as needed |
 | `location ~* \.(png\|jpg)$` | ``PathRegexp(`(?i)\.(png\|jpg)$`)`` |
 | `server_name a.example.com b.example.com` | ``Host(`a.example.com`) \|\| Host(`b.example.com`)`` |
-| `server_name *.example.com` | ``Host(`*.example.com`)`` (exactly one label; on HTTPS the route names its certificate with `tls: { certificate: <name> }` until automatic certificates arrive) |
+| `server_name *.example.com` | ``Host(`*.example.com`)`` (exactly one label; on HTTPS the route gets an automatic certificate for each host, or `tls: { certificate: <name> }` names one of yours; a wildcard certificate needs [DNS-01](/docs/guides/dns-challenge/)) |
 | `default_server` | a catch-all route such as ``PathPrefix(`/`)`` with `priority: 1` (on HTTPS also `tls: { certificate: <name> }`), and `defaults.certificate` for TLS clients whose name no certificate covers |
 
 Because a regex location does not automatically win over a prefix in ReverseDock, give routes that must win an explicit `priority`. Regular expressions use the Rust `regex` syntax, which has no look-around and no back-references. See [Routing and priority](/docs/concepts/routing-and-priority/) and [Rules](/docs/reference/rules/).
@@ -487,7 +487,7 @@ Set `max_body` on the route that needs a different limit, or `security.limits.ma
 - **Strict requests:** HTTP/1.1 requests without `Host` get 400, `Expect` values other than `100-continue` get 417, and bare-LF line endings in request headers close the connection.
 - **No variables or `if`:** conditions are matchers in the route's `match` (`Header`, `Query`, `Method`, `ClientIP`), and per-request values come from the middlewares.
 - **Reloads:** ReverseDock reloads when `rdock.yaml` or a file it refers to changes. A configuration with errors is rejected and the running one stays; at start, a broken file falls back to the last-known-good copy. See [Reloads](/docs/guides/reloads/).
-- **Settings for later versions:** `rdock validate` warns about settings planned for a later version, such as health checks or `least_conn`, and `rdock run` refuses them.
+- **Settings not implemented yet:** `rdock validate` warns about settings planned for a later version, and `rdock run` refuses them. The list is short; the [roadmap](/docs/project/roadmap/) names them.
 
 ## Cutover
 

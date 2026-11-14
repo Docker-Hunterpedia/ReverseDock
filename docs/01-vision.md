@@ -20,7 +20,7 @@ Nobody ships, in one free binary: **Traefik's discovery + Caddy's HTTPS + NGINX'
 
 > *ReverseDock is an open-source, Rust-powered reverse proxy that combines NGINX's flexibility, Traefik's service discovery, Caddy's automatic HTTPS, and HAProxy's reliability — built on Cloudflare Pingora, with a Cloudflare-style dashboard, and free for everyone.*
 
-The developer experience is as important as raw performance. A user should be able to go from `docker compose up` to a valid HTTPS site with **one label**.
+The developer experience is as important as raw performance. A user should be able to go from `docker compose up` to a valid HTTPS site with **a label or two** (`rdock.host`, and `rdock.enable=true` to opt the container in).
 
 ## 3. Audiences
 
@@ -71,8 +71,10 @@ Every feature is designed so the first audience never pays (in complexity) for t
 ## 7. What "done" means for 1.0
 
 - A Traefik-on-Docker user switches by changing the image, removing Traefik's flags (or running `rdock migrate traefik --static`) and keeping their labels (documented subset, conformance-tested: translation fixtures, a Compose corpus with golden output, and a differential test against a pinned Traefik; [ADR-0033](decisions/0033-v1-0-stable.md)).
-- Fresh VPS, DNS pointed, `docker compose up` → valid HTTPS in under 60 seconds with one label.
+- Fresh VPS, DNS pointed, `docker compose up` → valid HTTPS in under 60 seconds with two labels (`rdock.enable=true`, because containers are opt-in, and `rdock.host`; [ADR-0033](decisions/0033-v1-0-stable.md)).
 - Kubernetes Gateway API conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC` and `GATEWAY-TLS` pass (TCP/UDP route tests as they leave provisional status).
 - Benchmarks vs NGINX, Traefik, Caddy and HAProxy published with identical hardware, TLS settings and request mix.
 - Independent security review of HTTP parsing, TLS/ACME and the admin surface.
 - Chaos suite passes: control plane down, Docker socket down, CA down, disk full, backend flapping, config rollback under load.
+
+Where each criterion stands is in the v1.0 block of the [roadmap](07-roadmap.md). The final 1.0 is not tagged until the independent review is done; until then releases are `1.0.0-rc.N`.

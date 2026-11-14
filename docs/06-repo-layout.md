@@ -8,13 +8,12 @@ reversedock/
 ├── Cargo.lock
 ├── rust-toolchain.toml             # pinned toolchain (1.99.1) + clippy, rustfmt; bumped by PR
 ├── deny.toml                       # cargo-deny: licenses, advisories, bans, sources
-├── justfile                        # dev recipes: just dev | test | e2e | lint | dashboard | bench | release
+├── justfile                        # dev recipes: just ci | test | clippy | fmt | schema | compat | chaos | docker | msrv | docs-check | website (`just --list` has all)
 ├── .github/
 │   ├── workflows/
-│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc), msrv, deny, docker; clients, dashboard; `terraform-provider` (v0.8: provider checks, CLI tests with Terraform and OpenTofu against a fake and a real rdock; not a required check); `waf-example` (v0.8: examples/waf/smoke.sh, the CRS WAF as an agent; not a required check); `openbao` (v0.8: the ignored `e2e_vault` test against OpenBao 2.7.2 in dev mode, pinned by digest, with a root token generated in the job; not a required check); `oidc-dex` (v0.8: the ignored `e2e_oidc` login test against Dex v2.46.1, pinned by digest, with a client secret and a password generated in the job; not a required check); `wasm` (v0.8: `just wasm`, clippy and the WASM tests with the experimental `wasm` feature, the example guest, MSRV with the feature; not a required check); `http3` (v0.9: `just http3`, clippy, the HTTP/3 unit and end-to-end tests and MSRV with the experimental `http3` feature, then `scripts/http3-curl.sh`, curl over HTTP/3 from a Debian image pinned by digest; not a required check); `chaos` (1.0: `just chaos`, the chaos suite with `RDOCK_CHAOS_DISK=tmpfs`, a real tmpfs filled until `ENOSPC` through passwordless sudo, plus the Docker-based `chaos.rs` (Toxiproxy), `e2e_docker` and `e2e_acme` (Pebble) and `e2e_cluster`; not a required check); `image-scan` (1.0: Grype on the built image, `.grype.yaml` for reviewed exceptions; not a required check); semgrep (fails on any finding; clean on 2026-11-14 and eligible to be required, which is the maintainer's decision)
-│   │   ├── dashboard.yml           # (M0+) pnpm lint/test/build, bundle-size budget
-│   │   ├── e2e.yml                 # (v0.1+) docker compose scenarios, Pebble ACME, toxiproxy
-│   │   ├── conformance.yml         # (v0.2+) traefik-label suite
+│   │   ├── ci.yml                  # docs (+ actionlint), dco, pr-title, rust (fmt, clippy, nextest, doc; the end-to-end, conformance and rootless chaos suites run here), msrv, deny, docker; clients, dashboard (pnpm lint/test/build, bundle-size budget, Playwright); `terraform-provider` (v0.8: provider checks, CLI tests with Terraform and OpenTofu against a fake and a real rdock; not a required check); `waf-example` (v0.8: examples/waf/smoke.sh, the CRS WAF as an agent; not a required check); `openbao` (v0.8: the ignored `e2e_vault` test against OpenBao 2.7.2 in dev mode, pinned by digest, with a root token generated in the job; not a required check); `oidc-dex` (v0.8: the ignored `e2e_oidc` login test against Dex v2.46.1, pinned by digest, with a client secret and a password generated in the job; not a required check); `wasm` (v0.8: `just wasm`, clippy and the WASM tests with the experimental `wasm` feature, the example guest, MSRV with the feature; not a required check); `http3` (v0.9: `just http3`, clippy, the HTTP/3 unit and end-to-end tests and MSRV with the experimental `http3` feature, then `scripts/http3-curl.sh`, curl over HTTP/3 from a Debian image pinned by digest; not a required check); `chaos` (1.0: `just chaos`, the chaos suite with `RDOCK_CHAOS_DISK=tmpfs`, a real tmpfs filled until `ENOSPC` through passwordless sudo, plus the Docker-based `chaos.rs` (Toxiproxy), `e2e_docker` and `e2e_acme` (Pebble) and `e2e_cluster`; not a required check); `image-scan` (1.0: Grype on the built image, `.grype.yaml` for reviewed exceptions; not a required check); semgrep (fails on any finding; clean on 2026-11-14 and eligible to be required, which is the maintainer's decision)
+│   │   ├── traefik-diff.yml        # (1.0) differential test of the documented Traefik label subset against a pinned Traefik v3.7.19 (`tests/conformance/traefik-diff`); not a required check; ran on 2026-11-14 (ADR-0033)
+│   │   ├── website.yml             # the website (`apps/website`): generated pages current, config snippets pass `rdock validate --strict`, status badges, links, types, axe; PRs touching the site, schema, CLI or changelog
 │   │   ├── kubernetes.yml          # (v0.7) chart lint/render/kubeconform and manifests in sync; Gateway API conformance on kind and Helm on k3s (both fail the workflow; passed 2026-11-11; not yet required checks; ADR-0029)
 │   │   ├── cache.yml               # (v0.8) `http-cache`: the public RFC 9111 suite http-tests/cache-tests (pinned by commit, Node.js 24) against the cache at safe defaults, gated by tests/conformance/http-cache/allowlist.json; on PRs touching the cache, weekly; passed its gate 2026-11-12; not a required check (ADR-0030)
 │   │   ├── fuzz.yml                # cargo-fuzz, weekly (30 min/target, corpus cached) + on parser changes (tests/fuzz)
@@ -62,16 +61,10 @@ reversedock/
 │       └── rdock-provider-api/
 ├── apps/
 │   ├── website/                    # reversedock.dev: Astro + Starlight, landing + docs (09-website.md, ADR-0017)
-│   └── dashboard/                  # Vite + React 19 + TypeScript + Tailwind v4 + shadcn/ui (pnpm)
-│       ├── src/
-│       │   ├── app/                # router, layout shell, providers
-│       │   ├── features/           # overview, routes, services, middlewares, certificates, listeners, providers, security, logs, metrics, config, settings
-│       │   ├── components/         # design-system components (Harbor UI)
-│       │   ├── api/                # generated from /api/openapi.json (openapi-typescript + openapi-fetch)
-│       │   ├── lib/                # utils, i18n (en, ar), formatters
-│       │   └── styles/             # tokens.css, globals.css
+│   └── dashboard/                  # Vite + React 19 + TypeScript + Tailwind v4 (pnpm)
+│       ├── src/                    # main.tsx, pages/, components/ (design-system components, Harbor UI), api/ (generated from /api/openapi.json), lib/ (api, stream, theme, status, metrics), styles.css
 │       ├── e2e/                    # Playwright
-│       ├── package.json · vite.config.ts · tsconfig.json · components.json
+│       ├── package.json · vite.config.ts · tsconfig.json · openapi-ts.config.ts
 │       └── dist/                   # build output (gitignored), embedded by rdock-admin
 ├── clients/
 │   ├── go/                         # generated Go client of the admin API (used by the Terraform provider)
@@ -92,7 +85,6 @@ reversedock/
 ├── examples/                       # runnable scenarios: config/, kubernetes/ (Gateway, HTTPRoute, GRPCRoute, TLSRoute, Ingress, cert-manager, secrets/), secrets/ (OpenBao Agent in Compose; examples that CI does not run), plugins/ (v0.8: header-rewrite, ip-blocklist, custom-rdock, template; workspace members, `publish = false`, tested by `rust`; wasm-header, the experimental WASM guest for `wasm32-wasip2`, outside the workspace with its own lock file, built and tested by `wasm`), waf/ (v0.8: CRS WAF as a `forward` agent in Compose, `smoke.sh` run by `waf-example`)
 ├── benchmarks/                     # scenarios/, configs for nginx/traefik/caddy/haproxy, run.sh, results/<version>/; perreq/ (v0.9: allocations, system calls and CPU time per request and the CPU-scaling mode, without Docker; a workspace member, `publish = false`), soak/hosted (v0.9: the soak without Docker, with binary upgrades), cpu-ladder.sh; (1.0) configs/tuned/ (each proxy's documented tuning), compose.pinned.yaml (cpusets for hosted runners), hosted_report.py with test_reports.py
 ├── tests/
-│   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # container fixtures + expected routing tables; coverage.json (generated from labels/coverage.rs)
 │   ├── conformance/traefik-compose/# (1.0) Compose corpus: input, case.json, expected.yaml and report.json of `rdock migrate traefik` (`just migrate-golden`)
 │   ├── conformance/caddy-json/     # (1.0) Caddy corpus: Caddyfile, adapted JSON, expected.yaml and report.json of `rdock migrate caddy` (`just caddy-corpus` re-adapts)
@@ -101,7 +93,7 @@ reversedock/
 │   ├── conformance/http-cache/     # (v0.8) harness for http-tests/cache-tests: rdock.yaml (the cache at safe defaults), summarize.mjs (the gate), allowlist.json (test id → reason), README
 │   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs or a follow-up PR from a run on the release tag
 │   ├── https-60s/                  # (1.0) the 60-second HTTPS proof: compose.ci.yaml (override of deploy/docker/examples/https with Pebble), pebble.json, run.sh (workflow `https-60s`)
-│   └── fuzz/                       # own cargo workspace: h1_framing (differential), rules_parser, config_loader, jwt_verify, clienthello, disk_cache_header, json_patch and oidc_cookie (v0.8), proxy_header (v0.6), tls_fingerprint and http3_request (v0.9), nginx_parser, and (v1.0) rules_eval, backend_response, acme_answers, admin_input, cluster_protocol, resp_reader, docker_labels, compose_interpolation, migrate_caddy
+│   └── fuzz/                       # own cargo workspace: 21 targets (list in 11-threat-model.md §8), each with seeds and a mutation smoke test run by `cargo test`; `fuzz.yml`
 ├── docs/                           # these documents (the engineering plan); the public docs live in apps/website
 ├── scripts/                        # xlsx2md.py, check-docs.py, compat.py (the compatibility gate, ADR-0033; standard library only) and test_compat.py, render-kubernetes-manifests.sh, http3-curl.sh (curl over HTTP/3, `http3` CI job), https-60s-vps.sh (the 60-second HTTPS proof on a real server against Let's Encrypt, run by hand), release helpers (`release_latest.py` with `test_release_latest.py`: the rule that `latest` never moves backwards; `pin-base-images.sh`: base images by digest)
 ├── CONTRIBUTING.md · CODE_OF_CONDUCT.md · SECURITY.md · SUPPORT.md · GOVERNANCE.md
@@ -144,7 +136,7 @@ reversedock/
 | `fault-injection` | off, tests only | faults for the admin API's tests (`RDOCK_FAULT`) and the binary upgrade's (`RDOCK_UPGRADE_FAULT`, also in debug builds); a fault can only make an operation fail; never in a release build |
 | `rustls` / `openssl` / `boringssl` | `rustls` | mutually exclusive TLS backends ([ADR-0002](decisions/0002-tls-backend-rustls.md)) |
 
-`cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard). The features appear as their crates gain code; M0 has none yet.
+`cargo build --no-default-features --features rustls` builds the minimal proxy (file provider, no dashboard). 
 
 ## 3. Dashboard conventions
 
@@ -174,7 +166,7 @@ reversedock/
 |---|---|---|---|
 | Unit | `cargo nextest` | per crate | every PR |
 | Property / grammar | `proptest` | rules, labels, path normalisation | every PR |
-| Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; Pebble and toxiproxy later) | `crates/rdock/tests/e2e_*.rs` | every PR |
+| Integration | `rdock-testkit` (spawns h1/h2c/TLS upstreams, a test CA and the real `rdock` binary; fake Docker and ACME servers; Pebble, Toxiproxy and a real Docker daemon in the non-required `chaos` job and some e2e tests) | `crates/rdock/tests/e2e_*.rs` | every PR |
 | Conformance | Traefik-label suite; Gateway API v1.7.0 suite on kind (`kubernetes.yml`; GATEWAY-HTTP, -GRPC, -TLS, -TCP passed 2026-11-11 and GATEWAY-UDP 2026-11-12, commit `43d81de`; fails the workflow, not yet a required check); RFC 9111 suite `http-tests/cache-tests` (`cache.yml`; gate passed 2026-11-12, not a required check) | `tests/conformance` | PRs touching providers; nightly |
 | Kubernetes | Translator and status tests on fixtures (`tests/gateway_conformance.rs` transcribes upstream conformance tests); runtime tests against a bare kube-apiserver when `RDOCK_TEST_KUBECONFIG` is set (not wired into CI); chart `helm lint --strict`, `helm template` + kubeconform, manifests in sync; Helm on k3s (fails the workflow; passed 2026-11-11) | `crates/providers/rdock-provider-kubernetes`, `deploy/`, `.github/workflows/kubernetes.yml` | PRs touching them; nightly |
 | Fuzz | `cargo-fuzz` (libFuzzer): 21 targets, from the differential HTTP/1 framing check to ACME answers, admin request bodies, cluster bundles, the RESP reader, label translation and the migration readers (list and coverage: [11-threat-model.md](11-threat-model.md) §8); each has seeds and a mutation smoke test run by `cargo test` | `tests/fuzz`, `fuzz.yml` | 30 min per target weekly with the corpus kept in the Actions cache (written only by the scheduled run on `main`); 2 min on PRs touching code a target reaches; smoke tests on every fuzz run |

@@ -68,7 +68,7 @@ gh attestation verify "rdock-$VERSION-$TARGET.tar.gz" --repo Docker-Hunterpedia/
 
 The command exits with status 0 when the attestation matches, and prints the workflow and commit that built the file.
 
-**4. The SBOM belongs to that archive.** Step 2 already checks the SBOM file when it is in the same directory, because `SHA256SUMS` lists it. To check its attestation too (the predicate type carries the SPDX version of the file):
+**4. The SBOM belongs to that archive.** (Releases up to `0.9.0-alpha.1` have no per-archive SBOM and no SBOM attestation: skip this step for them.) Step 2 already checks the SBOM file when it is in the same directory, because `SHA256SUMS` lists it. To check its attestation too (the predicate type carries the SPDX version of the file):
 
 ```sh
 gh attestation verify "rdock-$VERSION-$TARGET.tar.gz" --repo Docker-Hunterpedia/ReverseDock \

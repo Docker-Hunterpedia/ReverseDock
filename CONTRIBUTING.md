@@ -6,9 +6,9 @@ By participating you agree to follow the [Code of Conduct](CODE_OF_CONDUCT.md).
 
 ## Project status
 
-ReverseDock is in the **design phase**: the plan lives in [`docs/`](docs/README.md) and code starts with milestone **M0**. The most useful contributions right now:
+ReverseDock is an alpha: v0.1 to v0.9 are implemented (`0.9.0-alpha.1` is the latest release) and v1.0 "Stable" is implemented and is released as `1.0.0-rc.N` until an independent security review is done. The plan lives in [`docs/`](docs/README.md) and [the roadmap](docs/07-roadmap.md) says what has run and what is open. The most useful contributions right now:
 
-- review the [architecture](docs/05-architecture.md), [requirements](docs/04-requirements.md) and [roadmap](docs/07-roadmap.md) and open issues for mistakes or gaps;
+- review the [architecture](docs/05-architecture.md), the [threat model](docs/11-threat-model.md), [requirements](docs/04-requirements.md) and [roadmap](docs/07-roadmap.md) and open issues for mistakes or gaps;
 - verify facts in the [research](docs/02-research.md) against official sources;
 - contribute real-world Traefik label sets and Compose files for the compatibility suite (open a *Migration / compatibility gap* issue);
 - open a *Design proposal* for changes to the config model, label grammar or security model.
@@ -34,8 +34,8 @@ The workspace needs:
 - **Rust** via [rustup](https://rustup.rs); the exact toolchain is pinned in `rust-toolchain.toml` and installs itself. The minimum supported version is 1.89.
 - A **C compiler** and **CMake** for Pingora's native dependencies (`xcode-select --install && brew install cmake`, or `apt install build-essential cmake`).
 - **just**, **cargo-nextest**, **cargo-deny**, **actionlint** and **shellcheck** for the dev recipes (`brew install just cargo-nextest cargo-deny actionlint shellcheck`). `just ci` runs what the required Rust and docs checks run; `just schema` regenerates `schema/rdock.v1.json` after model changes; `just compat` regenerates the compatibility snapshots in `schema/compat/`; `just msrv` and `just docker` run the other two jobs.
-- **Node 24 + pnpm** (version in the root `package.json`) for the website in `apps/website` and, later, the dashboard. `just website` starts the docs locally; `just website-check` runs the `website` CI job. How to write pages: [apps/website/README.md](apps/website/README.md).
-- **Docker** for the image smoke test (`just docker`) and, later, the Pebble/toxiproxy/Docker-provider suites. The v0.1 end-to-end tests run with plain `cargo nextest`.
+- **Node 24 + pnpm** (version in the root `package.json`) for the website in `apps/website` and the dashboard in `apps/dashboard`. `just website` starts the docs locally; `just website-check` runs the `website` CI job. How to write pages: [apps/website/README.md](apps/website/README.md).
+- **Docker** for the image smoke test (`just docker`) and the Pebble, Toxiproxy and Docker-provider suites (`just chaos`). The other end-to-end tests run with plain `cargo nextest`.
 - Optional: `cargo install cargo-fuzz` and a nightly toolchain to run the fuzz targets in `tests/fuzz`.
 - Optional: [Graphify](docs/06-repo-layout.md#6-code-graph-tooling-graphify) to explore the code as a graph. Keep its Claude Code hooks in `.claude/settings.local.json`, not in a committed file.
 

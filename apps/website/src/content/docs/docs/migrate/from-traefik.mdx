@@ -409,6 +409,11 @@ Read these first: each one changes what a setup that relied on Traefik's default
 | No access log unless `accessLog` is set | A JSON access log on standard output | `format: off` under `observability.access_log` turns it off. |
 | `rateLimit` burst defaults to 1 | `burst` defaults to `average` | Set `burst` to keep Traefik's. |
 | No `nosniff` on a Basic challenge or a redirect | Every answer rdock writes has `X-Content-Type-Options: nosniff` | Nothing; proxied responses are not changed. |
+| `tls=true` serves Traefik's default or a stored certificate | `tls=true` takes an automatic certificate for the route's hosts | List your own under `certificates`: a host that one of them covers gets no automatic order. |
+| `compress`: gzip, br, zstd in that order, every type not excluded | zstd, br, gzip in that order, common text types only | Set `compress.algorithms` and `content_types` to match. |
+| A Basic challenge is `Basic realm="traefik"` | `Basic realm="rdock", charset="UTF-8"` (RFC 7617) | Set `basic_auth.realm` if clients or scripts match the realm; the charset stays. |
+
+The differential test that runs Traefik v3.7 and ReverseDock on the same labels records every difference it accepts in [`tests/conformance/traefik-diff/allowlist.json`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/tests/conformance/traefik-diff/allowlist.json), each with a reason and a source. The table above lists them all: certificate source and resolver name (the `tls` and resolver rows), compression defaults, the rate-limit burst, the Basic challenge and `nosniff`. Anything else that differs between the two on labels marked exact is a bug: please open a *Migration / compatibility gap* issue.
 
 ### What moves automatically, and what does not
 
@@ -449,7 +454,7 @@ These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterped
 - **Paths are normalised and the normalised path is forwarded**, as in Traefik 3.7. Encoded slashes (`%2F`) are allowed and never act as separators.
 - **`ClientIP`, `ip_allow`, `ip_deny`, `rate_limit` and `maintenance.allow` use the resolved client IP.** Without `security.trusted_proxies` this is the TCP peer, the same as Traefik. Behind a load balancer it is the address the load balancer reports; Traefik needs an `ipStrategy` per middleware for that.
 - **Route defaults differ.** A Traefik router without `entryPoints` attaches to every entry point, and one without `tls` serves plain HTTP. A ReverseDock route without `listeners` attaches to `defaults.listeners` (`[websecure]`) and asks for HTTPS (`defaults.tls: auto`). A route meant for plain HTTP needs `listeners: [web]` and `tls: off`.
-- **Until automatic certificates arrive** <Status since="v0.3" />, a route on an HTTPS listener needs a certificate under `certificates` that covers each of its hosts, or `defaults.certificate`. `rdock validate` warns, and `rdock run` refuses the configuration, when a host is not covered.
+- **Certificates are automatic** <Status since="v0.3" /> for the hosts of routes on an HTTPS listener (see [Automatic HTTPS](/docs/guides/automatic-https/)). A host that a certificate under `certificates` covers gets no automatic order.
 
 ### Forwarding headers and limits
 
@@ -471,14 +476,14 @@ These differences are deliberate ([ADR-0014](https://github.com/Docker-Hunterped
 - `rate_limit` defaults `burst` to `average`; Traefik's default burst is 1 (checked 2026-10-27). Requests over the limit get 429 with `Retry-After` at once; Traefik first delays them briefly (Traefik v3.7.16 source, per the research behind ADR-0014). `average: 0` is a validation error, where Traefik reads it as no limit.
 - `ip_allow` answers 403 and has no `rejectStatusCode`.
 - `cors` is its own middleware. It answers preflights itself with 204; `*` together with `allow_credentials: true` is a validation error, where Traefik echoes the request's `Origin`. List the origins instead.
-- `compress` uses gzip on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. zstd and Brotli <Status since="v0.4" /> are offered too, preferred in that order.
+- `compress` works on an allow-list of text types and never touches server-sent events, gRPC, partial responses or HEAD; it honours q-values. It offers zstd, Brotli <Status since="v0.4" /> and gzip, preferred in that order (Traefik: gzip, Brotli, zstd).
 - `errors` keeps the original status and also covers ReverseDock's own 502, 503 and 504 answers.
 - `maintenance` has no Traefik equivalent: it answers with its `status` (503 by default), `Retry-After`, `Cache-Control: no-store` and your page, except for the `allow` networks.
 
 ### Configuration files
 
 - Unknown keys are errors, with a suggestion for the nearest valid key, so a Traefik key such as `stsSeconds` pasted into a ReverseDock middleware is reported, not ignored. Keys that start with `x-` are ignored, for YAML anchors.
-- Settings the model accepts but v0.1 cannot honour are reported: `rdock validate` lists them as warnings ("planned for vX.Y") and `rdock run` refuses them. In v0.1 these are ACME and DNS-01, TCP and UDP listeners and routes, the PROXY protocol, traffic splits, load-balancing policies other than `round_robin` and `random`, health checks, retries, sticky sessions, client certificates to backends, brotli and zstd, extra configuration files, the Docker, Swarm and Kubernetes providers, `cloudflare` in `trusted_proxies`, `client_ip_header: cf-connecting-ip`, and tracing. See the [roadmap](/docs/project/roadmap/).
+- Settings the model accepts but that are not implemented yet are reported: `rdock validate` lists them as warnings ("planned for a later version") and `rdock run` refuses them. The list is short (hedged requests, for example); the [roadmap](/docs/project/roadmap/) names them.
 
 ## Cutover
 
