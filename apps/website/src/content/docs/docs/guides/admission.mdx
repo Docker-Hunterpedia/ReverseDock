@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The `admission` middleware <Status planned="v0.9" /> keeps a backend in the range where it
+The `admission` middleware <Status since="v0.9" /> keeps a backend in the range where it
 answers quickly. It learns how many requests the backend can have **in flight** from how its
 latency reacts, and answers the rest with **503 Service Unavailable** (problem type
 [`overloaded`](/docs/reference/problems/#overloaded)) and `Retry-After`, before they reach

@@ -9,7 +9,7 @@ publish = false
 
 # Outside this repository, depend on the plugin API through git (the crates are not published
 # on crates.io):
-#   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
+#   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.9.0-alpha.1" }
 [dependencies]
 rdock-plugin-api = { path = "../../../crates/rdock-plugin-api" }
 serde = { version = "1.0.229", features = ["derive"] }

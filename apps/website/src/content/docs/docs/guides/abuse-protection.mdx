@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-The `abuse` middleware <Status planned="v0.9" /> counts signs of abuse per client (failed
+The `abuse` middleware <Status since="v0.9" /> counts signs of abuse per client (failed
 logins, `401`, `403`, `404` or `429` answers) in a time window, and **bans** a client that
 reaches a threshold for a while. It is what fail2ban does from log files, inside the proxy.
 

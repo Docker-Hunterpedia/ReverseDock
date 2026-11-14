@@ -64,9 +64,9 @@ services:
 
 **DNS names** are resolved when a configuration is applied and again when their records expire: the TTL is honoured, kept between 1 second and 5 minutes <Status since="v0.4" />. Names that DNS does not know but the system does (`/etc/hosts`, some container networks) are looked up through the system and refreshed every 10 seconds. A container that restarts with a new IP address is picked up without a reload. A lookup that fails or takes longer than 2 seconds keeps the previous addresses, logs `cannot resolve backend`, and is tried again after 5 seconds. When a name resolves to several addresses, each address is a backend with the weight of the entry. A name that has never resolved leaves the service without backends, and its requests get `503`.
 
-**SRV records** (Consul, Kubernetes headless services, many service registries) list targets with a priority, a weight and a port. ReverseDock uses the targets of the lowest priority; higher priorities are kept as lower [priority tiers](#priority-tiers-and-failover) <Status planned="v0.9" /> (before v0.9, as backups) for when no lower one is available ([RFC 2782](https://www.rfc-editor.org/rfc/rfc2782.html)). Each target's weight is the entry's `weight` times its SRV weight (a weight of 0 counts as 1). Target names are resolved like any DNS name.
+**SRV records** (Consul, Kubernetes headless services, many service registries) list targets with a priority, a weight and a port. ReverseDock uses the targets of the lowest priority; higher priorities are kept as lower [priority tiers](#priority-tiers-and-failover) <Status since="v0.9" /> (before v0.9, as backups) for when no lower one is available ([RFC 2782](https://www.rfc-editor.org/rfc/rfc2782.html)). Each target's weight is the entry's `weight` times its SRV weight (a weight of 0 counts as 1). Target names are resolved like any DNS name.
 
-**Numeric host spellings** are refused: a host that is not a strict IP literal but whose last label is a number (`127.1`, `2130706433`, `0x7f.0.0.1`) is not a DNS name, since the system's resolver would read it as an IPv4 address. Write the address as four decimal parts. <Status planned="v0.9" />
+**Numeric host spellings** are refused: a host that is not a strict IP literal but whose last label is a number (`127.1`, `2130706433`, `0x7f.0.0.1`) is not a DNS name, since the system's resolver would read it as an IPv4 address. Write the address as four decimal parts. <Status since="v0.9" />
 
 **Unix sockets** need ReverseDock to have permission to open the socket file. In a container, mount the socket's directory into the ReverseDock container.
 
@@ -114,7 +114,7 @@ Each backend has a `weight`, `1` by default. In the `app` service above, `10.0.0
 - **`random`**: weighted random choice.
 - **`least_requests`** <Status since="v0.4" />: the backend with the fewest requests in flight relative to its weight (`weight / (in_flight + 1)`). Good for requests of very different durations. `least_conn` is the same policy: an HTTP/1.1 request holds one connection.
 - **`p2c`** <Status since="v0.4" />: two weighted random picks, the less busy one wins. Close to `least_requests` with less coordination; Traefik's `p2c`.
-- **`peak_ewma`** <Status planned="v0.9" />: latency-aware. Two distinct backends are drawn at random and the one with the lower `latency × (in_flight + 1) / weight` wins. The latency is a moving average that jumps up at once when a request is slower than the average and decays over `decay` (default `10s`) otherwise, and that also decays while a backend is idle, so a backend that was slow is tried again. A slow or overloaded backend gets less traffic before it fails outright. This is Finagle's and Linkerd's Peak-EWMA ([Finagle](https://github.com/twitter/finagle/blob/develop/doc/src/sphinx/Clients.rst), [Linkerd](https://github.com/linkerd/linkerd2/blob/main/policy-controller/grpc/src/outbound.rs), checked 2026-11-13). Details below.
+- **`peak_ewma`** <Status since="v0.9" />: latency-aware. Two distinct backends are drawn at random and the one with the lower `latency × (in_flight + 1) / weight` wins. The latency is a moving average that jumps up at once when a request is slower than the average and decays over `decay` (default `10s`) otherwise, and that also decays while a backend is idle, so a backend that was slow is tried again. A slow or overloaded backend gets less traffic before it fails outright. This is Finagle's and Linkerd's Peak-EWMA ([Finagle](https://github.com/twitter/finagle/blob/develop/doc/src/sphinx/Clients.rst), [Linkerd](https://github.com/linkerd/linkerd2/blob/main/policy-controller/grpc/src/outbound.rs), checked 2026-11-13). Details below.
 - **`ip_hash`**, **`header_hash`**, **`cookie_hash`** <Status since="v0.4" />: consistent hashing of the client IP, of a header or of a cookie (`hash_on` names it), so the same key reaches the same backend. When a backend is added or removed, only the keys on its share of the ring move. A request without the header or cookie uses round-robin. Every instance maps a key the same way. Weights above 100 count as 100 here.
 
 ```yaml title="rdock.yaml (excerpt)"
@@ -126,7 +126,7 @@ services:
 
 ### Latency-aware balancing: `peak_ewma`
 
-<Status planned="v0.9" />
+<Status since="v0.9" />
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
@@ -199,11 +199,11 @@ services:
 
 **Passive checks** count failures of real requests: connection errors, resets and timeouts before the response headers, and the answers in `statuses` (default `[502, 503, 504]`). `failures` of them within `window` eject the backend for `ejection`. When that time is over, one request tries it: success brings it back, failure ejects it again for twice as long. `max_ejection_percent` (default 50) stops passive checks from ejecting more than that share of the pool, as Envoy's outlier detection does ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/outlier_detection.proto), checked 2026-10-29).
 
-`ejection_jitter` <Status planned="v0.9" /> (default `0s`) adds up to that much at random to each ejection time, so that a backend ejected by many instances at once does not get all their traffic back at the same moment (Envoy's `max_ejection_time_jitter`).
+`ejection_jitter` <Status since="v0.9" /> (default `0s`) adds up to that much at random to each ejection time, so that a backend ejected by many instances at once does not get all their traffic back at the same moment (Envoy's `max_ejection_time_jitter`).
 
 ### Outlier detection
 
-<Status planned="v0.9" /> Counting failures in a window misses a backend that fails, say, 30 % of its requests: at low traffic it never reaches 5 failures in 30 seconds, at high traffic its neighbours' errors look the same. The two detectors of Envoy's outlier detection compare the backends of a pool with each other instead, once per `interval`, over the requests of that interval:
+<Status since="v0.9" /> Counting failures in a window misses a backend that fails, say, 30 % of its requests: at low traffic it never reaches 5 failures in 30 seconds, at high traffic its neighbours' errors look the same. The two detectors of Envoy's outlier detection compare the backends of a pool with each other instead, once per `interval`, over the requests of that interval:
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
@@ -232,7 +232,7 @@ services:
 
 **When every backend is down**, `when_all_down: fail_open` (default) sends requests to all of them anyway: a broken health check, for example a wrong `path`, must not take your service offline. Envoy's panic mode and NGINX's rule for single-server upstreams do the same. `fail_closed` answers `503` with `Retry-After` instead.
 
-**Slow start:** with `slow_start: 30s`, a backend that comes back gets a growing share of its weight over 30 seconds, so a cold cache or JIT is not hit with full traffic at once. The long form <Status planned="v0.9" /> sets the shape and when it applies (Envoy's `SlowStartConfig`, [cluster.proto](https://github.com/envoyproxy/envoy/blob/main/api/envoy/config/cluster/v3/cluster.proto), checked 2026-11-13):
+**Slow start:** with `slow_start: 30s`, a backend that comes back gets a growing share of its weight over 30 seconds, so a cold cache or JIT is not hit with full traffic at once. The long form <Status since="v0.9" /> sets the shape and when it applies (Envoy's `SlowStartConfig`, [cluster.proto](https://github.com/envoyproxy/envoy/blob/main/api/envoy/config/cluster/v3/cluster.proto), checked 2026-11-13):
 
 ```yaml title="rdock.yaml (excerpt)"
 services:
@@ -251,7 +251,7 @@ The weight is `weight × max(min_weight_percent / 100, (elapsed / window)^(1 / a
 
 **Backups:** `backup: true` on a backend keeps it idle until no primary backend is available.
 
-<Status planned="v0.9" /> `priority` generalises this to eight tiers, `0` (the default, used first) to `7`; `backup: true` is the same as `priority: 1`, and setting both is refused. `failover` on the service decides how traffic moves between tiers:
+<Status since="v0.9" /> `priority` generalises this to eight tiers, `0` (the default, used first) to `7`; `backup: true` is the same as `priority: 1`, and setting both is refused. `failover` on the service decides how traffic moves between tiers:
 
 - **`strict`** (default): a tier gets traffic only when every tier above it has no available backend; it hands traffic back as soon as one returns.
 - **`spill`**: as Envoy's priority levels, a tier keeps `healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes to the next tier. With the default `overprovisioning: 1.4`, tier 0 keeps everything until fewer than about 71 % of its backends are available; at 50 % it keeps 70 % and 30 % goes to tier 1; at 25 %, 35 % and 65 % ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/intro/arch_overview/upstream/load_balancing/priority), checked 2026-11-13). When all tiers are degraded, their shares are scaled up to add up to 100 %.
@@ -272,7 +272,7 @@ services:
 
 ### Zones
 
-<Status planned="v0.9" /> A backend can name its `zone`. With `locality: { mode: prefer }`, services use only backends in the proxy's own zone while at least one of them is available, and every backend otherwise, which is Kubernetes' `PreferSameZone` ([Virtual IPs and Service Proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/#traffic-distribution), checked 2026-11-13). Cross-zone traffic often costs money and latency; a zone that loses its backends falls back at once.
+<Status since="v0.9" /> A backend can name its `zone`. With `locality: { mode: prefer }`, services use only backends in the proxy's own zone while at least one of them is available, and every backend otherwise, which is Kubernetes' `PreferSameZone` ([Virtual IPs and Service Proxies](https://kubernetes.io/docs/reference/networking/virtual-ips/#traffic-distribution), checked 2026-11-13). Cross-zone traffic often costs money and latency; a zone that loses its backends falls back at once.
 
 ```yaml title="rdock.yaml (excerpt)"
 locality:
@@ -331,7 +331,7 @@ Except for `connect`, only idempotent methods (`GET`, `HEAD`, `PUT`, `DELETE`, `
 
 **The retry budget** keeps retries from piling onto a pool that is already failing: retries in flight may be at most `budget_percent` of the service's requests in flight, with 3 always allowed. These are Envoy's defaults ([Envoy](https://www.envoyproxy.io/docs/envoy/latest/api-v3/config/cluster/v3/circuit_breaker.proto), checked 2026-10-29). Retries wait a random 0–25 ms before the first retry, doubling up to 250 ms.
 
-**A backend that stalls** <Status planned="v0.9" />: `per_try_timeout` abandons an attempt that has waited that long for data and sends the request to another backend, within the budget and the rules above (only when `on` lists `timeout`, which is required, an idempotent method or `retry_non_idempotent`, a replayable body, and another backend to try):
+**A backend that stalls** <Status since="v0.9" />: `per_try_timeout` abandons an attempt that has waited that long for data and sends the request to another backend, within the budget and the rules above (only when `on` lists `timeout`, which is required, an idempotent method or `retry_non_idempotent`, a replayable body, and another backend to try):
 
 ```yaml title="rdock.yaml (excerpt)"
 services:

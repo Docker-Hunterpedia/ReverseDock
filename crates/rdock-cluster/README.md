@@ -27,7 +27,7 @@ file storage. Keep clocks synchronised; the control plane's store enforces fenci
 
 ## Status
 
-Implemented in v0.9 and unreleased (ADR-0031). The cluster protocol is version 1; no release has
-carried it. The Redis backend is tested against the testkit's RESP server only, not against a
+Implemented in v0.9 and released in 0.9.0-alpha.1 (ADR-0031). The cluster protocol is version 1;
+0.9.0-alpha.1 is the first release that carries it. The Redis backend is tested against the testkit's RESP server only, not against a
 real Redis or Valkey. One active control plane serves the store; a highly available one is
 planned.

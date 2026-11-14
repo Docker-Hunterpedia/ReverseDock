@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock <Status planned="v0.9" /> lets you set the options of each listener's socket, bound
+ReverseDock <Status since="v0.9" /> lets you set the options of each listener's socket, bound
 how many TLS handshakes a listener runs at once, and choose how many threads serve connections.
 The defaults suit most servers: leave everything unset unless a measurement points at one of
 these settings. The design is [ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md).
@@ -167,7 +167,7 @@ the values in use:
 runtime      4 worker threads, at most 64 blocking
 ```
 
-## HTTP/2 settings <Status planned="v0.9" />
+## HTTP/2 settings <Status since="v0.9" />
 
 `listeners.<name>.http2` sets the HTTP/2 options of an `http` (h2c) or `https` listener. Unset
 values keep what ReverseDock did before v0.9; only values that are set appear in the SETTINGS

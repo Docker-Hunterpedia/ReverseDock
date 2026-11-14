@@ -1,7 +1,7 @@
 {
-  "version": "0.8.0-alpha.1",
-  "milestone": "v0.8",
-  "next": "v0.9",
+  "version": "0.9.0-alpha.1",
+  "milestone": "v0.9",
+  "next": "v1.0",
   "image": "ghcr.io/docker-hunterpedia/rdock",
   "repo": "https://github.com/Docker-Hunterpedia/ReverseDock"
 }

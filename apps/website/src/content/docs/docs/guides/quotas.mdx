@@ -79,7 +79,7 @@ services:
 | `overrides` | none | Group → limit. With `key: consumer`, the **first of the consumer's groups**, in its `groups` order, that has an override wins; with `key: group`, the primary group's. |
 | `headers` | `off` | `draft` adds `RateLimit-Policy` and `RateLimit` (below). |
 | `flush_interval` | `10s` | How often counters are written to disk. |
-| `key` | `consumer` | `consumer`, or `group` <Status planned="v0.9" />: one count per **primary group** (the first of the consumer's `groups`), shared by every consumer of that group. A consumer without a group is counted on its own. |
+| `key` | `consumer` | `consumer`, or `group` <Status since="v0.9" />: one count per **primary group** (the first of the consumer's `groups`), shared by every consumer of that group. A consumer without a group is counted on its own. |
 
 `rate_limit` takes the same `overrides` (each with `average`, and optionally `burst` and
 `period`, defaulting to the middleware's) and the same `headers` setting, with `key: consumer`
@@ -87,7 +87,7 @@ or `key: group`.
 
 ### One quota for a whole customer
 
-<Status planned="v0.9" /> With `key: group`, every key and user of a customer draws on one
+<Status since="v0.9" /> With `key: group`, every key and user of a customer draws on one
 count. Group counters show as `group:<name>` in `key` in `GET /api/v1/quota`; reset them with
 `DELETE /api/v1/quota/group:<name>`.
 
@@ -132,7 +132,7 @@ off by default; `Retry-After` takes precedence, as the draft says. The older
 ## How exact the counts are
 
 - **Per instance by default.** Each ReverseDock process counts on its own: three replicas allow
-  up to three times the quota. With `scope: cluster` <Status planned="v0.9" /> the instances of a
+  up to three times the quota. With `scope: cluster` <Status since="v0.9" /> the instances of a
   cluster share it, within the bound `L + N × max(c, ⌈L / N⌉)` and with a fallback to each instance's share while
   the store is away ([details](/docs/guides/rate-limiting/#share-a-limit-across-instances));
   cluster-scoped quotas are not written to `<data dir>/quota/` and do not appear in

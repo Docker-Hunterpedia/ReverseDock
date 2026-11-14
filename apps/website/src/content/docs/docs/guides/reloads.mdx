@@ -59,7 +59,7 @@ rejected: the configuration has errors; generation 3 stays in use
 `rdock status` shows the generation in use and the result of the last reload:
 
 ```text
-rdock 0.8.0-alpha.1 (…)
+rdock 0.9.0-alpha.1 (…)
 ready        true
 generation   4
 config       /etc/rdock/rdock.yaml (file)
@@ -94,7 +94,7 @@ Adding, removing or moving a listener does not need a restart. New sockets are b
 
 The admin listener is the exception: it is bound once at start, so a change to `admin.listener` (or to `admin.enabled`) takes effect after a restart.
 
-A listener that keeps its socket also keeps it when its `socket` options change <Status planned="v0.9" />: the backlog, the buffers and Fast Open are changed on the running socket, and `keepalive`, `user_timeout` and `dscp` apply to new connections. `reuse_port` and `ipv6_only` are set before a socket is bound, so a change to them, like a change to `runtime` (the proxy's threads), takes effect after a restart; the reload is applied without them and reports a warning. See [Sockets and threads](/docs/guides/sockets-and-threads/).
+A listener that keeps its socket also keeps it when its `socket` options change <Status since="v0.9" />: the backlog, the buffers and Fast Open are changed on the running socket, and `keepalive`, `user_timeout` and `dscp` apply to new connections. `reuse_port` and `ipv6_only` are set before a socket is bound, so a change to them, like a change to `runtime` (the proxy's threads), takes effect after a restart; the reload is applied without them and reports a warning. See [Sockets and threads](/docs/guides/sockets-and-threads/).
 
 ## History and last-known-good
 
