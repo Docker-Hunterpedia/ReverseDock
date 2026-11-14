@@ -94,6 +94,7 @@ Milestones, not dates. Each milestone ships a usable binary and has acceptance c
 
 ## v1.0 — Stable
 **Scope:** API/config stability guarantees, deprecation policy, F-OSS-05 support policy, third-party security audit (HTTP parsing, TLS/ACME, admin), full docs site with schema-driven playground, migration guides (Traefik, Caddy; NGINX directive subset from F-MGMT-03), signed releases + SBOM in place since M0.
+**Plan:** [ADR-0033](decisions/0033-v1-0-stable.md) and the [research note](research/v1.0-stable.md). Order: feature registry and maturity levels → deprecation plumbing and `rdock migrate config` → compatibility checks in CI → migration report and the Traefik work → Caddy → NGINX → chaos suite and the disk-full rules → security preparation → benchmarks and the 60-second proof → release integrity → documents. The result is released as `1.0.0-rc.1`; the final 1.0 waits for an independent security review, which needs a funder and is the maintainer's to commission.
 **Done when:** the 1.0 success criteria in [01-vision.md §7](01-vision.md) are all met.
 
 ---
