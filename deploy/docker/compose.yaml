@@ -12,7 +12,7 @@ name: reversedock
 
 services:
   rdock:
-    image: ghcr.io/docker-hunterpedia/rdock:0.9.0-alpha.1
+    image: ghcr.io/docker-hunterpedia/rdock:1.0.0-rc.1
     # Or build from this repository: `build: ../..`
     restart: unless-stopped
     ports:

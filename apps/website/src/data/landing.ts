@@ -6,7 +6,7 @@ const image = `${release.image}:${release.version}`;
 const archive = `rdock-${release.version}-x86_64-unknown-linux-musl`;
 
 /** The line next to the version in the hero. */
-export const announce = 'Clusters, in-place upgrades and edge security are here.';
+export const announce = 'The 1.0 release candidate, with a written stability promise.';
 
 export const pillars: { eyebrow: string; badge: string; kind: Kind; title: string; body: string }[] = [
   { eyebrow: 'Engine', badge: 'shipped', kind: 'shipped', title: 'Rust on Pingora', body: 'The HTTP engine Cloudflare runs at its edge, with our own listeners on top. HTTP/1.1, HTTP/2, h2c, WebSocket, SSE and gRPC.' },
@@ -18,7 +18,7 @@ export const pillars: { eyebrow: string; badge: string; kind: Kind; title: strin
 export const guides: { title: string; badge: string; kind: Kind; body: string; href: string }[] = [
   { title: 'From Traefik', badge: 'guide', kind: 'shipped', body: 'Rules carry over; routers and services map one to one.', href: '/docs/migrate/from-traefik/' },
   { title: 'From NGINX', badge: 'guide', kind: 'shipped', body: 'server and location blocks to hosts, paths and middlewares.', href: '/docs/migrate/from-nginx/' },
-  { title: 'From Caddy', badge: 'planned', kind: 'planned', body: 'The JSON of caddy adapt to routes, automatic HTTPS included.', href: '/docs/migrate/from-caddy/' },
+  { title: 'From Caddy', badge: 'guide', kind: 'shipped', body: 'The JSON of caddy adapt to routes, automatic HTTPS included.', href: '/docs/migrate/from-caddy/' },
   { title: 'From Nginx Proxy Manager', badge: 'planned', kind: 'planned', body: 'Proxy hosts from the UI to one versioned YAML file.', href: '/docs/project/roadmap/' },
 ];
 
@@ -39,6 +39,8 @@ export const features: { title: string; status: string; kind: Kind; body: string
   { title: 'HTTP cache and plugins', status: 'v0.8', kind: 'shipped', body: 'An RFC 9111 cache in memory or on disk, native Rust plugins, agents, API keys, quotas and OIDC login.' },
   { title: 'Cluster and in-place upgrades', status: 'v0.9', kind: 'shipped', body: 'A control plane with staged rollout, certificates ordered once, shared limits, and a binary upgrade that keeps connections.' },
   { title: 'Edge security', status: 'v0.9', kind: 'shipped', body: 'JA4 fingerprints, GeoIP rules, abuse bans and identity rules on client certificates.' },
+  { title: 'Stability promise', status: 'v1.0', kind: 'shipped', body: 'What may change per surface, deprecation periods, maturity levels, and a CI gate against the last release.' },
+  { title: 'Migrate from Caddy and NGINX', status: 'v1.0', kind: 'shipped', body: 'rdock migrate caddy and rdock migrate nginx (beta), with a report of every item, next to rdock migrate traefik.' },
 ];
 
 export const compare = [

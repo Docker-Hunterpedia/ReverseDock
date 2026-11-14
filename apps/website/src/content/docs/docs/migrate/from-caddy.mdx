@@ -13,7 +13,7 @@ The Caddy facts below are those of Caddy v2.11.9, the latest release on 2026-11-
 
 ## `rdock migrate caddy`
 
-<Status planned="v1.0" /> `rdock migrate caddy` reads **Caddy's JSON**, not the Caddyfile ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)): what a Caddyfile means lives in Caddy's adapter (directive order, snippets, `import`, what a site address implies), so the tool reads the adapter's output. Caddy users have the `caddy` binary:
+<Status since="v1.0" /> <Status feature="migrate-caddy" /> `rdock migrate caddy` reads **Caddy's JSON**, not the Caddyfile ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)): what a Caddyfile means lives in Caddy's adapter (directive order, snippets, `import`, what a site address implies), so the tool reads the adapter's output. Caddy users have the `caddy` binary:
 
 ```sh
 # A Caddyfile: adapt it with Caddy, then migrate the JSON.
