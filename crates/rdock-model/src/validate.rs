@@ -57,6 +57,7 @@ impl Config {
             out: Vec::new(),
         };
         v.check_version();
+        crate::maturity::check_opt_in(self, merged, &mut v.out);
         v.check_listeners();
         v.check_sockets();
         v.check_resumption();

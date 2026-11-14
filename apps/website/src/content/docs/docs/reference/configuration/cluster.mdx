@@ -11,6 +11,8 @@ import Status from '../../../../../components/Status.astro';
 
 Membership of a cluster (H-HA-01…03): the control plane this data plane takes its configuration from, and where certificates are shared.
 
+<Status maturity="beta" />
+
 ## `cluster.control`
 
 **Type:** object
@@ -59,7 +61,7 @@ The control plane's cluster address, e.g. `https://control.example.com:7443`. Al
 
 This instance's name in leases and the control plane's instance list: letters, digits, `.`, `-` and `_`, at most 63 characters. Default: the identity the control plane gave at enrolment, or (without a control plane) an id generated once and kept in `$RDOCK_DATA_DIR/cluster/instance`.
 
-## `cluster.limits`
+## `cluster.limits` <Status maturity="beta" />
 
 **Type:** object
 

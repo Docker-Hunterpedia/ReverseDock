@@ -2,7 +2,7 @@
 title: observability
 description: "Logs, metrics and traces."
 sidebar:
-  order: 14
+  order: 15
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -39,7 +39,7 @@ Header names whose values are replaced by `***`.
 
 Share of successful requests (status below 400) that are logged, from 0 to 1. Errors and failed requests are always logged.
 
-## `observability.alerts`
+## `observability.alerts` <Status maturity="beta" />
 
 **Type:** object · **Default:** see the fields below
 
@@ -273,11 +273,12 @@ The p99 above which a service alerts.
 
 Window (1m–15m).
 
-### `observability.alerts.webhook`
+### `observability.alerts.webhook` <Status deprecated="1.0" />
 
 **Type:** object
 
 Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.
+ Deprecated since 1.0, removed in 2.0: use a channel under `observability.alerts.channels` with `type: webhook`.
 
 #### `observability.alerts.webhook.timeout`
 
@@ -297,7 +298,7 @@ Bearer token sent in `Authorization`. Write it as a `${file:…}` or `${env:…}
 
 `https://` URL (`http://` only for loopback addresses).
 
-## `observability.metering`
+## `observability.metering` <Status maturity="beta" />
 
 **Type:** object
 

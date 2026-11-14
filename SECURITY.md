@@ -6,8 +6,11 @@ ReverseDock sits in front of other people's infrastructure, so we treat security
 
 | Version | Supported |
 |---|---|
-| `0.x` (alpha pre-releases, currently `0.9.0-alpha.1`) | Latest release only |
-| `1.x` and later | The two most recent minor releases |
+| `0.x` (alpha pre-releases, currently `0.9.0-alpha.1`) and `-rc` pre-releases | Latest release only |
+| `1.x` and later | The two most recent minor releases of the current major |
+| The previous major, after a new major | Its last minor release, for six months |
+
+Fixes land on `main` first and are cherry-picked to the release branches; fixes to experimental features are not backported. The full policy, including what is backported, is in [Stability, deprecation and support](docs/10-stability.md) §6. ReverseDock has one maintainer and no SLA: the response times below are targets.
 
 ## Reporting a vulnerability
 

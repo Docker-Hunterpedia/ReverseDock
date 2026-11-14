@@ -367,6 +367,17 @@ impl<'a> Scope<'a> {
         self.out.push(Diagnostic::warning(path, message));
     }
 
+    /// A deprecated label (ADR-0033): the registry's warning, at the label.
+    pub(crate) fn deprecated(
+        &mut self,
+        label: &str,
+        entry: &rdock_model::deprecation::Deprecation,
+    ) {
+        let path = self.path(Some(label));
+        self.out
+            .push(rdock_model::deprecation::diagnostic(entry, path));
+    }
+
     fn warn_container(&mut self, message: impl Into<String>, hint: Option<String>) {
         let mut warning = Diagnostic::warning(self.path(None), message);
         if let Some(hint) = hint {

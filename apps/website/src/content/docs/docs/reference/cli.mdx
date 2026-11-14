@@ -24,7 +24,7 @@ Commands:
   upgrade      Replace the running binary without dropping connections (Linux; over the admin Unix socket only). The running process hands its listeners to the new binary and drains
   hash         Create an argon2id password hash for `basic_auth` (reads the password from stdin)
   trust        Install the local CA's root (for localhost and private names) into the system trust stores, or remove it with --uninstall
-  migrate      Turn another proxy's configuration into rdock.yaml
+  migrate      Turn another proxy's configuration into rdock.yaml, or move an rdock.yaml off deprecated settings
   audit        Work with the admin audit log
   config       The configuration history, diffs and rollback of the API provider
   users        Manage dashboard users
@@ -98,13 +98,33 @@ Validate configuration files without starting the proxy
 Usage: rdock validate [OPTIONS] <FILES>...
 
 Arguments:
-  <FILES>...  Configuration files (YAML, or JSON with a .json extension)
+  <FILES>...
+          Configuration files (YAML, or JSON with a .json extension)
 
 Options:
-      --strict           Treat warnings as errors
-      --format <FORMAT>  Output format [default: text] [possible values: text, json]
-  -h, --help             Print help
-  -V, --version          Print version
+      --strict
+          Treat warnings as errors
+
+      --deprecations <DEPRECATIONS>
+          How deprecated settings count: `warn` (the default) or `error`, to see whether a file is ready for the release that removes them
+
+          Possible values:
+          - warn:  A warning (an error under `--strict`)
+          - error: An error
+          
+          [default: warn]
+
+      --format <FORMAT>
+          Output format
+          
+          [default: text]
+          [possible values: text, json]
+
+  -h, --help
+          Print help (see a summary with '-h')
+
+  -V, --version
+          Print version
 ```
 
 ## `rdock control`
@@ -222,12 +242,13 @@ Options:
 ## `rdock migrate`
 
 ```text
-Turn another proxy's configuration into rdock.yaml
+Turn another proxy's configuration into rdock.yaml, or move an rdock.yaml off deprecated settings
 
 Usage: rdock migrate <COMMAND>
 
 Commands:
   traefik  Traefik labels (a Compose file) or a Traefik dynamic configuration → rdock.yaml
+  config   Rewrite deprecated settings of an rdock.yaml to their replacements (and, once a later schema version exists, convert to it). Comments and formatting are kept where the change can be made as a text edit
   help     Print this message or the help of the given subcommand(s)
 
 Options:

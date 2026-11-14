@@ -106,6 +106,7 @@ export function Overview({ session }: { session: Session }) {
         )}
       </div>
       {reload.error && <div className="mb-4"><Alert>{describe(reload.error)}</Alert></div>}
+      {s && <MaturityNotice status={s} />}
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
         <Tile label="Requests / s" value={rate(perSecond)} sub={`${total?.requests ?? 0} in 15 min`} />
@@ -169,5 +170,40 @@ export function Overview({ session }: { session: Session }) {
         </Card>
       </div>
     </>
+  );
+}
+
+/**
+ * What the configuration uses that is deprecated, experimental or beta (ADR-0033), from the
+ * status document: deprecations and experimental features as a warning, beta features as a note.
+ */
+function MaturityNotice({ status }: { status: Status }) {
+  const deprecated = status.deprecations_in_use ?? [];
+  const experimental = status.features_in_use?.experimental ?? [];
+  const beta = status.features_in_use?.beta ?? [];
+  if (deprecated.length + experimental.length + beta.length === 0) return null;
+  return (
+    <div className="mb-4 flex flex-col gap-2">
+      {deprecated.length > 0 && (
+        <Alert tone="warn">
+          Deprecated settings in use (run <code>rdock migrate config</code>):{" "}
+          {deprecated.map((d, i) => (
+            <span key={d.element}>
+              {i > 0 && "; "}
+              <code>{d.paths.join(", ")}</code>, removed in {d.removal}: use {d.replacement}
+            </span>
+          ))}
+        </Alert>
+      )}
+      {experimental.length > 0 && (
+        <Alert tone="warn">
+          Experimental features in use, which may change or be removed in any release:{" "}
+          {experimental.map((f) => f.feature).join(", ")}
+        </Alert>
+      )}
+      {beta.length > 0 && (
+        <Alert tone="info">Beta features in use, whose details may change in a minor release: {beta.map((f) => f.feature).join(", ")}</Alert>
+      )}
+    </div>
   );
 }

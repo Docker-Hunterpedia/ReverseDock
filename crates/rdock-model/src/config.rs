@@ -27,6 +27,13 @@ pub struct Config {
     pub schema: Option<String>,
     /// Configuration format version. Only `1` exists; omit it to use the latest.
     pub version: Option<u32>,
+    /// Experimental features this configuration uses on purpose (ADR-0033), e.g.
+    /// `[wasm, http3]`. A configuration that uses an experimental feature without naming it
+    /// here is refused: experimental features may change or be removed in any release and are
+    /// not covered by the stability promise.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[schemars(schema_with = "crate::schema::experimental_schema")]
+    pub experimental: Vec<String>,
     /// Sockets to accept traffic on. When empty, `web` (`:80`) and `websecure` (`:443`, TLS)
     /// are used.
     pub listeners: BTreeMap<String, Listener>,
@@ -261,15 +268,15 @@ pub struct Listener {
     /// values keep the behaviour before v0.9.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http2: Option<ListenerHttp2>,
-    /// HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
-    /// the listener then also owns the UDP socket of its address. Needs a build with the
-    /// `http3` cargo feature; off by default.
+    /// HTTP/3 over QUIC on the same address, `https` listeners only (ADR-0032): the listener
+    /// then also owns the UDP socket of its address. Experimental: `enabled: true` needs
+    /// `http3` under `experimental` and a build with the `http3` cargo feature; off by default.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub http3: Option<ListenerHttp3>,
 }
 
-/// HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
-/// nothing is unlimited.
+/// HTTP/3 settings of an `https` listener (ADR-0032). Every limit is bounded; nothing is
+/// unlimited.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, JsonSchema)]
 #[serde(default)]
 #[allow(

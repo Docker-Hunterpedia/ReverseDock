@@ -7,4 +7,7 @@ The desired-state model of ReverseDock: the Rust types behind `rdock.yaml`, thei
 - **Validation** (`Config::validate`) reports `Diagnostic`s with a path such as `routes.app.service`, a message and an optional hint: broken references, invalid rules, conflicting listeners, unsafe settings.
 - **JSON Schema** (`json_schema`) is generated from the types and committed as [`schema/rdock.v1.json`](../../schema/rdock.v1.json); a test fails when it is out of date (`just schema` regenerates it).
 
+- **Maturity** (`maturity`): the registry of every feature area with its level (experimental, beta, stable), the `experimental` opt-in check, and the detectors that find a feature's use ([ADR-0033](../../docs/decisions/0033-v1-0-stable.md), [10-stability.md](../../docs/10-stability.md)).
+- **Deprecations** (`deprecation`): the registry of deprecated elements, the warning every surface reports, and the rewrite rules that the loader (for renamed keys) and `rdock migrate config` apply.
+
 Loading files, interpolation and merging live in `rdock-config`.

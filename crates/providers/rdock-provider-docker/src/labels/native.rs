@@ -34,6 +34,17 @@ const FILE_FIELDS: [&str; 2] = ["users_file", "file"];
 
 /// Adds one `rdock.*` label to the draft.
 pub(super) fn label(scope: &mut Scope<'_>, draft: &mut Draft, key: &str, value: &str) {
+    // A deprecated label is reported, and a renamed one read under its new name (ADR-0033).
+    let renamed = rdock_model::deprecation::rewrite_label(key);
+    let key = if let Some((new, entry)) = &renamed {
+        scope.deprecated(key, entry);
+        new.as_str()
+    } else {
+        if let Some(entry) = rdock_model::deprecation::label(key) {
+            scope.deprecated(key, entry);
+        }
+        key
+    };
     if HANDLED.contains(&key) || (scope.platform() == Platform::Swarm && key == SWARM_LBSWARM) {
         return;
     }

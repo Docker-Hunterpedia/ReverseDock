@@ -480,6 +480,19 @@ applied reload.
 `result`, which is `applied` or `rejected`. A rejected reload leaves the running configuration
 in place.
 
+### `rdock_experimental_feature_in_use`
+
+**Gauge.** `1` for each [experimental feature](/docs/project/maturity/) the applied configuration
+uses, `0` for the others; set at each applied load and reload. Label: `feature` (`wasm`, `http3`).
+
+### `rdock_deprecated_config_in_use`
+
+**Gauge**, `1` for each [deprecated element](/docs/project/deprecations/) the applied
+configuration uses (in the file or in a provider's labels). Label: `element`, as the registry
+names it, for example `observability.alerts.webhook`. An element no longer in use disappears.
+Alert on `count(rdock_deprecated_config_in_use) > 0` to find files to run through
+`rdock migrate config` before the release that removes the element.
+
 ## Alerts <Status since="v0.5" />
 
 ### `rdock_alerts_sent_total`

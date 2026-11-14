@@ -41,7 +41,8 @@ pub struct Loaded {
     /// The document as written, before references were resolved. History and the
     /// last-known-good copy store this form, so resolved secrets never reach the disk.
     pub source: Value,
-    /// Reference errors, unknown keys and validation findings, in that order.
+    /// Reference errors, deprecated settings, unknown keys and validation findings, in that
+    /// order.
     pub diagnostics: Vec<Diagnostic>,
 }
 
@@ -107,7 +108,14 @@ pub fn load_str_with(text: &str, format: Format, lookup: &dyn Lookup) -> Result<
 
 /// Loads and validates an already parsed document, such as a stored last-known-good copy.
 pub fn load_value(source: Value, lookup: &dyn Lookup) -> Result<Loaded, LoadError> {
+    // Deprecated settings are reported as written; the ones the model no longer reads are
+    // rewritten to their replacement before it reads the document (ADR-0033).
+    let deprecated: Vec<Diagnostic> = rdock_model::deprecation::scan(&source)
+        .iter()
+        .map(rdock_model::deprecation::Found::diagnostic)
+        .collect();
     let mut input = source.clone();
+    rdock_model::deprecation::rewrite_for_loading(&mut input);
     let mut references = References {
         lookup,
         resolved: Vec::new(),
@@ -138,6 +146,7 @@ pub fn load_value(source: Value, lookup: &dyn Lookup) -> Result<Loaded, LoadErro
         message: err.to_string(),
     })?;
     let mut diagnostics = references.diagnostics;
+    diagnostics.extend(deprecated);
     UnknownKeys {
         found: &mut diagnostics,
     }

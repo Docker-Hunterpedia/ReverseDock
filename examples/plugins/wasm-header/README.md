@@ -13,6 +13,7 @@ sha256sum target/wasm32-wasip2/release/rdock_wasm_header.wasm
 ```
 
 ```yaml
+experimental: [wasm]   # WASM plugins are experimental (ADR-0033)
 middlewares:
   header:
     type: wasm

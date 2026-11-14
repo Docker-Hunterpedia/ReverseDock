@@ -1640,9 +1640,9 @@ type ClientInterface interface {
 	// Corresponds with POST /api/v1/setup (the `Setup` operationId).
 	Setup(ctx context.Context, body SetupJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
-	// Status The running process: version, configuration generation, listeners, providers and the last reload
+	// Status The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`)
 	//
-	// The running process: version, configuration generation, listeners, providers and the last reload.
+	// The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`).
 	//
 	// Corresponds with GET /api/v1/status (the `Status` operationId).
 	Status(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -3229,9 +3229,9 @@ func (c *Client) Setup(ctx context.Context, body SetupJSONRequestBody, reqEditor
 	return c.Client.Do(req)
 }
 
-// Status The running process: version, configuration generation, listeners, providers and the last reload
+// Status The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`)
 //
-// The running process: version, configuration generation, listeners, providers and the last reload.
+// The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`).
 //
 // Corresponds with GET /api/v1/status (the `Status` operationId).
 func (c *Client) Status(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -7324,9 +7324,9 @@ type ClientWithResponsesInterface interface {
 	// Corresponds with POST /api/v1/setup (the `Setup` operationId).
 	SetupWithResponse(ctx context.Context, body SetupJSONRequestBody, reqEditors ...RequestEditorFn) (*SetupResponse, error)
 
-	// StatusWithResponse The running process: version, configuration generation, listeners, providers and the last reload
+	// StatusWithResponse The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`)
 	//
-	// The running process: version, configuration generation, listeners, providers and the last reload.
+	// The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`).
 	//
 	// Returns a wrapper object for the known response body format(s).
 	//
@@ -14294,9 +14294,9 @@ func (c *ClientWithResponses) SetupWithResponse(ctx context.Context, body SetupJ
 	return ParseSetupResponse(rsp)
 }
 
-// StatusWithResponse The running process: version, configuration generation, listeners, providers and the last reload
+// StatusWithResponse The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`)
 //
-// The running process: version, configuration generation, listeners, providers and the last reload.
+// The running process: version, configuration generation, listeners, providers, the last reload, and the experimental and beta features and deprecated settings the configuration uses (`features_in_use`, `deprecations_in_use`).
 //
 // Returns a wrapper object for the known response body format(s).
 //

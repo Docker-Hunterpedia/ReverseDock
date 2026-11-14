@@ -11,6 +11,7 @@ mod cluster;
 mod config_api;
 mod consumers;
 mod dashboard;
+mod deprecated;
 #[cfg(feature = "fault-injection")]
 pub mod fault;
 mod guard;

@@ -81,14 +81,17 @@ Let's Encrypt offers profiles: `classic` (90 days, moving to 64 days in 2027 and
 - **Failures** are retried after 1 minute, then 2, 4 … up to 24 hours. After a failure against Let's Encrypt, the next attempt is rehearsed on staging first, so a broken setup does not use up production limits.
 - **A CA outage** never stops serving: the stored certificate is used until it expires.
 
-`rdock status` lists every automatic certificate with its expiry, planned renewal and last error. Metrics: `rdock_cert_expiry_timestamp_seconds`, `rdock_cert_renewal_failures_total` and `rdock_acme_orders_total`. After 3 failures in a row, or with less than 7 days left, a warning is logged and, if set, a webhook receives the event:
+`rdock status` lists every automatic certificate with its expiry, planned renewal and last error. Metrics: `rdock_cert_expiry_timestamp_seconds`, `rdock_cert_renewal_failures_total` and `rdock_acme_orders_total`. After 3 failures in a row, or with less than 7 days left, a warning is logged and, if set, an [alert channel](/docs/guides/alerts/) receives the event:
 
 ```yaml title="rdock.yaml (excerpt)"
 observability:
   alerts:
-    webhook:
-      url: https://alerts.example.com/rdock
-      token: "${file:/run/secrets/alert_token}"
+    channels:
+      ops:
+        type: webhook
+        url: "${file:/run/secrets/alert_url}"
+        token: "${file:/run/secrets/alert_token}"
+        rules: [certificates]
 ```
 
 ## Storage

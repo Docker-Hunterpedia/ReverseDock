@@ -27,7 +27,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 use anyhow::Context;
-use clap::{Args, Parser, Subcommand, ValueEnum};
+use clap::{Args, CommandFactory, FromArgMatches, Parser, Subcommand, ValueEnum};
 
 /// musl's malloc took a global lock on every allocation and mapped and unmapped memory for
 /// the 64 KiB connection buffers, which was about a quarter of the CPU per request on 2 CPUs
@@ -110,7 +110,8 @@ enum Command {
     /// Install the local CA's root (for localhost and private names) into the system trust
     /// stores, or remove it with --uninstall.
     Trust(TrustArgs),
-    /// Turn another proxy's configuration into rdock.yaml.
+    /// Turn another proxy's configuration into rdock.yaml, or move an rdock.yaml off deprecated
+    /// settings.
     #[command(subcommand)]
     Migrate(MigrateCommand),
     /// Work with the admin audit log.
@@ -176,6 +177,27 @@ struct AuditArgs {
 enum MigrateCommand {
     /// Traefik labels (a Compose file) or a Traefik dynamic configuration → rdock.yaml.
     Traefik(MigrateTraefikArgs),
+    /// Rewrite deprecated settings of an rdock.yaml to their replacements (and, once a later
+    /// schema version exists, convert to it). Comments and formatting are kept where the
+    /// change can be made as a text edit.
+    Config(MigrateConfigArgs),
+}
+
+#[derive(Args)]
+struct MigrateConfigArgs {
+    /// Configuration file (YAML, or JSON with a .json extension); `-` reads standard input as
+    /// YAML.
+    input: PathBuf,
+    /// Print a unified diff instead of the migrated file.
+    #[arg(long, conflicts_with_all = ["write", "output"])]
+    diff: bool,
+    /// Replace the file, after copying it to `<file>.bak` (or `.bak.1`, `.bak.2`, … when
+    /// taken).
+    #[arg(long, conflicts_with = "output")]
+    write: bool,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
 }
 
 #[derive(Args)]
@@ -251,9 +273,21 @@ struct ValidateArgs {
     /// Treat warnings as errors.
     #[arg(long)]
     strict: bool,
+    /// How deprecated settings count: `warn` (the default) or `error`, to see whether a file
+    /// is ready for the release that removes them.
+    #[arg(long, value_enum, default_value_t = DeprecationsArg::Warn)]
+    deprecations: DeprecationsArg,
     /// Output format.
     #[arg(long, value_enum, default_value_t = OutputFormat::Text)]
     format: OutputFormat,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum DeprecationsArg {
+    /// A warning (an error under `--strict`).
+    Warn,
+    /// An error.
+    Error,
 }
 
 #[derive(Clone, Copy, ValueEnum)]
@@ -307,7 +341,7 @@ struct StatusArgs {
 #[must_use]
 pub fn run(registry: Registry) -> ExitCode {
     // clap reads the process's arguments itself.
-    run_parsed(registry, Cli::try_parse)
+    run_parsed(registry, || Cli::command().try_get_matches())
 }
 
 /// Like [`run`], with explicit arguments (the first is the program name), e.g. for tests.
@@ -317,16 +351,29 @@ where
     I: IntoIterator<Item = T>,
     T: Into<OsString> + Clone,
 {
-    run_parsed(registry, || Cli::try_parse_from(args))
+    run_parsed(registry, || Cli::command().try_get_matches_from(args))
 }
 
 /// Checks the registry, parses the command line with `parse` and runs the command.
-fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Error>) -> ExitCode {
+fn run_parsed(
+    registry: Registry,
+    parse: impl FnOnce() -> Result<clap::ArgMatches, clap::Error>,
+) -> ExitCode {
+    // Test hook (ADR-0033): registry entries that exercise the deprecation plumbing end to
+    // end. Debug builds only; a release binary never reads the variable.
+    if cfg!(debug_assertions)
+        && std::env::var_os("RDOCK_TEST_DEPRECATIONS").is_some_and(|v| v == "1")
+    {
+        rdock_model::deprecation::enable_test_entries();
+    }
     if let Err(err) = registry.check() {
         eprintln!("error: the plugin registry is invalid: {err}");
         return ExitCode::from(2);
     }
-    let cli = match parse() {
+    let cli = match parse().and_then(|matches| {
+        warn_deprecated_cli(&matches);
+        Cli::from_arg_matches(&matches)
+    }) {
         Ok(cli) => cli,
         Err(err) => {
             // `--help` and `--version` print and succeed; usage errors exit 2.
@@ -354,6 +401,7 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
+        Command::Migrate(MigrateCommand::Config(args)) => migrate::config(&args),
         Command::Audit(AuditCommand::Verify(args)) => audit_verify(&args),
         Command::Audit(AuditCommand::List(args)) => admin_cli::audit_list(&args),
         Command::Config(command) => admin_cli::config(&command),
@@ -375,6 +423,41 @@ fn run_parsed(registry: Registry, parse: impl FnOnce() -> Result<Cli, clap::Erro
         eprintln!("error: {err:#}");
         ExitCode::from(2)
     })
+}
+
+/// A warning on standard error for each deprecated command and flag used (ADR-0033). Flags are
+/// named as clap derives them: `--` and the field name with `-` for `_`.
+fn warn_deprecated_cli(matches: &clap::ArgMatches) {
+    let mut words: Vec<&str> = Vec::new();
+    let mut level = matches;
+    while let Some((name, sub)) = level.subcommand() {
+        words.push(name);
+        if let Some(entry) = rdock_model::deprecation::cli_command(&words) {
+            eprintln!(
+                "warning: `rdock {}` is deprecated since {} and will be removed in {}: use {}",
+                words.join(" "),
+                entry.since,
+                entry.removal,
+                entry.replacement
+            );
+        }
+        for id in sub.ids() {
+            if sub.value_source(id.as_str()) != Some(clap::parser::ValueSource::CommandLine) {
+                continue;
+            }
+            let flag = format!("--{}", id.as_str().replace('_', "-"));
+            if let Some(entry) = rdock_model::deprecation::cli_flag(&words, &flag) {
+                eprintln!(
+                    "warning: `rdock {} {flag}` is deprecated since {} and will be removed in {}: use {}",
+                    words.join(" "),
+                    entry.since,
+                    entry.removal,
+                    entry.replacement
+                );
+            }
+        }
+        level = sub;
+    }
 }
 
 fn print(text: &str) -> anyhow::Result<()> {
@@ -405,15 +488,41 @@ fn schema() -> anyhow::Result<()> {
     print(&rdock_model::json_schema_string().context("serialising the JSON Schema")?)
 }
 
+/// Whether this build includes a feature: every feature but those behind a cargo feature that
+/// is off.
+fn built(feature: &rdock_model::maturity::Feature) -> bool {
+    match feature.cargo_feature {
+        Some("wasm") => rdock_middleware::wasm::ENABLED,
+        Some("http3") => rdock_proxy::http3::ENABLED,
+        Some(_) => false,
+        None => true,
+    }
+}
+
 fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
+    use rdock_model::maturity::{FEATURES, Level, feature};
     let names: Vec<&str> = plugins.names().collect();
     let api = rdock_plugin_api::API_VERSION;
-    // The WASM host ABI, when this build includes it (`wasm` feature, experimental).
+    // The WASM host ABI, when this build includes it (`wasm` feature).
     let wasm_abi = rdock_middleware::wasm::ENABLED.then_some(rdock_wasm::ABI_VERSION);
+    // The levels come from the maturity registry (ADR-0033).
+    let level = |id: &str| feature(id).map_or("experimental", |f| f.level.as_str());
     if json {
-        // HTTP/3 ingress, when this build includes it (`http3` feature, experimental).
         let http3 = rdock_proxy::http3::ENABLED;
-        let info = serde_json::json!({ "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET, "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi, "http3": http3 });
+        let features: Vec<serde_json::Value> = FEATURES
+            .iter()
+            .map(|f| {
+                let mut v = serde_json::to_value(f).unwrap_or_default();
+                v["built"] = built(f).into();
+                v
+            })
+            .collect();
+        let info = serde_json::json!({
+            "version": VERSION, "commit": COMMIT, "rustc": RUSTC, "target": TARGET,
+            "plugin_api": api, "plugins": names, "wasm_abi": wasm_abi, "http3": http3,
+            "schema_version": rdock_model::deprecation::SCHEMA_VERSION,
+            "features": features,
+        });
         print(&format!("{info}\n"))
     } else {
         let plugins = if names.is_empty() {
@@ -423,15 +532,32 @@ fn version(json: bool, plugins: &Registry) -> anyhow::Result<()> {
         };
         let wasm = wasm_abi.map_or_else(
             || "not in this build".to_owned(),
-            |abi| format!("ABI {abi} (experimental)"),
+            |abi| format!("ABI {abi} ({})", level("wasm")),
         );
         let http3 = if rdock_proxy::http3::ENABLED {
-            "quinn and h3 (experimental)"
+            format!("quinn and h3 ({})", level("http3"))
         } else {
-            "not in this build"
+            "not in this build".to_owned()
+        };
+        let list = |wanted: Level| {
+            FEATURES
+                .iter()
+                .filter(|f| f.level == wanted)
+                .map(|f| {
+                    if built(f) {
+                        f.id.to_owned()
+                    } else {
+                        format!("{} (not in this build)", f.id)
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", ")
         };
         print(&format!(
-            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\nHTTP/3: {http3}\n"
+            "rdock {VERSION}\ncommit  {COMMIT}\nrustc   {RUSTC}\ntarget  {TARGET}\nplugin API {api}; plugins: {plugins}\nWASM plugins: {wasm}\nHTTP/3: {http3}\nconfiguration schema: v{}\nexperimental: {}\nbeta: {}\n",
+            rdock_model::deprecation::SCHEMA_VERSION,
+            list(Level::Experimental),
+            list(Level::Beta),
         ))
     }
 }

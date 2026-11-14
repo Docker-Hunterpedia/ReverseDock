@@ -1,5 +1,6 @@
 // src/content/docs/docs/reference/configuration/*.mdx from schema/rdock.v1.json (`just schema`),
-// with the "planned for" badges of src/data/status.json (proved by check-status.ts).
+// with the "planned for" badges of src/data/status.json (proved by check-status.ts) and the
+// maturity and deprecation badges the schema carries (`x-rdock-maturity`, `deprecated`; ADR-0033).
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ROOT, SITE } from './lib.ts';
@@ -19,6 +20,9 @@ type Schema = {
   anyOf?: Schema[];
   oneOf?: Schema[];
   minimum?: number;
+  deprecated?: boolean;
+  'x-rdock-maturity'?: 'beta' | 'experimental';
+  'x-rdock-deprecated'?: { since: string; removal: string; replacement: string };
 };
 interface Status { path: string; planned: string; what: string; value: boolean }
 
@@ -68,6 +72,14 @@ function defaultLabel(value: unknown): string | undefined {
   return text.length > 90 ? 'see the fields below' : `\`${text}\``;
 }
 
+/** The maturity or deprecation badge a schema node carries, with a leading space; empty when stable. */
+function marks(s: Schema): string {
+  const out: string[] = [];
+  if (s['x-rdock-maturity']) out.push(`<Status maturity="${s['x-rdock-maturity']}" />`);
+  if (s.deprecated && s['x-rdock-deprecated']) out.push(`<Status deprecated="${s['x-rdock-deprecated'].since}" />`);
+  return out.map((m) => ` ${m}`).join('');
+}
+
 function statusFor(path: string) {
   return statuses.find((s) => s.path === path);
 }
@@ -94,7 +106,7 @@ function factsLine(s: Schema, required: boolean): string {
 function valueLines(s: Schema): string[] {
   const variants = withoutNull(s);
   const r = resolve(variants.find((v) => isObject(v) || isMap(v) || consts(v).length > 0) ?? variants[0]);
-  return consts(r).map((c) => `- \`${c.const}\`: ${prose(c.description ?? '')}`);
+  return consts(r).map((c) => `- \`${c.const}\`${marks(c)}: ${prose(c.description ?? '')}`);
 }
 
 /** The aside for a value (not a key) that `rdock` refuses until a later release. */
@@ -104,7 +116,7 @@ function plannedValueNote(status: Status): string[] {
 
 function field(lines: string[], path: string, s: Schema, required: boolean, level: number) {
   const status = statusFor(path);
-  const badge = status && !status.value ? ` <Status planned="${status.planned}" />` : '';
+  const badge = (status && !status.value ? ` <Status planned="${status.planned}" />` : '') + marks(s);
   lines.push(`${'#'.repeat(level)} \`${path}\`${badge}`, '', factsLine(s, required), '');
   if (s.description) lines.push(prose(s.description), '');
   const values = valueLines(s);
@@ -128,7 +140,7 @@ function walk(lines: string[], path: string, s: Schema, level: number) {
     } else if (isUnionOfObjects(r)) {
       for (const option of r.oneOf ?? []) {
         const kind = option.properties?.type?.const;
-        lines.push(`${'#'.repeat(level)} \`type: ${kind}\``, '', prose(option.description), '');
+        lines.push(`${'#'.repeat(level)} \`type: ${kind}\`${marks(option)}`, '', prose(option.description), '');
         const { type: _type, ...rest } = option.properties ?? {};
         walk(lines, path, { ...option, properties: rest }, Math.min(level + 1, 4));
       }
@@ -156,6 +168,7 @@ sections.forEach(([key, s], i) => {
   const lines: string[] = [header(key, (s.description ?? key).replace(/\n/g, ' '), i + 1), prose(s.description), ''];
   const status = statusFor(key);
   if (status && !status.value) lines.push(`<Status planned="${status.planned}" />`, '');
+  if (marks(s)) lines.push(marks(s).trim(), '');
   const value = withoutNull(s)[0];
   if (isObject(value) || isMap(value) || isUnionOfObjects(value)) walk(lines, key, s, 2);
   else field(lines, key, s, false, 2);
@@ -182,6 +195,7 @@ ReverseDock reads one YAML or JSON file, \`/etc/rdock/rdock.yaml\` by default (\
 - \`\${NAME}\`, \`\${env:NAME}\` and \`\${file:/path}\` insert environment variables and file contents; secret fields keep the reference instead of the value.
 - Add \`# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json\` at the top of the file for completion and checks in your editor.
 - Settings marked **planned** are accepted by \`rdock validate\` with a warning and refused by \`rdock run\` until their release.
+- Settings marked **beta** or **experimental** are below stable ([maturity levels](/docs/project/maturity/)); an experimental one must be named under \`experimental\`. Settings marked **deprecated** keep working until their removal release ([deprecations](/docs/project/deprecations/)). Unmarked settings are stable.
 
 ## Sections
 

@@ -11,6 +11,8 @@ use rdock_model::{Config, Diagnostic};
 use rdock_provider_docker::labels::{Container, Health, translate};
 use serde_json::{Map, Value};
 
+pub mod config;
+
 /// What `rdock migrate traefik` read.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Input {

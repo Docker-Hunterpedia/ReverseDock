@@ -2,7 +2,7 @@
 title: middlewares
 description: "Reusable request and response policies."
 sidebar:
-  order: 13
+  order: 14
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -355,7 +355,7 @@ Period of `average`; defaults to the middleware's.
 
 Period of `average`.
 
-### `middlewares.<name>.scope`
+### `middlewares.<name>.scope` <Status maturity="beta" />
 
 **Type:** `instance` · `cluster`
 
@@ -677,13 +677,13 @@ Demand a verified client certificate, check its names and pass its identity on.
 
 Names a certificate must have one of: its common name or a DNS, URI or email SAN. `*` matches any run of characters, e.g. `*.clients.example.com`. Any name when empty. The typed lists below check one field each and are safer: a URI pattern there cannot be satisfied by a common name that carries the same text.
 
-### `middlewares.<name>.dns`
+### `middlewares.<name>.dns` <Status maturity="beta" />
 
 **Type:** list of `string`
 
 DNS SANs, one must match (`*` globs).
 
-### `middlewares.<name>.emails`
+### `middlewares.<name>.emails` <Status maturity="beta" />
 
 **Type:** list of `string`
 
@@ -699,7 +699,7 @@ Headers that pass the identity to the backend.
 - `traefik`: Traefik's `X-Forwarded-Tls-Client-Cert` (the certificate) and `X-Forwarded-Tls-Client-Cert-Info` (its fields).
 - `xfcc`: Envoy's `X-Forwarded-Client-Cert`.
 
-### `middlewares.<name>.organizations`
+### `middlewares.<name>.organizations` <Status maturity="beta" />
 
 **Type:** list of `string`
 
@@ -711,19 +711,19 @@ Subject organizations (O), one must match (`*` globs).
 
 Answer `403` to requests without a verified client certificate.
 
-### `middlewares.<name>.serials`
+### `middlewares.<name>.serials` <Status maturity="beta" />
 
 **Type:** list of `string`
 
 Certificate serial numbers in hex (`0a1b…`, colons allowed), exact.
 
-### `middlewares.<name>.sha256`
+### `middlewares.<name>.sha256` <Status maturity="beta" />
 
 **Type:** list of `string`
 
 SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.
 
-### `middlewares.<name>.spiffe`
+### `middlewares.<name>.spiffe` <Status maturity="beta" />
 
 **Type:** object
 
@@ -753,13 +753,13 @@ SPIFFE IDs accepted exactly, e.g. `spiffe://prod.example.com/ns/web/sa/api`.
 
 Trust domains accepted, e.g. `prod.example.com`. Required.
 
-### `middlewares.<name>.subjects`
+### `middlewares.<name>.subjects` <Status maturity="beta" />
 
 **Type:** list of `string`
 
 Subject common names, one must match (`*` globs). Every typed list that is set must match, together with `allow`.
 
-### `middlewares.<name>.uris`
+### `middlewares.<name>.uris` <Status maturity="beta" />
 
 **Type:** list of `string`
 
@@ -870,7 +870,7 @@ Which symbolic links are followed.
 
 File extension → media type, overriding the built-in table, e.g. `{ ts: text/typescript }`.
 
-## `type: hold_body`
+## `type: hold_body` <Status maturity="beta" />
 
 Hold the request body until it is complete (up to `max`) before any of it reaches the backend. The backend connection and the request head are already sent, so this does not shield backend workers from slow uploads; it refuses oversize bodies with `413` and lets body middlewares see the whole body.
 
@@ -886,7 +886,7 @@ Largest body held, at most 64MiB; a longer one is refused with `413`. The route'
 
 Longest time from the first body byte to the last; a slower upload is refused with `408`. The service's `timeouts.read` also runs while the backend waits for the body.
 
-## `type: cache`
+## `type: cache` <Status maturity="beta" />
 
 Cache responses in a store named under `caches` (RFC 9111). Only what the origin's headers allow is stored; see `docs/guides/caching`.
 
@@ -1092,7 +1092,7 @@ Pass the tag headers on to clients; by default they are removed.
 
 Targeted cache-control fields honoured, in order (RFC 9213): the first one with a valid, non-empty value replaces `Cache-Control` and `Expires` for this cache, in both directions (`CDN-Cache-Control: no-store` keeps a fresh response out; `max-age=600` stores one marked `Cache-Control: no-store`). Default `[CDN-Cache-Control]`: from the origin's side this cache is the CDN tier. `[]` reads `Cache-Control` only; a name of your own first (`[RDock-Cache-Control, CDN-Cache-Control]`) targets this cache alone.
 
-## `type: plugin`
+## `type: plugin` <Status maturity="beta" />
 
 A native plugin compiled into this binary and registered under `name` (ADR-0030). The stock `rdock` binary registers none; see `docs/guides/plugins`.
 
@@ -1108,9 +1108,9 @@ The plugin's own settings, checked by the plugin when the configuration is valid
 
 The name the plugin is registered under in this binary.
 
-## `type: wasm`
+## `type: wasm` <Status maturity="experimental" />
 
-A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with minisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
+A sandboxed WebAssembly plugin (ADR-0030): a component for the world `rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with minisign. Experimental: name `wasm` under `experimental`. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.
 
 ### `middlewares.<name>.allow_unsigned`
 
@@ -1181,7 +1181,7 @@ Wall-clock time allowed per call (a backstop to `fuel`; resolution about 1 ms). 
 
 Minisign public keys whose signatures are accepted: the base64 line of a `.pub` file (`RWQ…`).
 
-## `type: agent`
+## `type: agent` <Status maturity="beta" />
 
 Ask an out-of-process agent (a WAF, a policy service) whether to allow a request, with its body up to `max_body` (ADR-0030). Fails closed by default.
 
@@ -1309,7 +1309,7 @@ SNI and verification name, when it differs from the backend host.
 
 Verify the backend certificate and host name.
 
-## `type: cloudflare_access`
+## `type: cloudflare_access` <Status maturity="beta" />
 
 Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset over `jwt` with the team's keys, issuer and RS256, the token from the `Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.
 
@@ -1337,7 +1337,7 @@ Request headers set from claims (`claim: header`), e.g. `{ email: X-Auth-Email, 
 
 The Zero Trust team name (`acme`) or team domain (`acme.cloudflareaccess.com`).
 
-## `type: api_key`
+## `type: api_key` <Status maturity="beta" />
 
 Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or `X-API-Key`; sets the request's consumer (F-GW-01).
 
@@ -1380,7 +1380,7 @@ A query parameter the key is also read from, after the headers. Off unless named
 
 The realm of the `WWW-Authenticate` challenge.
 
-## `type: quota`
+## `type: quota` <Status maturity="beta" />
 
 Requests per consumer per calendar window (hour, day, month), persisted across restarts; `429` when used up (F-GW-02).
 
@@ -1417,7 +1417,7 @@ Requests allowed per window.
 
 Group → limit, for consumers in that group (with `key: consumer`, the first of the consumer's groups that has one wins; with `key: group`, the primary group's).
 
-### `middlewares.<name>.scope`
+### `middlewares.<name>.scope` <Status maturity="beta" />
 
 **Type:** `instance` · `cluster`
 
@@ -1440,7 +1440,7 @@ The calendar window, in UTC: `hour`, `day` (from 00:00) or `month` (from the 1st
 - `day`: From 00:00 UTC.
 - `month`: From 00:00 UTC on the 1st.
 
-## `type: validate`
+## `type: validate` <Status maturity="beta" />
 
 Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an OpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).
 
@@ -1540,7 +1540,7 @@ With `openapi`: requests that match no operation of the document. `deny` (the de
 - `deny`: Answer `404` (no path template matches) or `405` (the path exists, the method not).
 - `allow`: Let them through unchecked.
 
-## `type: transform`
+## `type: transform` <Status maturity="beta" />
 
 Change request and response headers, and JSON bodies with JSON Patch (RFC 6902) (F-GW-04).
 
@@ -1652,7 +1652,7 @@ Remove headers.
 
 Replace headers.
 
-## `type: oidc`
+## `type: oidc` <Status maturity="beta" />
 
 OpenID Connect login for browsers: authorization code flow with PKCE, a stateless encrypted session cookie, claims to headers and to the consumer (F-GW-01).
 
@@ -1871,7 +1871,7 @@ Requests without a valid session: `auto` redirects page navigations (`GET`/`HEAD
 - `redirect`: Redirect every `GET` and `HEAD` to the login; `401` for other methods.
 - `deny`: Always `401`.
 
-## `type: abuse`
+## `type: abuse` <Status maturity="beta" />
 
 Count abuse signals (response statuses, failed authentications) per key in a window and ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive restarts and binary upgrades.
 
@@ -1951,7 +1951,7 @@ Events within one `window` that start a ban. Default 20.
 
 The counting window. Default 1m.
 
-## `type: admission`
+## `type: admission` <Status maturity="beta" />
 
 An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the routes using it can have in flight from their latency (`aimd` or `gradient`) and answers the rest with `503` and `Retry-After`, routes of the lowest `priority_class` first. Off unless configured.
 

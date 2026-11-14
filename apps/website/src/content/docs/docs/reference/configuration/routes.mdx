@@ -2,7 +2,7 @@
 title: routes
 description: "HTTP routes: which requests go to which service, through which middlewares."
 sidebar:
-  order: 16
+  order: 17
 ---
 
 import Status from '../../../../../components/Status.astro';
@@ -17,7 +17,7 @@ HTTP routes: which requests go to which service, through which middlewares.
 
 Set to `false` to keep the route defined but inactive.
 
-## `routes.<name>.errors`
+## `routes.<name>.errors` <Status maturity="beta" />
 
 **Type:** object
 
@@ -81,7 +81,7 @@ The service that receives the copies (`name` or `name@provider`).
 
 Higher priorities are evaluated first. `0` uses the rule length, like Traefik.
 
-## `routes.<name>.priority_class`
+## `routes.<name>.priority_class` <Status maturity="beta" />
 
 **Type:** `critical` · `normal` · `sheddable`
 

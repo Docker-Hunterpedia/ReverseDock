@@ -102,6 +102,7 @@ fn document() -> Value {
     add_model(&mut document);
     add_security(&mut document);
     tidy_texts(&mut document);
+    crate::deprecated::mark(&mut document);
     document
 }
 
@@ -116,6 +117,9 @@ fn add_model(document: &mut Value) {
     if let Some(root) = model.as_object_mut() {
         root.remove("$schema");
         root.remove("$id");
+        // The registries are for the website; the API document keeps the per-key marks.
+        root.remove("x-rdock-features");
+        root.remove("x-rdock-deprecations");
     }
     let schemas = &mut document["components"]["schemas"];
     for (name, mut schema) in defs {

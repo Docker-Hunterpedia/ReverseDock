@@ -90,6 +90,11 @@ pub struct Metrics {
     pub config_generation: IntGauge,
     /// Configuration reloads by result (`applied`, `rejected`).
     pub config_reloads: IntCounterVec,
+    /// 1 for each experimental feature the applied configuration uses, 0 for the others
+    /// (ADR-0033).
+    pub experimental_in_use: IntGaugeVec,
+    /// 1 for each deprecated element the applied configuration uses (ADR-0033).
+    pub deprecated_in_use: IntGaugeVec,
     /// Expiry of each certificate, in seconds since the Unix epoch.
     pub cert_expiry: IntGaugeVec,
     /// Failed attempts to issue or renew an automatic certificate, by its first name.
@@ -450,6 +455,18 @@ impl Metrics {
             "rdock_config_reloads_total",
             "Configuration reload attempts.",
             &["result"],
+        )?;
+        let experimental_in_use = gauges(
+            &registry,
+            "rdock_experimental_feature_in_use",
+            "1 when the applied configuration uses this experimental feature, else 0.",
+            &["feature"],
+        )?;
+        let deprecated_in_use = gauges(
+            &registry,
+            "rdock_deprecated_config_in_use",
+            "1 when the applied configuration uses this deprecated element.",
+            &["element"],
         )?;
         let cert_expiry = gauges(
             &registry,
@@ -858,6 +875,8 @@ impl Metrics {
             udp_session_ends,
             config_generation,
             config_reloads,
+            experimental_in_use,
+            deprecated_in_use,
             cert_expiry,
             cert_renewal_failures,
             acme_orders,

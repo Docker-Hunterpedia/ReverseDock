@@ -26,6 +26,7 @@ use crate::zero_config::{self, Source};
 
 mod api;
 pub(crate) mod control;
+mod maturity;
 mod vault;
 
 pub(crate) use vault::{read_once as read_vault_once, references as vault_references};
@@ -149,6 +150,8 @@ pub(crate) struct Engine {
     ready: AtomicBool,
     metrics_enabled: AtomicBool,
     last: Mutex<Option<Report>>,
+    /// Features below stable and deprecated elements the applied configuration uses.
+    signals: Mutex<maturity::Signals>,
     watched: Mutex<BTreeSet<PathBuf>>,
     /// Hash of the watched files when the configuration was last applied.
     fingerprint: Mutex<Option<u64>>,
@@ -270,6 +273,7 @@ impl Engine {
             ready: AtomicBool::new(false),
             metrics_enabled: AtomicBool::new(true),
             last: Mutex::new(None),
+            signals: Mutex::new(maturity::Signals::default()),
             watched: Mutex::new(BTreeSet::new()),
             fingerprint: Mutex::new(None),
             included: Mutex::new(Included::default()),
@@ -563,7 +567,7 @@ impl Engine {
         }
         match load_value(lkg, &System) {
             Ok(loaded) if !loaded.has_errors() => {
-                let lkg_report = self.apply(loaded, "start", Origin::LastKnownGood).await;
+                let lkg_report = Box::pin(self.apply(loaded, "start", Origin::LastKnownGood)).await;
                 if lkg_report.applied() {
                     Ok(lkg_report)
                 } else {
@@ -619,7 +623,8 @@ impl Engine {
         if self.control.is_some() {
             return Box::pin(self.reload_with_bundle(loaded, trigger)).await;
         }
-        self.apply(loaded, trigger, Origin::File).await
+        // Boxed: the configuration grew past what a reload future may hold on the stack.
+        Box::pin(self.apply(loaded, trigger, Origin::File)).await
     }
 
     /// Hands the applied configuration to the tasks that work beside the data plane.
@@ -802,14 +807,13 @@ impl Engine {
         self.watch_files(&file);
         self.metrics_enabled
             .store(config.observability.metrics.prometheus, Ordering::SeqCst);
+        let signals = maturity::Signals::of(&config, &diagnostics);
         applied.config = Some(config);
         applied.source = Some(source);
         applied.api = api;
         applied.origin = origin;
         drop(applied);
-        for d in diagnostics.iter().filter(|d| !d.is_error()) {
-            tracing::warn!(path = %d.path, "{}", d.message);
-        }
+        self.report_findings(&diagnostics, signals);
         tracing::info!(generation, %trigger, %summary, "configuration applied");
         self.count_applied(generation);
         let report = Report {
@@ -831,6 +835,21 @@ impl Engine {
             "diagnostics": report.diagnostics.len(),
         }));
         report
+    }
+
+    /// Logs an applied configuration's warnings, and what it uses below stable or deprecated
+    /// (ADR-0033): one line per feature or element, the gauges, and the status document's lists.
+    fn report_findings(&self, diagnostics: &[Diagnostic], signals: maturity::Signals) {
+        // Deprecations are logged once per element by `signals`, not once per use.
+        for d in diagnostics
+            .iter()
+            .filter(|d| !d.is_error() && !maturity::is_deprecation(d))
+        {
+            tracing::warn!(path = %d.path, "{}", d.message);
+        }
+        signals.log();
+        signals.record(self.plane.metrics());
+        *self.signals.lock().unwrap_or_else(PoisonError::into_inner) = signals;
     }
 
     /// Merges, compiles and hands the result to the data plane. A provider listener whose
@@ -1308,6 +1327,11 @@ impl rdock_admin::Control for Engine {
             .lock()
             .unwrap_or_else(PoisonError::into_inner)
             .clone();
+        let signals = self
+            .signals
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone();
         serde_json::json!({
             "version": crate::VERSION,
             "commit": crate::COMMIT,
@@ -1328,6 +1352,13 @@ impl rdock_admin::Control for Engine {
                 "max_blocking_threads": t.max_blocking,
             })),
             "last_reload": last,
+            // ADR-0033: what the applied configuration uses below stable, and what it uses
+            // that is deprecated.
+            "features_in_use": {
+                "experimental": signals.experimental,
+                "beta": signals.beta,
+            },
+            "deprecations_in_use": signals.deprecated,
         })
     }
 

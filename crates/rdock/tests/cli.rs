@@ -217,34 +217,274 @@ fn the_stock_binary_registers_no_plugins_and_says_so() {
 
 #[cfg(not(feature = "http3"))]
 #[test]
-fn http3_needs_a_build_with_the_feature() {
+fn http3_needs_the_opt_in_and_a_build_with_the_feature() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("rdock.yaml");
-    std::fs::write(
-        &file,
-        "listeners:\n  websecure: { address: \":443\", tls: {}, http3: { enabled: true } }\n  web: { address: \":80\" }\n",
-    )
-    .unwrap();
-    let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
+    let config = "listeners:\n  websecure: { address: \":443\", tls: {}, http3: { enabled: true } }\n  web: { address: \":80\" }\n";
+    std::fs::write(&file, config).unwrap();
+    // Experimental (ADR-0033): refused without the opt-in, whatever the build.
+    let out = rdock(&["validate", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let text = stdout(&out);
+    assert!(
+        text.contains("error: listeners.websecure.http3.enabled: the experimental feature `http3` (HTTP/3 over QUIC on `https` listeners) is used but not enabled"),
+        "{text}"
+    );
+    assert!(text.contains("add `experimental: [http3]`"), "{text}");
+    assert!(text.contains("`http3` cargo feature"), "{text}");
+    // With it, the build is what is missing.
+    std::fs::write(&file, format!("experimental: [http3]\n{config}")).unwrap();
+    let out = rdock(&["validate", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    let text = stdout(&out);
     assert!(
         text.contains("warning: listeners.websecure.http3.enabled: HTTP/3 (`http3.enabled`): this build does not include HTTP/3; build with --features http3"),
         "{text}"
     );
+    assert!(!text.contains("experimental feature"), "{text}");
 }
 
 #[cfg(not(feature = "wasm"))]
 #[test]
-fn wasm_plugins_need_a_build_with_the_feature() {
+fn wasm_plugins_need_the_opt_in_and_a_build_with_the_feature() {
     let dir = tempfile::tempdir().unwrap();
     let file = dir.path().join("rdock.yaml");
-    std::fs::write(
-        &file,
-        "middlewares:\n  w: { type: wasm, path: /plugins/p.wasm, sha256: \"0000000000000000000000000000000000000000000000000000000000000000\", trusted_keys: [\"RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\"] }\n",
-    )
-    .unwrap();
+    let config = "middlewares:\n  w: { type: wasm, path: /plugins/p.wasm, sha256: \"0000000000000000000000000000000000000000000000000000000000000000\", trusted_keys: [\"RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\"] }\n";
+    std::fs::write(&file, config).unwrap();
+    let out = rdock(&["validate", "--format", "json", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+    let d = &report[0]["diagnostics"][0];
+    assert_eq!(d["severity"], "error");
+    assert_eq!(d["path"], "middlewares.w");
+    assert_eq!(d["code"], "experimental_not_enabled");
+    // `rdock run` refuses it for the same reason.
+    let data = dir.path().join("data");
+    let out = rdock(&[
+        "run",
+        "--config",
+        file.to_str().unwrap(),
+        "--data-dir",
+        data.to_str().unwrap(),
+        "--no-watch",
+    ]);
+    assert_ne!(out.status.code(), Some(0));
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr));
+    assert!(text.contains("experimental feature `wasm`"), "{text}");
+    // With the opt-in, the build is what is missing: a warning here, refused by `rdock run`.
+    std::fs::write(&file, format!("experimental: [wasm]\n{config}")).unwrap();
     let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
     assert!(
         text.contains("warning: middlewares.w: WASM plugins (`type: wasm`): this build does not include WASM plugins; build with --features wasm"),
+        "{text}"
+    );
+    let out = rdock(&[
+        "run",
+        "--config",
+        file.to_str().unwrap(),
+        "--data-dir",
+        data.to_str().unwrap(),
+        "--no-watch",
+    ]);
+    assert_ne!(out.status.code(), Some(0));
+    let text = format!("{}{}", stdout(&out), String::from_utf8_lossy(&out.stderr));
+    assert!(
+        text.contains("this build does not include WASM plugins"),
+        "{text}"
+    );
+}
+
+/// `tests/migrate-config/<name>.yaml` migrates to `<name>.migrated.yaml`, comments kept, and
+/// the result validates without deprecation warnings (ADR-0033).
+#[test]
+fn migrate_config_matches_the_golden_files() {
+    let dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/migrate-config");
+    let mut checked = 0;
+    for entry in std::fs::read_dir(&dir).unwrap() {
+        let path = entry.unwrap().path();
+        let name = path.file_name().unwrap().to_str().unwrap().to_owned();
+        if name.contains(".migrated.") || path.extension().is_none_or(|e| e != "yaml") {
+            continue;
+        }
+        let golden = dir.join(name.replace(".yaml", ".migrated.yaml"));
+        let out = rdock(&["migrate", "config", path.to_str().unwrap()]);
+        assert_eq!(out.status.code(), Some(0), "{name}");
+        assert_eq!(
+            stdout(&out),
+            std::fs::read_to_string(&golden).unwrap(),
+            "{name}: run `rdock migrate config {name}` and compare"
+        );
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(
+            stderr.contains("rewrote observability.alerts.webhook"),
+            "{stderr}"
+        );
+        let out = rdock(&["validate", "--format", "json", golden.to_str().unwrap()]);
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        assert!(
+            report[0]["diagnostics"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .all(|d| d["code"] != "deprecated"),
+            "{report}"
+        );
+        // The original validates with the deprecation warning only (and passes without --strict).
+        let out = rdock(&["validate", "--format", "json", path.to_str().unwrap()]);
+        assert_eq!(out.status.code(), Some(0));
+        let report: serde_json::Value = serde_json::from_slice(&out.stdout).unwrap();
+        let deprecated: Vec<&serde_json::Value> = report[0]["diagnostics"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|d| d["code"] == "deprecated")
+            .collect();
+        assert_eq!(deprecated.len(), 1, "{report}");
+        assert_eq!(deprecated[0]["element"], "observability.alerts.webhook");
+        assert_eq!(deprecated[0]["since"], "1.0");
+        assert_eq!(deprecated[0]["removal"], "2.0");
+        assert!(
+            deprecated[0]["replacement"]
+                .as_str()
+                .unwrap()
+                .contains("channels")
+        );
+        checked += 1;
+    }
+    assert!(checked > 0);
+}
+
+#[test]
+fn migrate_config_diffs_reads_stdin_and_refuses_unknown_versions() {
+    let golden = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../tests/migrate-config/alerts-webhook.yaml");
+    let out = rdock(&["migrate", "config", "--diff", golden.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    let diff = stdout(&out);
+    assert!(
+        diff.contains("+++ ") && diff.contains("(migrated)"),
+        "{diff}"
+    );
+    assert!(
+        diff.contains("-    webhook:") && diff.contains("+    channels:"),
+        "{diff}"
+    );
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_rdock"))
+        .args(["migrate", "config", "-"])
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write as _;
+        let mut stdin = child.stdin.take().unwrap();
+        stdin.write_all(b"version: 2\n").unwrap();
+    }
+    let out = child.wait_with_output().unwrap();
+    assert_eq!(out.status.code(), Some(1));
+    assert!(
+        String::from_utf8_lossy(&out.stderr).contains("reads configuration schema version 1 only"),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let dir = tempfile::tempdir().unwrap();
+    let clean = dir.path().join("rdock.yaml");
+    std::fs::write(&clean, "routes: {}\n").unwrap();
+    let out = rdock(&["migrate", "config", "--write", clean.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("nothing to migrate"));
+    assert!(
+        !dir.path().join("rdock.yaml.bak").exists(),
+        "no backup when nothing changes"
+    );
+    let out = rdock(&["migrate", "config", "--write", "-"]);
+    assert_eq!(out.status.code(), Some(2));
+}
+
+/// One source for maturity (ADR-0033): `rdock version --json` lists the registry, and the
+/// website's planned settings (`apps/website/src/data/status.json`) never contradict it.
+#[test]
+fn version_lists_the_maturity_registry_and_status_json_agrees_with_it() {
+    use rdock_model::maturity::{FEATURES, Level, covering, listed};
+    let info: serde_json::Value =
+        serde_json::from_str(&stdout(&rdock(&["version", "--json"]))).unwrap();
+    let features = info["features"].as_array().unwrap();
+    assert_eq!(features.len(), FEATURES.len());
+    let wasm = features.iter().find(|f| f["id"] == "wasm").unwrap();
+    assert_eq!(wasm["level"], "experimental");
+    assert_eq!(wasm["cargo_feature"], "wasm");
+    assert_eq!(wasm["built"], cfg!(feature = "wasm"));
+    assert_eq!(info["schema_version"], 1);
+    let text = stdout(&rdock(&["version"]));
+    assert!(text.contains("\nexperimental: wasm"), "{text}");
+    assert!(text.contains("\nbeta: "), "{text}");
+
+    let status =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../apps/website/src/data/status.json");
+    let entries: Vec<serde_json::Value> =
+        serde_json::from_str(&std::fs::read_to_string(status).unwrap()).unwrap();
+    for entry in entries {
+        let path = entry["path"].as_str().unwrap().replace("<name>", "*");
+        // Every planned setting lies in a known feature area…
+        assert!(covering(&path).is_some(), "{path} is in no feature area");
+        // …is never itself declared as shipped and stable…
+        assert!(
+            listed(&path).is_none_or(|f| f.level != Level::Stable),
+            "{path} is planned, yet listed as stable"
+        );
+        // …and its fixture names the experimental features it uses.
+        let fixture = entry["fixture"].as_str().unwrap();
+        let loaded = rdock_config::load_str(fixture, rdock_config::Format::Yaml).unwrap();
+        let refused: Vec<&rdock_model::Diagnostic> = loaded
+            .diagnostics
+            .iter()
+            .filter(|d| {
+                d.code
+                    .as_deref()
+                    .is_some_and(|c| c.starts_with("experimental_"))
+            })
+            .collect();
+        assert_eq!(refused, Vec::<&rdock_model::Diagnostic>::new(), "{path}");
+    }
+}
+
+/// In a build with HTTP/3, the opt-in is what is required, and it is enough (ADR-0033).
+#[cfg(feature = "http3")]
+#[test]
+fn with_the_http3_build_the_opt_in_is_required_and_enough() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("rdock.yaml");
+    let config = "listeners:\n  websecure: { address: \":443\", tls: {}, http3: { enabled: true } }\n  web: { address: \":80\" }\n";
+    std::fs::write(&file, config).unwrap();
+    let out = rdock(&["validate", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stdout(&out).contains("the experimental feature `http3`"));
+    std::fs::write(&file, format!("experimental: [http3]\n{config}")).unwrap();
+    let out = rdock(&["validate", "--strict", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(0), "{}", stdout(&out));
+}
+
+/// In a build with WASM plugins, the opt-in is what is required, and it is enough (ADR-0033).
+#[cfg(feature = "wasm")]
+#[test]
+fn with_the_wasm_build_the_opt_in_is_required_and_enough() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("rdock.yaml");
+    let config = "middlewares:\n  w: { type: wasm, path: /plugins/p.wasm, sha256: \"0000000000000000000000000000000000000000000000000000000000000000\", trusted_keys: [\"RWQf6LRCGA9i53mlYecO4IzT51TGPpvWucNSCh1CBM0QTaLn73Y7GFO3\"] }\n";
+    std::fs::write(&file, config).unwrap();
+    let out = rdock(&["validate", file.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1));
+    assert!(stdout(&out).contains("the experimental feature `wasm`"));
+    // With it, validation goes on to load the module (which this test does not provide).
+    std::fs::write(&file, format!("experimental: [wasm]\n{config}")).unwrap();
+    let text = stdout(&rdock(&["validate", file.to_str().unwrap()]));
+    assert!(!text.contains("experimental feature"), "{text}");
+    assert!(!text.contains("this build does not include"), "{text}");
+    assert!(
+        text.contains("middlewares.w.path: cannot read /plugins/p.wasm"),
         "{text}"
     );
 }

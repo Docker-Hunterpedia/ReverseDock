@@ -224,7 +224,7 @@ Tracked as W-SWM-01…03 below.
 - [x] F-OSS-02 `cargo-deny`/`cargo-audit`, SAST (Semgrep), dependency review in CI
 - [x] F-OSS-03 Signed releases (cosign), SBOM (SPDX), checksums, reproducible builds where possible
 - [x] F-OSS-04 Non-root, distroless/static images; read-only root FS; no mandatory account, telemetry or activation
-- [ ] F-OSS-05 Support policy: last two minor versions receive security fixes
+- [ ] F-OSS-05 Support policy: last two minor versions receive security fixes. *Progress (v1.0 step 2):* the policy is written in [10-stability.md](10-stability.md) §6 and `SECURITY.md` (two newest minors of the current major; the previous major's last minor for six months; one maintainer, no SLA); open until the first `release/X.Y` branch with its ruleset and one rehearsed backport release exist (ADR-0033, research A 5.8 item 6).
 
 ---
 

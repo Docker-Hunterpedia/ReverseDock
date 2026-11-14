@@ -503,3 +503,39 @@ fn native_tcp_labels_build_tcp_routes_that_pass_the_merged_validation() {
         ["office@docker"]
     );
 }
+
+/// A deprecated label is reported with the registry's facts, and a renamed one is read under
+/// its new name (ADR-0033). The registry's test entries rename `routes.<name>.rule` to
+/// `match`; no other test here uses that label, so turning them on for this process is safe.
+#[test]
+fn deprecated_labels_are_reported_and_renamed_ones_still_work() {
+    rdock_model::deprecation::enable_test_entries();
+    let t = run(&[container(
+        "api-1",
+        9,
+        &[8080],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.api.rule", "Host(`api.example.com`)"),
+            ("rdock.routes.api.service", "api"),
+            ("rdock.services.api.port", "8080"),
+        ],
+    )]);
+    let route = &t.fragment.routes["api"];
+    assert_eq!(
+        serde_json::to_value(&route.matcher).unwrap(),
+        serde_json::json!("Host(`api.example.com`)")
+    );
+    let deprecated: Vec<_> = t
+        .diagnostics
+        .iter()
+        .filter(|d| d.code.as_deref() == Some("deprecated"))
+        .collect();
+    assert_eq!(deprecated.len(), 1, "{:?}", t.diagnostics);
+    assert!(
+        deprecated[0].path.ends_with("rdock.routes.api.rule\"]"),
+        "{}",
+        deprecated[0].path
+    );
+    assert_eq!(deprecated[0].removal.as_deref(), Some("2.0"));
+}

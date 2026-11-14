@@ -1,6 +1,6 @@
 # rdock-migrate
 
-Migration assistants (F-MGMT-03): `rdock migrate traefik` turns Traefik labels in a Docker Compose file, or a Traefik dynamic configuration (file provider), into an `rdock.yaml` fragment.
+Migration assistants (F-MGMT-03): `rdock migrate config` moves an `rdock.yaml` off deprecated settings with the deprecation registry's rewrite rules, editing the text in place where it can so comments stay (`src/config.rs`, ADR-0033); `rdock migrate traefik` turns Traefik labels in a Docker Compose file, or a Traefik dynamic configuration (file provider), into an `rdock.yaml` fragment.
 
 - Labels go through the Docker provider's own translator (`rdock-provider-docker::labels`), so the result is what the Docker provider would build from the same labels. Compose service names become backend hosts; a service without `expose`, `ports` or a port label gets port 80, with a note.
 - A dynamic configuration is flattened into the same label form; every `loadBalancer.servers` URL becomes a backend. `tcp`, `udp` and `tls` sections are noted, not migrated.

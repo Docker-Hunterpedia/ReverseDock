@@ -130,7 +130,7 @@
     "planned": "a later version",
     "what": "PROXY protocol on the QUIC socket of an HTTP/3 listener",
     "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, proxy_protocol: { trusted: [10.0.0.0/8] }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+    "fixture": "experimental: [http3]\nlisteners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: {}, proxy_protocol: { trusted: [10.0.0.0/8] }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   },
   {
     "path": "services.<name>.scheme",
@@ -151,6 +151,6 @@
     "planned": "a later version",
     "what": "TLS fingerprints of HTTP/3 connections (tls.fingerprint with http3)",
     "value": true,
-    "fixture": "listeners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: { fingerprint: {} }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
+    "fixture": "experimental: [http3]\nlisteners:\n  web: { address: \":80\" }\n  websecure: { address: \":443\", tls: { fingerprint: {} }, http3: { enabled: true } }\nroutes:\n  app: { match: \"Host(`app.example.com`)\", service: app }\nservices:\n  app:\n    backends: [{ address: \"127.0.0.1:3000\" }]\n"
   }
 ]

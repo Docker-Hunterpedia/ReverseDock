@@ -1057,6 +1057,10 @@ export type RdockAlerts = {
     rules?: RdockAlertRules;
     /**
      * Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.
+     *
+     * Deprecated since 1.0, removed in 2.0: use a channel under `observability.alerts.channels` with `type: webhook`.
+     *
+     * @deprecated
      */
     webhook?: RdockWebhook | null;
     [key: string]: unknown | {
@@ -1540,6 +1544,13 @@ export type RdockConfig = {
      */
     defaults?: RdockDefaults;
     /**
+     * Experimental features this configuration uses on purpose (ADR-0033), e.g.
+     * `[wasm, http3]`. A configuration that uses an experimental feature without naming it
+     * here is refused: experimental features may change or be removed in any release and are
+     * not covered by the stability promise.
+     */
+    experimental?: Array<'wasm' | 'http3'>;
+    /**
      * GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No
      * database is bundled or downloaded.
      */
@@ -1644,7 +1655,7 @@ export type RdockConfig = {
         [key: string]: RdockCertificate;
     } | RdockCluster | null | {
         [key: string]: RdockConsumer;
-    } | RdockControlPlane | null | RdockDefaults | RdockGeoIp | null | RdockLifecycle | {
+    } | RdockControlPlane | null | RdockDefaults | Array<'wasm' | 'http3'> | RdockGeoIp | null | RdockLifecycle | {
         [key: string]: RdockListener;
     } | RdockLocality | null | {
         [key: string]: RdockMiddleware;
@@ -2499,9 +2510,9 @@ export type RdockListener = {
      */
     http2?: RdockListenerHttp2 | null;
     /**
-     * HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):
-     * the listener then also owns the UDP socket of its address. Needs a build with the
-     * `http3` cargo feature; off by default.
+     * HTTP/3 over QUIC on the same address, `https` listeners only (ADR-0032): the listener
+     * then also owns the UDP socket of its address. Experimental: `enabled: true` needs
+     * `http3` under `experimental` and a build with the `http3` cargo feature; off by default.
      */
     http3?: RdockListenerHttp3 | null;
     /**
@@ -2594,8 +2605,8 @@ export type RdockListenerHttp2 = {
 };
 
 /**
- * HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;
- * nothing is unlimited.
+ * HTTP/3 settings of an `https` listener (ADR-0032). Every limit is bounded; nothing is
+ * unlimited.
  */
 export type RdockListenerHttp3 = {
     /**

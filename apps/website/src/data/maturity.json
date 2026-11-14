@@ -1,0 +1,268 @@
+{
+  "features": [
+    {
+      "id": "config-file",
+      "level": "stable",
+      "since": "v0.1",
+      "summary": "The configuration file itself: schema v1, `version`, `$schema` and the `experimental` opt-in"
+    },
+    {
+      "id": "http-proxy",
+      "level": "stable",
+      "since": "v0.1",
+      "summary": "HTTP/1.1, HTTP/2 and h2c proxying: listeners, routes and rules, services, defaults, manual certificates, client IP trust, the v0.1 middlewares"
+    },
+    {
+      "id": "observability",
+      "level": "stable",
+      "since": "v0.1",
+      "summary": "Access log, Prometheus metrics and OpenTelemetry traces"
+    },
+    {
+      "id": "file-provider",
+      "level": "stable",
+      "since": "v0.1",
+      "summary": "The file provider with watching, reload and the last-known-good copy"
+    },
+    {
+      "id": "docker-provider",
+      "level": "stable",
+      "since": "v0.2",
+      "summary": "The Docker provider with `rdock.*` and Traefik labels and zero-config mode"
+    },
+    {
+      "id": "automatic-https",
+      "level": "stable",
+      "since": "v0.3",
+      "summary": "Automatic certificates over ACME (HTTP-01, TLS-ALPN-01, DNS-01), ARI renewal and the local CA"
+    },
+    {
+      "id": "reliability",
+      "level": "stable",
+      "since": "v0.4",
+      "summary": "Health checks, passive ejection, retries, sticky sessions, splits, mirroring, limits, client certificates, JWT and gRPC-Web"
+    },
+    {
+      "id": "admin-api",
+      "level": "stable",
+      "since": "v0.5",
+      "summary": "The admin API under `/api/v1`, the configuration API and the local CLI"
+    },
+    {
+      "id": "users-and-audit",
+      "level": "stable",
+      "since": "v0.5",
+      "summary": "Dashboard users, second factors, sessions, API tokens and the audit log"
+    },
+    {
+      "id": "dashboard",
+      "level": "stable",
+      "since": "v0.5",
+      "summary": "The embedded dashboard"
+    },
+    {
+      "id": "swarm-provider",
+      "level": "stable",
+      "since": "v0.6",
+      "summary": "The Docker Swarm provider"
+    },
+    {
+      "id": "tcp-routes",
+      "level": "stable",
+      "since": "v0.6",
+      "summary": "TCP routes: SNI routing, TLS passthrough and termination, STARTTLS"
+    },
+    {
+      "id": "static-files",
+      "level": "stable",
+      "since": "v0.6",
+      "summary": "Static files from ReverseDock's own file system (`type: static`)"
+    },
+    {
+      "id": "dns-01-providers",
+      "level": "stable",
+      "since": "v0.6",
+      "summary": "DNS-01 adapters (Cloudflare, RFC 2136, Route 53, Google Cloud DNS, Azure DNS, deSEC, webhook)"
+    },
+    {
+      "id": "gateway-api",
+      "level": "stable",
+      "since": "v0.7",
+      "summary": "The Kubernetes Gateway API controller (the conformance profiles it passes)"
+    },
+    {
+      "id": "alerts",
+      "level": "beta",
+      "since": "v0.5",
+      "summary": "Alert channels (Slack, Discord, webhooks, SMTP) and alert rules"
+    },
+    {
+      "id": "proxy-protocol",
+      "level": "beta",
+      "since": "v0.6",
+      "summary": "PROXY protocol v1/v2 from trusted sources and to TCP backends"
+    },
+    {
+      "id": "kubernetes-ingress",
+      "level": "beta",
+      "since": "v0.7",
+      "summary": "Translation of Kubernetes Ingress objects and ingress-nginx annotations"
+    },
+    {
+      "id": "fixed-responses",
+      "level": "beta",
+      "since": "v0.7",
+      "summary": "Services that answer a fixed status (`respond`)"
+    },
+    {
+      "id": "http-cache",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "The RFC 9111 HTTP cache in memory or on disk, with purge by URL and tag"
+    },
+    {
+      "id": "native-plugins",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Native Rust plugins compiled into your own binary (`type: plugin`, the `rdock-plugin-api` SDK)"
+    },
+    {
+      "id": "agents",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Out-of-process agents such as a WAF (`type: agent`)"
+    },
+    {
+      "id": "consumers",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Consumers, API keys, quotas, usage metering and limits keyed by consumer group"
+    },
+    {
+      "id": "oidc",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "OpenID Connect login for browsers (`type: oidc`)"
+    },
+    {
+      "id": "validation-and-transformation",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Request validation against JSON Schema and OpenAPI, header and JSON Patch transformation, problem-details answers"
+    },
+    {
+      "id": "hold-body",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Holding the whole request body before it is forwarded (`type: hold_body`)"
+    },
+    {
+      "id": "cloudflare-access",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Verifying Cloudflare Access tokens (`type: cloudflare_access`)"
+    },
+    {
+      "id": "udp",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "UDP listeners, routes and services"
+    },
+    {
+      "id": "vault",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "Secrets read from Vault or OpenBao (`${vault:…}` references)"
+    },
+    {
+      "id": "balancing",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Latency-aware balancing (`peak_ewma`), outlier detection, the long form of slow start, priority tiers, zones and per-try timeouts"
+    },
+    {
+      "id": "tls-fingerprints",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "JA4 and JA3 TLS client fingerprints"
+    },
+    {
+      "id": "geoip",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "GeoIP databases for country, continent and ASN rules"
+    },
+    {
+      "id": "abuse",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Abuse counters and bans (`type: abuse`)"
+    },
+    {
+      "id": "client-cert-identity",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Identity rules on client certificates and SPIFFE IDs"
+    },
+    {
+      "id": "binary-upgrade",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Replacing the binary in place by handing the listeners over (`rdock upgrade`)"
+    },
+    {
+      "id": "cluster",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "A cluster with a control plane, staged rollout and shared certificates (`rdock control`)"
+    },
+    {
+      "id": "cluster-limits",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Rate limits and quotas shared between the instances of a cluster (`scope: cluster`)"
+    },
+    {
+      "id": "admission-control",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Adaptive concurrency limits and load shedding by priority class (`type: admission`)"
+    },
+    {
+      "id": "tenants",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Tenants of the admin API"
+    },
+    {
+      "id": "tuning",
+      "level": "beta",
+      "since": "v0.9",
+      "summary": "Listener socket and HTTP/2 options, the TLS handshake bound, shared TLS session resumption and runtime threads"
+    },
+    {
+      "id": "go-client",
+      "level": "beta",
+      "since": "v0.5",
+      "summary": "The Go client of the admin API (`clients/go`, generated; not tagged yet)"
+    },
+    {
+      "id": "terraform-provider",
+      "level": "beta",
+      "since": "v0.8",
+      "summary": "The Terraform and OpenTofu provider (`clients/terraform`; not published yet)"
+    },
+    {
+      "id": "wasm",
+      "level": "experimental",
+      "since": "v0.8",
+      "summary": "Sandboxed WebAssembly plugins (`type: wasm`); the host ABI is `0.x`"
+    },
+    {
+      "id": "http3",
+      "level": "experimental",
+      "since": "v0.9",
+      "summary": "HTTP/3 over QUIC on `https` listeners (`http3.enabled`)"
+    }
+  ]
+}

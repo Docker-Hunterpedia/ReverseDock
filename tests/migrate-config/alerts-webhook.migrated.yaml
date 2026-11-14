@@ -1,0 +1,28 @@
+# yaml-language-server: $schema=https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/rdock.v1.json
+# A configuration from v0.4 with the v0.3 alert webhook.
+
+listeners:
+  web: { address: ":80" }
+  websecure: { address: ":443", tls: {} }
+
+routes:
+  app:
+    match: "Host(`app.example.com`)"
+    service: app
+
+services:
+  app:
+    backends:
+      - address: "app:3000"   # the container
+
+observability:
+  access_log:
+    format: json
+  alerts:
+    # Certificate and backend alerts go to the on-call relay.
+    channels:
+      webhook:
+        type: webhook
+        url: https://alerts.example.com/rdock
+        token: "${file:/run/secrets/alert_token}"   # never inline
+    min_interval: 30m

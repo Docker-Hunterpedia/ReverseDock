@@ -57,7 +57,9 @@ pub(crate) fn document(fragment: &Fragment) -> Value {
 }
 
 /// A client's document as a fragment, or why it is not one.
-pub(crate) fn parse(candidate: Value) -> Result<Fragment, String> {
+pub(crate) fn parse(mut candidate: Value) -> Result<Fragment, String> {
+    // Renamed keys keep working during their overlap, as in the file (ADR-0033).
+    rdock_model::deprecation::rewrite_for_loading(&mut candidate);
     let document: Document = serde_path_to_error::deserialize(candidate)
         .map_err(|err| format!("{}: {}", err.path(), err.inner()))?;
     let names = document

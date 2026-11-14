@@ -1955,7 +1955,7 @@ fn vault_settings_are_checked() {
 #[test]
 fn wasm_plugins_are_checked() {
     let pin = "a".repeat(64);
-    let config = json!({ "middlewares": {
+    let config = json!({ "experimental": ["wasm"], "middlewares": {
         "bad": {
             "type": "wasm", "path": "", "sha256": "abc",
             "fuel": 0, "timeout": "11s", "memory": "1KiB",
@@ -3405,7 +3405,7 @@ fn http3_owns_the_udp_port_of_its_address() {
     // The defaults are valid.
     let defaults = with(
         app(),
-        json!({ "listeners": { "websecure": { "address": ":443", "tls": {}, "http3": { "enabled": true } }, "web": { "address": ":80" } } }),
+        json!({ "experimental": ["http3"], "listeners": { "websecure": { "address": ":443", "tls": {}, "http3": { "enabled": true } }, "web": { "address": ":80" } } }),
     );
     assert_eq!(errors(defaults.clone()), Vec::<(String, String)>::new());
     assert_eq!(warnings(defaults), Vec::<(String, String)>::new());

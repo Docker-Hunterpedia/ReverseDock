@@ -70,7 +70,10 @@
       "additionalProperties": {
         "$ref": "#/$defs/CacheStore"
       },
-      "default": {}
+      "default": {},
+      "x-rdock-feature": "http-cache",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.8"
     },
     "certificates": {
       "description": "Certificates you provide yourself.",
@@ -89,14 +92,20 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "x-rdock-feature": "cluster",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "consumers": {
       "description": "API clients and users that requests are attributed to, with their API keys (stored\nhashed). The `api` provider may add consumers and keys (`rdock consumers`).",
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/Consumer"
-      }
+      },
+      "x-rdock-feature": "consumers",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.8"
     },
     "control": {
       "description": "The control plane's own settings, read only by `rdock control run`.",
@@ -107,7 +116,10 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "x-rdock-feature": "cluster",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "defaults": {
       "description": "Defaults applied to routes that do not set a value.",
@@ -121,6 +133,18 @@
         "tls": "auto"
       }
     },
+    "experimental": {
+      "description": "Experimental features this configuration uses on purpose (ADR-0033), e.g.\n`[wasm, http3]`. A configuration that uses an experimental feature without naming it\nhere is refused: experimental features may change or be removed in any release and are\nnot covered by the stability promise.",
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": [
+          "wasm",
+          "http3"
+        ]
+      },
+      "uniqueItems": true
+    },
     "geoip": {
       "description": "GeoIP databases for `ClientCountry`, `ClientContinent` and `ClientASN` (H-SEC-04). No\ndatabase is bundled or downloaded.",
       "anyOf": [
@@ -130,7 +154,10 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "x-rdock-feature": "geoip",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "lifecycle": {
       "description": "Start-up and shutdown behaviour.",
@@ -156,7 +183,10 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "x-rdock-feature": "balancing",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "middlewares": {
       "description": "Reusable request and response policies.",
@@ -223,11 +253,17 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "x-rdock-feature": "tuning",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "secrets": {
       "description": "External secret stores that secret fields can reference (`${vault:…}`).",
-      "$ref": "#/$defs/Secrets"
+      "$ref": "#/$defs/Secrets",
+      "x-rdock-feature": "vault",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.8"
     },
     "security": {
       "description": "Client IP trust and request limits.",
@@ -274,7 +310,10 @@
       "type": "object",
       "additionalProperties": {
         "$ref": "#/$defs/Tenant"
-      }
+      },
+      "x-rdock-feature": "tenants",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "udp_routes": {
       "description": "UDP routes: which `udp` listener's datagrams go to which UDP service.",
@@ -282,7 +321,10 @@
       "additionalProperties": {
         "$ref": "#/$defs/UdpRoute"
       },
-      "default": {}
+      "default": {},
+      "x-rdock-feature": "udp",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.8"
     },
     "udp_services": {
       "description": "UDP backend pools.",
@@ -290,7 +332,10 @@
       "additionalProperties": {
         "$ref": "#/$defs/UdpService"
       },
-      "default": {}
+      "default": {},
+      "x-rdock-feature": "udp",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.8"
     },
     "upgrade": {
       "description": "In-place binary upgrades (`rdock upgrade`, `SIGUSR2`): the binary, the drain bound and\nthe start timeout.",
@@ -301,7 +346,10 @@
         {
           "type": "null"
         }
-      ]
+      ],
+      "x-rdock-feature": "binary-upgrade",
+      "x-rdock-maturity": "beta",
+      "x-rdock-since": "v0.9"
     },
     "version": {
       "description": "Configuration format version. Only `1` exists; omit it to use the latest.",
@@ -318,6 +366,494 @@
   "patternProperties": {
     "^x-": {}
   },
+  "x-rdock-deprecations": [
+    {
+      "automatic": true,
+      "element": "observability.alerts.webhook",
+      "kind": "config_key",
+      "note": "The single v0.3 webhook has worked as a channel named `webhook` since v0.5. Its `timeout` has had no effect since then (channels wait 5 s), so it is dropped. A channel treats its `url` as a secret: write it as a `${file:…}` or `${env:…}` reference to avoid the warning.",
+      "removal": "2.0",
+      "replacement": "a channel under `observability.alerts.channels` with `type: webhook`",
+      "since": "1.0"
+    }
+  ],
+  "x-rdock-features": [
+    {
+      "id": "config-file",
+      "level": "stable",
+      "locations": [
+        "$schema",
+        "version",
+        "experimental"
+      ],
+      "since": "v0.1",
+      "summary": "The configuration file itself: schema v1, `version`, `$schema` and the `experimental` opt-in"
+    },
+    {
+      "id": "http-proxy",
+      "level": "stable",
+      "locations": [
+        "listeners",
+        "defaults",
+        "routes",
+        "services",
+        "certificates",
+        "security",
+        "lifecycle",
+        "middlewares",
+        "middlewares.*.type=headers",
+        "middlewares.*.type=redirect",
+        "middlewares.*.type=rewrite",
+        "middlewares.*.type=strip_prefix",
+        "middlewares.*.type=add_prefix",
+        "middlewares.*.type=replace_path",
+        "middlewares.*.type=basic_auth",
+        "middlewares.*.type=forward_auth",
+        "middlewares.*.type=ip_allow",
+        "middlewares.*.type=ip_deny",
+        "middlewares.*.type=rate_limit",
+        "middlewares.*.type=cors",
+        "middlewares.*.type=compress",
+        "middlewares.*.type=errors",
+        "middlewares.*.type=maintenance"
+      ],
+      "since": "v0.1",
+      "summary": "HTTP/1.1, HTTP/2 and h2c proxying: listeners, routes and rules, services, defaults, manual certificates, client IP trust, the v0.1 middlewares"
+    },
+    {
+      "id": "observability",
+      "level": "stable",
+      "locations": [
+        "observability"
+      ],
+      "since": "v0.1",
+      "summary": "Access log, Prometheus metrics and OpenTelemetry traces"
+    },
+    {
+      "id": "file-provider",
+      "level": "stable",
+      "locations": [
+        "providers",
+        "providers.file"
+      ],
+      "since": "v0.1",
+      "summary": "The file provider with watching, reload and the last-known-good copy"
+    },
+    {
+      "id": "docker-provider",
+      "level": "stable",
+      "locations": [
+        "providers.docker"
+      ],
+      "since": "v0.2",
+      "summary": "The Docker provider with `rdock.*` and Traefik labels and zero-config mode"
+    },
+    {
+      "id": "automatic-https",
+      "level": "stable",
+      "locations": [
+        "acme"
+      ],
+      "since": "v0.3",
+      "summary": "Automatic certificates over ACME (HTTP-01, TLS-ALPN-01, DNS-01), ARI renewal and the local CA"
+    },
+    {
+      "id": "reliability",
+      "level": "stable",
+      "locations": [
+        "services.*.health",
+        "services.*.retries",
+        "services.*.sticky",
+        "services.*.split",
+        "routes.*.mirror",
+        "middlewares.*.type=in_flight",
+        "middlewares.*.type=bandwidth",
+        "middlewares.*.type=jwt",
+        "middlewares.*.type=client_cert",
+        "middlewares.*.type=grpc_web"
+      ],
+      "since": "v0.4",
+      "summary": "Health checks, passive ejection, retries, sticky sessions, splits, mirroring, limits, client certificates, JWT and gRPC-Web"
+    },
+    {
+      "id": "admin-api",
+      "level": "stable",
+      "locations": [
+        "admin"
+      ],
+      "since": "v0.5",
+      "summary": "The admin API under `/api/v1`, the configuration API and the local CLI"
+    },
+    {
+      "id": "users-and-audit",
+      "level": "stable",
+      "locations": [
+        "admin.passwords",
+        "admin.mfa",
+        "admin.sessions",
+        "admin.tokens",
+        "admin.audit"
+      ],
+      "since": "v0.5",
+      "summary": "Dashboard users, second factors, sessions, API tokens and the audit log"
+    },
+    {
+      "id": "dashboard",
+      "level": "stable",
+      "locations": [
+        "admin.dashboard"
+      ],
+      "since": "v0.5",
+      "summary": "The embedded dashboard"
+    },
+    {
+      "id": "swarm-provider",
+      "level": "stable",
+      "locations": [
+        "providers.swarm"
+      ],
+      "since": "v0.6",
+      "summary": "The Docker Swarm provider"
+    },
+    {
+      "id": "tcp-routes",
+      "level": "stable",
+      "locations": [
+        "tcp_routes",
+        "tcp_services",
+        "listeners.*.protocol=tcp",
+        "listeners.*.starttls"
+      ],
+      "since": "v0.6",
+      "summary": "TCP routes: SNI routing, TLS passthrough and termination, STARTTLS"
+    },
+    {
+      "id": "static-files",
+      "level": "stable",
+      "locations": [
+        "middlewares.*.type=static"
+      ],
+      "since": "v0.6",
+      "summary": "Static files from ReverseDock's own file system (`type: static`)"
+    },
+    {
+      "id": "dns-01-providers",
+      "level": "stable",
+      "locations": [
+        "acme.dns_provider",
+        "acme.dns_providers"
+      ],
+      "since": "v0.6",
+      "summary": "DNS-01 adapters (Cloudflare, RFC 2136, Route 53, Google Cloud DNS, Azure DNS, deSEC, webhook)"
+    },
+    {
+      "id": "gateway-api",
+      "level": "stable",
+      "locations": [
+        "providers.kubernetes",
+        "providers.kubernetes.gateway"
+      ],
+      "since": "v0.7",
+      "summary": "The Kubernetes Gateway API controller (the conformance profiles it passes)"
+    },
+    {
+      "id": "alerts",
+      "level": "beta",
+      "locations": [
+        "observability.alerts"
+      ],
+      "since": "v0.5",
+      "summary": "Alert channels (Slack, Discord, webhooks, SMTP) and alert rules"
+    },
+    {
+      "id": "proxy-protocol",
+      "level": "beta",
+      "locations": [
+        "listeners.*.proxy_protocol",
+        "tcp_services.*.proxy_protocol"
+      ],
+      "since": "v0.6",
+      "summary": "PROXY protocol v1/v2 from trusted sources and to TCP backends"
+    },
+    {
+      "id": "kubernetes-ingress",
+      "level": "beta",
+      "locations": [
+        "providers.kubernetes.ingress"
+      ],
+      "since": "v0.7",
+      "summary": "Translation of Kubernetes Ingress objects and ingress-nginx annotations"
+    },
+    {
+      "id": "fixed-responses",
+      "level": "beta",
+      "locations": [
+        "services.*.respond"
+      ],
+      "since": "v0.7",
+      "summary": "Services that answer a fixed status (`respond`)"
+    },
+    {
+      "id": "http-cache",
+      "level": "beta",
+      "locations": [
+        "caches",
+        "middlewares.*.type=cache"
+      ],
+      "since": "v0.8",
+      "summary": "The RFC 9111 HTTP cache in memory or on disk, with purge by URL and tag"
+    },
+    {
+      "id": "native-plugins",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=plugin"
+      ],
+      "since": "v0.8",
+      "summary": "Native Rust plugins compiled into your own binary (`type: plugin`, the `rdock-plugin-api` SDK)"
+    },
+    {
+      "id": "agents",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=agent"
+      ],
+      "since": "v0.8",
+      "summary": "Out-of-process agents such as a WAF (`type: agent`)"
+    },
+    {
+      "id": "consumers",
+      "level": "beta",
+      "locations": [
+        "consumers",
+        "middlewares.*.type=api_key",
+        "middlewares.*.type=quota",
+        "observability.metering"
+      ],
+      "since": "v0.8",
+      "summary": "Consumers, API keys, quotas, usage metering and limits keyed by consumer group"
+    },
+    {
+      "id": "oidc",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=oidc"
+      ],
+      "since": "v0.8",
+      "summary": "OpenID Connect login for browsers (`type: oidc`)"
+    },
+    {
+      "id": "validation-and-transformation",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=validate",
+        "middlewares.*.type=transform",
+        "defaults.errors",
+        "routes.*.errors"
+      ],
+      "since": "v0.8",
+      "summary": "Request validation against JSON Schema and OpenAPI, header and JSON Patch transformation, problem-details answers"
+    },
+    {
+      "id": "hold-body",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=hold_body"
+      ],
+      "since": "v0.8",
+      "summary": "Holding the whole request body before it is forwarded (`type: hold_body`)"
+    },
+    {
+      "id": "cloudflare-access",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=cloudflare_access"
+      ],
+      "since": "v0.8",
+      "summary": "Verifying Cloudflare Access tokens (`type: cloudflare_access`)"
+    },
+    {
+      "id": "udp",
+      "level": "beta",
+      "locations": [
+        "udp_routes",
+        "udp_services",
+        "listeners.*.protocol=udp",
+        "listeners.*.sessions"
+      ],
+      "since": "v0.8",
+      "summary": "UDP listeners, routes and services"
+    },
+    {
+      "id": "vault",
+      "level": "beta",
+      "locations": [
+        "secrets"
+      ],
+      "since": "v0.8",
+      "summary": "Secrets read from Vault or OpenBao (`${vault:…}` references)"
+    },
+    {
+      "id": "balancing",
+      "level": "beta",
+      "locations": [
+        "locality",
+        "services.*.load_balancer.policy=peak_ewma",
+        "services.*.load_balancer.decay",
+        "services.*.load_balancer.measure",
+        "services.*.failover",
+        "services.*.overprovisioning",
+        "services.*.locality",
+        "services.*.health.passive.outlier",
+        "services.*.retries.per_try_timeout",
+        "services.*.backends.*.priority",
+        "services.*.backends.*.zone",
+        "services.*.backends.*.for_zones"
+      ],
+      "since": "v0.9",
+      "summary": "Latency-aware balancing (`peak_ewma`), outlier detection, the long form of slow start, priority tiers, zones and per-try timeouts"
+    },
+    {
+      "id": "tls-fingerprints",
+      "level": "beta",
+      "locations": [
+        "listeners.*.tls.fingerprint"
+      ],
+      "since": "v0.9",
+      "summary": "JA4 and JA3 TLS client fingerprints"
+    },
+    {
+      "id": "geoip",
+      "level": "beta",
+      "locations": [
+        "geoip"
+      ],
+      "since": "v0.9",
+      "summary": "GeoIP databases for country, continent and ASN rules"
+    },
+    {
+      "id": "abuse",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=abuse"
+      ],
+      "since": "v0.9",
+      "summary": "Abuse counters and bans (`type: abuse`)"
+    },
+    {
+      "id": "client-cert-identity",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=client_cert.subjects",
+        "middlewares.*.type=client_cert.organizations",
+        "middlewares.*.type=client_cert.dns",
+        "middlewares.*.type=client_cert.uris",
+        "middlewares.*.type=client_cert.emails",
+        "middlewares.*.type=client_cert.serials",
+        "middlewares.*.type=client_cert.sha256",
+        "middlewares.*.type=client_cert.spiffe"
+      ],
+      "since": "v0.9",
+      "summary": "Identity rules on client certificates and SPIFFE IDs"
+    },
+    {
+      "id": "binary-upgrade",
+      "level": "beta",
+      "locations": [
+        "upgrade"
+      ],
+      "since": "v0.9",
+      "summary": "Replacing the binary in place by handing the listeners over (`rdock upgrade`)"
+    },
+    {
+      "id": "cluster",
+      "level": "beta",
+      "locations": [
+        "cluster",
+        "control"
+      ],
+      "since": "v0.9",
+      "summary": "A cluster with a control plane, staged rollout and shared certificates (`rdock control`)"
+    },
+    {
+      "id": "cluster-limits",
+      "level": "beta",
+      "locations": [
+        "cluster.limits",
+        "middlewares.*.type=rate_limit.scope",
+        "middlewares.*.type=quota.scope"
+      ],
+      "since": "v0.9",
+      "summary": "Rate limits and quotas shared between the instances of a cluster (`scope: cluster`)"
+    },
+    {
+      "id": "admission-control",
+      "level": "beta",
+      "locations": [
+        "middlewares.*.type=admission",
+        "routes.*.priority_class"
+      ],
+      "since": "v0.9",
+      "summary": "Adaptive concurrency limits and load shedding by priority class (`type: admission`)"
+    },
+    {
+      "id": "tenants",
+      "level": "beta",
+      "locations": [
+        "tenants"
+      ],
+      "since": "v0.9",
+      "summary": "Tenants of the admin API"
+    },
+    {
+      "id": "tuning",
+      "level": "beta",
+      "locations": [
+        "runtime",
+        "listeners.*.socket",
+        "listeners.*.http2",
+        "listeners.*.tls.max_handshakes",
+        "listeners.*.tls.tickets",
+        "listeners.*.tls.session_cache"
+      ],
+      "since": "v0.9",
+      "summary": "Listener socket and HTTP/2 options, the TLS handshake bound, shared TLS session resumption and runtime threads"
+    },
+    {
+      "id": "go-client",
+      "level": "beta",
+      "locations": [],
+      "since": "v0.5",
+      "summary": "The Go client of the admin API (`clients/go`, generated; not tagged yet)"
+    },
+    {
+      "id": "terraform-provider",
+      "level": "beta",
+      "locations": [],
+      "since": "v0.8",
+      "summary": "The Terraform and OpenTofu provider (`clients/terraform`; not published yet)"
+    },
+    {
+      "cargo_feature": "wasm",
+      "id": "wasm",
+      "level": "experimental",
+      "locations": [
+        "middlewares.*.type=wasm"
+      ],
+      "since": "v0.8",
+      "summary": "Sandboxed WebAssembly plugins (`type: wasm`); the host ABI is `0.x`"
+    },
+    {
+      "cargo_feature": "http3",
+      "id": "http3",
+      "level": "experimental",
+      "locations": [
+        "listeners.*.http3"
+      ],
+      "since": "v0.9",
+      "summary": "HTTP/3 over QUIC on `https` listeners (`http3.enabled`)"
+    }
+  ],
   "$defs": {
     "AbuseAction": {
       "description": "What a banned key gets.",
@@ -1312,7 +1848,7 @@
           }
         },
         "webhook": {
-          "description": "Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.",
+          "description": "Receives each alert as a JSON `POST` (v0.3); works like a `webhook` channel.\n\nDeprecated since 1.0, removed in 2.0: use a channel under `observability.alerts.channels` with `type: webhook`.",
           "anyOf": [
             {
               "$ref": "#/$defs/Webhook"
@@ -1321,7 +1857,13 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "deprecated": true,
+          "x-rdock-deprecated": {
+            "removal": "2.0",
+            "replacement": "a channel under `observability.alerts.channels` with `type: webhook`",
+            "since": "1.0"
+          }
         }
       },
       "additionalProperties": false,
@@ -1582,7 +2124,10 @@
           "type": "array",
           "items": {
             "type": "string"
-          }
+          },
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "priority": {
           "description": "Priority tier from 0 (the default, used first) to 7. See the service's `failover`.\nNot together with `backup`.",
@@ -1592,7 +2137,10 @@
           ],
           "format": "uint8",
           "maximum": 255,
-          "minimum": 0
+          "minimum": 0,
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "weight": {
           "description": "Relative share of traffic.",
@@ -1606,7 +2154,10 @@
           "type": [
             "string",
             "null"
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         }
       },
       "additionalProperties": false,
@@ -1906,7 +2457,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "cluster-limits",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "store": {
           "description": "Where certificates, the ACME account, leases and challenge answers are shared. Default:\nthe control plane when `control` is set.",
@@ -2177,7 +2731,10 @@
         },
         "errors": {
           "description": "How answers rdock produces itself (404 without a route, 401/403/429 from middlewares,\n502/503/504) are rendered, for routes that do not set `errors`.",
-          "$ref": "#/$defs/ErrorSettings"
+          "$ref": "#/$defs/ErrorSettings",
+          "x-rdock-feature": "validation-and-transformation",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         "listeners": {
           "description": "Listeners used by routes that do not name any.",
@@ -3435,7 +3992,10 @@
             "nginx_annotations": true,
             "publish_address": null,
             "publish_service": null
-          }
+          },
+          "x-rdock-feature": "kubernetes-ingress",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.7"
         },
         "kubeconfig": {
           "description": "Path of a kubeconfig file. Unset, the in-cluster service account is used, then the\n`KUBECONFIG` variable and `~/.kube/config`.",
@@ -3574,7 +4134,10 @@
         {
           "description": "Power of two distinct random choices over `latency × (in_flight + 1) / weight`, with a\nlatency average that reacts to peaks at once (Finagle's and Linkerd's Peak-EWMA).",
           "type": "string",
-          "const": "peak_ewma"
+          "const": "peak_ewma",
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         }
       ]
     },
@@ -3736,10 +4299,13 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "tuning",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "http3": {
-          "description": "HTTP/3 over QUIC on the same address, `https` listeners only (experimental, ADR-0032):\nthe listener then also owns the UDP socket of its address. Needs a build with the\n`http3` cargo feature; off by default.",
+          "description": "HTTP/3 over QUIC on the same address, `https` listeners only (ADR-0032): the listener\nthen also owns the UDP socket of its address. Experimental: `enabled: true` needs\n`http3` under `experimental` and a build with the `http3` cargo feature; off by default.",
           "anyOf": [
             {
               "$ref": "#/$defs/ListenerHttp3"
@@ -3747,7 +4313,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "http3",
+          "x-rdock-maturity": "experimental",
+          "x-rdock-since": "v0.9"
         },
         "ping": {
           "description": "A path answered `200 OK` for any host before routing, for load-balancer health\nmonitors such as Cloudflare Load Balancing, e.g. `/rdock/ping`.",
@@ -3779,7 +4348,10 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-rdock-feature": "proxy-protocol",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.6"
         },
         "sessions": {
           "description": "`udp` listeners: how many sessions (client address and port, each with its own\nupstream socket) may exist at once. Capped by default even when omitted.",
@@ -3790,7 +4362,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "udp",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         "socket": {
           "description": "Options of the listening socket and of the connections it accepts (ADR-0031). Unset\noptions keep the kernel's behaviour, except `backlog`, which defaults to 4096.",
@@ -3801,7 +4376,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "tuning",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "starttls": {
           "description": "`tcp` listeners: answer a protocol's request to start TLS before reading the TLS\nClientHello. Off by default.",
@@ -3945,7 +4523,7 @@
       }
     },
     "ListenerHttp3": {
-      "description": "HTTP/3 settings of an `https` listener (experimental, ADR-0032). Every limit is bounded;\nnothing is unlimited.",
+      "description": "HTTP/3 settings of an `https` listener (ADR-0032). Every limit is bounded; nothing is\nunlimited.",
       "type": "object",
       "properties": {
         "advertise": {
@@ -4101,7 +4679,10 @@
         {
           "description": "UDP datagrams, relayed per client address (a session) to a UDP service.",
           "type": "string",
-          "const": "udp"
+          "const": "udp",
+          "x-rdock-feature": "udp",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         }
       ]
     },
@@ -4261,7 +4842,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "tls-fingerprints",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "max_handshakes": {
           "description": "`https` listeners: TLS handshakes in progress at once. While the bound is reached, new\nconnections wait in the listen backlog instead of taking CPU from established ones.\nUnset: no bound (ADR-0031).",
@@ -4270,7 +4854,10 @@
             "null"
           ],
           "format": "uint32",
-          "minimum": 0
+          "minimum": 0,
+          "x-rdock-feature": "tuning",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "policy": {
           "description": "TLS versions and cipher suites.",
@@ -4286,7 +4873,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "tuning",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "tickets": {
           "description": "Session tickets (stateless resumption, H-PERF-02). On by default, with keys shared by\nevery listener of the same security class and kept across reloads and binary upgrades.",
@@ -4297,7 +4887,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "tuning",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         }
       },
       "additionalProperties": false,
@@ -4318,7 +4911,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "hash_on": {
           "description": "Header or cookie name for `header_hash` and `cookie_hash`.",
@@ -4337,7 +4933,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "policy": {
           "description": "Selection policy.",
@@ -5018,7 +5617,10 @@
             },
             "scope": {
               "description": "`instance` (default) or `cluster`. With `cluster`, the cluster admits at most\n`average` requests per key in each `period` (fixed windows from the Unix epoch), within\nthe bound of `cluster.limits`; each instance's own token bucket still shapes bursts.",
-              "$ref": "#/$defs/LimitScope"
+              "$ref": "#/$defs/LimitScope",
+              "x-rdock-feature": "cluster-limits",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "type": {
               "type": "string",
@@ -5482,14 +6084,20 @@
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "emails": {
               "description": "Email SANs, one must match (`*` globs).",
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "forward": {
               "description": "Headers that pass the identity to the backend.",
@@ -5501,7 +6109,10 @@
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "required": {
               "description": "Answer `403` to requests without a verified client certificate.",
@@ -5513,14 +6124,20 @@
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "sha256": {
               "description": "SHA-256 fingerprints of the certificate in hex (colons allowed), exact: pins.",
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "spiffe": {
               "description": "SPIFFE X.509-SVID rules (H-SEC-05): the certificate must be a valid SVID of one of the\ntrust domains, and its ID one of `ids` or under one of `id_prefixes`.",
@@ -5531,14 +6148,20 @@
                 {
                   "type": "null"
                 }
-              ]
+              ],
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "subjects": {
               "description": "Subject common names, one must match (`*` globs). Every typed list that is set must\nmatch, together with `allow`.",
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "type": {
               "type": "string",
@@ -5549,7 +6172,10 @@
               "type": "array",
               "items": {
                 "type": "string"
-              }
+              },
+              "x-rdock-feature": "client-cert-identity",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             }
           },
           "additionalProperties": false,
@@ -5714,7 +6340,10 @@
           },
           "required": [
             "type"
-          ]
+          ],
+          "x-rdock-feature": "hold-body",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Cache responses in a store named under `caches` (RFC 9111). Only what the origin's\nheaders allow is stored; see `docs/guides/caching`.",
@@ -5938,7 +6567,10 @@
           "required": [
             "type",
             "store"
-          ]
+          ],
+          "x-rdock-feature": "http-cache",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "A native plugin compiled into this binary and registered under `name` (ADR-0030). The\nstock `rdock` binary registers none; see `docs/guides/plugins`.",
@@ -5966,10 +6598,13 @@
           "required": [
             "type",
             "name"
-          ]
+          ],
+          "x-rdock-feature": "native-plugins",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
-          "description": "A sandboxed WebAssembly plugin (EXPERIMENTAL, ADR-0030): a component for the world\n`rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with\nminisign. Needs a build with the `wasm` cargo feature; see `docs/guides/wasm-plugins`.",
+          "description": "A sandboxed WebAssembly plugin (ADR-0030): a component for the world\n`rdock:plugin/filter@0.1.0`, loaded from a file pinned by SHA-256 and signed with\nminisign. Experimental: name `wasm` under `experimental`. Needs a build with the `wasm`\ncargo feature; see `docs/guides/wasm-plugins`.",
           "type": "object",
           "properties": {
             "allow_unsigned": {
@@ -6049,7 +6684,10 @@
             "type",
             "path",
             "sha256"
-          ]
+          ],
+          "x-rdock-feature": "wasm",
+          "x-rdock-maturity": "experimental",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Ask an out-of-process agent (a WAF, a policy service) whether to allow a request,\nwith its body up to `max_body` (ADR-0030). Fails closed by default.",
@@ -6133,7 +6771,10 @@
           "required": [
             "type",
             "address"
-          ]
+          ],
+          "x-rdock-feature": "agents",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Verify the token Cloudflare Access adds to requests it let through (W-CF-06): a preset\nover `jwt` with the team's keys, issuer and RS256, the token from the\n`Cf-Access-Jwt-Assertion` header, then the `CF_Authorization` cookie.",
@@ -6179,7 +6820,10 @@
             "type",
             "team",
             "audience"
-          ]
+          ],
+          "x-rdock-feature": "cloudflare-access",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Authenticate with consumers' API keys (`rdk_…`), read from `Authorization: Bearer` or\n`X-API-Key`; sets the request's consumer (F-GW-01).",
@@ -6238,7 +6882,10 @@
           "additionalProperties": false,
           "required": [
             "type"
-          ]
+          ],
+          "x-rdock-feature": "consumers",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Requests per consumer per calendar window (hour, day, month), persisted across\nrestarts; `429` when used up (F-GW-02).",
@@ -6276,7 +6923,10 @@
             },
             "scope": {
               "description": "`instance` (default) or `cluster`: with `cluster`, the instances of a cluster share each\nkey's quota through `cluster.limits`, within its documented bound.",
-              "$ref": "#/$defs/LimitScope"
+              "$ref": "#/$defs/LimitScope",
+              "x-rdock-feature": "cluster-limits",
+              "x-rdock-maturity": "beta",
+              "x-rdock-since": "v0.9"
             },
             "type": {
               "type": "string",
@@ -6292,7 +6942,10 @@
             "type",
             "limit",
             "window"
-          ]
+          ],
+          "x-rdock-feature": "consumers",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Check request parameters and JSON bodies against JSON Schema 2020-12, inline or from an\nOpenAPI 3.1 document; `400` with the errors when they do not match (F-GW-03).",
@@ -6375,7 +7028,10 @@
           "additionalProperties": false,
           "required": [
             "type"
-          ]
+          ],
+          "x-rdock-feature": "validation-and-transformation",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Change request and response headers, and JSON bodies with JSON Patch (RFC 6902)\n(F-GW-04).",
@@ -6432,7 +7088,10 @@
           "additionalProperties": false,
           "required": [
             "type"
-          ]
+          ],
+          "x-rdock-feature": "validation-and-transformation",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "OpenID Connect login for browsers: authorization code flow with PKCE, a stateless\nencrypted session cookie, claims to headers and to the consumer (F-GW-01).",
@@ -6582,7 +7241,10 @@
             "issuer",
             "client_id",
             "session"
-          ]
+          ],
+          "x-rdock-feature": "oidc",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         {
           "description": "Count abuse signals (response statuses, failed authentications) per key in a window\nand ban keys past a threshold for a while (H-SEC-01). Per instance; bans survive\nrestarts and binary upgrades.",
@@ -6670,7 +7332,10 @@
           },
           "required": [
             "type"
-          ]
+          ],
+          "x-rdock-feature": "abuse",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         {
           "description": "An adaptive concurrency limit (H-LB-04, ADR-0031): it learns how many requests the\nroutes using it can have in flight from their latency (`aimd` or `gradient`) and\nanswers the rest with `503` and `Retry-After`, routes of the lowest `priority_class`\nfirst. Off unless configured.",
@@ -6812,7 +7477,10 @@
           "required": [
             "type",
             "mode"
-          ]
+          ],
+          "x-rdock-feature": "admission-control",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         }
       ]
     },
@@ -6870,7 +7538,10 @@
               "latency": null
             },
             "webhook": null
-          }
+          },
+          "x-rdock-feature": "alerts",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.5"
         },
         "metering": {
           "description": "Usage events per request with a consumer, for analytics and showback (F-GW-05).",
@@ -6881,7 +7552,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "consumers",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         "metrics": {
           "description": "Metrics.",
@@ -7148,7 +7822,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "statuses": {
           "description": "Answers that count as failures, besides connection errors, resets and timeouts.",
@@ -7725,7 +8402,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "retry_non_idempotent": {
           "description": "Also retry non-idempotent methods such as POST. Only safe if backends are idempotent.",
@@ -7896,7 +8576,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "validation-and-transformation",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.8"
         },
         "listeners": {
           "description": "Listeners the route is attached to. Defaults to `defaults.listeners`.",
@@ -7953,7 +8636,10 @@
         },
         "priority_class": {
           "description": "Which requests an `admission` middleware sheds first under overload: `sheddable`,\nthen `normal` (the default), `critical` last. Unrelated to `priority`, which orders\nmatching.",
-          "$ref": "#/$defs/PriorityClass"
+          "$ref": "#/$defs/PriorityClass",
+          "x-rdock-feature": "admission-control",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "service": {
           "description": "Service that handles matching requests (`name` or `name@provider`). Required unless the\nlast middleware answers every request itself (`static` without `pass_through`, or\n`maintenance` enabled for everyone).",
@@ -8292,7 +8978,10 @@
         "failover": {
           "description": "How traffic moves between backend `priority` tiers. `strict` (the default): a tier gets\ntraffic only when every tier above it has no available backend. `spill`: a tier keeps\n`healthy share × overprovisioning` of the traffic (at most all of it) and the rest goes\nto the next tier, as Envoy's priority levels do.",
           "$ref": "#/$defs/Failover",
-          "default": "strict"
+          "default": "strict",
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "health": {
           "description": "Active and passive health checks.",
@@ -8334,7 +9023,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "max_connections_per_backend": {
           "description": "Requests in flight to one backend; a backend at the limit gets no more until one ends.",
@@ -8365,7 +9057,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "balancing",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.9"
         },
         "pass_host_header": {
           "description": "Forward the client's `Host` header (otherwise the backend address is used).",
@@ -8381,7 +9076,10 @@
             {
               "type": "null"
             }
-          ]
+          ],
+          "x-rdock-feature": "fixed-responses",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.7"
         },
         "retries": {
           "description": "Retries of failed requests (ADR-0010, ADR-0015, ADR-0022). Without this setting the\ndefaults below apply: a connection that cannot be opened is tried again on another\nbackend, up to twice, within the retry budget (ADR-0028). `attempts: 0` turns retries off.",
@@ -9119,7 +9817,10 @@
               "type": "null"
             }
           ],
-          "default": null
+          "default": null,
+          "x-rdock-feature": "proxy-protocol",
+          "x-rdock-maturity": "beta",
+          "x-rdock-since": "v0.6"
         },
         "timeouts": {
           "description": "Connection timeouts.",

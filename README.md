@@ -69,6 +69,7 @@ services:
 | [Repo layout](docs/06-repo-layout.md) | crates, conventions, CI, releases |
 | [Roadmap](docs/07-roadmap.md) | M0 → v1.0 with acceptance criteria |
 | [Design system](docs/08-design-system.md) | Harbor UI · dashboard mock `docs/design/dashboard-mock.html` ([preview](https://claude.ai/artifact/Svy4mzFgfqoWie4aGmHrxB)) · banner & logo sources in `docs/assets/` ([canvas](https://claude.ai/artifact/Kg8V5vPCPyYbokXwYEH8iu)); the in-repo files are canonical, the links are private previews |
+| [Stability](docs/10-stability.md) | the stability promise, deprecations, maturity levels, support and MSRV policy |
 | [Decisions](docs/decisions/README.md) | ADRs |
 
 ## Roadmap at a glance
@@ -81,7 +82,7 @@ services:
 
 - [CONTRIBUTING.md](CONTRIBUTING.md): issues, PR rules, Conventional Commits, DCO sign-off (`git commit -s`)
 - [Code of Conduct](CODE_OF_CONDUCT.md) · [Governance](GOVERNANCE.md) · [Support](SUPPORT.md)
-- Security problems: [SECURITY.md](SECURITY.md), never a public issue
+- Security problems: [SECURITY.md](SECURITY.md), never a public issue; which versions get fixes: [Stability, deprecation and support](docs/10-stability.md)
 - Questions: [Discussions](https://github.com/Docker-Hunterpedia/ReverseDock/discussions)
 
 `main` is protected: every change goes through a reviewed pull request with green checks.
