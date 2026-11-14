@@ -26,6 +26,7 @@ python3 -m http.server 8081 --bind 127.0.0.1 --directory "$work/www" >"$work/bac
 backend_pid=$!
 
 cat > "$work/rdock.yaml" <<YAML
+experimental: [http3]
 acme: false
 certificates:
   app: { cert_file: "$work/app.crt", key_file: "$work/app.key" }
