@@ -169,6 +169,14 @@ async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
             limits.push(metric(&text, "rdock_admission_limit", "middleware=\"adm\""));
         }
     }
+    // Read under load: while the flood drains, each of its last answers is a fast sample that
+    // was admitted with half the limit in use, so the limit climbs again and a reading taken
+    // after the drain says nothing about the overload.
+    let overloaded = metric(
+        &rdock.get_admin("/metrics").unwrap().1,
+        "rdock_admission_limit",
+        "middleware=\"adm\"",
+    );
     stop.store(true, Ordering::Relaxed);
     let (bulk_ok, bulk_shed, bulk_other) = totals(bulk).await;
     let text = rdock.get_admin("/metrics").unwrap().1;
@@ -198,8 +206,10 @@ async fn overload_sheds_sheddable_requests_first_and_the_limit_recovers() {
         limits.iter().all(|l| (4.0..=64.0).contains(l)),
         "the limit stays within min and max: {report}"
     );
-    let overloaded = metric(&text, "rdock_admission_limit", "middleware=\"adm\"");
-    assert!(overloaded <= 32.0, "the limit came down near 16: {report}");
+    assert!(
+        overloaded <= 32.0,
+        "the limit came down near 16 (read {overloaded}): {report}"
+    );
     // The shed answers are problem details and named in the access log.
     let reply = {
         let stop = Arc::new(AtomicBool::new(false));
