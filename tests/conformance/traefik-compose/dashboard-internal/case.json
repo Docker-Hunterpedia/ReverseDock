@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "routers to api@internal on Traefik's own service",
+    "basicauth on the dashboard"
+  ],
+  "diff": false
+}

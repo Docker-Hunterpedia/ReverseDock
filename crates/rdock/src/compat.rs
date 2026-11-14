@@ -205,6 +205,14 @@ fn cli() -> Value {
                 .into_root_schema_for::<crate::VersionInfo>(),
         ),
     );
+    // Beta (the `migrate-report` feature): the schema carries `x-rdock-maturity: beta`.
+    let mut report = rdock_migrate::report::json_schema();
+    strip_texts(&mut report);
+    if let Some(map) = report.as_object_mut() {
+        map.remove("x-rdock-codes");
+        map.remove("$id");
+    }
+    outputs.insert("migrate traefik --report".to_owned(), report);
     for (output, operation) in API_OUTPUTS {
         outputs.insert(
             output.to_owned(),

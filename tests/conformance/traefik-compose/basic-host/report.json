@@ -1,0 +1,80 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `whoami` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.whoami",
+        "kind": "object",
+        "scope": "whoami"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "whoami"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.whoami.rule",
+        "kind": "label",
+        "scope": "whoami"
+      },
+      "target": "routes.whoami"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.whoami.entrypoints",
+        "kind": "label",
+        "scope": "whoami"
+      },
+      "target": "routes.whoami"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true`; certificates come from the one `acme` account; the resolver's name is not kept",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.whoami.tls.certresolver",
+        "kind": "label",
+        "scope": "whoami"
+      },
+      "target": "routes.whoami"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 4,
+    "items": 5,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

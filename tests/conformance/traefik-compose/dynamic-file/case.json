@@ -1,0 +1,13 @@
+{
+  "input": "dynamic.yml",
+  "exercises": [
+    "a dynamic configuration file",
+    "routers, several servers with weights",
+    "serversTransports",
+    "weighted service",
+    "usersFile",
+    "TCP and UDP sections",
+    "tls.certificates and options"
+  ],
+  "diff": false
+}

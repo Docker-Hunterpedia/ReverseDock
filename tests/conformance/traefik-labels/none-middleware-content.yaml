@@ -1,0 +1,48 @@
+description: "Content and path options without an equivalent (content-type sniffing, encoded characters, excluded types, error rewrites, gRPC-Web origins, plugins, stripPrefixRegex) are warnings with the reason."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.x.compress.defaultencoding: "gzip"
+      traefik.http.middlewares.x.compress.excludedcontenttypes: "image/png"
+      traefik.http.middlewares.x.contenttype: "true"
+      traefik.http.middlewares.x.contenttype.autodetect: "true"
+      traefik.http.middlewares.x.encodedcharacters.allowencodedbackslash: "true"
+      traefik.http.middlewares.x.encodedcharacters.allowencodedhash: "true"
+      traefik.http.middlewares.x.encodedcharacters.allowencodedpercent: "true"
+      traefik.http.middlewares.x.encodedcharacters.allowencodedquestionmark: "true"
+      traefik.http.middlewares.x.encodedcharacters.allowencodedsemicolon: "true"
+      traefik.http.middlewares.x.encodedcharacters.allowencodedslash: "true"
+      traefik.http.middlewares.x.errors.errorrequestheaders: "X-Original"
+      traefik.http.middlewares.x.errors.statusrewrites.404: "200"
+      traefik.http.middlewares.x.grpcweb.alloworigins: "*"
+      traefik.http.middlewares.x.plugin.demo.key: "v"
+      traefik.http.middlewares.x.stripprefix.forceslash: "false"
+      traefik.http.middlewares.x.stripprefixregex.regex: "/v[0-9]+"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "traefik.http.middlewares.x.compress.defaultencoding\"]"
+    - "traefik.http.middlewares.x.compress.excludedcontenttypes\"]"
+    - "traefik.http.middlewares.x.contenttype\"]"
+    - "traefik.http.middlewares.x.contenttype.autodetect\"]"
+    - "traefik.http.middlewares.x.encodedcharacters.allowencodedbackslash\"]"
+    - "traefik.http.middlewares.x.encodedcharacters.allowencodedhash\"]"
+    - "traefik.http.middlewares.x.encodedcharacters.allowencodedpercent\"]"
+    - "traefik.http.middlewares.x.encodedcharacters.allowencodedquestionmark\"]"
+    - "traefik.http.middlewares.x.encodedcharacters.allowencodedsemicolon\"]"
+    - "traefik.http.middlewares.x.encodedcharacters.allowencodedslash\"]"
+    - "traefik.http.middlewares.x.errors.errorrequestheaders\"]"
+    - "traefik.http.middlewares.x.errors.statusrewrites.404\"]"
+    - "traefik.http.middlewares.x.grpcweb.alloworigins\"]"
+    - "traefik.http.middlewares.x.plugin.demo.key\"]"
+    - "traefik.http.middlewares.x.stripprefix.forceslash\"]"
+    - "traefik.http.middlewares.x.stripprefixregex.regex\"]"

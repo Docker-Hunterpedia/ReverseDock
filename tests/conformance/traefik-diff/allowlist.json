@@ -1,0 +1,34 @@
+{
+  "about": "Documented differences between Traefik v3.7 and rdock that the differential test accepts (tests/conformance/traefik-diff/harness.py, ADR-0033). Each entry needs a reason and a source; additions are reviewed like any other change of the documented Traefik subset (docs/10-stability.md). `field` is a regular expression over the compared fields (status, backend, seen.path, seen.header.<name>, response.header.<name>); `option` names the coverage-table row whose stated difference the entry covers; `when` narrows it to values.",
+  "differences": [
+    {
+      "id": "tls-certificate-source",
+      "option": "traefik.http.routers.<name>.tls",
+      "field": "certificate",
+      "reason": "`tls=true` takes an automatic certificate in rdock and Traefik's default or stored one; the harness gives both proxies the same certificate and does not compare certificates, so nothing is observed.",
+      "source": "tests/conformance/traefik-labels/coverage.json (the row's note); https://doc.traefik.io/traefik/reference/routing-configuration/http/tls/tls-certificates/ (read 2026-11-14)"
+    },
+    {
+      "id": "tls-resolver-name",
+      "option": "traefik.http.routers.<name>.tls.certresolver",
+      "field": "certificate",
+      "reason": "A resolver's name is not kept (one ACME account); ACME is off in the test and certificates are not compared, so nothing is observed.",
+      "source": "tests/conformance/traefik-labels/coverage.json (the row's note)"
+    },
+    {
+      "id": "compress-defaults",
+      "option": "traefik.http.middlewares.<name>.compress",
+      "field": "response\\.header\\.content-encoding",
+      "reason": "With `compress=true`, rdock prefers zstd, br, gzip and compresses common text types; Traefik prefers gzip, br, zstd and compresses every type not excluded. whoami's answers are below the 1024-byte minimum, so the difference shows only on larger answers.",
+      "source": "https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/compress/ (read 2026-11-14); crates/rdock-middleware/src/compress.rs"
+    },
+    {
+      "id": "ratelimit-default-burst",
+      "option": "traefik.http.middlewares.<name>.ratelimit.average",
+      "field": "status",
+      "when": { "traefik": "429", "rdock": "200" },
+      "reason": "Without `burst`, rdock's burst is `average` and Traefik's is 1, so Traefik refuses a quick second request that rdock admits. The cases set `burst` where the matrix could reach the limit.",
+      "source": "https://doc.traefik.io/traefik/reference/routing-configuration/http/middlewares/ratelimit/ (read 2026-11-14); apps/website/src/content/docs/docs/migrate/from-traefik.mdx"
+    }
+  ]
+}

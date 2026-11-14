@@ -1,0 +1,318 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `app` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.app",
+        "kind": "object",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "app"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true`; certificates come from the one `acme` account; the resolver's name is not kept",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.tls.certresolver",
+        "kind": "label",
+        "scope": "app"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.static.manual",
+      "hint": "set `admin.enabled: true` and create a user with `rdock users add`",
+      "level": "manual",
+      "message": "ReverseDock's API and dashboard are on the admin listener (`admin`), with users and tokens; nothing is written",
+      "source": {
+        "file": "traefik.yml",
+        "item": "api.dashboard",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "Let's Encrypt's staging directory (`acme.staging: true`)",
+      "source": {
+        "file": "traefik.yml",
+        "item": "certificatesResolvers.dns.acme.caServer",
+        "kind": "key"
+      },
+      "target": "acme.staging"
+    },
+    {
+      "code": "traefik.static.credentials",
+      "hint": "set CF_DNS_API_TOKEN in ReverseDock's environment (or replace the references with `${file:…}`)",
+      "level": "manual",
+      "message": "`acme.dns_providers.cloudflare` (type `cloudflare`) reads its credentials from `CF_DNS_API_TOKEN`; their values were not copied",
+      "source": {
+        "file": "traefik.yml",
+        "item": "certificatesResolvers.dns.acme.dnsChallenge.provider",
+        "kind": "key"
+      },
+      "target": "acme.dns_providers.cloudflare"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "`acme.dns_resolvers`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "certificatesResolvers.dns.acme.dnsChallenge.resolvers",
+        "kind": "key"
+      },
+      "target": "acme.dns_resolvers"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "`acme.email`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "certificatesResolvers.dns.acme.email",
+        "kind": "key"
+      },
+      "target": "acme.email"
+    },
+    {
+      "code": "traefik.static.manual",
+      "level": "manual",
+      "message": "`acme.json` is not imported: certificates are requested again and kept in ReverseDock's data directory; mind the CA's rate limits when many names move at once",
+      "source": {
+        "file": "traefik.yml",
+        "item": "certificatesResolvers.dns.acme.storage",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:80`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.web.address",
+        "kind": "key"
+      },
+      "target": "listeners.web.address"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "the HTTPS redirect is permanent: 301 for GET, 308 otherwise, as Traefik's permanent redirect",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.web.http.redirections.entryPoint.permanent",
+        "kind": "key"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "redirects go to `https`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.web.http.redirections.entryPoint.scheme",
+        "kind": "key"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "`defaults.redirect_http_to_https: true` (ReverseDock's default): plain-HTTP requests for hosts that have an HTTPS route are redirected, permanently (301 for GET, 308 otherwise); Traefik redirects every request on `web` to `websecure`, temporarily unless `permanent` is set",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.web.http.redirections.entryPoint.to",
+        "kind": "key"
+      },
+      "target": "defaults.redirect_http_to_https"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "a listener on `:443`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.websecure.address",
+        "kind": "key"
+      },
+      "target": "listeners.websecure.address"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "routes without listeners use it (`defaults.listeners`)",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.websecure.asDefault",
+        "kind": "key"
+      },
+      "target": "defaults.listeners"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "`security.trusted_proxies`: one list for every listener (Traefik: per entry point)",
+      "security": true,
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.websecure.forwardedHeaders.trustedIPs",
+        "kind": "key"
+      },
+      "target": "security.trusted_proxies"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "routes on this listener get automatic certificates from the one `acme` account (the resolver's name is not kept)",
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.websecure.http.tls.certResolver",
+        "kind": "key"
+      },
+      "target": "listeners.websecure.tls"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "PROXY protocol from these addresses (`proxy_protocol.trusted`)",
+      "security": true,
+      "source": {
+        "file": "traefik.yml",
+        "item": "entryPoints.websecure.proxyProtocol.trustedIPs",
+        "kind": "key"
+      },
+      "target": "listeners.websecure.proxy_protocol.trusted"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "the log level is a command-line setting: run `rdock run --log info`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "log.level",
+        "kind": "key"
+      }
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "`observability.metrics.prometheus: true`: metrics are served at `/metrics` on the admin listener, named `rdock_*`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "metrics.prometheus",
+        "kind": "key"
+      },
+      "target": "observability.metrics.prometheus"
+    },
+    {
+      "code": "traefik.static.expose_by_default",
+      "level": "exact",
+      "message": "`providers.docker.expose_by_default: false`, as Traefik's `exposedByDefault`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "providers.docker.exposedByDefault",
+        "kind": "key"
+      },
+      "target": "providers.docker.expose_by_default"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "`providers.docker.network`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "providers.docker.network",
+        "kind": "key"
+      },
+      "target": "providers.docker.network"
+    },
+    {
+      "code": "traefik.static.approximate",
+      "level": "approximate",
+      "message": "`providers.file.paths`: the files there are Traefik dynamic configuration; migrate each one with `rdock migrate traefik <file>` and point this at the results",
+      "source": {
+        "file": "traefik.yml",
+        "item": "providers.file.directory",
+        "kind": "key"
+      },
+      "target": "providers.file.paths"
+    },
+    {
+      "code": "traefik.static.exact",
+      "level": "exact",
+      "message": "`providers.file.watch`",
+      "source": {
+        "file": "traefik.yml",
+        "item": "providers.file.watch",
+        "kind": "key"
+      },
+      "target": "providers.file.watch"
+    },
+    {
+      "code": "output.labels_live",
+      "level": "exact",
+      "message": "the routes, services and middlewares from labels are not written: with `--full` the Docker provider reads the same labels at run time (run without `--full` to see them as YAML)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml",
+      "traefik.yml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 7,
+    "dropped": 0,
+    "exact": 16,
+    "items": 26,
+    "manual": 3,
+    "result": 1
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

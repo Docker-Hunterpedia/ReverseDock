@@ -1,0 +1,15 @@
+# Corpus case `mtls-passtlsclientcert` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: passtlsclientcert pem and info fields (approximate).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  bank:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.bank.rule: Host(`bank.example.com`)
+      traefik.http.routers.bank.entrypoints: websecure
+      traefik.http.routers.bank.tls: "true"
+      traefik.http.routers.bank.middlewares: client-cert
+      traefik.http.middlewares.client-cert.passtlsclientcert.pem: "true"
+      traefik.http.middlewares.client-cert.passtlsclientcert.info.subject.commonname: "true"

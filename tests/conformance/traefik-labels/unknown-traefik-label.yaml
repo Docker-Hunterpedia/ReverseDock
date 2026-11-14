@@ -1,10 +1,10 @@
-description: "Unknown traefik.* labels are warnings."
+description: "Labels that are not Traefik v3.7 labels are warnings naming them."
 containers:
   - name: "app"
     labels:
       traefik.enable: "true"
       traefik.http.routers.app.rule: "Host(`app.example.com`)"
-      traefik.http.routers.app.observability.accesslogs: "false"
+      traefik.http.routers.app.no-such-option: "false"
     networks:
       web: "172.18.0.2"
     ports:
@@ -15,4 +15,4 @@ expect:
   services:
     app: {}
   diagnostics:
-    - "observability.accesslogs\"]: not in the supported Traefik label subset"
+    - "app.no-such-option\"]: not in the supported Traefik label subset"

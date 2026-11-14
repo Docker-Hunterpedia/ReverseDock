@@ -1,0 +1,23 @@
+# Corpus case `security-headers` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: headers sts*, frameDeny, customFrameOptionsValue, contentTypeNosniff, browserXssFilter, referrerPolicy, contentSecurityPolicy, permissionsPolicy.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  blog:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.blog.rule=Host(`blog.example.com`)
+      - traefik.http.routers.blog.entrypoints=websecure
+      - traefik.http.routers.blog.tls=true
+      - traefik.http.routers.blog.middlewares=secure-headers
+      - traefik.http.middlewares.secure-headers.headers.stsSeconds=31536000
+      - traefik.http.middlewares.secure-headers.headers.stsIncludeSubdomains=true
+      - traefik.http.middlewares.secure-headers.headers.stsPreload=true
+      - traefik.http.middlewares.secure-headers.headers.frameDeny=true
+      - traefik.http.middlewares.secure-headers.headers.customFrameOptionsValue=SAMEORIGIN
+      - traefik.http.middlewares.secure-headers.headers.contentTypeNosniff=true
+      - traefik.http.middlewares.secure-headers.headers.browserXssFilter=true
+      - traefik.http.middlewares.secure-headers.headers.referrerPolicy=strict-origin-when-cross-origin
+      - traefik.http.middlewares.secure-headers.headers.contentSecurityPolicy=default-src 'self'
+      - traefik.http.middlewares.secure-headers.headers.permissionsPolicy=camera=(), microphone=()

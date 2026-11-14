@@ -1,0 +1,22 @@
+# Corpus case `unsupported-mix` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: plugin, digestauth, circuitbreaker, observability, rulesyntax, tls.options, serverstransport, usersfile from a label, an unknown label.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: Host(`app.example.com`)
+      traefik.http.routers.app.entrypoints: websecure
+      traefik.http.routers.app.tls: "true"
+      traefik.http.routers.app.tls.options: modern@file
+      traefik.http.routers.app.ruleSyntax: v3
+      traefik.http.routers.app.observability.accessLogs: "false"
+      traefik.http.routers.app.middlewares: geo,digest,cb,files
+      traefik.http.middlewares.geo.plugin.geoblock.allowedCountries: DE
+      traefik.http.middlewares.digest.digestauth.users: alice:staff:0123456789abcdef0123456789abcdef
+      traefik.http.middlewares.cb.circuitbreaker.expression: NetworkErrorRatio() > 0.30
+      traefik.http.middlewares.files.basicauth.usersFile: /etc/traefik/users
+      traefik.http.services.app.loadbalancer.serversTransport: insecure@file
+      traefik.http.routers.app.colour: blue

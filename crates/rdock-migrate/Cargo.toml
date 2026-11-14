@@ -14,10 +14,15 @@ publish.workspace = true
 rdock-config.workspace = true
 rdock-model.workspace = true
 rdock-provider-docker.workspace = true
+schemars.workspace = true
 serde.workspace = true
 serde-saphyr = { workspace = true, features = ["serialize"] }
 serde_json.workspace = true
 similar.workspace = true
+thiserror.workspace = true
+
+[dev-dependencies]
+serde.workspace = true
 
 [lints]
 workspace = true

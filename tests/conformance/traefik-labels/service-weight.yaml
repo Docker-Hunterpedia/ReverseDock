@@ -1,0 +1,30 @@
+description: "server.weight sets each container's weight in the service it declares."
+containers:
+  - name: "app-1"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.service: "app"
+      traefik.http.services.app.loadbalancer.server.weight: "3"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+  - name: "app-2"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.service: "app"
+      traefik.http.services.app.loadbalancer.server.weight: "1"
+    networks:
+      web: "172.18.0.3"
+    ports:
+      - 80
+expect:
+  routes:
+    app: { service: "app" }
+  services:
+    app:
+      backends:
+        - { address: "172.18.0.2:80", weight: 3, backup: false }
+        - { address: "172.18.0.3:80", weight: 1, backup: false }

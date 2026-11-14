@@ -1,0 +1,14 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "headers sts*",
+    "frameDeny",
+    "customFrameOptionsValue",
+    "contentTypeNosniff",
+    "browserXssFilter",
+    "referrerPolicy",
+    "contentSecurityPolicy",
+    "permissionsPolicy"
+  ],
+  "diff": true
+}

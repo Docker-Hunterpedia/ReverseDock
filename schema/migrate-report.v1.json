@@ -1,0 +1,501 @@
+{
+  "$defs": {
+    "Finding": {
+      "description": "One finding.",
+      "properties": {
+        "code": {
+          "description": "The kind of finding (a code of `x-rdock-codes`).",
+          "type": "string"
+        },
+        "hint": {
+          "description": "What to do, when something can be done.",
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "level": {
+          "$ref": "#/$defs/Level",
+          "description": "How faithfully the item was carried over."
+        },
+        "message": {
+          "description": "One line on what happened.",
+          "type": "string"
+        },
+        "security": {
+          "description": "The item is a security-relevant choice (for example Traefik's `exposedByDefault`).",
+          "type": "boolean"
+        },
+        "source": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Source"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "description": "The source item it accounts for; absent for a finding about the written result."
+        },
+        "target": {
+          "description": "The generated object, as a path in rdock.yaml (`routes.web`), when there is one.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "code",
+        "level",
+        "message"
+      ],
+      "type": "object"
+    },
+    "ItemKind": {
+      "description": "What kind of thing a source item is.",
+      "oneOf": [
+        {
+          "const": "label",
+          "description": "A container label (`traefik.http.routers.web.rule`).",
+          "type": "string"
+        },
+        {
+          "const": "key",
+          "description": "A key of a configuration file, as a dotted path (`http.routers.web.rule`).",
+          "type": "string"
+        },
+        {
+          "const": "flag",
+          "description": "A command-line flag (`--entrypoints.web.address`).",
+          "type": "string"
+        },
+        {
+          "const": "env",
+          "description": "An environment variable (`TRAEFIK_ENTRYPOINTS_WEB_ADDRESS`).",
+          "type": "string"
+        },
+        {
+          "const": "object",
+          "description": "A whole file, or a Compose service as a whole.",
+          "type": "string"
+        }
+      ]
+    },
+    "Level": {
+      "description": "How faithfully a source item was carried over.",
+      "oneOf": [
+        {
+          "const": "exact",
+          "description": "The same behaviour; the object is written.",
+          "type": "string"
+        },
+        {
+          "const": "approximate",
+          "description": "Written, with a stated difference.",
+          "type": "string"
+        },
+        {
+          "const": "manual",
+          "description": "Needs a decision: left out (or written disabled), and the report says what to do.",
+          "type": "string"
+        },
+        {
+          "const": "dropped",
+          "description": "No equivalent: left out, and the report says why.",
+          "type": "string"
+        }
+      ]
+    },
+    "Source": {
+      "description": "Where a source item is.",
+      "properties": {
+        "file": {
+          "description": "The file it was read from (`-` for standard input).",
+          "type": "string"
+        },
+        "item": {
+          "description": "The item: a label key, a dotted file key, a flag, a variable name, an object name.",
+          "type": "string"
+        },
+        "kind": {
+          "$ref": "#/$defs/ItemKind",
+          "description": "What kind of item it is."
+        },
+        "line": {
+          "description": "The line, when known.",
+          "format": "uint32",
+          "minimum": 0,
+          "type": [
+            "integer",
+            "null"
+          ]
+        },
+        "scope": {
+          "description": "The object it belongs to in the file: a Compose service, a static section.",
+          "type": [
+            "string",
+            "null"
+          ]
+        }
+      },
+      "required": [
+        "file",
+        "kind",
+        "item"
+      ],
+      "type": "object"
+    },
+    "SourceInfo": {
+      "description": "What was read.",
+      "properties": {
+        "checked_against": {
+          "description": "The version the translation was checked against, e.g. `Traefik v3.7`.",
+          "type": "string"
+        },
+        "files": {
+          "description": "The files read, in order.",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "kind": {
+          "description": "The other proxy: `traefik` (later `caddy`, `nginx`).",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "checked_against",
+        "files"
+      ],
+      "type": "object"
+    },
+    "Summary": {
+      "description": "Counts.",
+      "properties": {
+        "approximate": {
+          "description": "Items carried over with a stated difference.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "dropped": {
+          "description": "Items without an equivalent.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "exact": {
+          "description": "Items carried over with the same behaviour.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "items": {
+          "description": "Source items read; each is accounted for by exactly one finding.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "manual": {
+          "description": "Items that need a decision.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        },
+        "result": {
+          "description": "Findings about the written result (no source item), counted apart.",
+          "format": "uint",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "items",
+        "exact",
+        "approximate",
+        "manual",
+        "dropped",
+        "result"
+      ],
+      "type": "object"
+    }
+  },
+  "$id": "https://raw.githubusercontent.com/Docker-Hunterpedia/ReverseDock/main/schema/migrate-report.v1.json",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "description": "The report of one migration.",
+  "properties": {
+    "findings": {
+      "description": "Every finding: one per source item (in reading order), then the findings about the\nresult.",
+      "items": {
+        "$ref": "#/$defs/Finding"
+      },
+      "type": "array"
+    },
+    "rdock_version": {
+      "description": "The rdock version that wrote it.",
+      "type": "string"
+    },
+    "source": {
+      "$ref": "#/$defs/SourceInfo",
+      "description": "What was read."
+    },
+    "summary": {
+      "$ref": "#/$defs/Summary",
+      "description": "Counts by level."
+    },
+    "tool": {
+      "description": "The command, e.g. `rdock migrate traefik`.",
+      "type": "string"
+    },
+    "version": {
+      "description": "The report format's version: 1.",
+      "format": "uint32",
+      "minimum": 0,
+      "type": "integer"
+    }
+  },
+  "required": [
+    "version",
+    "tool",
+    "rdock_version",
+    "source",
+    "summary",
+    "findings"
+  ],
+  "title": "rdock migrate report",
+  "type": "object",
+  "x-rdock-codes": [
+    {
+      "help": "To keep them on the stack, run ReverseDock with `providers.swarm` instead of migrating them.",
+      "id": "compose.deploy_labels",
+      "level": "approximate",
+      "summary": "`deploy.labels` (Swarm) were read as container labels."
+    },
+    {
+      "help": "Fix the reference; `$$` writes a literal `$`.",
+      "id": "compose.interpolation.invalid",
+      "level": "manual",
+      "summary": "A `${…}` reference that Compose cannot read."
+    },
+    {
+      "help": "Pass the variable with `--env-file` (or `--process-env`).",
+      "id": "compose.interpolation.required",
+      "level": "manual",
+      "summary": "A `${NAME?message}` reference whose variable is not set: Compose would refuse the file."
+    },
+    {
+      "help": "Pass the variables with `--env-file FILE` (Compose's `.env`), or `--process-env` to read this process's environment.",
+      "id": "compose.interpolation.unset",
+      "level": "manual",
+      "summary": "A `${NAME}` reference whose variable is not set: Compose would use an empty string."
+    },
+    {
+      "help": "None.",
+      "id": "compose.service",
+      "level": "exact",
+      "summary": "A Compose service with Traefik or ReverseDock labels, reachable by its service name."
+    },
+    {
+      "help": "Add `traefik.enable=true`, rerun with `--expose-by-default`, or migrate the static configuration (`--static`), which writes Traefik's setting explicitly.",
+      "id": "compose.service.not_exposed",
+      "level": "manual",
+      "summary": "A service with Traefik router labels and no `traefik.enable`: Traefik routes it (its `exposedByDefault` is `true`), ReverseDock does not."
+    },
+    {
+      "help": "Fix what the message names.",
+      "id": "compose.service.problem",
+      "level": "manual",
+      "summary": "A problem with a service as a whole (the message says which: several exposed ports, a network…)."
+    },
+    {
+      "help": "Traefik uses the port the image exposes, which a Compose file does not say: check it, or add `traefik.http.services.<name>.loadbalancer.server.port`.",
+      "id": "compose.service.port_assumed",
+      "level": "approximate",
+      "summary": "No `expose`, `ports` or port label: port 80 was assumed."
+    },
+    {
+      "help": "Replace its image with ReverseDock's and remove Traefik's flags (`rdock run` does not accept them).",
+      "id": "compose.service.traefik",
+      "level": "exact",
+      "summary": "The service that runs Traefik itself: its labels and static flags are read, the service is not routed."
+    },
+    {
+      "help": "Read the difference; the supported Traefik subset page lists them all.",
+      "id": "traefik.label.approximate",
+      "level": "approximate",
+      "summary": "A Traefik label translated with a stated difference (the coverage table's note)."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.label.exact",
+      "level": "exact",
+      "summary": "A Traefik label translated with the same behaviour."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.label.inactive",
+      "level": "exact",
+      "summary": "A label of a container that `traefik.enable=false` turns off: Traefik ignores it too."
+    },
+    {
+      "help": "Fix the value as the message says.",
+      "id": "traefik.label.invalid",
+      "level": "manual",
+      "summary": "A supported Traefik label whose value was refused."
+    },
+    {
+      "help": "Write the setting in rdock.yaml.",
+      "id": "traefik.label.manual",
+      "level": "manual",
+      "summary": "A Traefik label that needs a setting outside labels (the message says which)."
+    },
+    {
+      "help": "See `compose.service.not_exposed`.",
+      "id": "traefik.label.not_exposed",
+      "level": "manual",
+      "summary": "A label of a container nothing exposes (no `traefik.enable`): it was not migrated."
+    },
+    {
+      "help": "Fix what the message names; the object's other labels are then translated.",
+      "id": "traefik.label.object_ignored",
+      "level": "manual",
+      "summary": "A label of an object that was left out (the message says why: no port, an ambiguous service, a conflict…)."
+    },
+    {
+      "help": "Check its spelling against Traefik's reference.",
+      "id": "traefik.label.unknown",
+      "level": "dropped",
+      "summary": "A `traefik.*` label that is not a Traefik v3.7 label."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "traefik.label.unsupported",
+      "level": "dropped",
+      "summary": "A Traefik label without an equivalent (the message says why)."
+    },
+    {
+      "help": "Replace what was not migrated, then remove `enabled: false`.",
+      "id": "traefik.route.disabled",
+      "level": "manual",
+      "summary": "A route written disabled (`enabled: false`) because a middleware or service it uses was not migrated, so it never goes live without, say, its authentication."
+    },
+    {
+      "help": "None.",
+      "id": "rdock.label",
+      "level": "exact",
+      "summary": "An `rdock.*` label, read as it is."
+    },
+    {
+      "help": "Fix it as the message says.",
+      "id": "rdock.label.invalid",
+      "level": "manual",
+      "summary": "An `rdock.*` label that was refused."
+    },
+    {
+      "help": "Name the entry points, or set `defaults.listeners`.",
+      "id": "traefik.router.all_entrypoints",
+      "level": "approximate",
+      "summary": "A router without `entrypoints`: Traefik attaches it to every entry point, ReverseDock to `defaults.listeners`."
+    },
+    {
+      "help": "Keep the HTTPS default (recommended), or write `tls: off` on the route; with `--static`, the entry points decide and the route is written as Traefik serves it.",
+      "id": "traefik.router.plain_http",
+      "level": "approximate",
+      "summary": "A router without `tls`: Traefik serves it as plain HTTP (unless its entry point sets `http.tls`); the migrated route gets HTTPS with an automatic certificate and HTTP is redirected."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "traefik.file.approximate",
+      "level": "approximate",
+      "summary": "A key of a dynamic configuration file written with a stated difference."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.file.exact",
+      "level": "exact",
+      "summary": "A key of a dynamic configuration file translated with the same behaviour."
+    },
+    {
+      "help": "Write the setting in rdock.yaml.",
+      "id": "traefik.file.manual",
+      "level": "manual",
+      "summary": "A key of a dynamic configuration file that needs a decision (the message says which)."
+    },
+    {
+      "help": "Convert the file to YAML (the keys are the same), then run the migration again.",
+      "id": "traefik.file.toml",
+      "level": "manual",
+      "summary": "A TOML file: only YAML is read."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "traefik.file.unsupported",
+      "level": "dropped",
+      "summary": "A key of a dynamic configuration file without an equivalent."
+    },
+    {
+      "help": "Make the file readable by ReverseDock at the same path.",
+      "id": "traefik.file.users_file",
+      "level": "exact",
+      "summary": "`basicAuth.usersFile`: the same file is named, never read or copied."
+    },
+    {
+      "help": "Read the difference.",
+      "id": "traefik.static.approximate",
+      "level": "approximate",
+      "summary": "A static setting written with a stated difference."
+    },
+    {
+      "help": "Set the variables the message names in ReverseDock's environment (or use `${file:…}` references).",
+      "id": "traefik.static.credentials",
+      "level": "manual",
+      "summary": "A credential (DNS provider, EAB key, provider password): never copied; the output refers to an environment variable."
+    },
+    {
+      "help": "None.",
+      "id": "traefik.static.exact",
+      "level": "exact",
+      "summary": "A static setting translated with the same behaviour."
+    },
+    {
+      "help": "This is a security choice: every container with labels is routed. Set it to `false` and add `traefik.enable=true` where wanted, which is ReverseDock's default.",
+      "id": "traefik.static.expose_by_default",
+      "level": "exact",
+      "summary": "Traefik's `exposedByDefault` (default `true`) written explicitly as `expose_by_default`."
+    },
+    {
+      "help": "Write the setting in rdock.yaml.",
+      "id": "traefik.static.manual",
+      "level": "manual",
+      "summary": "A static setting that needs a decision (the message says which)."
+    },
+    {
+      "help": "Check its spelling against Traefik's reference.",
+      "id": "traefik.static.unknown",
+      "level": "dropped",
+      "summary": "A key that is not a Traefik v3.7 static option this tool knows."
+    },
+    {
+      "help": "None, or the alternative the message names.",
+      "id": "traefik.static.unsupported",
+      "level": "dropped",
+      "summary": "A static setting without an equivalent (the message says why)."
+    },
+    {
+      "help": "Check it with `rdock validate` once the rest of the configuration is in place.",
+      "id": "output.invalid",
+      "level": "manual",
+      "summary": "The written configuration has a validation error on its own (for example a reference to an object in another file)."
+    },
+    {
+      "help": "Keep the labels on the containers.",
+      "id": "output.labels_live",
+      "level": "exact",
+      "summary": "With `--full` and a Compose file, the label routes are not written: the Docker provider reads the same labels at run time."
+    }
+  ],
+  "x-rdock-maturity": "beta"
+}

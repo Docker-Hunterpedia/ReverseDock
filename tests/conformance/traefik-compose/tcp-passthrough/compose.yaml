@@ -1,0 +1,20 @@
+# Corpus case `tcp-passthrough` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: TCP router HostSNI, tls.passthrough, TCP server.port, a listener from the static configuration.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  traefik:
+    image: traefik:v3.7.19
+    command:
+      - --entrypoints.web.address=:80
+      - --entrypoints.websecure.address=:443
+      - --entrypoints.postgres.address=:5432
+      - --providers.docker.exposedbydefault=false
+  db:
+    image: postgres:17
+    expose: [5432]
+    labels:
+      traefik.enable: "true"
+      traefik.tcp.routers.db.rule: HostSNI(`db.example.com`)
+      traefik.tcp.routers.db.entrypoints: postgres
+      traefik.tcp.routers.db.tls.passthrough: "true"
+      traefik.tcp.services.db.loadbalancer.server.port: "5432"

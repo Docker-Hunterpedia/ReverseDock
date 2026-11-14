@@ -1,0 +1,19 @@
+# Corpus case `chain-secure` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: chain middlewares, chain of chains, compress, ratelimit.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.app.entrypoints=websecure
+      - traefik.http.routers.app.tls=true
+      - traefik.http.routers.app.middlewares=secured
+      - traefik.http.middlewares.secured.chain.middlewares=hsts,limits
+      - traefik.http.middlewares.limits.chain.middlewares=rl,gz
+      - traefik.http.middlewares.hsts.headers.stsSeconds=63072000
+      - traefik.http.middlewares.rl.ratelimit.average=50
+      - traefik.http.middlewares.rl.ratelimit.burst=100
+      - traefik.http.middlewares.gz.compress=true

@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "two services on one container",
+    "explicit router services"
+  ],
+  "diff": false
+}

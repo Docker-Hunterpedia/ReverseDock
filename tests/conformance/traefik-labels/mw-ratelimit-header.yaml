@@ -1,0 +1,22 @@
+description: "A rate limit keyed by a request header (sourceCriterion.requestHeaderName)."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.rl.ratelimit.average: "10"
+      traefik.http.middlewares.rl.ratelimit.sourcecriterion.requestheadername: "X-Api-Key"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    rl:
+      type: "rate_limit"
+      average: 10
+      key: "header:X-Api-Key"

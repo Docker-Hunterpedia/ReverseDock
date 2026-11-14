@@ -1,0 +1,2490 @@
+{
+  "generated_by": "the label_snapshot_is_current test of rdock-provider-docker (just compat), from crates/providers/rdock-provider-docker/src/labels/coverage.rs",
+  "options": [
+    {
+      "fixtures": [],
+      "key": "traefik.swarm.lbswarm",
+      "note": "",
+      "proven_by": "crates/providers/rdock-provider-swarm/tests/translate.rs",
+      "rdock": "Swarm only: route to the service's virtual IP (`rdock.swarm.lbswarm`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [],
+      "key": "traefik.swarm.network",
+      "note": "",
+      "proven_by": "crates/providers/rdock-provider-swarm/tests/translate.rs",
+      "rdock": "Swarm only: the network used to reach tasks (`rdock.network`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "network-label.yaml",
+        "network-missing.yaml"
+      ],
+      "key": "traefik.docker.network",
+      "note": "",
+      "rdock": "`rdock.network`: the network used to reach the container",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.docker.allownonrunning",
+      "note": "only running containers are routed",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "case-insensitive-keys.yaml",
+        "conflicting-routers.yaml",
+        "enable-invalid-value.yaml",
+        "host-network-with-port.yaml",
+        "host-network-without-port.yaml",
+        "misc-exact-options.yaml",
+        "mw-addprefix.yaml",
+        "mw-basicauth-usersfile.yaml",
+        "mw-basicauth.yaml",
+        "mw-chain.yaml",
+        "mw-circuitbreaker.yaml",
+        "mw-compress-options.yaml",
+        "mw-compress.yaml",
+        "mw-errors.yaml",
+        "mw-forwardauth.yaml",
+        "mw-headers-cors.yaml",
+        "mw-headers-custom.yaml",
+        "mw-headers-security-custom.yaml",
+        "mw-headers-security.yaml",
+        "mw-inflightreq.yaml",
+        "mw-ipallowlist.yaml",
+        "mw-ipwhitelist.yaml",
+        "mw-passtlsclientcert-info.yaml",
+        "mw-passtlsclientcert.yaml",
+        "mw-ratelimit-header.yaml",
+        "mw-ratelimit.yaml",
+        "mw-redirectregex.yaml",
+        "mw-redirectscheme.yaml",
+        "mw-replacepath.yaml",
+        "mw-replacepathregex.yaml",
+        "mw-retry-no-network.yaml",
+        "mw-retry.yaml",
+        "mw-stripprefix.yaml",
+        "mw-unsupported.yaml",
+        "network-ambiguous.yaml",
+        "network-label.yaml",
+        "network-missing.yaml",
+        "network-provider-setting.yaml",
+        "none-middleware-auth.yaml",
+        "none-middleware-content.yaml",
+        "none-middleware-headers.yaml",
+        "none-middleware-traffic.yaml",
+        "none-router-options.yaml",
+        "none-service-options.yaml",
+        "none-tcp-options.yaml",
+        "port-ambiguous.yaml",
+        "port-none.yaml",
+        "reference-in-label.yaml",
+        "replica-starting.yaml",
+        "replica-stopping.yaml",
+        "replica-unhealthy.yaml",
+        "replicas-all-unhealthy.yaml",
+        "replicas.yaml",
+        "router-ambiguous-service.yaml",
+        "router-basic.yaml",
+        "router-default-service.yaml",
+        "router-entrypoints-mapped.yaml",
+        "router-entrypoints-unmapped.yaml",
+        "router-middlewares.yaml",
+        "router-no-entrypoints.yaml",
+        "router-priority.yaml",
+        "router-tls-certresolver.yaml",
+        "router-tls-domains.yaml",
+        "router-tls-false.yaml",
+        "router-tls-true.yaml",
+        "router-uses-only-service.yaml",
+        "service-healthcheck-full.yaml",
+        "service-healthcheck.yaml",
+        "service-passhostheader.yaml",
+        "service-scheme-h2c.yaml",
+        "service-serverstransport.yaml",
+        "service-sticky-cookie-options.yaml",
+        "service-sticky-cookie-path.yaml",
+        "service-sticky-cookie.yaml",
+        "service-strategy.yaml",
+        "service-url.yaml",
+        "service-weight.yaml",
+        "tcp-router-no-entrypoints.yaml",
+        "tcp-router-tls.yaml",
+        "tcp-router.yaml",
+        "tcp-service-options.yaml",
+        "traefik-enable-false.yaml",
+        "traefik-labels-off.yaml",
+        "two-routers-one-service.yaml",
+        "two-routers-two-services.yaml",
+        "udp-router-no-port.yaml",
+        "udp-router-unsupported.yaml",
+        "udp-router.yaml",
+        "unknown-traefik-label.yaml"
+      ],
+      "key": "traefik.enable",
+      "note": "",
+      "rdock": "exposes the container (`rdock.enable`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.tls.stores.<store>.defaultgeneratedcert.domain.main",
+      "note": "the default certificate is `defaults.certificate` (a key of `certificates`) in rdock.yaml",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.tls.stores.<store>.defaultgeneratedcert.domain.sans",
+      "note": "the default certificate is `defaults.certificate` (a key of `certificates`) in rdock.yaml",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.tls.stores.<store>.defaultgeneratedcert.resolver",
+      "note": "the default certificate is `defaults.certificate` (a key of `certificates`) in rdock.yaml",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-addprefix.yaml",
+        "mw-chain.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.addprefix.prefix",
+      "note": "",
+      "rdock": "`add_prefix.prefix`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.basicauth.headerfield",
+      "note": "the user name is not passed on in a header",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.basicauth.realm",
+      "note": "",
+      "rdock": "`basic_auth.realm`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.basicauth.removeheader",
+      "note": "",
+      "rdock": "`basic_auth.remove_header`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-basicauth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.basicauth.users",
+      "note": "",
+      "rdock": "`basic_auth.users` (bcrypt and argon2id; Apache MD5 and SHA-1 with a warning)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-basicauth-usersfile.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.basicauth.usersfile",
+      "note": "labels cannot name files on the proxy's host: set `basic_auth.users_file` on the middleware in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.buffering.maxrequestbodybytes",
+      "note": "set `max_body` on the routes in rdock.yaml (or `rdock.routes.<name>.max_body`)",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.buffering.maxresponsebodybytes",
+      "note": "responses are streamed; there is no response size limit",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.buffering.memrequestbodybytes",
+      "note": "bodies are streamed, not spooled to disk",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.buffering.memresponsebodybytes",
+      "note": "responses are streamed, not spooled to disk",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.buffering.retryexpression",
+      "note": "retries are a service setting (`retries`)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-chain.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.chain.middlewares",
+      "note": "",
+      "rdock": "inlined: routes that use the chain list its middlewares in its place",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.circuitbreaker.checkperiod",
+      "note": "circuit-breaker expressions are not carried over: set `health.passive` and `max_requests` on the service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "mw-circuitbreaker.yaml",
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.circuitbreaker.expression",
+      "note": "circuit-breaker expressions are not carried over: set `health.passive` and `max_requests` on the service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.circuitbreaker.fallbackduration",
+      "note": "circuit-breaker expressions are not carried over: set `health.passive` and `max_requests` on the service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.circuitbreaker.recoveryduration",
+      "note": "circuit-breaker expressions are not carried over: set `health.passive` and `max_requests` on the service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.circuitbreaker.responsecode",
+      "note": "circuit-breaker expressions are not carried over: set `health.passive` and `max_requests` on the service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "mw-chain.yaml",
+        "mw-compress.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.compress",
+      "note": "ReverseDock compresses common text types only (Traefik: every type not excluded, and it sniffs a missing `Content-Type`), and prefers zstd, then br, then gzip (Traefik: gzip, br, zstd)",
+      "rdock": "`compress` with its defaults",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.compress.defaultencoding",
+      "note": "a response is compressed only when the client sends `Accept-Encoding`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-compress-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.compress.encodings",
+      "note": "",
+      "rdock": "`compress.algorithms`, in the same order of preference",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.compress.excludedcontenttypes",
+      "note": "`compress.content_types` is an allow-list",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-compress-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.compress.includedcontenttypes",
+      "note": "`text/event-stream` and `application/grpc` are never compressed, even when listed",
+      "rdock": "`compress.content_types`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-compress-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.compress.minresponsebodybytes",
+      "note": "",
+      "rdock": "`compress.min_size`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.contenttype",
+      "note": "a missing `Content-Type` is never guessed",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.contenttype.autodetect",
+      "note": "a missing `Content-Type` is never guessed",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.digestauth.headerfield",
+      "note": "digest authentication is not offered (it needs reversible or MD5-derived secrets); use `basic_auth` over HTTPS, `forward_auth` or `oidc`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.digestauth.realm",
+      "note": "digest authentication is not offered (it needs reversible or MD5-derived secrets); use `basic_auth` over HTTPS, `forward_auth` or `oidc`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.digestauth.removeheader",
+      "note": "digest authentication is not offered (it needs reversible or MD5-derived secrets); use `basic_auth` over HTTPS, `forward_auth` or `oidc`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.digestauth.users",
+      "note": "digest authentication is not offered (it needs reversible or MD5-derived secrets); use `basic_auth` over HTTPS, `forward_auth` or `oidc`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.digestauth.usersfile",
+      "note": "digest authentication is not offered (it needs reversible or MD5-derived secrets); use `basic_auth` over HTTPS, `forward_auth` or `oidc`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.encodedcharacters.allowencodedbackslash",
+      "note": "encoded reserved characters in paths are always allowed and never act as separators (ADR-0014); there is nothing to switch",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.encodedcharacters.allowencodedhash",
+      "note": "encoded reserved characters in paths are always allowed and never act as separators (ADR-0014); there is nothing to switch",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.encodedcharacters.allowencodedpercent",
+      "note": "encoded reserved characters in paths are always allowed and never act as separators (ADR-0014); there is nothing to switch",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.encodedcharacters.allowencodedquestionmark",
+      "note": "encoded reserved characters in paths are always allowed and never act as separators (ADR-0014); there is nothing to switch",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.encodedcharacters.allowencodedsemicolon",
+      "note": "encoded reserved characters in paths are always allowed and never act as separators (ADR-0014); there is nothing to switch",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.encodedcharacters.allowencodedslash",
+      "note": "encoded reserved characters in paths are always allowed and never act as separators (ADR-0014); there is nothing to switch",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.errors.errorrequestheaders",
+      "note": "the error page request carries no extra headers",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-errors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.errors.query",
+      "note": "only `{status}` is replaced; Traefik also replaces `{originalStatus}` and `{url}`",
+      "rdock": "`errors.path`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-errors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.errors.service",
+      "note": "",
+      "rdock": "`errors.service`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-errors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.errors.status",
+      "note": "",
+      "rdock": "`errors.status`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.errors.statusrewrites.<status>",
+      "note": "the status of the error page response is the original one",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.addauthcookiestoresponse",
+      "note": "not offered by `forward_auth`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-forwardauth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.address",
+      "note": "an auth service that cannot be reached gives `502` (Traefik: `500`); the auth request times out after 5s",
+      "rdock": "`forward_auth.address`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.authrequestheaders",
+      "note": "",
+      "rdock": "`forward_auth.request_headers`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-forwardauth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.authresponseheaders",
+      "note": "",
+      "rdock": "`forward_auth.copy_headers`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.authresponseheadersregex",
+      "note": "not offered by `forward_auth`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.forwardbody",
+      "note": "the body is not sent to the auth service (an `agent` middleware with `protocol: forward` can)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.headerfield",
+      "note": "not offered by `forward_auth`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.maxbodysize",
+      "note": "the body is not sent to the auth service",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.maxresponsebodysize",
+      "note": "not offered by `forward_auth`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.preservelocationheader",
+      "note": "not offered by `forward_auth`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.preserverequestmethod",
+      "note": "not offered by `forward_auth`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.tls.ca",
+      "note": "TLS settings for the auth service are not offered; it is reached with the system roots",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.tls.caoptional",
+      "note": "TLS settings for the auth service are not offered",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.tls.cert",
+      "note": "client certificates to the auth service are not offered",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.tls.insecureskipverify",
+      "note": "the auth service's certificate is always verified",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-auth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.tls.key",
+      "note": "client certificates to the auth service are not offered",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-forwardauth.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.forwardauth.trustforwardheader",
+      "note": "",
+      "rdock": "`forward_auth.trust_forward_header`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.grpcweb.alloworigins",
+      "note": "the `grpc_web` middleware has no origin list; add it in rdock.yaml with a `cors` middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolallowcredentials",
+      "note": "preflight requests are answered `204` (Traefik: `200`)",
+      "rdock": "`cors.allow_credentials` (a `cors` middleware added next to the headers one)",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolallowheaders",
+      "note": "as `accesscontrolallowcredentials`",
+      "rdock": "`cors.allowed_headers`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolallowmethods",
+      "note": "as `accesscontrolallowcredentials`",
+      "rdock": "`cors.allowed_methods`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolalloworiginlist",
+      "note": "as `accesscontrolallowcredentials`; without `accesscontrolallowmethods` the preflight allows GET, HEAD and POST (Traefik: none)",
+      "rdock": "`cors.allowed_origins`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolalloworiginlistregex",
+      "note": "`cors.allowed_origins` is a list of exact origins",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolexposeheaders",
+      "note": "as `accesscontrolallowcredentials`",
+      "rdock": "`cors.exposed_headers`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.accesscontrolmaxage",
+      "note": "as `accesscontrolallowcredentials`",
+      "rdock": "`cors.max_age`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.addvaryheader",
+      "note": "`Vary` is sent whether or not the label is set",
+      "rdock": "always on: the `cors` middleware sends `Vary: Origin`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.allowedhosts",
+      "note": "routes match hosts; there is no separate host allow-list",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.browserxssfilter",
+      "note": "",
+      "rdock": "`response.set` of `X-XSS-Protection: 1; mode=block`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.contentsecuritypolicy",
+      "note": "",
+      "rdock": "`response.set` of `Content-Security-Policy`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.contentsecuritypolicyreportonly",
+      "note": "",
+      "rdock": "`response.set` of `Content-Security-Policy-Report-Only`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.contenttypenosniff",
+      "note": "",
+      "rdock": "`response.set` of `X-Content-Type-Options: nosniff`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.custombrowserxssvalue",
+      "note": "",
+      "rdock": "`response.set` of `X-XSS-Protection` (overrides `browserxssfilter`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.customframeoptionsvalue",
+      "note": "",
+      "rdock": "`response.set` of `X-Frame-Options` (overrides `framedeny`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.customrequestheaders.<header>",
+      "note": "",
+      "rdock": "`request.set` (an empty value: `request.remove`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-cors.yaml",
+        "mw-headers-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.customresponseheaders.<header>",
+      "note": "",
+      "rdock": "`response.set` (an empty value: `response.remove`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.featurepolicy",
+      "note": "removed in Traefik v3 (only in its old label list); use `permissionspolicy`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.forcestsheader",
+      "note": "HSTS is sent on HTTPS responses only",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml",
+        "mw-headers-security.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.framedeny",
+      "note": "",
+      "rdock": "`response.set` of `X-Frame-Options: DENY`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.hostsproxyheaders",
+      "note": "the host is never taken from a proxy header",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.isdevelopment",
+      "note": "there is no development mode",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.permissionspolicy",
+      "note": "",
+      "rdock": "`response.set` of `Permissions-Policy`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.publickey",
+      "note": "HPKP is obsolete and not offered",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.referrerpolicy",
+      "note": "",
+      "rdock": "`response.set` of `Referrer-Policy`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.sslforcehost",
+      "note": "removed in Traefik v3 (only in its old label list); use a `redirectscheme` middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.sslhost",
+      "note": "removed in Traefik v3 (only in its old label list); use a `redirectscheme` middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.sslproxyheaders.<header>",
+      "note": "HTTPS is never inferred from a request header",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.sslredirect",
+      "note": "removed in Traefik v3 (only in its old label list); use a `redirectscheme` middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-headers.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.ssltemporaryredirect",
+      "note": "removed in Traefik v3 (only in its old label list); use a `redirectscheme` middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.stsincludesubdomains",
+      "note": "",
+      "rdock": "`hsts.include_subdomains`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.stspreload",
+      "note": "",
+      "rdock": "`hsts.preload`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-headers-security-custom.yaml",
+        "mw-headers-security.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.headers.stsseconds",
+      "note": "",
+      "rdock": "`hsts.max_age`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-inflightreq.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.inflightreq.amount",
+      "note": "",
+      "rdock": "`in_flight.amount`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.inflightreq.sourcecriterion.ipstrategy.depth",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.inflightreq.sourcecriterion.ipstrategy.excludedips",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.inflightreq.sourcecriterion.ipstrategy.ipv6subnet",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-inflightreq.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.inflightreq.sourcecriterion.requestheadername",
+      "note": "",
+      "rdock": "`in_flight.key: header:<Name>`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.inflightreq.sourcecriterion.requesthost",
+      "note": "only the client IP and a request header are keys",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipallowlist.ipstrategy",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipallowlist.ipstrategy.depth",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipallowlist.ipstrategy.excludedips",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipallowlist.ipstrategy.ipv6subnet",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipallowlist.rejectstatuscode",
+      "note": "refused clients always get `403`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-chain.yaml",
+        "mw-ipallowlist.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipallowlist.sourcerange",
+      "note": "",
+      "rdock": "`ip_allow.cidrs`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipwhitelist.ipstrategy",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipwhitelist.ipstrategy.depth",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipwhitelist.ipstrategy.excludedips",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipwhitelist.ipstrategy.ipv6subnet",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-ipwhitelist.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ipwhitelist.sourcerange",
+      "note": "",
+      "rdock": "`ip_allow.cidrs` (the old name of `ipallowlist`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.commonname",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "`client_cert` with `required: false`, `forward: traefik`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.country",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.domaincomponent",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.locality",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.organization",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.province",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.issuer.serialnumber",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.notafter",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.notbefore",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.sans",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.serialnumber",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml",
+        "mw-passtlsclientcert.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.commonname",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.country",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.domaincomponent",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.locality",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.organization",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.organizationalunit",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.province",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert-info.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.info.subject.serialnumber",
+      "note": "the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "rdock": "as `info.issuer.commonname`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-passtlsclientcert.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.passtlsclientcert.pem",
+      "note": "the PEM is passed in `X-Forwarded-Tls-Client-Cert`; the client certificate is requested on the listener (`listeners.<name>.tls.client_auth`)",
+      "rdock": "`client_cert` with `required: false`, `forward: traefik`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-unsupported.yaml",
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.plugin.<plugin>.<option>",
+      "note": "Traefik (Yaegi) plugins do not run here; ReverseDock's `plugin` type is a native or WASM plugin of its own",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-ratelimit-header.yaml",
+        "mw-ratelimit.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.average",
+      "note": "without `burst`, the burst is `average` (Traefik: 1)",
+      "rdock": "`rate_limit.average`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-ratelimit.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.burst",
+      "note": "",
+      "rdock": "`rate_limit.burst`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-ratelimit.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.period",
+      "note": "",
+      "rdock": "`rate_limit.period`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.db",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.dialtimeout",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.endpoints",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.maxactiveconns",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.minidleconns",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.password",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.poolsize",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.readtimeout",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.tls.ca",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.tls.cert",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.tls.insecureskipverify",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.tls.key",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.username",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.redis.writetimeout",
+      "note": "a Redis endpoint is not read; cluster-wide limits are `scope: cluster` on the middleware with `cluster.limits` (ADR-0031)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.sourcecriterion.ipstrategy.depth",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.sourcecriterion.ipstrategy.excludedips",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.sourcecriterion.ipstrategy.ipv6subnet",
+      "note": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-ratelimit-header.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.sourcecriterion.requestheadername",
+      "note": "",
+      "rdock": "`rate_limit.key: header:<Name>`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.ratelimit.sourcecriterion.requesthost",
+      "note": "only the client IP, a request header and consumers are keys",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.redirectregex.permanent",
+      "note": "",
+      "rdock": "`redirect.permanent`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-redirectregex.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.redirectregex.regex",
+      "note": "",
+      "rdock": "`redirect.regex`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-redirectregex.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.redirectregex.replacement",
+      "note": "",
+      "rdock": "`redirect.replacement`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-redirectscheme.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.redirectscheme.permanent",
+      "note": "",
+      "rdock": "`redirect.permanent`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.redirectscheme.port",
+      "note": "",
+      "rdock": "`redirect.port`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-redirectscheme.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.redirectscheme.scheme",
+      "note": "",
+      "rdock": "`redirect.scheme`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-replacepath.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.replacepath.path",
+      "note": "",
+      "rdock": "`replace_path.path`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-replacepathregex.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.replacepathregex.regex",
+      "note": "",
+      "rdock": "`rewrite.regex`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-replacepathregex.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.replacepathregex.replacement",
+      "note": "",
+      "rdock": "`rewrite.replacement`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-retry-no-network.yaml",
+        "mw-retry.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.attempts",
+      "note": "retries move from the route to its service, so every route to that service retries; they use a fixed jittered backoff of 25 to 250 ms",
+      "rdock": "`retries.attempts` of the routes' services (minus one: Traefik counts the first try)",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "mw-retry-no-network.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.disableretryonnetworkerror",
+      "note": "",
+      "rdock": "`retries.on` without `connect` and `reset`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-retry-no-network.yaml",
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.initialinterval",
+      "note": "retries use a fixed jittered backoff (25 to 250 ms)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.maxrequestbodybytes",
+      "note": "a request whose body was sent is retried only when the body was held (`hold_body`)",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.retrynonidempotentmethod",
+      "note": "",
+      "rdock": "`retries.retry_non_idempotent`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-retry-no-network.yaml",
+        "mw-retry.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.status",
+      "note": "only `502`, `503` and `504` are retried; other statuses in the list are left out",
+      "rdock": "`retries.on` with the statuses",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "none-middleware-traffic.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.retry.timeout",
+      "note": "set `retries.per_try_timeout` or the service's `timeouts` in rdock.yaml",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.stripprefix.forceslash",
+      "note": "deprecated in Traefik; the stripped path always starts with `/`",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "mw-stripprefix.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.stripprefix.prefixes",
+      "note": "",
+      "rdock": "`strip_prefix.prefixes`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-middleware-content.yaml"
+      ],
+      "key": "traefik.http.middlewares.<name>.stripprefixregex.regex",
+      "note": "not translated yet; write a `rewrite` middleware with an anchored regex in rdock.yaml",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "router-entrypoints-mapped.yaml",
+        "router-entrypoints-unmapped.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.entrypoints",
+      "note": "",
+      "rdock": "`listeners`, through `providers.docker.entrypoints`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "mw-chain.yaml",
+        "mw-headers-cors.yaml",
+        "mw-inflightreq.yaml",
+        "mw-passtlsclientcert.yaml",
+        "mw-retry-no-network.yaml",
+        "mw-retry.yaml",
+        "native-and-traefik.yaml",
+        "router-middlewares.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.middlewares",
+      "note": "",
+      "rdock": "`middlewares`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-router-options.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.observability.accesslogs",
+      "note": "access logs, metrics and tracing are switched for the whole proxy (`observability`), not per router",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-router-options.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.observability.metrics",
+      "note": "access logs, metrics and tracing are switched for the whole proxy (`observability`), not per router",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-router-options.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.observability.traceverbosity",
+      "note": "access logs, metrics and tracing are switched for the whole proxy (`observability`), not per router",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "none-router-options.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.observability.tracing",
+      "note": "access logs, metrics and tracing are switched for the whole proxy (`observability`), not per router",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "router-priority.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.priority",
+      "note": "",
+      "rdock": "`priority` (default: the rule's length, as in Traefik)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "case-insensitive-keys.yaml",
+        "conflicting-routers.yaml",
+        "enable-invalid-value.yaml",
+        "expose-by-default.yaml",
+        "host-network-with-port.yaml",
+        "host-network-without-port.yaml",
+        "misc-exact-options.yaml",
+        "mw-addprefix.yaml",
+        "mw-basicauth-usersfile.yaml",
+        "mw-basicauth.yaml",
+        "mw-chain.yaml",
+        "mw-circuitbreaker.yaml",
+        "mw-compress-options.yaml",
+        "mw-compress.yaml",
+        "mw-errors.yaml",
+        "mw-forwardauth.yaml",
+        "mw-headers-cors.yaml",
+        "mw-headers-custom.yaml",
+        "mw-headers-security-custom.yaml",
+        "mw-headers-security.yaml",
+        "mw-inflightreq.yaml",
+        "mw-ipallowlist.yaml",
+        "mw-ipwhitelist.yaml",
+        "mw-passtlsclientcert-info.yaml",
+        "mw-passtlsclientcert.yaml",
+        "mw-ratelimit-header.yaml",
+        "mw-ratelimit.yaml",
+        "mw-redirectregex.yaml",
+        "mw-redirectscheme.yaml",
+        "mw-replacepath.yaml",
+        "mw-replacepathregex.yaml",
+        "mw-retry-no-network.yaml",
+        "mw-retry.yaml",
+        "mw-stripprefix.yaml",
+        "mw-unsupported.yaml",
+        "native-and-traefik.yaml",
+        "network-ambiguous.yaml",
+        "network-label.yaml",
+        "network-missing.yaml",
+        "network-provider-setting.yaml",
+        "none-middleware-auth.yaml",
+        "none-middleware-content.yaml",
+        "none-middleware-headers.yaml",
+        "none-middleware-traffic.yaml",
+        "none-router-options.yaml",
+        "none-service-options.yaml",
+        "not-enabled.yaml",
+        "port-ambiguous.yaml",
+        "port-none.yaml",
+        "reference-in-label.yaml",
+        "replica-starting.yaml",
+        "replica-stopping.yaml",
+        "replica-unhealthy.yaml",
+        "replicas-all-unhealthy.yaml",
+        "replicas.yaml",
+        "router-ambiguous-service.yaml",
+        "router-basic.yaml",
+        "router-default-service.yaml",
+        "router-entrypoints-mapped.yaml",
+        "router-entrypoints-unmapped.yaml",
+        "router-middlewares.yaml",
+        "router-no-entrypoints.yaml",
+        "router-priority.yaml",
+        "router-tls-certresolver.yaml",
+        "router-tls-domains.yaml",
+        "router-tls-false.yaml",
+        "router-tls-true.yaml",
+        "router-uses-only-service.yaml",
+        "service-healthcheck-full.yaml",
+        "service-healthcheck.yaml",
+        "service-passhostheader.yaml",
+        "service-scheme-h2c.yaml",
+        "service-serverstransport.yaml",
+        "service-sticky-cookie-options.yaml",
+        "service-sticky-cookie-path.yaml",
+        "service-sticky-cookie.yaml",
+        "service-strategy.yaml",
+        "service-url.yaml",
+        "service-weight.yaml",
+        "traefik-enable-false.yaml",
+        "traefik-labels-off.yaml",
+        "two-routers-one-service.yaml",
+        "two-routers-two-services.yaml",
+        "unknown-traefik-label.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.rule",
+      "note": "",
+      "rdock": "`match`, the same rule grammar",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-router-options.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.rulesyntax",
+      "note": "Traefik v2 rule syntax is not read: write the rule in v3 syntax",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "conflicting-routers.yaml",
+        "router-basic.yaml",
+        "service-weight.yaml",
+        "two-routers-two-services.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.service",
+      "note": "",
+      "rdock": "`service`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "router-tls-false.yaml",
+        "router-tls-true.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.tls",
+      "note": "`true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "rdock": "`tls.auto: true` (`true`) or `tls: off` (`false`)",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "router-tls-certresolver.yaml",
+        "router-tls-domains.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.tls.certresolver",
+      "note": "certificates come from the one `acme` account; the resolver's name is not kept",
+      "rdock": "`tls.auto: true`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "router-tls-domains.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.tls.domains[n].main",
+      "note": "",
+      "rdock": "`tls.domains`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "router-tls-domains.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.tls.domains[n].sans",
+      "note": "",
+      "rdock": "`tls.domains`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-router-options.yaml"
+      ],
+      "key": "traefik.http.routers.<name>.tls.options",
+      "note": "TLS options are listener settings here: set `listeners.<name>.tls` (`policy`, `client_auth`) in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.followredirects",
+      "note": "",
+      "rdock": "redirects are never followed (only `false` is taken)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.headers.<header>",
+      "note": "",
+      "rdock": "`health.active.headers`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.hostname",
+      "note": "",
+      "rdock": "`health.active.hostname`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.interval",
+      "note": "",
+      "rdock": "`health.active.interval`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.method",
+      "note": "",
+      "rdock": "`health.active.method`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.mode",
+      "note": "",
+      "rdock": "`health.active.mode`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml",
+        "service-healthcheck.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.path",
+      "note": "unset settings take ReverseDock's defaults (every 10s, a 2s timeout, 2 passes or 3 failures to change state); Traefik's defaults are every 30s with a 5s timeout",
+      "rdock": "`health.active.path`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "misc-exact-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.port",
+      "note": "",
+      "rdock": "`health.active.port`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.scheme",
+      "note": "health checks use the service's scheme",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.status",
+      "note": "",
+      "rdock": "`health.active.expected_status`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.timeout",
+      "note": "",
+      "rdock": "`health.active.timeout`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.healthcheck.unhealthyinterval",
+      "note": "one interval is used for healthy and unhealthy backends",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "service-passhostheader.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.passhostheader",
+      "note": "",
+      "rdock": "`pass_host_header`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.passivehealthcheck.failurewindow",
+      "note": "",
+      "rdock": "`health.passive.window`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.passivehealthcheck.maxfailedattempts",
+      "note": "",
+      "rdock": "`health.passive.failures`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.responseforwarding.flushinterval",
+      "note": "responses are streamed as they arrive; there is no flush setting",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "conflicting-routers.yaml",
+        "host-network-with-port.yaml",
+        "router-ambiguous-service.yaml",
+        "router-basic.yaml",
+        "router-uses-only-service.yaml",
+        "two-routers-one-service.yaml",
+        "two-routers-two-services.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.server.port",
+      "note": "",
+      "rdock": "the backend's port",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.server.preservepath",
+      "note": "a backend address carries no path",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "service-healthcheck-full.yaml",
+        "service-scheme-h2c.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.server.scheme",
+      "note": "",
+      "rdock": "`scheme` (`http`, `https`, `h2c`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-url.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.server.url",
+      "note": "",
+      "rdock": "the backend's address and `scheme`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-weight.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.server.weight",
+      "note": "",
+      "rdock": "the container's backend `weight`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-serverstransport.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.serverstransport",
+      "note": "servers transports are not read from labels: set `tls` (server name, CA, client certificate) and `timeouts` on the service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-path.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky",
+      "note": "as `sticky.cookie`",
+      "rdock": "`sticky.cookie` with the defaults of `sticky.cookie`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie",
+      "note": "the cookie is named `rdock_sticky` unless `sticky.cookie.name` is set (Traefik derives a name), is signed, and is `Secure`, `HttpOnly` and `SameSite=Lax` unless the labels say otherwise (Traefik: none of the three)",
+      "rdock": "`sticky.cookie` named `rdock_sticky`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "none-service-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.domain",
+      "note": "the cookie has no `Domain` attribute",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.httponly",
+      "note": "",
+      "rdock": "`sticky.cookie.http_only`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-path.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.maxage",
+      "note": "",
+      "rdock": "`sticky.cookie.max_age`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.name",
+      "note": "",
+      "rdock": "`sticky.cookie.name`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-path.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.path",
+      "note": "",
+      "rdock": "`sticky.cookie.path`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.samesite",
+      "note": "",
+      "rdock": "`sticky.cookie.same_site`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-sticky-cookie-options.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.sticky.cookie.secure",
+      "note": "",
+      "rdock": "`sticky.cookie.secure`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "service-strategy.yaml"
+      ],
+      "key": "traefik.http.services.<name>.loadbalancer.strategy",
+      "note": "`leasttime` also weighs response time in Traefik; `least_requests` counts requests in flight only",
+      "rdock": "`load_balancer.policy`: `wrr` → `round_robin`, `p2c` → `p2c`, `hrw` → `ip_hash`, `leasttime` → `least_requests`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.middlewares.<name>.inflightconn.amount",
+      "note": "",
+      "rdock": "`in_flight.amount` (TCP connections)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.middlewares.<name>.ipallowlist.sourcerange",
+      "note": "",
+      "rdock": "`ip_allow.cidrs`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "mw-ipwhitelist.yaml"
+      ],
+      "key": "traefik.tcp.middlewares.<name>.ipwhitelist.sourcerange",
+      "note": "",
+      "rdock": "`ip_allow.cidrs` (the old name of `ipallowlist`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml",
+        "tcp-router-tls.yaml",
+        "tcp-router.yaml",
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.entrypoints",
+      "note": "",
+      "rdock": "`tcp_routes.<r>.listeners`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.middlewares",
+      "note": "",
+      "rdock": "`tcp_routes.<r>.middlewares`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.priority",
+      "note": "",
+      "rdock": "`tcp_routes.<r>.priority`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml",
+        "tcp-router-no-entrypoints.yaml",
+        "tcp-router-tls.yaml",
+        "tcp-router.yaml",
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.rule",
+      "note": "",
+      "rdock": "`tcp_routes.<r>.match` (`HostSNI`, `HostSNIRegexp`, `ALPN`, `ClientIP`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.rulesyntax",
+      "note": "Traefik v2 rule syntax is not read: write the rule in v3 syntax",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml",
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.service",
+      "note": "",
+      "rdock": "`tcp_routes.<r>.service`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml",
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.tls",
+      "note": "TLS is terminated with the listener's certificates (Traefik: a resolver's or the default certificate)",
+      "rdock": "`tcp_routes.<r>.tls`",
+      "status": "approximate"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.tls.certresolver",
+      "note": "a terminating TCP route uses its listener's TLS settings and certificates: set them on `listeners.<name>.tls`",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.tls.domains[n].main",
+      "note": "a terminating TCP route uses its listener's TLS settings and certificates: set them on `listeners.<name>.tls`",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.tls.domains[n].sans",
+      "note": "a terminating TCP route uses its listener's TLS settings and certificates: set them on `listeners.<name>.tls`",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.tls.options",
+      "note": "a terminating TCP route uses its listener's TLS settings and certificates: set them on `listeners.<name>.tls`",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.routers.<name>.tls.passthrough",
+      "note": "",
+      "rdock": "`tcp_routes.<r>.tls.passthrough`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.services.<name>.loadbalancer.proxyprotocol",
+      "note": "",
+      "rdock": "`tcp_services.<s>.proxy_protocol: v2` (Traefik's default version)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.services.<name>.loadbalancer.proxyprotocol.version",
+      "note": "",
+      "rdock": "`tcp_services.<s>.proxy_protocol` (`1` → `v1`, `2` → `v2`)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml",
+        "tcp-router.yaml",
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.services.<name>.loadbalancer.server.port",
+      "note": "",
+      "rdock": "the backend's port",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "none-tcp-options.yaml"
+      ],
+      "key": "traefik.tcp.services.<name>.loadbalancer.server.tls",
+      "note": "TLS to TCP backends is not offered; the backend gets the bytes as relayed",
+      "rdock": "",
+      "status": "none"
+    },
+    {
+      "fixtures": [
+        "tcp-router-tls.yaml"
+      ],
+      "key": "traefik.tcp.services.<name>.loadbalancer.serverstransport",
+      "note": "servers transports are not read from labels: set `proxy_protocol` and `timeouts` on the TCP service in rdock.yaml",
+      "rdock": "",
+      "status": "manual"
+    },
+    {
+      "fixtures": [
+        "tcp-service-options.yaml"
+      ],
+      "key": "traefik.tcp.services.<name>.loadbalancer.terminationdelay",
+      "note": "",
+      "rdock": "`tcp_services.<s>.timeouts.termination_delay` (milliseconds; a negative value, no deadline, is refused)",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "udp-router-no-port.yaml",
+        "udp-router.yaml"
+      ],
+      "key": "traefik.udp.routers.<name>.entrypoints",
+      "note": "",
+      "rdock": "`udp_routes.<r>.listeners`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "udp-router.yaml"
+      ],
+      "key": "traefik.udp.routers.<name>.service",
+      "note": "",
+      "rdock": "`udp_routes.<r>.service`",
+      "status": "exact"
+    },
+    {
+      "fixtures": [
+        "udp-router-unsupported.yaml",
+        "udp-router.yaml"
+      ],
+      "key": "traefik.udp.services.<name>.loadbalancer.server.port",
+      "note": "",
+      "rdock": "the backend's port",
+      "status": "exact"
+    }
+  ],
+  "totals": {
+    "approximate": 41,
+    "exact": 94,
+    "manual": 14,
+    "none": 101
+  },
+  "traefik": {
+    "checked": "2026-11-14",
+    "reference": "https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/docker/",
+    "version": "v3.7"
+  }
+}

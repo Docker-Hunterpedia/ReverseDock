@@ -1730,6 +1730,16 @@
             "INPUT"
           ]
         },
+        "--env-file": {
+          "defaults": [],
+          "multiple": true,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
         "--expose-by-default": {
           "defaults": [],
           "multiple": false,
@@ -1743,6 +1753,19 @@
             "EXPOSE_BY_DEFAULT"
           ]
         },
+        "--full": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "FULL"
+          ]
+        },
         "--output": {
           "defaults": [],
           "multiple": false,
@@ -1752,6 +1775,52 @@
           "takes_value": true,
           "value_names": [
             "OUTPUT"
+          ]
+        },
+        "--process-env": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "PROCESS_ENV"
+          ]
+        },
+        "--report": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--static": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [],
+          "required": false,
+          "takes_value": true,
+          "value_names": [
+            "FILE"
+          ]
+        },
+        "--strict": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "STRICT"
           ]
         }
       },
@@ -1999,6 +2068,19 @@
     },
     "schema": {
       "args": {
+        "--migrate-report": {
+          "defaults": [],
+          "multiple": false,
+          "possible_values": [
+            "true",
+            "false"
+          ],
+          "required": false,
+          "takes_value": false,
+          "value_names": [
+            "MIGRATE_REPORT"
+          ]
+        },
         "--openapi": {
           "defaults": [],
           "multiple": false,
@@ -2831,6 +2913,232 @@
   },
   "generated_by": "rdock schema --compat cli (just compat)",
   "json_outputs": {
+    "migrate traefik --report": {
+      "$defs": {
+        "Finding": {
+          "properties": {
+            "code": {
+              "type": "string"
+            },
+            "hint": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "level": {
+              "$ref": "#/$defs/Level"
+            },
+            "message": {
+              "type": "string"
+            },
+            "security": {
+              "type": "boolean"
+            },
+            "source": {
+              "anyOf": [
+                {
+                  "$ref": "#/$defs/Source"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "target": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "code",
+            "level",
+            "message"
+          ],
+          "type": "object"
+        },
+        "ItemKind": {
+          "oneOf": [
+            {
+              "const": "label",
+              "type": "string"
+            },
+            {
+              "const": "key",
+              "type": "string"
+            },
+            {
+              "const": "flag",
+              "type": "string"
+            },
+            {
+              "const": "env",
+              "type": "string"
+            },
+            {
+              "const": "object",
+              "type": "string"
+            }
+          ]
+        },
+        "Level": {
+          "oneOf": [
+            {
+              "const": "exact",
+              "type": "string"
+            },
+            {
+              "const": "approximate",
+              "type": "string"
+            },
+            {
+              "const": "manual",
+              "type": "string"
+            },
+            {
+              "const": "dropped",
+              "type": "string"
+            }
+          ]
+        },
+        "Source": {
+          "properties": {
+            "file": {
+              "type": "string"
+            },
+            "item": {
+              "type": "string"
+            },
+            "kind": {
+              "$ref": "#/$defs/ItemKind"
+            },
+            "line": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "scope": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          },
+          "required": [
+            "file",
+            "kind",
+            "item"
+          ],
+          "type": "object"
+        },
+        "SourceInfo": {
+          "properties": {
+            "checked_against": {
+              "type": "string"
+            },
+            "files": {
+              "items": {
+                "type": "string"
+              },
+              "type": "array"
+            },
+            "kind": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "kind",
+            "checked_against",
+            "files"
+          ],
+          "type": "object"
+        },
+        "Summary": {
+          "properties": {
+            "approximate": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "dropped": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "exact": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "items": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "manual": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            },
+            "result": {
+              "format": "uint",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "items",
+            "exact",
+            "approximate",
+            "manual",
+            "dropped",
+            "result"
+          ],
+          "type": "object"
+        }
+      },
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "properties": {
+        "findings": {
+          "items": {
+            "$ref": "#/$defs/Finding"
+          },
+          "type": "array"
+        },
+        "rdock_version": {
+          "type": "string"
+        },
+        "source": {
+          "$ref": "#/$defs/SourceInfo"
+        },
+        "summary": {
+          "$ref": "#/$defs/Summary"
+        },
+        "tool": {
+          "type": "string"
+        },
+        "version": {
+          "format": "uint32",
+          "minimum": 0,
+          "type": "integer"
+        }
+      },
+      "required": [
+        "version",
+        "tool",
+        "rdock_version",
+        "source",
+        "summary",
+        "findings"
+      ],
+      "type": "object",
+      "x-rdock-maturity": "beta"
+    },
     "routes explain --json": {
       "description": "The admin API's answer as it is; its fields are checked with schema/openapi.json.",
       "x-rdock-openapi": "POST /api/v1/routes/explain 200"

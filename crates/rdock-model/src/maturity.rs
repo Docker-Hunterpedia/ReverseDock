@@ -582,6 +582,15 @@ pub static FEATURES: &[Feature] = &[
         detect: None,
     },
     Feature {
+        id: "migrate-report",
+        level: Level::Beta,
+        since: "v1.0",
+        summary: "The JSON report of `rdock migrate traefik --report` (`schema/migrate-report.v1.json`) and its finding codes",
+        cargo_feature: None,
+        locations: &[],
+        detect: None,
+    },
+    Feature {
         id: "terraform-provider",
         level: Level::Beta,
         since: "v0.8",

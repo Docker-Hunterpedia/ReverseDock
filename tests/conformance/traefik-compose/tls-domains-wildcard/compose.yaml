@@ -1,0 +1,14 @@
+# Corpus case `tls-domains-wildcard` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: tls.domains main and sans, a DNS resolver name.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  portal:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.portal.rule=HostRegexp(`^.+\.example\.com$$`)
+      - traefik.http.routers.portal.entrypoints=websecure
+      - traefik.http.routers.portal.tls.certresolver=dns
+      - traefik.http.routers.portal.tls.domains[0].main=example.com
+      - traefik.http.routers.portal.tls.domains[0].sans=*.example.com

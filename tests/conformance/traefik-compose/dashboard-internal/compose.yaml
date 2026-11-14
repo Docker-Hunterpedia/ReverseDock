@@ -1,0 +1,17 @@
+# Corpus case `dashboard-internal` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: routers to api@internal on Traefik's own service, basicauth on the dashboard.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  traefik:
+    image: traefik:v3.7.19
+    command:
+      - --api.dashboard=true
+      - --providers.docker.exposedbydefault=false
+      - --entrypoints.websecure.address=:443
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.dashboard.rule=Host(`traefik.example.com`)
+      - traefik.http.routers.dashboard.service=api@internal
+      - traefik.http.routers.dashboard.entrypoints=websecure
+      - traefik.http.routers.dashboard.middlewares=dash-auth
+      - "traefik.http.middlewares.dash-auth.basicauth.users=admin:$$apr1$$rdocksal$$5LPVgykbpaVCZ1TvRi2xV."

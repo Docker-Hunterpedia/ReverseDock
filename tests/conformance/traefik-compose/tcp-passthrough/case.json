@@ -1,0 +1,13 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "TCP router HostSNI",
+    "tls.passthrough",
+    "TCP server.port",
+    "a listener from the static configuration"
+  ],
+  "diff": false,
+  "args": {
+    "full": false
+  }
+}

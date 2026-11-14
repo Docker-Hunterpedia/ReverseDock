@@ -1,0 +1,34 @@
+description: "Service options without an equivalent are warnings with the reason; the service keeps the rest."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.docker.allownonrunning: "true"
+      traefik.http.services.app.loadbalancer.healthcheck.scheme: "https"
+      traefik.http.services.app.loadbalancer.healthcheck.unhealthyinterval: "5s"
+      traefik.http.services.app.loadbalancer.responseforwarding.flushinterval: "100ms"
+      traefik.http.services.app.loadbalancer.server.preservepath: "true"
+      traefik.http.services.app.loadbalancer.sticky.cookie.domain: "example.com"
+      traefik.tls.stores.default.defaultgeneratedcert.domain.main: "example.com"
+      traefik.tls.stores.default.defaultgeneratedcert.domain.sans: "www.example.com"
+      traefik.tls.stores.default.defaultgeneratedcert.resolver: "le"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  diagnostics:
+    - "traefik.docker.allownonrunning\"]"
+    - "traefik.http.services.app.loadbalancer.healthcheck.scheme\"]"
+    - "traefik.http.services.app.loadbalancer.healthcheck.unhealthyinterval\"]"
+    - "traefik.http.services.app.loadbalancer.responseforwarding.flushinterval\"]"
+    - "traefik.http.services.app.loadbalancer.server.preservepath\"]"
+    - "traefik.http.services.app.loadbalancer.sticky.cookie.domain\"]"
+    - "traefik.tls.stores.default.defaultgeneratedcert.domain.main\"]"
+    - "traefik.tls.stores.default.defaultgeneratedcert.domain.sans\"]"
+    - "traefik.tls.stores.default.defaultgeneratedcert.resolver\"]"

@@ -247,6 +247,12 @@
       "summary": "The Go client of the admin API (`clients/go`, generated; not tagged yet)"
     },
     {
+      "id": "migrate-report",
+      "level": "beta",
+      "since": "v1.0",
+      "summary": "The JSON report of `rdock migrate traefik --report` (`schema/migrate-report.v1.json`) and its finding codes"
+    },
+    {
       "id": "terraform-provider",
       "level": "beta",
       "since": "v0.8",

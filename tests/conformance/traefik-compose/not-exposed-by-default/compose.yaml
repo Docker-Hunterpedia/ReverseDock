@@ -1,0 +1,16 @@
+# Corpus case `not-exposed-by-default` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: router labels without traefik.enable (Traefik's exposedByDefault), traefik.enable=false.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.app.entrypoints=websecure
+  off:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=false
+      - traefik.http.routers.off.rule=Host(`off.example.com`)

@@ -109,27 +109,73 @@ fn backup_path(file: &Path) -> PathBuf {
         .unwrap_or(first)
 }
 
+/// `rdock migrate traefik`: exit 0 when the result was written, 1 when the input is not a
+/// Compose file or Traefik configuration, 2 on an error (I/O, a broken report) or, with
+/// `--strict`, when a finding is manual or dropped.
 pub(crate) fn traefik(args: &MigrateTraefikArgs) -> anyhow::Result<ExitCode> {
     let text = read_input(&args.input)?;
-    let migration = match rdock_migrate::traefik(&text, args.expose_by_default) {
+    let mut vars = rdock_migrate::compose::Vars::new();
+    for file in &args.env_file {
+        let content =
+            std::fs::read_to_string(file).with_context(|| format!("reading {}", file.display()))?;
+        let read = rdock_migrate::compose::env_file(&content, &vars)
+            .map_err(|err| anyhow::anyhow!("{}: {err}", file.display()))?;
+        vars.extend(read);
+    }
+    if args.process_env {
+        // Asked for explicitly: the shell's variables win over the files, as in Compose.
+        vars.extend(
+            std::env::vars_os().filter_map(|(key, value)| {
+                Some((key.into_string().ok()?, value.into_string().ok()?))
+            }),
+        );
+    }
+    let static_file = match &args.static_file {
+        Some(path) => Some(rdock_migrate::StaticFile {
+            name: path.display().to_string(),
+            text: std::fs::read_to_string(path)
+                .with_context(|| format!("reading {}", path.display()))?,
+        }),
+        None => None,
+    };
+    let options = rdock_migrate::Options {
+        file: args.input.display().to_string(),
+        expose_by_default: args.expose_by_default,
+        vars,
+        static_file,
+        full: args.full,
+    };
+    let migration = match rdock_migrate::traefik(&text, &options) {
         Ok(migration) => migration,
-        Err(err) => {
+        Err(rdock_migrate::Error::Input(err)) => {
             eprintln!("error: {}: {err}", args.input.display());
             return Ok(ExitCode::from(1));
         }
+        Err(err @ rdock_migrate::Error::Accounting(_)) => return Err(err.into()),
     };
     match &args.output {
         Some(path) => std::fs::write(path, &migration.yaml)
             .with_context(|| format!("writing {}", path.display()))?,
         None => print!("{}", migration.yaml),
     }
-    if migration.notes.is_empty() {
-        eprintln!("migrated everything; check the result with `rdock validate`");
-    } else {
+    let json = serde_json::to_string_pretty(&migration.report)? + "\n";
+    match args.report.as_deref() {
+        Some(path) if path.as_os_str() == "-" => eprint!("{json}"),
+        Some(path) => {
+            std::fs::write(path, &json).with_context(|| format!("writing {}", path.display()))?;
+            eprint!("{}", migration.report.text(false));
+        }
+        None => eprint!("{}", migration.report.text(false)),
+    }
+    if migration.report.needs_review() {
         eprintln!(
-            "{} note(s) about what was not migrated are at the top of the output; check the result with `rdock validate`",
-            migration.notes.len()
+            "review the findings above (also at the top of the output); check the result with `rdock validate`"
         );
+        if args.strict {
+            return Ok(ExitCode::from(2));
+        }
+    } else {
+        eprintln!("check the result with `rdock validate`");
     }
     Ok(ExitCode::SUCCESS)
 }

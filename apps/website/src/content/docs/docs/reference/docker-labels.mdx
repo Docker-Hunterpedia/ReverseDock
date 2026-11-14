@@ -55,7 +55,9 @@ Values `true`/`false` and whole numbers become booleans and numbers where a fiel
 
 ## Traefik labels
 
-The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provider reference, checked 2026-10-28). Each becomes the field shown; anything else under `traefik.` is reported.
+The subset of Traefik v3 Docker labels the provider reads, pinned to Traefik v3.7 (Traefik Docker provider reference, checked 2026-11-14). Each becomes the field shown; anything else under `traefik.` is reported with the reason. The [supported Traefik subset](/docs/reference/traefik-subset/) lists every Traefik v3.7 label with its status (exact, approximate, manual or none), the difference where there is one, and the fixture that proves it; this page summarises it.
+
+A container with Traefik router labels and no `traefik.enable` is **not routed**: Traefik's `exposedByDefault` is `true`, ReverseDock's `expose_by_default` is `false`. The provider warns about each such container; add `traefik.enable=true`, or set `providers.docker.expose_by_default: true` for Traefik's behaviour.
 
 ### Routers: `traefik.http.routers.<name>.`
 
@@ -77,8 +79,9 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 | `server.port` | the backend port |
 | `server.scheme` | `scheme` (`http`, `https`, `h2c`) |
 | `server.url` | an explicit backend address and scheme, instead of the container's |
+| `server.weight` | the container's backend `weight` in the service |
 | `passhostheader` | `pass_host_header` |
-| `sticky.cookie` (`true`), `sticky.cookie.name`, `.secure`, `.httponly`, `.samesite`, `.maxage` | `sticky.cookie` |
+| `sticky` or `sticky.cookie` (`true`), `sticky.cookie.name`, `.secure`, `.httponly`, `.samesite`, `.maxage`, `.path` | `sticky.cookie` (named `rdock_sticky` unless set; `Secure`, `HttpOnly` and `SameSite=Lax` unless set, where Traefik sets none of them) |
 | `healthcheck.path`, `.interval`, `.timeout`, `.port`, `.mode` (`http`, `grpc`), `.status`, `.hostname`, `.method`, `.headers.<H>` | `health.active`; `.scheme`, `.unhealthyinterval` and `.followredirects=true` are reported |
 | `passivehealthcheck.failurewindow`, `.maxfailedattempts` | `health.passive.window`, `.failures` |
 | `strategy` (`wrr`, `p2c`, `hrw`, `leasttime`) | `load_balancer.policy` (`round_robin`, `p2c`, `ip_hash`, `least_requests`) |
@@ -91,6 +94,9 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 | `headers.customrequestheaders.<H>`, `headers.customresponseheaders.<H>` | `headers` with `request.set`/`response.set`; an empty value becomes `remove` |
 | `headers.stsseconds`, `.stsincludesubdomains`, `.stspreload` | `headers` with `hsts` |
 | `headers.framedeny`, `.contenttypenosniff`, `.browserxssfilter` | `headers` with the matching response header |
+| `headers.customframeoptionsvalue`, `.custombrowserxssvalue`, `.contentsecuritypolicy`, `.contentsecuritypolicyreportonly`, `.referrerpolicy`, `.permissionspolicy` | `headers` with `response.set` of the header (a custom value overrides `framedeny` and `browserxssfilter`) |
+| `headers.accesscontrolalloworiginlist`, `.accesscontrolallowmethods`, `.accesscontrolallowheaders`, `.accesscontrolexposeheaders`, `.accesscontrolallowcredentials`, `.accesscontrolmaxage`, `.addvaryheader` | a `cors` middleware of the same name, or `<name>-cors` used right after the headers middleware when it also sets headers; preflights are answered `204` (Traefik: `200`) |
+| `chain.middlewares` | inlined: every route that uses the chain lists its middlewares in its place (chains may name chains, also from other containers) |
 | `redirectscheme.scheme`, `.permanent`, `.port` | `redirect` |
 | `redirectregex.regex`, `.replacement`, `.permanent` | `redirect` |
 | `stripprefix.prefixes` | `strip_prefix` |
@@ -98,9 +104,9 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 | `replacepath.path` | `replace_path` |
 | `replacepathregex.regex`, `.replacement` | `rewrite` |
 | `basicauth.users`, `.realm`, `.removeheader` | `basic_auth` (`usersfile` is refused) |
-| `ratelimit.average`, `.burst`, `.period` | `rate_limit` |
-| `ipallowlist.sourcerange` | `ip_allow` |
-| `compress` (`true`), `compress.minresponsebodybytes` | `compress` |
+| `ratelimit.average`, `.burst`, `.period`, `.sourcecriterion.requestheadername` | `rate_limit` (the header as `key: header:<Name>`) |
+| `ipallowlist.sourcerange`, `ipwhitelist.sourcerange` | `ip_allow` |
+| `compress` (`true`), `compress.minresponsebodybytes`, `.encodings`, `.includedcontenttypes` | `compress` (`min_size`, `algorithms` in the same order, `content_types`) |
 | `forwardauth.address`, `.trustforwardheader`, `.authresponseheaders`, `.authrequestheaders` | `forward_auth` |
 | `errors.status`, `.service`, `.query` | `errors` |
 | `retry.attempts`, `.status`, `.disableretryonnetworkerror`, `.retrynonidempotentmethod` | `retries` on the service of each router using it (see below); `.initialinterval` is reported |
@@ -121,8 +127,10 @@ The subset of Traefik v3 Docker labels the provider reads (Traefik Docker provid
 | `traefik.tcp.routers.<name>.tls.passthrough` | `tls: { passthrough: true }` |
 | `traefik.tcp.routers.<name>.tls.certresolver`, `.tls.options`, `.tls.domains[n].*` | reported: the listener's TLS settings and certificates are used |
 | `traefik.tcp.services.<name>.loadbalancer.server.port` | the container port of the TCP service's backend |
+| `traefik.tcp.services.<name>.loadbalancer.proxyprotocol` (`true`), `.proxyprotocol.version` | `proxy_protocol` (`v2` by default, `1` → `v1`) |
+| `traefik.tcp.services.<name>.loadbalancer.terminationdelay` | `timeouts.termination_delay` (milliseconds; a negative value is reported) |
 | `traefik.tcp.services.<name>.loadbalancer.serverstransport`, `.server.tls` | reported |
-| `traefik.tcp.middlewares.<name>.ipallowlist.sourcerange` | `ip_allow` |
+| `traefik.tcp.middlewares.<name>.ipallowlist.sourcerange`, `.ipwhitelist.sourcerange` | `ip_allow` |
 | `traefik.tcp.middlewares.<name>.inflightconn.amount` | `in_flight` (per client IP) |
 
 ## UDP routes

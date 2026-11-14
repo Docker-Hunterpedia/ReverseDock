@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "UDP router entrypoints and service",
+    "UDP server.port",
+    "a UDP entry point"
+  ],
+  "diff": false
+}

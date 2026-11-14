@@ -5,7 +5,12 @@
 //! (<https://doc.traefik.io/traefik/reference/routing-configuration/other-providers/docker/>,
 //! checked 2026-11-06). A router's `tls` terminates TLS with the listener's settings and
 //! `tls.passthrough=true` relays it untouched; Traefik's TLS options, certificate resolvers and
-//! servers transports have no counterpart on TCP routes and are reported.
+//! servers transports have no counterpart on TCP routes and are reported. The PROXY protocol
+//! version and the termination delay of a TCP service, and the `ipWhiteList` alias, follow the
+//! v3.7 label list and TCP servers transport page
+//! (<https://doc.traefik.io/traefik/reference/routing-configuration/tcp/serverstransport/>,
+//! read 2026-11-14): an empty `proxyProtocol` means version 2, and the termination delay is
+//! the deadline for closing both sides once one has stopped sending, in milliseconds.
 
 use serde_json::Value;
 
@@ -84,13 +89,44 @@ fn service(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<()
             "servers transports are not supported on TCP services; the defaults are used"
                 .to_owned(),
         ),
+        "loadbalancer.proxyprotocol" => match value {
+            "true" if service.tree.has("proxy_protocol") => Ok(()),
+            "true" => service
+                .tree
+                .set("proxy_protocol", Value::String("v2".to_owned())),
+            "false" => Ok(()),
+            other => Err(format!("`{other}` is not `true` or `false`")),
+        },
+        "loadbalancer.proxyprotocol.version" => {
+            let version = match value.trim() {
+                "1" => "v1",
+                "2" => "v2",
+                other => return Err(format!("`{other}` is not `1` or `2`")),
+            };
+            service
+                .tree
+                .replace("proxy_protocol", Value::String(version.to_owned()))
+        }
+        "loadbalancer.terminationdelay" => {
+            let millis: i64 = value
+                .trim()
+                .parse()
+                .map_err(|_| format!("`{value}` is not a number of milliseconds"))?;
+            if millis < 0 {
+                return Err("a negative termination delay (no deadline) has no equivalent: half-closed connections always get one; the label is ignored".to_owned());
+            }
+            service.tree.set(
+                "timeouts.termination_delay",
+                Value::String(format!("{millis}ms")),
+            )
+        }
         _ => Err(unsupported()),
     }
 }
 
 fn middleware(draft: &mut Draft, name: &str, field: &str, value: &str) -> Result<(), String> {
     let (our_type, our_field, value) = match field {
-        "ipallowlist.sourcerange" => ("ip_allow", "cidrs", list(value)),
+        "ipallowlist.sourcerange" | "ipwhitelist.sourcerange" => ("ip_allow", "cidrs", list(value)),
         "inflightconn.amount" => ("in_flight", "amount", scalar(value)),
         _ => return Err(unsupported()),
     };

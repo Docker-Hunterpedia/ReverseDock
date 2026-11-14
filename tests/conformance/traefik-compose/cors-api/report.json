@@ -1,0 +1,164 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `api` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.api",
+        "kind": "object",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`cors.allowed_headers`; as `accesscontrolallowcredentials`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.api-cors.headers.accessControlAllowHeaders",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.api-cors"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`cors.allowed_methods`; as `accesscontrolallowcredentials`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.api-cors.headers.accessControlAllowMethods",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.api-cors"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`cors.allowed_origins`; as `accesscontrolallowcredentials`; without `accesscontrolallowmethods` the preflight allows GET, HEAD and POST (Traefik: none)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.api-cors.headers.accessControlAllowOriginList",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.api-cors"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`cors.max_age`; as `accesscontrolallowcredentials`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.api-cors.headers.accessControlMaxAge",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.api-cors"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "always on: the `cors` middleware sends `Vary: Origin`; `Vary` is sent whether or not the label is set",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.api-cors.headers.addVaryHeader",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.api-cors"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`response.set` (an empty value: `response.remove`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.api-cors.headers.customResponseHeaders.X-Api-Version",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.api-cors"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.entrypoints",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.middlewares",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.rule",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.tls",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 6,
+    "dropped": 0,
+    "exact": 6,
+    "items": 12,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

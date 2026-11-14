@@ -1,0 +1,125 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `flaky` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.flaky",
+        "kind": "object",
+        "scope": "flaky"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "flaky"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`retries.attempts` of the routes' services (minus one: Traefik counts the first try); retries move from the route to its service, so every route to that service retries; they use a fixed jittered backoff of 25 to 250 ms",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.retry3.retry.attempts",
+        "kind": "label",
+        "scope": "flaky"
+      }
+    },
+    {
+      "code": "traefik.label.unsupported",
+      "level": "dropped",
+      "message": "retries use a fixed jittered backoff (25 to 250 ms); the label is ignored",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.retry3.retry.initialInterval",
+        "kind": "label",
+        "scope": "flaky"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`retries.on` with the statuses; only `502`, `503` and `504` are retried; other statuses in the list are left out",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.retry3.retry.status",
+        "kind": "label",
+        "scope": "flaky"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.flaky.entrypoints",
+        "kind": "label",
+        "scope": "flaky"
+      },
+      "target": "routes.flaky"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.flaky.middlewares",
+        "kind": "label",
+        "scope": "flaky"
+      },
+      "target": "routes.flaky"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.flaky.rule",
+        "kind": "label",
+        "scope": "flaky"
+      },
+      "target": "routes.flaky"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.flaky.tls",
+        "kind": "label",
+        "scope": "flaky"
+      },
+      "target": "routes.flaky"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 1,
+    "exact": 5,
+    "items": 9,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

@@ -1,0 +1,25 @@
+# Corpus case `path-rewrites` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: replacepathregex, replacepath, addprefix, Path and PathRegexp rules.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  api:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.v1.rule: Host(`api.example.com`) && PathRegexp(`^/v1/`)
+      traefik.http.routers.v1.entrypoints: websecure
+      traefik.http.routers.v1.tls: "true"
+      traefik.http.routers.v1.middlewares: v1-to-v2
+      traefik.http.middlewares.v1-to-v2.replacepathregex.regex: ^/v1/(.*)
+      traefik.http.middlewares.v1-to-v2.replacepathregex.replacement: /v2/$$1
+      traefik.http.routers.health.rule: Host(`api.example.com`) && Path(`/healthz`)
+      traefik.http.routers.health.entrypoints: websecure
+      traefik.http.routers.health.tls: "true"
+      traefik.http.routers.health.middlewares: health-path
+      traefik.http.middlewares.health-path.replacepath.path: /status
+      traefik.http.routers.app.rule: Host(`api.example.com`)
+      traefik.http.routers.app.entrypoints: websecure
+      traefik.http.routers.app.tls: "true"
+      traefik.http.routers.app.middlewares: app-prefix
+      traefik.http.middlewares.app-prefix.addprefix.prefix: /app

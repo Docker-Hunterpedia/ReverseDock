@@ -1,0 +1,7 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "a router without tls on a plain entry point, known from the static configuration (written as tls: off)"
+  ],
+  "diff": true
+}

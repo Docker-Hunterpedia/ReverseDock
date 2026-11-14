@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "two exposed ports and no port label (left out, manual)"
+  ],
+  "diff": false,
+  "expect_invalid": [
+    "service `app` does not exist"
+  ]
+}

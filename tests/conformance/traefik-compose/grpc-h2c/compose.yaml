@@ -1,0 +1,14 @@
+# Corpus case `grpc-h2c` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: server.scheme h2c, passhostheader.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  grpc:
+    image: example/greeter:1
+    expose: [50051]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.grpc.rule=Host(`grpc.example.com`)
+      - traefik.http.routers.grpc.entrypoints=websecure
+      - traefik.http.routers.grpc.tls=true
+      - traefik.http.services.grpc.loadbalancer.server.scheme=h2c
+      - traefik.http.services.grpc.loadbalancer.passhostheader=false

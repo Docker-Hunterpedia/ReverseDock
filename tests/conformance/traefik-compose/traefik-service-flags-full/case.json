@@ -1,0 +1,16 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "the Traefik service's command flags",
+    "entry points",
+    "HTTP to HTTPS redirection",
+    "http.tls on an entry point",
+    "HTTP-01 resolver",
+    "exposedByDefault=false",
+    "--full"
+  ],
+  "diff": false,
+  "args": {
+    "full": true
+  }
+}

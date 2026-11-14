@@ -1,0 +1,42 @@
+description: "accessControl* settings become a cors middleware: under the same name when the headers middleware sets nothing else, else as <name>-cors after it in every route that uses it."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.routers.app.middlewares: "api,only"
+      traefik.http.middlewares.api.headers.customResponseHeaders.X-Api: "1"
+      traefik.http.middlewares.api.headers.accessControlAllowOriginList: "https://app.example.com,https://admin.example.com"
+      traefik.http.middlewares.api.headers.accessControlAllowMethods: "GET,OPTIONS,PUT"
+      traefik.http.middlewares.api.headers.accessControlAllowHeaders: "Content-Type"
+      traefik.http.middlewares.api.headers.accessControlExposeHeaders: "X-Total"
+      traefik.http.middlewares.api.headers.accessControlAllowCredentials: "true"
+      traefik.http.middlewares.api.headers.accessControlMaxAge: "600"
+      traefik.http.middlewares.api.headers.addVaryHeader: "true"
+      traefik.http.middlewares.only.headers.accessControlAllowOriginList: "*"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: { middlewares: ["api", "api-cors", "only"] }
+  services:
+    app: {}
+  middlewares:
+    api:
+      type: "headers"
+      response:
+        set:
+          x-api: "1"
+    api-cors:
+      type: "cors"
+      allowed_origins: ["https://app.example.com", "https://admin.example.com"]
+      allowed_methods: ["GET", "OPTIONS", "PUT"]
+      allowed_headers: ["Content-Type"]
+      exposed_headers: ["X-Total"]
+      allow_credentials: true
+      max_age: "10m"
+    only:
+      type: "cors"
+      allowed_origins: ["*"]

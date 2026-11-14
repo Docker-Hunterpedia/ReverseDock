@@ -1,0 +1,27 @@
+description: "TCP options without an equivalent (v2 rule syntax, TLS to backends) or that are listener settings here (resolvers, domains, TLS options) are warnings."
+containers:
+  - name: "db"
+    labels:
+      traefik.enable: "true"
+      traefik.tcp.routers.db.entrypoints: "postgres"
+      traefik.tcp.routers.db.rule: "HostSNI(`db.example.com`)"
+      traefik.tcp.routers.db.rulesyntax: "v2"
+      traefik.tcp.routers.db.tls: "true"
+      traefik.tcp.routers.db.tls.domains[0].main: "db.example.com"
+      traefik.tcp.routers.db.tls.domains[0].sans: "db2.example.com"
+      traefik.tcp.services.db.loadbalancer.server.tls: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 5432
+expect:
+  tcp_routes:
+    db:
+      listeners: ["postgres"]
+  tcp_services:
+    db: {}
+  diagnostics:
+    - "routers.db.rulesyntax\"]"
+    - "routers.db.tls.domains[0].main\"]"
+    - "routers.db.tls.domains[0].sans\"]"
+    - "services.db.loadbalancer.server.tls\"]"

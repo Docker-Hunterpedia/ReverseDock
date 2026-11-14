@@ -150,6 +150,9 @@ enum Command {
         /// Print the OpenAPI 3.1 document of the admin API instead.
         #[arg(long)]
         openapi: bool,
+        /// Print the JSON Schema of the `rdock migrate … --report` document instead (beta).
+        #[arg(long, conflicts_with_all = ["openapi", "compat"])]
+        migrate_report: bool,
         /// Internal (ADR-0033): print one compatibility snapshot of `schema/compat/` instead.
         /// Used by `just compat`; not for users.
         #[arg(long, hide = true, value_enum, conflicts_with = "openapi")]
@@ -180,7 +183,11 @@ struct AuditArgs {
 
 #[derive(Subcommand)]
 enum MigrateCommand {
-    /// Traefik labels (a Compose file) or a Traefik dynamic configuration → rdock.yaml.
+    /// Traefik labels (a Compose file), a Traefik dynamic configuration or Traefik's static
+    /// configuration → rdock.yaml, with a report that accounts for every label, key and flag.
+    /// Exit codes: 0 migrated (findings may exist), 1 the input is not one of these, 2 an
+    /// error, or with --strict anything that needs a decision (manual) or has no equivalent
+    /// (dropped). Nothing is written to disk without -o or --report.
     Traefik(MigrateTraefikArgs),
     /// Rewrite deprecated settings of an rdock.yaml to their replacements (and, once a later
     /// schema version exists, convert to it). Comments and formatting are kept where the
@@ -206,15 +213,43 @@ struct MigrateConfigArgs {
 }
 
 #[derive(Args)]
+#[allow(clippy::struct_excessive_bools)] // command-line switches
 struct MigrateTraefikArgs {
-    /// Compose file or Traefik dynamic configuration; `-` reads standard input.
+    /// Compose file, Traefik dynamic configuration or Traefik static configuration
+    /// (`traefik.yml`); `-` reads standard input. TOML files are reported, not read.
     input: PathBuf,
     /// Migrate Compose services without `traefik.enable`, as Traefik's `exposedByDefault` does.
+    /// Traefik's static configuration, when read, decides this by itself.
     #[arg(long)]
     expose_by_default: bool,
     /// Write the result to this file instead of standard output.
     #[arg(short, long)]
     output: Option<PathBuf>,
+    /// Also read Traefik's static configuration from this file (`traefik.yml`): entry points,
+    /// certificate resolvers, providers, logs and metrics. A Compose file's Traefik service
+    /// (its `command:` flags and `TRAEFIK_*` variables) is always read.
+    #[arg(long = "static", value_name = "FILE")]
+    static_file: Option<PathBuf>,
+    /// Write a complete rdock.yaml (listeners, acme, providers and the rest) instead of a
+    /// fragment. With a Compose file, the routes from labels are left out: the Docker provider
+    /// reads the same labels at run time.
+    #[arg(long)]
+    full: bool,
+    /// Values for Compose `${VAR}` references in KEY=VALUE lines (Compose's `.env` syntax);
+    /// may be given more than once, later files win. Without it, `.env` is not read.
+    #[arg(long, value_name = "FILE")]
+    env_file: Vec<PathBuf>,
+    /// Also take `${VAR}` values from this process's environment (it wins over --env-file,
+    /// as in Compose). Off by default: the environment is never read unless asked.
+    #[arg(long)]
+    process_env: bool,
+    /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
+    /// standard error instead of the text summary.
+    #[arg(long, value_name = "FILE")]
+    report: Option<PathBuf>,
+    /// Exit 2 when any finding is manual (needs a decision) or dropped (no equivalent).
+    #[arg(long)]
+    strict: bool,
 }
 
 #[derive(Args)]
@@ -423,6 +458,13 @@ fn run_parsed(
             ..
         } => compat::snapshot(surface)
             .and_then(|text| print(&text))
+            .map(|()| ExitCode::SUCCESS),
+        Command::Schema {
+            migrate_report: true,
+            ..
+        } => serde_json::to_string_pretty(&rdock_migrate::report::json_schema())
+            .context("serialising the report schema")
+            .and_then(|text| print(&(text + "\n")))
             .map(|()| ExitCode::SUCCESS),
         Command::Schema { openapi: false, .. } => schema().map(|()| ExitCode::SUCCESS),
         Command::Schema { openapi: true, .. } => {

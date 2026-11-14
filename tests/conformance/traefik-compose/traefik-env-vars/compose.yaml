@@ -1,0 +1,21 @@
+# Corpus case `traefik-env-vars` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: TRAEFIK_* environment variables, an unset exposedByDefault (Traefik's default true, written explicitly), credential variable names only.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  traefik:
+    image: traefik:v3.7.19
+    environment:
+      TRAEFIK_ENTRYPOINTS_WEB_ADDRESS: ":80"
+      TRAEFIK_ENTRYPOINTS_WEBSECURE_ADDRESS: ":443"
+      TRAEFIK_PROVIDERS_DOCKER: "true"
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_EMAIL: admin@example.com
+      TRAEFIK_CERTIFICATESRESOLVERS_LE_ACME_TLSCHALLENGE: "true"
+      TRAEFIK_GLOBAL_SENDANONYMOUSUSAGE: "false"
+      CF_DNS_API_TOKEN: not-copied-example-value
+  app:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.app.entrypoints=websecure
+      - traefik.http.routers.app.tls.certresolver=le

@@ -1,0 +1,7 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "rdock.* shorthand next to Traefik labels"
+  ],
+  "diff": false
+}

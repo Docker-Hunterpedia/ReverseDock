@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "router rule Host",
+    "entrypoints",
+    "tls.certresolver",
+    "default service from the container"
+  ],
+  "diff": true
+}

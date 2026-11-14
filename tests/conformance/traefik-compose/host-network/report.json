@@ -1,0 +1,92 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `monitor` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.monitor",
+        "kind": "object",
+        "scope": "monitor"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "monitor"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.monitor.rule",
+        "kind": "label",
+        "scope": "monitor"
+      },
+      "target": "routes.monitor"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.monitor.entrypoints",
+        "kind": "label",
+        "scope": "monitor"
+      },
+      "target": "routes.monitor"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.monitor.tls",
+        "kind": "label",
+        "scope": "monitor"
+      },
+      "target": "routes.monitor"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the backend's port",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.monitor.loadbalancer.server.port",
+        "kind": "label",
+        "scope": "monitor"
+      },
+      "target": "services.monitor"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 5,
+    "items": 6,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

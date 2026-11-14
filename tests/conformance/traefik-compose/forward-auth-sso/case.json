@@ -1,0 +1,11 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "forwardauth address",
+    "trustforwardheader",
+    "authresponseheaders",
+    "authrequestheaders",
+    "an SSO portal pattern"
+  ],
+  "diff": false
+}

@@ -1,0 +1,12 @@
+# Corpus case `several-ports-no-label` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: two exposed ports and no port label (left out, manual).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  app:
+    image: example/app:1
+    expose: [3000, 9229]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.app.rule=Host(`app.example.com`)
+      - traefik.http.routers.app.entrypoints=websecure
+      - traefik.http.routers.app.tls=true

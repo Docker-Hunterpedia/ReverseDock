@@ -1,0 +1,17 @@
+# Corpus case `compress-options` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: compress encodings, includedContentTypes, minResponseBodyBytes, excludedContentTypes (none).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  docs:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.docs.rule=Host(`docs.example.com`)
+      - traefik.http.routers.docs.entrypoints=websecure
+      - traefik.http.routers.docs.tls=true
+      - traefik.http.routers.docs.middlewares=gz
+      - traefik.http.middlewares.gz.compress.encodings=br,gzip
+      - traefik.http.middlewares.gz.compress.includedContentTypes=text/html,text/css,application/json
+      - traefik.http.middlewares.gz.compress.minResponseBodyBytes=512
+      - traefik.http.middlewares.gz.compress.excludedContentTypes=image/png

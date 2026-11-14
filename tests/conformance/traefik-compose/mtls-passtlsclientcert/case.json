@@ -1,0 +1,7 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "passtlsclientcert pem and info fields (approximate)"
+  ],
+  "diff": false
+}

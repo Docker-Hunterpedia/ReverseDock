@@ -1,0 +1,9 @@
+# Corpus case `dynamic-toml` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: a TOML dynamic file (manual: convert to YAML).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+[http.routers.app]
+  rule = "Host(`app.example.com`)"
+  service = "app"
+
+[[http.services.app.loadBalancer.servers]]
+  url = "http://10.0.0.1:8080"

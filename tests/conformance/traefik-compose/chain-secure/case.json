@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "chain middlewares",
+    "chain of chains",
+    "compress",
+    "ratelimit"
+  ],
+  "diff": true
+}

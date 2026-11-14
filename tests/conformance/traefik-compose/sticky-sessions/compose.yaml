@@ -1,0 +1,19 @@
+# Corpus case `sticky-sessions` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: sticky.cookie, cookie name, path, secure, httpOnly, sameSite, maxAge.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  cart:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.cart.rule: Host(`cart.example.com`)
+      traefik.http.routers.cart.entrypoints: websecure
+      traefik.http.routers.cart.tls: "true"
+      traefik.http.services.cart.loadbalancer.sticky.cookie: "true"
+      traefik.http.services.cart.loadbalancer.sticky.cookie.name: cart_affinity
+      traefik.http.services.cart.loadbalancer.sticky.cookie.path: /cart
+      traefik.http.services.cart.loadbalancer.sticky.cookie.secure: "true"
+      traefik.http.services.cart.loadbalancer.sticky.cookie.httpOnly: "true"
+      traefik.http.services.cart.loadbalancer.sticky.cookie.sameSite: strict
+      traefik.http.services.cart.loadbalancer.sticky.cookie.maxAge: "86400"

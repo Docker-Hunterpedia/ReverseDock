@@ -18,6 +18,7 @@ use rdock_model::{Diagnostic, path_key};
 use serde::de::DeserializeOwned;
 use serde_json::Value;
 
+pub mod coverage;
 mod native;
 mod traefik;
 mod traefik_tcp;
@@ -165,6 +166,37 @@ pub struct Translation {
     pub fragment: Fragment,
     /// Unsupported labels, missing ports, conflicts.
     pub diagnostics: Vec<Diagnostic>,
+    /// Objects that labels declared and that were left out, with why (each also has a
+    /// diagnostic). `rdock migrate traefik` uses them to account for every label.
+    pub ignored: Vec<Ignored>,
+}
+
+/// An object labels declared that is not in the fragment.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Ignored {
+    /// The container whose labels declared it; `None` when every container's declaration was
+    /// dropped (two containers declared it differently).
+    pub container: Option<String>,
+    /// `routes`, `services`, `middlewares`, `tcp_routes`, `tcp_services`, `udp_routes` or
+    /// `udp_services`.
+    pub section: &'static str,
+    /// The object's name.
+    pub name: String,
+    /// Why it was left out.
+    pub message: String,
+}
+
+/// The section of an object kind as messages name it (`TCP route` → `tcp_routes`).
+fn section(kind: &str) -> &'static str {
+    match kind {
+        "route" => "routes",
+        "service" => "services",
+        "TCP route" => "tcp_routes",
+        "TCP service" => "tcp_services",
+        "UDP route" => "udp_routes",
+        "UDP service" => "udp_services",
+        _ => "middlewares",
+    }
 }
 
 /// Translates the labels of running `containers` for the Docker provider.
@@ -203,7 +235,7 @@ pub fn exposed(labels: &BTreeMap<String, String>, settings: &Settings<'_>) -> bo
         group: None,
         virtual_ip: false,
     };
-    Scope::new(input, settings, &mut Vec::new()).eligible()
+    Scope::new(input, settings, &mut Vec::new(), &mut Vec::new()).eligible()
 }
 
 /// The value of a Swarm option label (`network`, `lbswarm`): the native label first, then
@@ -264,8 +296,9 @@ fn translate_inputs<'a>(
     let mut pools = Pools::default();
     let mut out = Translation::default();
     for input in inputs {
-        let mut scope = Scope::new(input, settings, &mut out.diagnostics);
+        let mut scope = Scope::new(input, settings, &mut out.diagnostics, &mut out.ignored);
         if !scope.eligible() {
+            scope.not_exposed();
             continue;
         }
         let draft = scope.draft();
@@ -305,6 +338,10 @@ pub(crate) struct Draft {
     pub(crate) tcp_services: BTreeMap<String, ServiceDraft>,
     pub(crate) udp_routes: BTreeMap<String, Tree>,
     pub(crate) udp_services: BTreeMap<String, ServiceDraft>,
+    /// Traefik `chain` middlewares: the middlewares each one stands for.
+    pub(crate) chains: BTreeMap<String, Vec<String>>,
+    /// The `accessControl*` settings of Traefik `headers` middlewares, as `cors` middlewares.
+    pub(crate) cors: BTreeMap<String, Tree>,
 }
 
 /// A service as labels describe it.
@@ -316,6 +353,8 @@ pub(crate) struct ServiceDraft {
     pub(crate) port: Option<u16>,
     /// An explicit backend (`loadbalancer.server.url`), instead of the container's address.
     pub(crate) address: Option<String>,
+    /// The container's weight among the service's backends (`loadbalancer.server.weight`).
+    pub(crate) weight: Option<u32>,
 }
 
 /// One container being translated: its labels, settings and where diagnostics go.
@@ -327,10 +366,16 @@ pub(crate) struct Scope<'a> {
     /// Labels with lower-case keys (Traefik's keys are case-insensitive), as (key, value).
     labels: Vec<(String, &'a str)>,
     out: &'a mut Vec<Diagnostic>,
+    ignored: &'a mut Vec<Ignored>,
 }
 
 impl<'a> Scope<'a> {
-    fn new(input: Input<'a>, settings: &'a Settings<'a>, out: &'a mut Vec<Diagnostic>) -> Self {
+    fn new(
+        input: Input<'a>,
+        settings: &'a Settings<'a>,
+        out: &'a mut Vec<Diagnostic>,
+        ignored: &'a mut Vec<Ignored>,
+    ) -> Self {
         let container = input.container;
         let labels = container
             .labels
@@ -344,7 +389,50 @@ impl<'a> Scope<'a> {
             settings,
             labels,
             out,
+            ignored,
         }
+    }
+
+    /// A container with Traefik router labels that nothing exposes: Traefik would route it
+    /// (its `exposedByDefault` is `true`); here containers are opt-in (ADR-0033).
+    fn not_exposed(&mut self) {
+        if !self.settings.traefik_labels
+            || self.settings.expose_by_default
+            || self.label("traefik.enable").is_some()
+            || self.label("rdock.enable").is_some()
+        {
+            return;
+        }
+        let routed = [
+            "traefik.http.routers.",
+            "traefik.tcp.routers.",
+            "traefik.udp.routers.",
+        ]
+        .iter()
+        .any(|prefix| self.has_prefix(prefix));
+        if !routed {
+            return;
+        }
+        let provider = self.platform().provider();
+        let message = format!(
+            "the {} has Traefik router labels but is not exposed: containers are not exposed by default (Traefik's `exposedByDefault` is `true`; `providers.{provider}.expose_by_default` is `false`)",
+            self.platform().noun()
+        );
+        let hint = format!(
+            "add `traefik.enable=true` (or `rdock.enable=true`) to the {}, or set `providers.{provider}.expose_by_default: true` for Traefik's behaviour (every container with labels is then routed)",
+            self.platform().noun()
+        );
+        self.warn_container(message, Some(hint));
+    }
+
+    /// Records an object of this container that is left out (the diagnostic says why).
+    fn ignore(&mut self, kind: &str, name: &str, message: &str) {
+        self.ignored.push(Ignored {
+            container: Some(self.container.name.clone()),
+            section: section(kind),
+            name: name.to_owned(),
+            message: message.to_owned(),
+        });
     }
 
     /// The platform the container comes from.
@@ -467,6 +555,10 @@ impl<'a> Scope<'a> {
     /// Fills in default services, decodes the objects and adds them to the fragment.
     fn build(&mut self, mut draft: Draft, pools: &mut Pools, fragment: &mut Fragment) {
         draft.routes.retain(|_, tree| !tree.is_empty());
+        Self::build_cors(&mut draft, pools);
+        for (name, members) in std::mem::take(&mut draft.chains) {
+            pools.aliases.insert(name, members);
+        }
         self.link_services(&mut draft.routes, &mut draft.services, &draft.middlewares);
         traefik::apply_retries(self, &mut draft);
         for (name, service) in std::mem::take(&mut draft.services) {
@@ -475,6 +567,12 @@ impl<'a> Scope<'a> {
                     self.drop_per_task_settings(&name, &mut service);
                 }
                 pools.add(self, name, service, backend);
+            } else {
+                self.ignore(
+                    "service",
+                    &name,
+                    "the service has no usable backend address",
+                );
             }
         }
         self.build_tcp(&mut draft, pools, fragment);
@@ -497,7 +595,36 @@ impl<'a> Scope<'a> {
 
     pub(crate) fn warn_object(&mut self, kind: &str, name: &str, error: &str) {
         let message = format!("{kind} `{name}` is ignored: {error}");
+        self.ignore(kind, name, &message);
         self.warn_container(message, None);
+    }
+
+    /// The `accessControl*` settings of Traefik `headers` middlewares become `cors`
+    /// middlewares: under the same name when the headers middleware sets nothing else, else as
+    /// `<name>-cors`, which routes that use `<name>` then also use.
+    fn build_cors(draft: &mut Draft, pools: &mut Pools) {
+        for (name, mut tree) in std::mem::take(&mut draft.cors) {
+            if tree.is_empty() {
+                continue;
+            }
+            let _ = tree.set("type", Value::String("cors".to_owned()));
+            let headers_used = draft.middlewares.get(&name).is_some_and(|headers| {
+                headers
+                    .clone()
+                    .into_value()
+                    .as_object()
+                    .is_some_and(|map| map.keys().any(|key| key != "type"))
+            });
+            if headers_used {
+                let cors = format!("{name}-cors");
+                pools
+                    .aliases
+                    .insert(name.clone(), vec![name.clone(), cors.clone()]);
+                draft.middlewares.insert(cors, tree);
+            } else {
+                draft.middlewares.insert(name, tree);
+            }
+        }
     }
 
     /// TCP routes and services: like HTTP ones, except that a TCP route must name its
@@ -513,6 +640,7 @@ impl<'a> Scope<'a> {
         for name in unattached {
             draft.tcp_routes.remove(&name);
             let message = format!("TCP route `{name}` names no listener; the route is ignored");
+            self.ignore("TCP route", &name, &message);
             let hint = "set `traefik.tcp.routers.<name>.entrypoints` or `rdock.tcp_routes.<name>.listeners`";
             self.warn_container(message, Some(hint.to_owned()));
         }
@@ -524,6 +652,12 @@ impl<'a> Scope<'a> {
         for (name, service) in std::mem::take(&mut draft.tcp_services) {
             if let Some((service, backend)) = self.service::<TcpService>(&name, service) {
                 pools.add_tcp(self, name, service, backend);
+            } else {
+                self.ignore(
+                    "TCP service",
+                    &name,
+                    "the service has no usable backend address",
+                );
             }
         }
         for (name, tree) in std::mem::take(&mut draft.tcp_routes) {
@@ -546,6 +680,7 @@ impl<'a> Scope<'a> {
         for name in unattached {
             draft.udp_routes.remove(&name);
             let message = format!("UDP route `{name}` names no listener; the route is ignored");
+            self.ignore("UDP route", &name, &message);
             let hint = "set `traefik.udp.routers.<name>.entrypoints` or `rdock.udp_routes.<name>.listeners`";
             self.warn_container(message, Some(hint.to_owned()));
         }
@@ -559,12 +694,19 @@ impl<'a> Scope<'a> {
             // guess for a UDP service: the port is always named.
             if service.port.is_none() && service.address.is_none() {
                 let message = format!("UDP service `{name}` names no port; the service is ignored");
+                self.ignore("UDP service", &name, &message);
                 let hint = "set `rdock.udp_services.<name>.port` or `traefik.udp.services.<name>.loadbalancer.server.port`";
                 self.warn_container(message, Some(hint.to_owned()));
                 continue;
             }
             if let Some((service, backend)) = self.service::<UdpService>(&name, service) {
                 pools.add_udp(self, name, service, backend);
+            } else {
+                self.ignore(
+                    "UDP service",
+                    &name,
+                    "the service has no usable backend address",
+                );
             }
         }
         for (name, tree) in std::mem::take(&mut draft.udp_routes) {
@@ -602,6 +744,7 @@ impl<'a> Scope<'a> {
                     "route `{name}` names no service and the container has {} services; the route is ignored",
                     services.len()
                 );
+                self.ignore("route", &name, &message);
                 self.warn_container(message, Some("set the route's `service` label".to_owned()));
             }
             return;
@@ -620,6 +763,7 @@ impl<'a> Scope<'a> {
         name: &str,
         draft: ServiceDraft,
     ) -> Option<(T, Backend)> {
+        let weight = draft.weight.unwrap_or(1);
         let (address, healthy) = if let Some(address) = draft.address {
             (address, true)
         } else {
@@ -649,6 +793,7 @@ impl<'a> Scope<'a> {
                 service,
                 Backend {
                     address,
+                    weight,
                     healthy,
                     container: self.container.name.clone(),
                 },
@@ -852,6 +997,7 @@ fn normalize(name: &str) -> String {
 #[derive(Debug, Clone)]
 struct Backend {
     address: String,
+    weight: u32,
     healthy: bool,
     container: String,
 }
@@ -890,6 +1036,9 @@ struct Pools {
     udp_services: PoolMap<UdpService>,
     /// (kind, name) of objects declared differently by two containers.
     conflicts: BTreeSet<(&'static str, String)>,
+    /// Middleware names that stand for a list of middlewares (Traefik `chain`, and a `headers`
+    /// middleware with CORS settings), expanded in every route once all containers are read.
+    aliases: BTreeMap<String, Vec<String>>,
 }
 
 impl Pools {
@@ -996,7 +1145,18 @@ impl Pools {
 
     /// Drops conflicting objects and fills each service with its serving backends.
     fn finish(self, out: &mut Translation) {
+        for route in out.fragment.routes.values_mut() {
+            route.middlewares = expand(&route.middlewares, &self.aliases, 0);
+        }
         for (kind, name) in &self.conflicts {
+            out.ignored.push(Ignored {
+                container: None,
+                section: section(kind),
+                name: name.clone(),
+                message: format!(
+                    "{kind} `{name}` is declared differently by two containers; both are ignored"
+                ),
+            });
             match *kind {
                 "route" => drop(out.fragment.routes.remove(name)),
                 "TCP route" => drop(out.fragment.tcp_routes.remove(name)),
@@ -1020,6 +1180,24 @@ impl Pools {
             &mut out.diagnostics,
         );
     }
+}
+
+/// A route's middlewares with every alias replaced by what it stands for (aliases may name
+/// aliases; a cycle stops after a few levels and leaves the name as it is).
+fn expand(names: &[String], aliases: &BTreeMap<String, Vec<String>>, depth: u8) -> Vec<String> {
+    let mut out = Vec::new();
+    for name in names {
+        match aliases.get(name) {
+            // A `headers` middleware that stands for itself and its CORS part.
+            Some(members) if depth < 8 && members.first() == Some(name) => {
+                out.push(name.clone());
+                out.extend(expand(&members[1..], aliases, depth + 1));
+            }
+            Some(members) if depth < 8 => out.extend(expand(members, aliases, depth + 1)),
+            _ => out.push(name.clone()),
+        }
+    }
+    out
 }
 
 /// Adds one container's backend to the service `name`; a container that declares the service
@@ -1105,12 +1283,17 @@ fn fill<T: Pooled>(
         } else {
             healthy
         };
-        let mut addresses: Vec<&str> = serving.iter().map(|b| b.address.as_str()).collect();
+        let mut addresses: Vec<(&str, u32)> = serving
+            .iter()
+            .map(|b| (b.address.as_str(), b.weight))
+            .collect();
         addresses.sort_unstable();
-        addresses.dedup();
+        addresses.dedup_by(|a, b| a.0 == b.0);
         *service.backends_mut() = addresses
             .into_iter()
-            .filter_map(|a| decode(serde_json::json!({ "address": a })).ok())
+            .filter_map(|(a, weight)| {
+                decode(serde_json::json!({ "address": a, "weight": weight })).ok()
+            })
             .collect();
         filled.insert(name, service);
     }

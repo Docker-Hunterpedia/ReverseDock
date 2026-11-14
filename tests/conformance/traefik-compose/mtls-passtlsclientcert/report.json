@@ -1,0 +1,116 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `bank` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.bank",
+        "kind": "object",
+        "scope": "bank"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "bank"
+      }
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "as `info.issuer.commonname`; the certificate is passed in `X-Forwarded-Tls-Client-Cert` (`forward: traefik`) whatever fields are selected; the per-field selection is not kept",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.client-cert.passtlsclientcert.info.subject.commonname",
+        "kind": "label",
+        "scope": "bank"
+      },
+      "target": "middlewares.client-cert"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`client_cert` with `required: false`, `forward: traefik`; the PEM is passed in `X-Forwarded-Tls-Client-Cert`; the client certificate is requested on the listener (`listeners.<name>.tls.client_auth`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.client-cert.passtlsclientcert.pem",
+        "kind": "label",
+        "scope": "bank"
+      },
+      "target": "middlewares.client-cert"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.bank.entrypoints",
+        "kind": "label",
+        "scope": "bank"
+      },
+      "target": "routes.bank"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.bank.middlewares",
+        "kind": "label",
+        "scope": "bank"
+      },
+      "target": "routes.bank"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.bank.rule",
+        "kind": "label",
+        "scope": "bank"
+      },
+      "target": "routes.bank"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.bank.tls",
+        "kind": "label",
+        "scope": "bank"
+      },
+      "target": "routes.bank"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 0,
+    "exact": 5,
+    "items": 8,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

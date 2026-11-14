@@ -488,3 +488,78 @@ fn with_the_wasm_build_the_opt_in_is_required_and_enough() {
         "{text}"
     );
 }
+
+/// `rdock migrate traefik` (ADR-0033): the YAML on standard output, the report as JSON with
+/// `--report`, exit 1 for an input it does not read, 2 with `--strict` when something is
+/// manual or dropped; `${VAR}` values come from `--env-file`, and from the process
+/// environment only with `--process-env`.
+#[test]
+fn migrate_traefik_reports_and_exits_as_documented() {
+    let dir = tempfile::tempdir().unwrap();
+    let compose = dir.path().join("compose.yaml");
+    std::fs::write(
+        &compose,
+        "services:\n  app:\n    image: traefik/whoami\n    expose: [80]\n    labels:\n      traefik.enable: 'true'\n      traefik.http.routers.app.rule: Host(`${DOMAIN}`)\n      traefik.http.routers.app.entrypoints: websecure\n      traefik.http.routers.app.tls: 'true'\n",
+    )
+    .unwrap();
+    let env = dir.path().join("vars.env");
+    std::fs::write(&env, "DOMAIN=app.example.com\n").unwrap();
+    let report = dir.path().join("report.json");
+    let path = compose.to_str().unwrap();
+    // The variable is set in this process's environment, but not read without --process-env.
+    let out = Command::new(env!("CARGO_BIN_EXE_rdock"))
+        .args(["migrate", "traefik", path, "--strict"])
+        .env("DOMAIN", "from-the-environment.example.com")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(!stdout(&out).contains("from-the-environment"));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("compose.interpolation.unset"));
+    let out = Command::new(env!("CARGO_BIN_EXE_rdock"))
+        .args(["migrate", "traefik", path, "--process-env"])
+        .env("DOMAIN", "from-the-environment.example.com")
+        .output()
+        .unwrap();
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(stdout(&out).contains("Host(`from-the-environment.example.com`)"));
+    // --env-file and --report.
+    let out = rdock(&[
+        "migrate",
+        "traefik",
+        path,
+        "--env-file",
+        env.to_str().unwrap(),
+        "--report",
+        report.to_str().unwrap(),
+        "--strict",
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(stdout(&out).contains("Host(`app.example.com`)"));
+    let json: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(json["version"], 1);
+    assert_eq!(json["summary"]["items"], 5);
+    assert_eq!(json["summary"]["manual"], 0);
+    // Not a Compose file or Traefik configuration: 1. A missing file: 2.
+    std::fs::write(&compose, "foo: 1\n").unwrap();
+    assert_eq!(rdock(&["migrate", "traefik", path]).status.code(), Some(1));
+    let missing = dir.path().join("missing.yaml");
+    assert_eq!(
+        rdock(&["migrate", "traefik", missing.to_str().unwrap()])
+            .status
+            .code(),
+        Some(2)
+    );
+}
+
+/// `rdock schema --migrate-report` prints the committed report schema.
+#[test]
+fn the_migrate_report_schema_is_printed() {
+    let out = rdock(&["schema", "--migrate-report"]);
+    assert!(out.status.success());
+    let committed = std::fs::read_to_string(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schema/migrate-report.v1.json"),
+    )
+    .unwrap();
+    assert_eq!(stdout(&out), committed);
+}

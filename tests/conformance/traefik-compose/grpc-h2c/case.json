@@ -1,0 +1,8 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "server.scheme h2c",
+    "passhostheader"
+  ],
+  "diff": false
+}

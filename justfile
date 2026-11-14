@@ -8,7 +8,7 @@ default:
     @just --list
 
 # Everything the Rust and docs CI jobs check
-ci: fmt-check clippy test doc deny docs-check compat-test lint-workflows
+ci: fmt-check clippy test doc deny docs-check compat-test traefik-diff-test lint-workflows
 
 # Format all crates
 fmt:
@@ -47,12 +47,17 @@ lint-workflows:
 schema:
     cargo run --quiet --locked -p rdock -- schema > schema/rdock.v1.json
     cargo run --quiet --locked -p rdock -- schema --openapi > schema/openapi.json
+    cargo run --quiet --locked -p rdock -- schema --migrate-report > schema/migrate-report.v1.json
 
 # Regenerate schema/compat/ (ADR-0033) after changing metrics, the CLI, JSON outputs, the access log, problem types, RDOCK_* variables, labels or the image
 compat:
     for s in metrics cli access-log problems env deprecations; do cargo run --quiet --locked -p rdock -- schema --compat "$s" > "schema/compat/$s.json"; done
     RDOCK_UPDATE_GOLDEN=1 cargo test --quiet --locked -p rdock-provider-docker --test conformance label_snapshot_is_current
     python3 -I scripts/compat.py snapshot image > schema/compat/image.json
+
+# Rewrite the golden files of the Traefik migration corpus (tests/conformance/traefik-compose); review the diff
+migrate-golden:
+    RDOCK_UPDATE_GOLDEN=1 cargo test --quiet --locked -p rdock-migrate --test corpus
 
 # The compatibility gate against the last release tag (needs `git fetch --tags`; report mode before 1.0.0-rc.1, RDOCK_COMPAT_MODE forces one)
 compat-check:
@@ -62,6 +67,10 @@ compat-check:
 # The gate's own tests (standard library only)
 compat-test:
     python3 -I scripts/test_compat.py
+
+# The offline tests of the Traefik differential harness (the comparison itself needs Docker: workflow traefik-diff)
+traefik-diff-test:
+    python3 -I tests/conformance/traefik-diff/test_harness.py
 
 # Regenerate the TypeScript types (apps/dashboard/src/api) and the Go client (clients/go) from schema/openapi.json
 clients:

@@ -65,7 +65,7 @@ rdock-wasm           (v0.8, experimental, ADR-0030) WASM plugins: `sha256` pin a
 rdock-cluster        (v0.9, ADR-0031) cluster protocol v1 · `ClusterStore` (compare-and-swap, leases with a fencing token) · memory and directory backends · data-plane agent (enrolment, mutual TLS, long poll, ACK/NACK, renewal, the control plane's store as a `ClusterStore`)
 rdock-control        (v0.9, ADR-0031) the control plane `rdock control run` runs: cluster CA · join tokens · instance registry · bundle history · store server · cluster listener (no dependency on `rdock-admin`; the binary wires the admin API to it)
 rdock-provider-file  · rdock-provider-docker · rdock-provider-swarm · rdock-provider-kubernetes · rdock-provider-api
-rdock-migrate        traefik (labels + dynamic yaml) → rdock.yaml · nginx subset (later)
+rdock-migrate        traefik (labels, dynamic yaml, static config) → rdock.yaml, one report · config (deprecations) · caddy, nginx (later)
 rdock-testkit        spawn upstream servers, Pebble ACME, toxiproxy, docker-in-CI helpers · fake provider APIs and the DNS-01 adapter contract
 rdock                the binary (clap): run / validate / reload / status / config / cert / migrate / trust / version · v0.9: upgrade (`upgrade/`, binary upgrade by handover), control (`rdock control …`), bans · the one-process lock on the data directory
 ```
@@ -378,7 +378,7 @@ labels:
   rdock.middlewares.robots.response.set.X-Robots-Tag: none
 ```
 
-**Traefik v3 compatibility subset (conformance-tested, v0.2):**
+**Traefik v3 compatibility subset (conformance-tested, v0.2; pinned to Traefik v3.7 in 1.0).** The source of truth is the coverage table in code (`crates/providers/rdock-provider-docker/src/labels/coverage.rs`, ADR-0033): every Traefik v3.7 label with its status, generated into `tests/conformance/traefik-labels/coverage.json` and the website's "Supported Traefik subset" page. The summary below is the original v0.2 plan:
 
 | Traefik label | Mapping |
 |---|---|

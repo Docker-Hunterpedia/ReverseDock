@@ -1,0 +1,7 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "server.url to a backend outside the project"
+  ],
+  "diff": false
+}

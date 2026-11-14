@@ -1,0 +1,20 @@
+description: "ipWhiteList, the old name of ipAllowList, for HTTP and TCP."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.old.ipwhitelist.sourcerange: "10.0.0.0/8, 192.168.0.0/16"
+      traefik.tcp.middlewares.oldtcp.ipwhitelist.sourcerange: "10.0.0.0/8"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    old: { type: "ip_allow", cidrs: ["10.0.0.0/8", "192.168.0.0/16"] }
+    oldtcp: { type: "ip_allow", cidrs: ["10.0.0.0/8"] }

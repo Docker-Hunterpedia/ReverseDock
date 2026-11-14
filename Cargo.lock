@@ -4720,10 +4720,12 @@ dependencies = [
  "rdock-config",
  "rdock-model",
  "rdock-provider-docker",
+ "schemars",
  "serde",
  "serde-saphyr",
  "serde_json",
  "similar",
+ "thiserror 2.0.21",
 ]
 
 [[package]]

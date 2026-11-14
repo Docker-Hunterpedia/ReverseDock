@@ -1,0 +1,224 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `api` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.api",
+        "kind": "object",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.entrypoints",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.rule",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.api.tls",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.headers`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.headers.X-Probe",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.hostname`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.hostname",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.interval`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.interval",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.method`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.method",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`health.active.path`; unset settings take ReverseDock's defaults (every 10s, a 2s timeout, 2 passes or 3 failures to change state); Traefik's defaults are every 30s with a 5s timeout",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.path",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.port`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.port",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.unsupported",
+      "level": "dropped",
+      "message": "health checks use the service's scheme; the label is ignored",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.scheme",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.expected_status`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.status",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.active.timeout`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.healthcheck.timeout",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.passive.window`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.passivehealthcheck.failurewindow",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`health.passive.failures`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.passivehealthcheck.maxfailedattempts",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the backend's port",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.api.loadbalancer.server.port",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "services.api"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 1,
+    "exact": 14,
+    "items": 17,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

@@ -1,0 +1,35 @@
+description: "TCP services: PROXY protocol (true means version 2; a version label wins) and the termination delay in milliseconds; a negative delay is refused."
+containers:
+  - name: "db"
+    labels:
+      traefik.enable: "true"
+      traefik.tcp.routers.db.rule: "HostSNI(`*`)"
+      traefik.tcp.routers.db.entrypoints: "postgres"
+      traefik.tcp.routers.db.service: "db"
+      traefik.tcp.services.db.loadbalancer.server.port: "5432"
+      traefik.tcp.services.db.loadbalancer.proxyprotocol: "true"
+      traefik.tcp.services.db.loadbalancer.proxyprotocol.version: "1"
+      traefik.tcp.services.db.loadbalancer.terminationdelay: "250"
+      traefik.tcp.routers.cache.rule: "HostSNI(`*`)"
+      traefik.tcp.routers.cache.entrypoints: "redis"
+      traefik.tcp.routers.cache.service: "cache"
+      traefik.tcp.services.cache.loadbalancer.server.port: "6379"
+      traefik.tcp.services.cache.loadbalancer.proxyprotocol: "true"
+      traefik.tcp.services.cache.loadbalancer.terminationdelay: "-1"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 5432
+      - 6379
+expect:
+  tcp_routes:
+    db: { service: "db" }
+    cache: { service: "cache" }
+  tcp_services:
+    db:
+      proxy_protocol: "v1"
+      timeouts: { termination_delay: "250ms" }
+    cache:
+      proxy_protocol: "v2"
+  diagnostics:
+    - "cache.loadbalancer.terminationdelay\"]: a negative termination delay"

@@ -1,0 +1,236 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `api` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.api",
+        "kind": "object",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "api"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`add_prefix.prefix`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.app-prefix.addprefix.prefix",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.app-prefix"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`replace_path.path`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.health-path.replacepath.path",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.health-path"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`rewrite.regex`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.v1-to-v2.replacepathregex.regex",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.v1-to-v2"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`rewrite.replacement`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.v1-to-v2.replacepathregex.replacement",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "middlewares.v1-to-v2"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.entrypoints",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.middlewares",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.rule",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.app.tls",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.app"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.health.entrypoints",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.health"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.health.middlewares",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.health"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.health.rule",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.health"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.health.tls",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.health"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.v1.entrypoints",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.v1"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.v1.middlewares",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.v1"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.v1.rule",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.v1"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.v1.tls",
+        "kind": "label",
+        "scope": "api"
+      },
+      "target": "routes.v1"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 0,
+    "exact": 15,
+    "items": 18,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

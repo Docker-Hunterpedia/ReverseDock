@@ -1,0 +1,18 @@
+# Corpus case `rate-limit-by-header` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: ratelimit average, burst, period, sourceCriterion.requestHeaderName, ratelimit without burst (approximate).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  api:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.api.rule: Host(`api.example.com`)
+      traefik.http.routers.api.entrypoints: websecure
+      traefik.http.routers.api.tls: "true"
+      traefik.http.routers.api.middlewares: per-key,global
+      traefik.http.middlewares.per-key.ratelimit.average: "100"
+      traefik.http.middlewares.per-key.ratelimit.period: 1m
+      traefik.http.middlewares.per-key.ratelimit.burst: "20"
+      traefik.http.middlewares.per-key.ratelimit.sourcecriterion.requestheadername: X-Api-Key
+      traefik.http.middlewares.global.ratelimit.average: "1000"

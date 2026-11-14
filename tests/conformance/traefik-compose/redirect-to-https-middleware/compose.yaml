@@ -1,0 +1,17 @@
+# Corpus case `redirect-to-https-middleware` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: redirectscheme scheme and permanent, plain-HTTP router on web, websecure router.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  shop:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.shop-http.rule=Host(`shop.example.com`)
+      - traefik.http.routers.shop-http.entrypoints=web
+      - traefik.http.routers.shop-http.middlewares=to-https
+      - traefik.http.middlewares.to-https.redirectscheme.scheme=https
+      - traefik.http.middlewares.to-https.redirectscheme.permanent=true
+      - traefik.http.routers.shop.rule=Host(`shop.example.com`)
+      - traefik.http.routers.shop.entrypoints=websecure
+      - traefik.http.routers.shop.tls=true

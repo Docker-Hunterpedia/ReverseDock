@@ -1,0 +1,19 @@
+# Corpus case `cors-api` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: headers accessControl* to cors, addVaryHeader, custom response header next to CORS.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  api:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.api.rule: Host(`api.example.com`)
+      traefik.http.routers.api.entrypoints: websecure
+      traefik.http.routers.api.tls: "true"
+      traefik.http.routers.api.middlewares: api-cors
+      traefik.http.middlewares.api-cors.headers.accessControlAllowOriginList: https://app.example.com
+      traefik.http.middlewares.api-cors.headers.accessControlAllowMethods: GET,POST,PUT,DELETE
+      traefik.http.middlewares.api-cors.headers.accessControlAllowHeaders: Content-Type,Authorization
+      traefik.http.middlewares.api-cors.headers.accessControlMaxAge: "100"
+      traefik.http.middlewares.api-cors.headers.addVaryHeader: "true"
+      traefik.http.middlewares.api-cors.headers.customResponseHeaders.X-Api-Version: "2"

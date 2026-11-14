@@ -70,7 +70,7 @@ Every feature is designed so the first audience never pays (in complexity) for t
 
 ## 7. What "done" means for 1.0
 
-- A Traefik-on-Docker user switches by changing the image name and keeping their labels (documented subset, conformance-tested).
+- A Traefik-on-Docker user switches by changing the image, removing Traefik's flags (or running `rdock migrate traefik --static`) and keeping their labels (documented subset, conformance-tested: translation fixtures, a Compose corpus with golden output, and a differential test against a pinned Traefik; [ADR-0033](decisions/0033-v1-0-stable.md)).
 - Fresh VPS, DNS pointed, `docker compose up` → valid HTTPS in under 60 seconds with one label.
 - Kubernetes Gateway API conformance profiles `GATEWAY-HTTP`, `GATEWAY-GRPC` and `GATEWAY-TLS` pass (TCP/UDP route tests as they leave provisional status).
 - Benchmarks vs NGINX, Traefik, Caddy and HAProxy published with identical hardware, TLS settings and request mix.

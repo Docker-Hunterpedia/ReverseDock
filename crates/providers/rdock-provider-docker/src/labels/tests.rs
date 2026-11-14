@@ -324,7 +324,7 @@ fn unsupported_and_unsafe_labels_are_warnings() {
         &[
             ("traefik.enable", "true"),
             ("traefik.http.routers.x.rule", "Host(`x.example.com`)"),
-            ("traefik.http.middlewares.chain.chain.middlewares", "a,b"),
+            ("traefik.http.middlewares.p.plugin.demo.key", "v"),
             (
                 "traefik.http.middlewares.auth.basicauth.usersfile",
                 "/etc/passwd",
@@ -335,8 +335,11 @@ fn unsupported_and_unsafe_labels_are_warnings() {
     )]);
     let found = messages(&t);
     assert_eq!(found.len(), 4, "{found:?}");
-    assert!(found.iter().any(|m| m.contains("chain.chain.middlewares")
-        && m.contains("not in the supported Traefik label subset")));
+    assert!(
+        found
+            .iter()
+            .any(|m| m.contains("p.plugin.demo.key") && m.contains("plugins do not run here"))
+    );
     assert!(
         found
             .iter()

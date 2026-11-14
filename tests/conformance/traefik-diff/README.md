@@ -1,0 +1,17 @@
+# Differential test against Traefik
+
+Layer 3 of "conformance-tested" ([ADR-0033](../../../docs/decisions/0033-v1-0-stable.md)): Traefik and rdock read the same Docker labels and answer the same requests; the answers must agree.
+
+`harness.py run --rdock-image IMAGE` takes every corpus case marked `"diff": true` (`tests/conformance/traefik-compose/*/case.json`; `--case NAME` picks some) and for each:
+
+1. reads the case with `docker compose config --format json` (so Compose's own interpolation applies, with the case's `vars.env`);
+2. checks the coverage gate: every Traefik label must be marked exact in `tests/conformance/traefik-labels/coverage.json`, or approximate with an entry in `allowlist.json` that names the option (its stated difference);
+3. writes a Compose project: the case's labelled services as `traefik/whoami` backends (`hostname` = the service, so the answering backend is known; the port from the port label), Traefik with entry points `web` (:80) and `websecure` (:443) and `exposedByDefault=false`, and the rdock image with the same listeners, both serving one self-signed certificate (made with openssl) with ACME off and rdock's HTTPS redirect off, so only label semantics are compared;
+4. sends the request matrix to both (`matrix`): for every router, each host and path of its rule, a deeper path, a sibling path (the near miss of a prefix), the root, `POST`, an unknown host, a CORS preflight where a CORS middleware exists, and the headers middlewares react to (`Origin`, `Accept-Encoding`, the rate limit's key header);
+5. compares the routing answer: status, the backend that answered (whoami's `Hostname:`), the path and selected headers the backend saw (`Host`, `X-Forwarded-Proto`, `X-Forwarded-Prefix`, `X-Forwarded-Host`, `Authorization`, the custom request headers the labels set), and selected response headers (`Location`, the security headers, CORS headers, `Content-Encoding`, `WWW-Authenticate`, the custom response headers the labels set).
+
+**Pass rule:** every request agrees on every compared field, apart from entries of `allowlist.json`. Each entry names the field, optionally the option, the cases and the values it covers, and has a reason and a source; additions are reviewed like any change to the documented Traefik subset. Errors (a gate failure, proxies that do not route within 90 s) fail as well. The report is `report.json` and `summary.txt` in `--out`, with the proxies' logs per case.
+
+**Pinned:** `traefik:v3.7.19` and `traefik/whoami:v1.12.0`, both by index digest (in `harness.py`, from Docker Hub's tag API, read 2026-11-14). The rdock image is built from the commit.
+
+**Status:** the workflow `.github/workflows/traefik-diff.yml` (job `traefik-diff`, not a required check) runs on pull requests that touch the label translator, the migration, the proxy or these files, weekly, and by hand. It needs Docker and could not run in the development sandbox (image pulls are blocked there), so **the job itself is unverified until it has run in CI**; expect the first run to find differences that need either a fix or an allow-list entry with its reason. What runs without Docker is tested: `python3 -I test_harness.py` covers rule parsing, the matrix, reading whoami's answers, the comparison and the allow-list, the coverage gate on every diff case, and the generated project, against recorded answers in `fixtures/` (written by hand from whoami's output format, not captured).

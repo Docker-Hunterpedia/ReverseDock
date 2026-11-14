@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "healthcheck path, interval, timeout, hostname, headers, status, method, port",
+    "passivehealthcheck",
+    "healthcheck.scheme (none)"
+  ],
+  "diff": false
+}

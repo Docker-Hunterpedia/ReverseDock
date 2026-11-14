@@ -1,0 +1,128 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `intranet` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.intranet",
+        "kind": "object",
+        "scope": "intranet"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "intranet"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.intranet.rule",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "routes.intranet"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.intranet.entrypoints",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "routes.intranet"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.intranet.tls",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "routes.intranet"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.intranet.middlewares",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "routes.intranet"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`ip_allow.cidrs`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.office.ipallowlist.sourcerange",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "middlewares.office"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`ip_allow.cidrs` (the old name of `ipallowlist`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.legacy.ipwhitelist.sourcerange",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "middlewares.legacy"
+    },
+    {
+      "code": "traefik.label.unsupported",
+      "level": "dropped",
+      "message": "the client IP is the one resolved from `security.trusted_proxies` (one setting for the whole proxy), not chosen per middleware; the label is ignored",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.legacy.ipwhitelist.ipstrategy.depth",
+        "kind": "label",
+        "scope": "intranet"
+      },
+      "target": "middlewares.legacy"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 1,
+    "exact": 7,
+    "items": 9,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

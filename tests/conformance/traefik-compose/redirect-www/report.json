@@ -1,0 +1,128 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `site` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.site",
+        "kind": "object",
+        "scope": "site"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "site"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.site.rule",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "routes.site"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.site.entrypoints",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "routes.site"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.site.tls",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "routes.site"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.site.middlewares",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "routes.site"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`redirect.regex`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.no-www.redirectregex.regex",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "middlewares.no-www"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`redirect.replacement`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.no-www.redirectregex.replacement",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "middlewares.no-www"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`redirect.permanent`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.no-www.redirectregex.permanent",
+        "kind": "label",
+        "scope": "site"
+      },
+      "target": "middlewares.no-www"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 8,
+    "items": 9,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

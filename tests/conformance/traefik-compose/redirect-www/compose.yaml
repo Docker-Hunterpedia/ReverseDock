@@ -1,0 +1,16 @@
+# Corpus case `redirect-www` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: redirectregex with $${{1}}, permanent.
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  site:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      - traefik.enable=true
+      - traefik.http.routers.site.rule=Host(`example.com`) || Host(`www.example.com`)
+      - traefik.http.routers.site.entrypoints=websecure
+      - traefik.http.routers.site.tls=true
+      - traefik.http.routers.site.middlewares=no-www
+      - traefik.http.middlewares.no-www.redirectregex.regex=^https://www\.(.*)
+      - traefik.http.middlewares.no-www.redirectregex.replacement=https://$${1}
+      - traefik.http.middlewares.no-www.redirectregex.permanent=true

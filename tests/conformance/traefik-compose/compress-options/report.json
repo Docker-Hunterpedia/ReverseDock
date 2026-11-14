@@ -1,0 +1,140 @@
+{
+  "findings": [
+    {
+      "code": "compose.service",
+      "level": "exact",
+      "message": "backends reach it as `docs` (its Compose service name)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.docs",
+        "kind": "object",
+        "scope": "docs"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "docs"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.docs.rule",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "routes.docs"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.docs.entrypoints",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "routes.docs"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.docs.tls",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "routes.docs"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`middlewares`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.docs.middlewares",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "routes.docs"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`compress.algorithms`, in the same order of preference",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.gz.compress.encodings",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "middlewares.gz"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`compress.content_types`; `text/event-stream` and `application/grpc` are never compressed, even when listed",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.gz.compress.includedContentTypes",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "middlewares.gz"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`compress.min_size`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.gz.compress.minResponseBodyBytes",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "middlewares.gz"
+    },
+    {
+      "code": "traefik.label.unsupported",
+      "level": "dropped",
+      "message": "`compress.content_types` is an allow-list; the label is ignored",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.middlewares.gz.compress.excludedContentTypes",
+        "kind": "label",
+        "scope": "docs"
+      },
+      "target": "middlewares.gz"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 1,
+    "exact": 7,
+    "items": 10,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

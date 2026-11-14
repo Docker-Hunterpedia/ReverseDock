@@ -1,0 +1,9 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "customRequestHeaders",
+    "customResponseHeaders",
+    "an empty value removes a header"
+  ],
+  "diff": true
+}

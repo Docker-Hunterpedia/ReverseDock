@@ -1,0 +1,16 @@
+# Corpus case `inflight-and-buffering` (tests/conformance/traefik-compose, ADR-0033).
+# Exercises: inflightreq.amount, inflightreq requestHeaderName, buffering (manual).
+# Written by hand in the shape of Traefik's documented Docker examples; nothing is copied.
+services:
+  upload:
+    image: traefik/whoami:v1.12.0
+    expose: [80]
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.upload.rule: Host(`upload.example.com`)
+      traefik.http.routers.upload.entrypoints: websecure
+      traefik.http.routers.upload.tls: "true"
+      traefik.http.routers.upload.middlewares: one-at-a-time,limit-body
+      traefik.http.middlewares.one-at-a-time.inflightreq.amount: "2"
+      traefik.http.middlewares.one-at-a-time.inflightreq.sourcecriterion.requestheadername: X-User
+      traefik.http.middlewares.limit-body.buffering.maxRequestBodyBytes: "10485760"

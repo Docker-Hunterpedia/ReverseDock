@@ -1,0 +1,93 @@
+{
+  "findings": [
+    {
+      "code": "compose.deploy_labels",
+      "hint": "to keep them on the stack instead, run ReverseDock with `providers.swarm`",
+      "level": "approximate",
+      "message": "`deploy.labels` (Swarm) were read as container labels",
+      "source": {
+        "file": "compose.yaml",
+        "item": "services.web",
+        "kind": "object",
+        "scope": "web"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "exposes the container (`rdock.enable`)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.enable",
+        "kind": "label",
+        "scope": "web"
+      }
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`listeners`, through `providers.docker.entrypoints`",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.web.entrypoints",
+        "kind": "label",
+        "scope": "web"
+      },
+      "target": "routes.web"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "`match`, the same rule grammar",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.web.rule",
+        "kind": "label",
+        "scope": "web"
+      },
+      "target": "routes.web"
+    },
+    {
+      "code": "traefik.label.approximate",
+      "level": "approximate",
+      "message": "`tls.auto: true` (`true`) or `tls: off` (`false`); `true` without a resolver gets an automatic certificate here (Traefik: a stored certificate or its default one)",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.routers.web.tls",
+        "kind": "label",
+        "scope": "web"
+      },
+      "target": "routes.web"
+    },
+    {
+      "code": "traefik.label.exact",
+      "level": "exact",
+      "message": "the backend's port",
+      "source": {
+        "file": "compose.yaml",
+        "item": "traefik.http.services.web.loadbalancer.server.port",
+        "kind": "label",
+        "scope": "web"
+      },
+      "target": "services.web"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "compose.yaml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 2,
+    "dropped": 0,
+    "exact": 4,
+    "items": 6,
+    "manual": 0,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

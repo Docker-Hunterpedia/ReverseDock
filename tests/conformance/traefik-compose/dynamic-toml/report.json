@@ -1,0 +1,33 @@
+{
+  "findings": [
+    {
+      "code": "traefik.file.toml",
+      "hint": "convert it to YAML with the same keys (for example with `yq -p toml -o yaml`) and run the migration again",
+      "level": "manual",
+      "message": "TOML is not read (no TOML parser is built in); nothing from this file was migrated",
+      "source": {
+        "file": "dynamic.toml",
+        "item": "dynamic.toml",
+        "kind": "object"
+      }
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "Traefik v3.7",
+    "files": [
+      "dynamic.toml"
+    ],
+    "kind": "traefik"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 0,
+    "items": 1,
+    "manual": 1,
+    "result": 0
+  },
+  "tool": "rdock migrate traefik",
+  "version": 1
+}

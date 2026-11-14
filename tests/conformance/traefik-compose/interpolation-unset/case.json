@@ -1,0 +1,11 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "an unset ${{VAR}} without a default (manual)",
+    "${{VAR:?message}} (manual)"
+  ],
+  "diff": false,
+  "expect_invalid": [
+    "is not a valid host name"
+  ]
+}

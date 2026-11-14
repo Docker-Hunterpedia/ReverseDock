@@ -44,7 +44,7 @@ Corrections versus the original notes are marked **(fixed)**. Where this file an
 - [x] B-CFG-01 One static binary (musl), Linux x86-64 + ARM64; macOS for development
 - [x] B-CFG-02 YAML config with JSON equivalence; published JSON Schema (IDE autocomplete, `$schema` line)
 - [x] B-CFG-03 Environment interpolation `${VAR}` and file secrets `${file:/run/secrets/x}`; never interpolate in labels
-- [ ] B-CFG-04 CLI: `run`, `validate`, `reload`, `status`, `config show|diff`, `cert list|renew`, `migrate traefik|nginx`, `version`, `trust`
+- [ ] B-CFG-04 CLI: `run`, `validate`, `reload`, `status`, `config show|diff`, `cert list|renew`, `migrate traefik|nginx`, `version`, `trust`. *Progress (v1.0 step 4, [ADR-0033](decisions/0033-v1-0-stable.md)):* `migrate traefik` gains `--static`, `--full`, `--env-file`, `--process-env`, `--report` and `--strict`, and `rdock migrate config` exists (step 2); `cert list|renew` and `config show` are still open.
 - [x] B-CFG-05 Actionable errors (path, line, hint); `--strict` to reject unknown keys
 - [ ] B-CFG-06 Atomic apply with validation; automatic rollback to last-known-good on bind/cert/backend failure
 - [x] B-CFG-07 Config auto-reload on file change (debounced), with diff in logs
@@ -215,7 +215,7 @@ Tracked as W-SWM-01…03 below.
 ### F-MGMT · Management and automation
 - [x] F-MGMT-01 CLI/API parity; OpenAPI published; typed clients generated (TS, Go)
 - [ ] F-MGMT-02 Terraform/OpenTofu provider (P2). *Open (v0.8, [ADR-0030](decisions/0030-v0-8-cache-extensibility-gateway.md)):* the provider source (`reversedock_route`, `reversedock_service`, `reversedock_middleware`, data sources, import) is in `clients/terraform` and tested in the `terraform-provider` CI job; publishing needs a separate public repository `terraform-provider-reversedock` and a signing key (maintainer actions), so the box stays unticked.
-- [ ] F-MGMT-03 Migration assistants: `rdock migrate traefik` (labels + dynamic YAML, P0), `rdock migrate nginx` (directive subset, P3)
+- [ ] F-MGMT-03 Migration assistants: `rdock migrate traefik` (labels + dynamic YAML, P0), `rdock migrate nginx` (directive subset, P3). *Progress (v1.0 step 4, [ADR-0033](decisions/0033-v1-0-stable.md)):* `rdock migrate traefik` reads Compose files (with interpolation), dynamic YAML files and Traefik's static configuration, and reports every source item at one of four levels (`schema/migrate-report.v1.json`); conformance is the coverage table of every Traefik v3.7 label, a 46-case Compose corpus with golden output and the differential `traefik-diff` job (not run yet). Open: `rdock migrate caddy` and `rdock migrate nginx` (later steps of ADR-0033), TOML dynamic files, `acme.json` import.
 - [ ] F-MGMT-04 Webhooks for config/cert/health events
 - [ ] F-MGMT-05 Docs site with interactive config playground (schema-driven)
 

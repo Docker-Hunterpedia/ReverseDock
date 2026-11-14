@@ -1,0 +1,43 @@
+description: "Header options without an equivalent (host lists, development mode, HPKP, the v2 SSL redirect options, origin regexes) are warnings with the reason; the headers middleware stays, empty."
+containers:
+  - name: "app"
+    labels:
+      traefik.enable: "true"
+      traefik.http.routers.app.rule: "Host(`app.example.com`)"
+      traefik.http.middlewares.h.headers.accesscontrolalloworiginlistregex: "https://.*\\.example\\.com"
+      traefik.http.middlewares.h.headers.allowedhosts: "example.com"
+      traefik.http.middlewares.h.headers.featurepolicy: "camera 'none'"
+      traefik.http.middlewares.h.headers.forcestsheader: "true"
+      traefik.http.middlewares.h.headers.hostsproxyheaders: "X-Forwarded-Host"
+      traefik.http.middlewares.h.headers.isdevelopment: "true"
+      traefik.http.middlewares.h.headers.publickey: "pin-sha256=\"x\""
+      traefik.http.middlewares.h.headers.sslforcehost: "true"
+      traefik.http.middlewares.h.headers.sslhost: "example.com"
+      traefik.http.middlewares.h.headers.sslproxyheaders.x-forwarded-proto: "https"
+      traefik.http.middlewares.h.headers.sslredirect: "true"
+      traefik.http.middlewares.h.headers.ssltemporaryredirect: "true"
+    networks:
+      web: "172.18.0.2"
+    ports:
+      - 80
+expect:
+  routes:
+    app: {}
+  services:
+    app: {}
+  middlewares:
+    h:
+      type: "headers"
+  diagnostics:
+    - "traefik.http.middlewares.h.headers.accesscontrolalloworiginlistregex\"]"
+    - "traefik.http.middlewares.h.headers.allowedhosts\"]"
+    - "traefik.http.middlewares.h.headers.featurepolicy\"]"
+    - "traefik.http.middlewares.h.headers.forcestsheader\"]"
+    - "traefik.http.middlewares.h.headers.hostsproxyheaders\"]"
+    - "traefik.http.middlewares.h.headers.isdevelopment\"]"
+    - "traefik.http.middlewares.h.headers.publickey\"]"
+    - "traefik.http.middlewares.h.headers.sslforcehost\"]"
+    - "traefik.http.middlewares.h.headers.sslhost\"]"
+    - "traefik.http.middlewares.h.headers.sslproxyheaders.x-forwarded-proto\"]"
+    - "traefik.http.middlewares.h.headers.sslredirect\"]"
+    - "traefik.http.middlewares.h.headers.ssltemporaryredirect\"]"

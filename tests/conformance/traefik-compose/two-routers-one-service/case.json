@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "two routers",
+    "router service",
+    "server.port",
+    "priority"
+  ],
+  "diff": true
+}

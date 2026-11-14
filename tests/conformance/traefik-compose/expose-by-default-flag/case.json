@@ -1,0 +1,10 @@
+{
+  "input": "compose.yaml",
+  "exercises": [
+    "--expose-by-default"
+  ],
+  "diff": false,
+  "args": {
+    "expose_by_default": true
+  }
+}
