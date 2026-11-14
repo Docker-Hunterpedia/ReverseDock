@@ -1,0 +1,186 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name spa.example.com",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the `static` root (the request path is appended, as with `root`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "root /srv/spa",
+        "kind": "directive",
+        "line": 6
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the `static` index files",
+      "source": {
+        "file": "nginx.conf",
+        "item": "index index.html",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "the single-page-app idiom → `fallback: /index.html`; ReverseDock serves it only for GET and HEAD requests whose last path segment has no `.`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "try_files $uri $uri/ /index.html",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /assets/",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "→ `cache_control: max-age=2592000` (no `Expires` header)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "expires 30d",
+        "kind": "directive",
+        "line": 13
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "files, then 404: what `static` does",
+      "source": {
+        "file": "nginx.conf",
+        "item": "try_files $uri =404",
+        "kind": "directive",
+        "line": 14
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /downloads/",
+        "kind": "directive",
+        "line": 16
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`alias` replaces the location's prefix: `strip_prefix` then `static` with the alias as root",
+      "source": {
+        "file": "nginx.conf",
+        "item": "alias /srv/files/",
+        "kind": "directive",
+        "line": 17
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "directory listings → `static.listing` (the page differs)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "autoindex on",
+        "kind": "directive",
+        "line": 18
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 0,
+    "exact": 11,
+    "items": 14,
+    "manual": 0,
+    "result": 2
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

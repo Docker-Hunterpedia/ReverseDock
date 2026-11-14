@@ -1,4 +1,6 @@
 //! `rdock migrate traefik`: Traefik labels or dynamic configuration to rdock.yaml (F-MGMT-03).
+//! `rdock migrate caddy`: Caddy's JSON configuration to rdock.yaml (F-MGMT-03, ADR-0033).
+//! `rdock migrate nginx`: an NGINX configuration to rdock.yaml (F-MGMT-03, ADR-0033; beta).
 //! `rdock migrate config`: an rdock.yaml off deprecated settings (ADR-0033).
 
 use std::io::Read;
@@ -7,7 +9,7 @@ use std::process::ExitCode;
 
 use anyhow::Context;
 
-use crate::{MigrateConfigArgs, MigrateTraefikArgs};
+use crate::{MigrateCaddyArgs, MigrateConfigArgs, MigrateNginxArgs, MigrateTraefikArgs};
 
 fn read_input(input: &Path) -> anyhow::Result<String> {
     if input.as_os_str() == "-" {
@@ -153,29 +155,100 @@ pub(crate) fn traefik(args: &MigrateTraefikArgs) -> anyhow::Result<ExitCode> {
         }
         Err(err @ rdock_migrate::Error::Accounting(_)) => return Err(err.into()),
     };
-    match &args.output {
-        Some(path) => std::fs::write(path, &migration.yaml)
-            .with_context(|| format!("writing {}", path.display()))?,
-        None => print!("{}", migration.yaml),
+    finish(
+        args.output.as_deref(),
+        args.report.as_deref(),
+        args.strict,
+        &migration.yaml,
+        &migration.report,
+    )
+}
+
+/// Writes the YAML and the report, and chooses the exit code (shared by every migration).
+fn finish(
+    output: Option<&Path>,
+    report_path: Option<&Path>,
+    strict: bool,
+    yaml: &str,
+    report: &rdock_migrate::report::Report,
+) -> anyhow::Result<ExitCode> {
+    match output {
+        Some(path) => {
+            std::fs::write(path, yaml).with_context(|| format!("writing {}", path.display()))?;
+        }
+        None => print!("{yaml}"),
     }
-    let json = serde_json::to_string_pretty(&migration.report)? + "\n";
-    match args.report.as_deref() {
+    let json = serde_json::to_string_pretty(report)? + "\n";
+    match report_path {
         Some(path) if path.as_os_str() == "-" => eprint!("{json}"),
         Some(path) => {
             std::fs::write(path, &json).with_context(|| format!("writing {}", path.display()))?;
-            eprint!("{}", migration.report.text(false));
+            eprint!("{}", report.text(false));
         }
-        None => eprint!("{}", migration.report.text(false)),
+        None => eprint!("{}", report.text(false)),
     }
-    if migration.report.needs_review() {
+    if report.needs_review() {
         eprintln!(
             "review the findings above (also at the top of the output); check the result with `rdock validate`"
         );
-        if args.strict {
+        if strict {
             return Ok(ExitCode::from(2));
         }
     } else {
         eprintln!("check the result with `rdock validate`");
     }
     Ok(ExitCode::SUCCESS)
+}
+
+/// `rdock migrate caddy`: exit 0 when the result was written, 1 when the input is not Caddy's
+/// JSON (a Caddyfile is refused with how to adapt it), 2 on an error or, with `--strict`, when a
+/// finding is manual or dropped.
+pub(crate) fn caddy(args: &MigrateCaddyArgs) -> anyhow::Result<ExitCode> {
+    let text = read_input(&args.input)?;
+    let options = rdock_migrate::caddy::Options {
+        file: args.input.display().to_string(),
+        full: args.full,
+    };
+    let migration = match rdock_migrate::caddy::caddy(&text, &options) {
+        Ok(migration) => migration,
+        Err(rdock_migrate::caddy::Error::Input(err)) => {
+            eprintln!("error: {}: {err}", args.input.display());
+            return Ok(ExitCode::from(1));
+        }
+        Err(err @ rdock_migrate::caddy::Error::Accounting(_)) => return Err(err.into()),
+    };
+    finish(
+        args.output.as_deref(),
+        args.report.as_deref(),
+        args.strict,
+        &migration.yaml,
+        &migration.report,
+    )
+}
+
+/// `rdock migrate nginx`: exit codes as for `rdock migrate caddy`.
+pub(crate) fn nginx(args: &MigrateNginxArgs) -> anyhow::Result<ExitCode> {
+    let text = read_input(&args.input)?;
+    let stdin = args.input.as_os_str() == "-";
+    let options = rdock_migrate::nginx::Options {
+        file: args.input.display().to_string(),
+        path: (!stdin).then(|| args.input.clone()),
+        include_outside: args.include_outside,
+        full: args.full,
+    };
+    let migration = match rdock_migrate::nginx::nginx(&text, &options) {
+        Ok(migration) => migration,
+        Err(rdock_migrate::nginx::Error::Input(err)) => {
+            eprintln!("error: {}: {err}", args.input.display());
+            return Ok(ExitCode::from(1));
+        }
+        Err(err @ rdock_migrate::nginx::Error::Accounting(_)) => return Err(err.into()),
+    };
+    finish(
+        args.output.as_deref(),
+        args.report.as_deref(),
+        args.strict,
+        &migration.yaml,
+        &migration.report,
+    )
 }

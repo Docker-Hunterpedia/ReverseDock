@@ -5,6 +5,11 @@ use std::time::Duration;
 use pingora_core::protocols::http::v1::server::HttpSession;
 use tokio::io::AsyncWriteExt;
 
+/// The NGINX configuration parser of `rdock migrate nginx`, from its source file.
+#[allow(dead_code, missing_docs, clippy::all, clippy::pedantic)]
+#[path = "../../../crates/rdock-migrate/src/nginx/parser.rs"]
+mod nginx;
+
 /// Largest body the framing check reads.
 const MAX_BODY: usize = 1 << 20;
 const STEP: Duration = Duration::from_millis(200);
@@ -133,6 +138,60 @@ pub fn rules_parser(data: &[u8]) {
         let _ = expr.validate(rdock_rules::Context::Http);
     }
     let _ = rdock_rules::path::normalize(text);
+}
+
+/// Parses arbitrary text as an NGINX configuration: never a panic, never deeper than the parser's
+/// limit, and a tree printed back (every argument quoted) parses to the same names and arguments.
+pub fn nginx_parser(data: &[u8]) {
+    let Ok(text) = std::str::from_utf8(data) else {
+        return;
+    };
+    let Ok(tree) = nginx::parse(text, 0) else {
+        return;
+    };
+    fn depth(tree: &[nginx::Directive]) -> usize {
+        tree.iter().map(|d| d.block.as_deref().map_or(0, |b| 1 + depth(b))).max().unwrap_or(0)
+    }
+    assert!(depth(&tree) <= nginx::MAX_DEPTH + 1, "nesting beyond the limit");
+    if tree.iter().any(|d| d.raw.is_some()) {
+        return;
+    }
+    fn quote(text: &str) -> String {
+        format!("\"{}\"", text.replace('\\', "\\\\").replace('"', "\\\""))
+    }
+    fn print(tree: &[nginx::Directive], out: &mut String) {
+        for d in tree {
+            out.push_str(&quote(&d.name));
+            for a in &d.args {
+                out.push(' ');
+                out.push_str(&quote(&a.text));
+            }
+            match &d.block {
+                Some(block) => {
+                    out.push_str(" {\n");
+                    print(block, out);
+                    out.push_str("}\n");
+                }
+                None => out.push_str(";\n"),
+            }
+        }
+    }
+    fn shape(tree: &[nginx::Directive]) -> Vec<String> {
+        let mut out = Vec::new();
+        for d in tree {
+            out.push(format!("{:?} {:?}", d.name, d.values()));
+            if let Some(block) = &d.block {
+                out.push("{".to_owned());
+                out.extend(shape(block));
+                out.push("}".to_owned());
+            }
+        }
+        out
+    }
+    let mut printed = String::new();
+    print(&tree, &mut printed);
+    let again = nginx::parse(&printed, 0).unwrap_or_else(|e| panic!("printed tree does not parse: {e}\n{printed}"));
+    assert_eq!(shape(&again), shape(&tree), "printing changed the tree");
 }
 
 /// Loads arbitrary text as YAML and as JSON; only errors are expected, never panics.
@@ -477,6 +536,29 @@ mod tests {
         super::config_loader(b"routes: { a: { match: \"Host(`x`)\", service: s } }");
         super::config_loader(b"{\"listeners\": {\"web\": {\"address\": \":80\"}}}");
         super::config_loader(b"\xff\xfe");
+    }
+
+    #[test]
+    fn nginx_parser_seeds() {
+        let corpus = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../conformance/nginx");
+        let mut count = 0;
+        for case in std::fs::read_dir(corpus).unwrap() {
+            let case = case.unwrap().path();
+            if !case.is_dir() {
+                continue;
+            }
+            for file in std::fs::read_dir(&case).unwrap() {
+                let file = file.unwrap().path();
+                if file.extension().is_some_and(|e| e == "conf" || e == "txt") {
+                    super::nginx_parser(&std::fs::read(&file).unwrap());
+                    count += 1;
+                }
+            }
+        }
+        assert!(count > 10, "the NGINX corpus seeds the parser");
+        for input in ["a { b \"c\\\"d\" '${x}'; }", "a;;", "}{", "content_by_lua_block { x }"] {
+            super::nginx_parser(input.as_bytes());
+        }
     }
 
     #[test]

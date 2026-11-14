@@ -1,0 +1,72 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"admin.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"match": [
+												{
+													"path": [
+														"/admin/*"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "authentication",
+													"providers": {
+														"http_basic": {
+															"accounts": [
+																{
+																	"password": "$2a$14$rdockExampleSaltValue.uKQ1v6JqgM2v0pZbxJm3Gq7Vb9Yh2xW",
+																	"username": "admin"
+																}
+															],
+															"hash": {
+																"algorithm": "bcrypt"
+															},
+															"hash_cache": {}
+														}
+													}
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "dashboard:8000"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

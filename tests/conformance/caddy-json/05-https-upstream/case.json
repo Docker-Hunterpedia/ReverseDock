@@ -1,0 +1,9 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "transport tls \u2192 scheme https",
+    "pass_host_header false for HTTPS upstreams (Caddy 2.11)",
+    "tls server_name and CA file"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/reverse_proxy_http_transport_tls_file_cert.txt at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

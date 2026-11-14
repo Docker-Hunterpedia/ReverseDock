@@ -189,6 +189,15 @@ enum MigrateCommand {
     /// error, or with --strict anything that needs a decision (manual) or has no equivalent
     /// (dropped). Nothing is written to disk without -o or --report.
     Traefik(MigrateTraefikArgs),
+    /// Caddy's JSON configuration → rdock.yaml, with a report that accounts for every handler,
+    /// matcher and setting. Reads the JSON `caddy adapt` writes, not a Caddyfile:
+    /// `caddy adapt --config Caddyfile | rdock migrate caddy -`. Exit codes as for `traefik`.
+    Caddy(MigrateCaddyArgs),
+    /// An NGINX configuration (a file, or the output of `nginx -T`) → rdock.yaml, with a report
+    /// that accounts for every directive (beta). Constructs without a faithful translation (`if`,
+    /// `map`, `rewrite … last`, variables, …) are refused one by one and their routes written
+    /// disabled. Exit codes as for `traefik`.
+    Nginx(MigrateNginxArgs),
     /// Rewrite deprecated settings of an rdock.yaml to their replacements (and, once a later
     /// schema version exists, convert to it). Comments and formatting are kept where the
     /// change can be made as a text edit.
@@ -243,6 +252,49 @@ struct MigrateTraefikArgs {
     /// as in Compose). Off by default: the environment is never read unless asked.
     #[arg(long)]
     process_env: bool,
+    /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
+    /// standard error instead of the text summary.
+    #[arg(long, value_name = "FILE")]
+    report: Option<PathBuf>,
+    /// Exit 2 when any finding is manual (needs a decision) or dropped (no equivalent).
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+struct MigrateCaddyArgs {
+    /// Caddy's JSON configuration (`caddy adapt` output, or `GET /config/` of a running Caddy);
+    /// `-` reads standard input. A Caddyfile is refused with how to adapt it.
+    input: PathBuf,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Write a complete rdock.yaml (listeners, defaults, acme, security) instead of a fragment.
+    #[arg(long)]
+    full: bool,
+    /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
+    /// standard error instead of the text summary.
+    #[arg(long, value_name = "FILE")]
+    report: Option<PathBuf>,
+    /// Exit 2 when any finding is manual (needs a decision) or dropped (no equivalent).
+    #[arg(long)]
+    strict: bool,
+}
+
+#[derive(Args)]
+struct MigrateNginxArgs {
+    /// The main configuration file (`nginx.conf`), a file with server blocks, or the output of
+    /// `nginx -T`; `-` reads standard input. `include` is resolved against the file's directory.
+    input: PathBuf,
+    /// Write the result to this file instead of standard output.
+    #[arg(short, long)]
+    output: Option<PathBuf>,
+    /// Also read included files outside the main file's directory tree.
+    #[arg(long)]
+    include_outside: bool,
+    /// Write a complete rdock.yaml (listeners, defaults, security) instead of a fragment.
+    #[arg(long)]
+    full: bool,
     /// Write the report as JSON (schema/migrate-report.v1.json) to this file; `-` writes it to
     /// standard error instead of the text summary.
     #[arg(long, value_name = "FILE")]
@@ -441,6 +493,8 @@ fn run_parsed(
         Command::Hash(args) => hash::hash(&args),
         Command::Trust(args) => trust::trust(&args),
         Command::Migrate(MigrateCommand::Traefik(args)) => migrate::traefik(&args),
+        Command::Migrate(MigrateCommand::Caddy(args)) => migrate::caddy(&args),
+        Command::Migrate(MigrateCommand::Nginx(args)) => migrate::nginx(&args),
         Command::Migrate(MigrateCommand::Config(args)) => migrate::config(&args),
         Command::Audit(AuditCommand::Verify(args)) => audit_verify(&args),
         Command::Audit(AuditCommand::List(args)) => admin_cli::audit_list(&args),

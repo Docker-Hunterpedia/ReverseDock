@@ -1,0 +1,116 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"secure.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "secure-app:8080"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"dev.localhost"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "devapp:3000"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					],
+					"tls_connection_policies": [
+						{
+							"match": {
+								"sni": [
+									"secure.example.com"
+								]
+							},
+							"certificate_selection": {
+								"any_tag": [
+									"cert0"
+								]
+							},
+							"protocol_min": "tls1.3"
+						},
+						{}
+					]
+				}
+			}
+		},
+		"tls": {
+			"certificates": {
+				"load_files": [
+					{
+						"certificate": "/etc/ssl/secure.pem",
+						"key": "/etc/ssl/secure.key",
+						"tags": [
+							"cert0"
+						]
+					}
+				]
+			},
+			"automation": {
+				"policies": [
+					{
+						"subjects": [
+							"dev.localhost"
+						],
+						"issuers": [
+							{
+								"module": "internal"
+							}
+						]
+					}
+				]
+			}
+		}
+	}
+}

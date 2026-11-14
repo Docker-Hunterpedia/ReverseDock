@@ -1,0 +1,8 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "try_files with a named location fallback",
+    "the named location's proxy settings"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_core_module, try_files) read 2026-11-14."
+}

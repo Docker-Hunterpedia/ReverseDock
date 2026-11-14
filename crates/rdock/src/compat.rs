@@ -43,8 +43,9 @@ pub(crate) const EXIT_CODES: [(&str, &str); 3] = [
     ),
 ];
 
-/// Commands of features below stable in the maturity registry, by first word.
-const COMMAND_FEATURES: [(&str, &str); 6] = [
+/// Commands of features below stable in the maturity registry, by their first words.
+const COMMAND_FEATURES: [(&str, &str); 7] = [
+    ("migrate nginx", "migrate-nginx"),
     ("control", "cluster"),
     ("upgrade", "binary-upgrade"),
     ("cache", "http-cache"),
@@ -171,10 +172,9 @@ fn metrics() -> anyhow::Result<Value> {
 
 /// The first word of a command path decides its feature.
 fn command_feature(path: &str) -> Option<&'static str> {
-    let first = path.split(' ').next().unwrap_or_default();
     COMMAND_FEATURES
         .iter()
-        .find(|(word, _)| *word == first)
+        .find(|(words, _)| path == *words || path.starts_with(&format!("{words} ")))
         .map(|(_, feature)| *feature)
 }
 
@@ -212,7 +212,13 @@ fn cli() -> Value {
         map.remove("x-rdock-codes");
         map.remove("$id");
     }
-    outputs.insert("migrate traefik --report".to_owned(), report);
+    for command in [
+        "migrate traefik --report",
+        "migrate caddy --report",
+        "migrate nginx --report",
+    ] {
+        outputs.insert(command.to_owned(), report.clone());
+    }
     for (output, operation) in API_OUTPUTS {
         outputs.insert(
             output.to_owned(),
@@ -466,11 +472,14 @@ mod tests {
     #[test]
     fn every_command_feature_names_a_command() {
         let root = Cli::command();
-        for (word, _) in COMMAND_FEATURES {
-            assert!(
-                root.get_subcommands().any(|c| c.get_name() == word),
-                "no command {word}"
-            );
+        for (words, _) in COMMAND_FEATURES {
+            let mut command = &root;
+            for word in words.split(' ') {
+                command = command
+                    .get_subcommands()
+                    .find(|c| c.get_name() == word)
+                    .unwrap_or_else(|| panic!("no command {words}"));
+            }
         }
     }
 

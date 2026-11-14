@@ -119,6 +119,7 @@ hyper.workspace = true
 hyper-util.workspace = true
 jsonschema.workspace = true
 rdock-testkit.workspace = true
+regex.workspace = true
 rdock-wasm = { workspace = true, features = ["testing"] }
 ring.workspace = true
 rustls.workspace = true

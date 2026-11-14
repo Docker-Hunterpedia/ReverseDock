@@ -1,0 +1,157 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name app.example.com",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://127.0.0.1:8080",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the client's `Host` is passed (`pass_host_header`, the default)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_set_header Host $host",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a forwarding header ReverseDock writes itself",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_set_header X-Real-IP $remote_addr",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "a forwarding header ReverseDock writes itself; it keeps a client's `X-Forwarded-For` only from `security.trusted_proxies` (NGINX appends to whatever the client sent)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a forwarding header ReverseDock writes itself",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_set_header X-Forwarded-Proto $scheme",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 1,
+    "dropped": 0,
+    "exact": 9,
+    "items": 10,
+    "manual": 0,
+    "result": 5
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

@@ -1,0 +1,10 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "server, listen, server_name",
+    "location / with proxy_pass without a URI",
+    "the standard forwarding headers",
+    "defaults written explicitly (body limit, connect timeout)"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_core_module, ngx_http_proxy_module) read 2026-11-14."
+}

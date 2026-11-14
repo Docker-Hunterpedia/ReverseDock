@@ -248,6 +248,8 @@ Usage: rdock migrate <COMMAND>
 
 Commands:
   traefik  Traefik labels (a Compose file), a Traefik dynamic configuration or Traefik's static configuration → rdock.yaml, with a report that accounts for every label, key and flag. Exit codes: 0 migrated (findings may exist), 1 the input is not one of these, 2 an error, or with --strict anything that needs a decision (manual) or has no equivalent (dropped). Nothing is written to disk without -o or --report
+  caddy    Caddy's JSON configuration → rdock.yaml, with a report that accounts for every handler, matcher and setting. Reads the JSON `caddy adapt` writes, not a Caddyfile: `caddy adapt --config Caddyfile | rdock migrate caddy -`. Exit codes as for `traefik`
+  nginx    An NGINX configuration (a file, or the output of `nginx -T`) → rdock.yaml, with a report that accounts for every directive (beta). Constructs without a faithful translation (`if`, `map`, `rewrite … last`, variables, …) are refused one by one and their routes written disabled. Exit codes as for `traefik`
   config   Rewrite deprecated settings of an rdock.yaml to their replacements (and, once a later schema version exists, convert to it). Comments and formatting are kept where the change can be made as a text edit
   help     Print this message or the help of the given subcommand(s)
 

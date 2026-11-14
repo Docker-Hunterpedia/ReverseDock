@@ -1,0 +1,94 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"www.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "static_response",
+													"headers": {
+														"Location": [
+															"https://example.com{http.request.uri}"
+														]
+													},
+													"status_code": 301
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						},
+						{
+							"match": [
+								{
+									"host": [
+										"example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"match": [
+												{
+													"path": [
+														"/old-blog"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "static_response",
+													"headers": {
+														"Location": [
+															"https://blog.example.com/"
+														]
+													},
+													"status_code": 302
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "site:8080"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

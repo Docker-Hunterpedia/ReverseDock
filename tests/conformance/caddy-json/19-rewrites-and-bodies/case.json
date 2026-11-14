@@ -1,0 +1,12 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "request_body \u2192 max_body",
+    "rewrite uri \u2192 replace_path",
+    "strip_path_prefix and path_regexp \u2192 rewrite",
+    "error \u2192 respond",
+    "a response body (manual)",
+    "a path matcher after a rewrite (manual: Caddy matches the rewritten path)"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/request_body.caddyfiletest, rewrite_directive_permutations.caddyfiletest and uri_query_operations.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

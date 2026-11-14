@@ -1,0 +1,9 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "redir as static_response with Location",
+    "redirect keeping the path and query",
+    "a fixed redirect target"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/php_fastcgi_expanded_form.caddyfiletest (redir as static_response) at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

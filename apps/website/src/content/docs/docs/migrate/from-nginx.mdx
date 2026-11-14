@@ -1,6 +1,6 @@
 ---
 title: Migrate from NGINX
-description: Move an NGINX reverse-proxy configuration to rdock.yaml, with a directive map, five side-by-side setups, the differences that matter and a cutover plan.
+description: Move an NGINX reverse-proxy configuration to rdock.yaml with rdock migrate nginx or by hand, with a directive map, the defaults that change, five side-by-side setups, the differences that matter and a cutover plan.
 sidebar:
   order: 2
 ---
@@ -8,9 +8,9 @@ sidebar:
 import Status from '../../../../components/Status.astro';
 import { Steps } from '@astrojs/starlight/components';
 
-This page moves an NGINX configuration that proxies HTTP to backends: `server` blocks with `location`, `proxy_pass`, TLS, authentication and limits. ReverseDock does not serve static files or cache responses in v0.1; keep a small web server as a backend for files.
+This page moves an NGINX configuration that proxies HTTP to backends: `server` blocks with `location`, `proxy_pass`, TLS, authentication, static files and limits. [`rdock migrate nginx`](#rdock-migrate-nginx) translates the faithful subset for you and reports everything else; the sections after it show the same translations by hand.
 
-The NGINX facts below come from the official module documentation at nginx.org (checked 2026-10-27): [core](https://nginx.org/en/docs/http/ngx_http_core_module.html), [proxy](https://nginx.org/en/docs/http/ngx_http_proxy_module.html), [upstream](https://nginx.org/en/docs/http/ngx_http_upstream_module.html), [realip](https://nginx.org/en/docs/http/ngx_http_realip_module.html), [limit_req](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html), [auth_basic](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html) and [WebSocket proxying](https://nginx.org/en/docs/http/websocket.html).
+The NGINX facts below come from the official module documentation at nginx.org (checked 2026-10-27; the tool's section re-checked against NGINX 1.30, the stable branch, on 2026-11-14): [core](https://nginx.org/en/docs/http/ngx_http_core_module.html), [proxy](https://nginx.org/en/docs/http/ngx_http_proxy_module.html), [upstream](https://nginx.org/en/docs/http/ngx_http_upstream_module.html), [realip](https://nginx.org/en/docs/http/ngx_http_realip_module.html), [limit_req](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html), [auth_basic](https://nginx.org/en/docs/http/ngx_http_auth_basic_module.html) and [WebSocket proxying](https://nginx.org/en/docs/http/websocket.html).
 
 ## Concept map
 
@@ -37,7 +37,7 @@ The NGINX facts below come from the official module documentation at nginx.org (
 | `limit_req_zone`, `limit_req` | `rate_limit` |
 | `gzip` | `compress` |
 | `error_page` | `errors` |
-| `client_max_body_size` | `security.limits.max_body_bytes` (one value for all routes) |
+| `client_max_body_size` | `routes.<name>.max_body`, or `security.limits.max_body_bytes` for every route |
 | `large_client_header_buffers` | `security.limits.max_header_bytes`, `max_headers`, `max_uri_bytes` |
 | `client_header_timeout`, `keepalive_timeout` | `listeners.<name>.timeouts.request_header`, `idle` |
 | `proxy_connect_timeout`, `proxy_read_timeout`, `proxy_send_timeout` | `services.<name>.timeouts` or `routes.<name>.timeouts` (`connect`, `read`, `write`) |
@@ -345,6 +345,95 @@ services:
 
 ReverseDock walks `X-Forwarded-For` from the right and skips trusted addresses, like `real_ip_recursive on`. The resolved address is used by `ip_allow`, `rate_limit` and the access log. A blocked client gets 403; a client over the limit gets 429 with `Retry-After`. See [Behind a proxy](/docs/guides/behind-a-proxy/) and [Rate limiting](/docs/guides/rate-limiting/).
 
+## `rdock migrate nginx`
+
+<Status planned="v1.0" /> <Status feature="migrate-nginx" /> `rdock migrate nginx` reads an NGINX configuration and writes rdock.yaml with a [report](/docs/reference/migrate-report/) that accounts for **every directive**: exact, approximate (with the difference), manual (with what to do) or dropped (with why). It ships as beta ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)): the translation may change in a minor release, with a note.
+
+```sh
+# The routes, services and middlewares of nginx.conf and the files it includes:
+rdock migrate nginx /etc/nginx/nginx.conf -o conf.d/site.yaml
+# A complete rdock.yaml (listeners, defaults), with the report as JSON:
+rdock migrate nginx /etc/nginx/nginx.conf --full -o rdock.yaml --report report.json
+# Everything NGINX loads, from its own dump (includes resolved without reading the disk):
+nginx -T | rdock migrate nginx - --full -o rdock.yaml
+rdock validate rdock.yaml
+```
+
+- **Input:** the main file, a `conf.d` file with only `server` and `upstream` blocks (read as the inside of `http`), or the output of `nginx -T`. `include` masks are resolved against the main file's directory (NGINX resolves them against its prefix, which is that directory in the standard layout), at most 8 levels deep and 256 files, and never outside the directory tree without `--include-outside`. Files that other directives name (`auth_basic_user_file`, `ssl_certificate_key`) are never read.
+- **Refused by construct, not by file:** one `if` does not stop the other locations. A location with a construct that has no faithful translation is written `enabled: false`, so it never goes live with the wrong behaviour; the report names the construct and what to do.
+- Nothing is written to disk without `-o` or `--report`. `--strict` exits 2 when anything needs a decision or has no equivalent; exit 1 means the input is not an NGINX configuration.
+
+### What moves automatically
+
+| NGINX | Written as | Level |
+|---|---|---|
+| `server`, `listen` (address, `ssl`, `http2`, `default_server`, `proxy_protocol`), `server_name` | listeners and the routes' host matchers: exact names as `Host`, `*.example.com` (any depth) and `www.example.*` as `HostRegexp`; a wildcard server leaves out the exact names of other servers; a `server_name _` default server catches the hosts no other server names | exact; regular-expression names manual |
+| `location =`, `^~`, `~`, `~*`, prefix | routes with priorities that reproduce NGINX's choice (below) | exact; nested and named locations manual |
+| `proxy_pass` | a service per target or `upstream` block, and the path middleware of the [four URI cases](#the-four-proxy_pass-cases) | exact, or approximate where noted |
+| `upstream` with `server` (`weight`, `backup`, `down`, `max_fails`, `fail_timeout`, `max_conns`), `least_conn`, `ip_hash`, `hash $http_*`/`$cookie_*`/`$remote_addr`, `random [two]`, `keepalive` | `backends` (weight, backup), `load_balancer.policy`, `health.passive`, `retries` | exact; hashing approximate (another hash function) |
+| `proxy_set_header` | `pass_host_header`, a `headers` middleware; the forwarding headers and the WebSocket lines are built in | exact (`X-Forwarded-For` approximate: ReverseDock keeps a client's only from trusted proxies) |
+| `proxy_connect_timeout`, `proxy_read_timeout`, `proxy_send_timeout`, `proxy_buffering`, `proxy_request_buffering`, `proxy_http_version`, `proxy_hide_header`, `proxy_ssl_*` | route `timeouts`, streaming, the service's `tls` | exact or approximate |
+| `return` (status, redirect), `rewrite … permanent\|redirect`, `rewrite … break` | a fixed-status service, a `redirect` middleware on its own route, a `rewrite` middleware | exact; `return` with a body, `rewrite … last` manual |
+| `add_header [always]` | `headers.response.add` | exact with `always`; approximate without (ReverseDock adds it to every status) |
+| `client_max_body_size` | `max_body` on each route | exact |
+| `gzip`, `gzip_types`, `gzip_min_length` | `compress` with gzip | approximate |
+| `auth_basic`, `auth_basic_user_file` | `basic_auth` with `users_file` (the file is named, not read) | exact |
+| `allow …; deny all;` and `deny …; [allow all;]` | `ip_allow`, `ip_deny` | exact; mixed lists manual |
+| `root`, `alias`, `index`, `autoindex`, `expires`, `try_files $uri [$uri/] =404`, `try_files … /index.html`, `try_files $uri @backend` | `static` (root, index, listing, cache control), with `strip_prefix` for `alias`, `fallback`, or `pass_through` and the named location's service | exact; the fallback forms approximate |
+| `ssl_certificate`, `ssl_certificate_key`, `ssl_protocols`, `ssl_ciphers`, `ssl_verify_client` | `certificates` and the route's `tls.certificate`, the listener's `tls.policy` and `client_auth` | exact; protocols below TLS 1.2 manual and not written; cipher lists approximate |
+| `return 301 https://$host$request_uri` in a plain-HTTP server for names that have an HTTPS server | nothing: ReverseDock redirects by default | approximate (308 for methods other than GET) |
+
+**Refused, each with its reason** (the routes they affect are disabled where it matters): `if`, `set`, `map` other than the WebSocket idiom, `rewrite … last` and `rewrite` without a flag, named locations other than a `try_files` fallback, nested and predicate locations, `proxy_pass` with variables, Lua, njs and Perl, `fastcgi_*`, `uwsgi_*`, `scgi_*`, `auth_request` (use `forward_auth`), `error_page` (use `errors`), `proxy_cache*` (use `cache`), `limit_req` and `limit_conn` (below), `sub_filter`, `geo`, `split_clients`, `mirror`, `stream {}` and `mail {}`.
+
+### Location precedence
+
+NGINX checks `=` locations, remembers the longest matching prefix, stops if it has `^~`, otherwise tries the regular expressions in file order and falls back to the remembered prefix ([location](https://nginx.org/en/docs/http/ngx_http_core_module.html#location)). The migration writes explicit priorities in tiers, highest first, so the same location wins for every request:
+
+1. The server's own `return` and redirecting `rewrite` (they run before location selection).
+2. `=` locations, and the trailing-slash redirect: for a prefix location ending in `/` that proxies, NGINX answers the path without the slash with a 301 to the path with it; the migration writes that redirect as an exact route.
+3. `^~` prefixes, the longest first, each leaving out the longer plain prefixes that extend it (NGINX then checks the regular expressions).
+4. Regular expressions in file order (`~*` as `(?i)`).
+5. Plain prefixes, the longest first.
+
+This is proven, not assumed: a test compares the migrated routes with an independent implementation of NGINX's documented algorithm for a table of cases and hundreds of random location sets, and an end-to-end test runs rdock with a migrated configuration and checks the answering backend and the path it receives for a matrix of requests.
+
+### The four `proxy_pass` cases
+
+From [proxy_pass](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_pass): with a URI, "the part of a normalized request URI matching the location is replaced by a URI specified in the directive"; without one, the URI is passed as the client sent it.
+
+| Location and `proxy_pass` | NGINX sends for … | Written as | Level |
+|---|---|---|---|
+| any location, `http://app` (no URI) | the request URI | no path middleware | exact |
+| `location /name/` + `http://app/remote/` | `/name/x` → `/remote/x` | `rewrite` `^/name/(.*)$` → `/remote/${1}` | exact |
+| `location /strip/` + `http://app/` | `/strip/x` → `/x` | `strip_prefix: [/strip/]` | exact |
+| `location /` + `http://app/base/` | `/x` → `/base/x` | `add_prefix: /base` | exact |
+| `location /a` + `http://app/` | `/a/x` → `//x`, `/ab` → `/b` | `rewrite` `^/a/?(.*)$` → `/${1}` | approximate: ReverseDock never sends an empty segment, so `/a/x` → `/x` |
+| `location = /exact` + `http://app/elsewhere` | `/exact` → `/elsewhere` | `replace_path` | exact |
+| a regular-expression or named location with a URI | NGINX refuses the configuration | not migrated | manual |
+| any location after `rewrite … break` | the rewritten URI (the directive's URI is ignored) | the `rewrite` only | exact |
+| `http://$upstream…` (variables) | resolved at run time | not migrated | manual |
+
+The query string is kept in every case, as NGINX does. Path changes add `X-Forwarded-Prefix` or `X-Replaced-Path` for the backend, like every ReverseDock path middleware.
+
+### Defaults that change
+
+Each is a finding in the report (`nginx.default.*`). Where NGINX's default keeps behaviour and is not the unsafe one, the migration writes NGINX's value explicitly.
+
+| NGINX default (1.30) | ReverseDock default | What the migration does |
+|---|---|---|
+| `client_max_body_size 1m` ([core](https://nginx.org/en/docs/http/ngx_http_core_module.html#client_max_body_size)) | no limit | writes `max_body: 1MiB` on each route |
+| `proxy_connect_timeout 60s` ([proxy](https://nginx.org/en/docs/http/ngx_http_proxy_module.html#proxy_connect_timeout)) | `connect: 5s` | writes `timeouts.connect: 1m` on each proxied route |
+| `proxy_read_timeout`, `proxy_send_timeout 60s` | `read`, `write` 60 s | nothing (the same) |
+| `proxy_ssl_verify off`, `proxy_ssl_server_name off` | backend certificates verified, server name sent | **keeps ReverseDock's**: verification stays on (security-relevant). Opt out per service with `tls.verify: false` for a self-signed backend you accept, or name its CA with `tls.ca_file` |
+| `proxy_buffering on`, `proxy_request_buffering on` | streaming | reported; add `hold_body` where a backend needs whole request bodies |
+| `max_fails=1 fail_timeout=10s` per upstream server ([upstream](https://nginx.org/en/docs/http/ngx_http_upstream_module.html#server)) | no passive checks | writes `health.passive` (1 failure in 10 s, ejected 10 s) on services with several backends; ReverseDock doubles the ejection for repeated failures |
+| `proxy_next_upstream error timeout` | no retries | writes `retries` on connection failures and timeouts for services with several backends |
+| `proxy_set_header Host $proxy_host` | the client's `Host` | writes `pass_host_header: false` unless `Host $host` is set; with an `upstream` block NGINX sends its name, ReverseDock the backend's address (approximate) |
+| `proxy_redirect default` (rewrites `Location` of backend redirects) | `Location` passed unchanged | reported |
+| `gzip_static off` | precompressed files served | writes `precompressed: []` on `static` |
+| unknown hosts go to the default server | 404 | a `server_name _` catch-all is written; a named default server keeps its names and the difference is reported |
+| `limit_req`: excess requests delayed, then 503 ([limit_req](https://nginx.org/en/docs/http/ngx_http_limit_req_module.html)) | `rate_limit` answers 429 at once | not migrated in this version; write `rate_limit` if 429 at once is acceptable |
+
 ## Differences and gotchas
 
 ### Location matching and route priority
@@ -381,14 +470,14 @@ NGINX passes the request URI as the client sent it when `proxy_pass` has no URI 
 
 | NGINX default | ReverseDock default |
 |---|---|
-| `client_max_body_size 1m` (413) | no body limit; set `security.limits.max_body_bytes` (413) |
+| `client_max_body_size 1m` (413) | no body limit; set `max_body` on a route or `security.limits.max_body_bytes` (413) |
 | `large_client_header_buffers 4 8k` | 64 KiB of request line and headers, 100 headers (431), 8 KiB request target (414) |
 | `client_header_timeout 60s` (408) | `listeners.<name>.timeouts.request_header` 10 s |
 | `keepalive_timeout 75s` | `listeners.<name>.timeouts.idle` 60 s |
 | `proxy_connect_timeout 60s` | `services.<name>.timeouts.connect` 5 s |
 | `proxy_read_timeout 60s`, `proxy_send_timeout 60s`, between two operations | `read` 60 s, `write` 60 s, also per operation |
 
-The body limit is global in v0.1. An upload endpoint that needs more than the rest of the site raises the limit for every route. See [Timeouts and limits](/docs/guides/timeouts-and-limits/) and [HTTP behaviour](/docs/reference/http-behaviour/).
+Set `max_body` on the route that needs a different limit, or `security.limits.max_body_bytes` for every route. See [Timeouts and limits](/docs/guides/timeouts-and-limits/) and [HTTP behaviour](/docs/reference/http-behaviour/).
 
 ### Other behaviour
 

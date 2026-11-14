@@ -1,0 +1,381 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80 default_server",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name _",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a fixed answer with status 404 (`respond`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "return 404",
+        "kind": "directive",
+        "line": 6
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name example.com www.example.com",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://main:80",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 13
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 14
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name *.example.com",
+        "kind": "directive",
+        "line": 15
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 16
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://tenants:80",
+        "kind": "directive",
+        "line": 16
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 18
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 19
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name .example.org",
+        "kind": "directive",
+        "line": 20
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 21
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://org:80",
+        "kind": "directive",
+        "line": 21
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 23
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 24
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name mail.*",
+        "kind": "directive",
+        "line": 25
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 26
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://mail:80",
+        "kind": "directive",
+        "line": 26
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 28
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 29
+      }
+    },
+    {
+      "code": "nginx.directive.manual",
+      "hint": "write the names as `Host` or `HostRegexp` matchers",
+      "level": "manual",
+      "message": "regular-expression names ~^(?<user>.+)\\.users\\.example\\.net$ are not migrated (their captures may be used elsewhere)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name ~^(?<user>.+)\\.users\\.example\\.net$",
+        "kind": "directive",
+        "line": 30
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 31
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://users:80",
+        "kind": "directive",
+        "line": 31
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.route.disabled",
+      "hint": "replace what was not migrated, then remove `enabled: false`",
+      "level": "manual",
+      "message": "route `user-users-example-net-root` is written disabled (`enabled: false`): a regular-expression server name was not migrated",
+      "security": true,
+      "target": "routes.user-users-example-net-root"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 29,
+    "items": 30,
+    "manual": 1,
+    "result": 5
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

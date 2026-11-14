@@ -14,6 +14,8 @@ publish.workspace = true
 rdock-config.workspace = true
 rdock-model.workspace = true
 rdock-provider-docker.workspace = true
+rdock-rules.workspace = true
+regex.workspace = true
 schemars.workspace = true
 serde.workspace = true
 serde-saphyr = { workspace = true, features = ["serialize"] }
@@ -22,7 +24,9 @@ similar.workspace = true
 thiserror.workspace = true
 
 [dev-dependencies]
+proptest.workspace = true
 serde.workspace = true
+tempfile.workspace = true
 
 [lints]
 workspace = true

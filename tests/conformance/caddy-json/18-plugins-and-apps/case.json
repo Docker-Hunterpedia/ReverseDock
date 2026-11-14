@@ -1,0 +1,9 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "admin, logging, storage",
+    "an unknown app (manual)",
+    "templates, push, metrics, a plugin handler"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/global_options.caddyfiletest, push.caddyfiletest and metrics_syntax.caddyfiletest (the plugin shapes are illustrative) at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

@@ -1,0 +1,12 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "root and index",
+    "try_files SPA fallback (approximate)",
+    "try_files $uri =404",
+    "expires \u2192 cache_control",
+    "alias \u2192 strip_prefix + static",
+    "autoindex \u2192 listing"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_core_module (root, alias, try_files), ngx_http_headers_module (expires), ngx_http_autoindex_module) read 2026-11-14."
+}

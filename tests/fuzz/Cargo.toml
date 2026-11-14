@@ -30,6 +30,9 @@ rdock-proxy = { path = "../../crates/rdock-proxy" }
 rdock-rules = { path = "../../crates/rdock-rules" }
 rdock-tls = { path = "../../crates/rdock-tls" }
 serde_json = "1.0.154"
+# The NGINX parser of `rdock migrate nginx`, compiled in from its source file (`src/lib.rs`): the
+# migration crate itself would bring the Docker provider into this lock.
+thiserror = "2.0.21"
 tokio = { version = "1.54.1", features = ["io-util", "rt", "time"] }
 
 [[bin]]
@@ -98,6 +101,13 @@ bench = false
 [[bin]]
 name = "json_patch"
 path = "fuzz_targets/json_patch.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "nginx_parser"
+path = "fuzz_targets/nginx_parser.rs"
 test = false
 doc = false
 bench = false

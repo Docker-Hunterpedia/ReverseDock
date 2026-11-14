@@ -4383,6 +4383,7 @@ dependencies = [
  "rdock-testkit",
  "rdock-tls",
  "rdock-wasm",
+ "regex",
  "ring",
  "rustix",
  "rustls",
@@ -4717,14 +4718,18 @@ dependencies = [
 name = "rdock-migrate"
 version = "0.9.0-alpha.1"
 dependencies = [
+ "proptest",
  "rdock-config",
  "rdock-model",
  "rdock-provider-docker",
+ "rdock-rules",
+ "regex",
  "schemars",
  "serde",
  "serde-saphyr",
  "serde_json",
  "similar",
+ "tempfile",
  "thiserror 2.0.21",
 ]
 

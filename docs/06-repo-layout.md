@@ -46,7 +46,7 @@ reversedock/
 │   ├── rdock-admin/                # axum API + OpenAPI + embedded dashboard
 │   ├── rdock-cloudflare/           # IP sync, DNS-01, Access JWT, Origin CA
 │   ├── rdock-dns-providers/        # DNS-01 adapters: Route 53, Google, Azure, DigitalOcean, Hetzner, deSEC, RFC 2136 (ADR-0026)
-│   ├── rdock-migrate/              # traefik/nginx → rdock.yaml
+│   ├── rdock-migrate/              # traefik/caddy/nginx → rdock.yaml
 │   ├── rdock-testkit/              # test harness (upstreams, Pebble, toxiproxy, containers)
 │   └── providers/
 │       ├── rdock-provider-file/
@@ -89,6 +89,8 @@ reversedock/
 │   ├── e2e/                        # (later) Docker-based scenarios; the v0.1 e2e suites live in crates/rdock/tests
 │   ├── conformance/traefik-labels/ # container fixtures + expected routing tables; coverage.json (generated from labels/coverage.rs)
 │   ├── conformance/traefik-compose/# (1.0) Compose corpus: input, case.json, expected.yaml and report.json of `rdock migrate traefik` (`just migrate-golden`)
+│   ├── conformance/caddy-json/     # (1.0) Caddy corpus: Caddyfile, adapted JSON, expected.yaml and report.json of `rdock migrate caddy` (`just caddy-corpus` re-adapts)
+│   ├── conformance/nginx/          # (1.0) NGINX corpus: configuration, expected.yaml and report.json of `rdock migrate nginx`
 │   ├── conformance/traefik-diff/   # (1.0) differential test against a pinned Traefik: harness.py, test_harness.py, allowlist.json (workflow `traefik-diff`)
 │   ├── conformance/http-cache/     # (v0.8) harness for http-tests/cache-tests: rdock.yaml (the cache at safe defaults), summarize.mjs (the gate), allowlist.json (test id → reason), README
 │   ├── conformance/gateway-api/    # Gateway API v1.7.0 suite: Go module, options.yaml, run.sh (kind), check-report.py; reports are added by release PRs or a follow-up PR from a run on the release tag

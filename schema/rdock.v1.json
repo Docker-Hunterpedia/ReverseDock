@@ -831,7 +831,14 @@
       "level": "beta",
       "locations": [],
       "since": "v1.0",
-      "summary": "The JSON report of `rdock migrate traefik --report` (`schema/migrate-report.v1.json`) and its finding codes"
+      "summary": "The JSON report of `rdock migrate traefik|caddy|nginx --report` (`schema/migrate-report.v1.json`) and its finding codes"
+    },
+    {
+      "id": "migrate-nginx",
+      "level": "beta",
+      "locations": [],
+      "since": "v1.0",
+      "summary": "`rdock migrate nginx`: an NGINX configuration to rdock.yaml (the faithful directive subset; ADR-0033)"
     },
     {
       "id": "terraform-provider",

@@ -1,0 +1,11 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "return 301 https://$host$request_uri recognised",
+    "ssl_certificate files (never read)",
+    "listen ... ssl, http2",
+    "ssl_protocols TLSv1.2 TLSv1.3"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_ssl_module, ngx_http_rewrite_module) read 2026-11-14.",
+  "full": true
+}

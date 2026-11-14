@@ -1,0 +1,8 @@
+{
+  "input": "dump.txt",
+  "exercises": [
+    "an nginx -T dump",
+    "includes resolved inside the dump"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_core_module (include); the dump format of `nginx -T`) read 2026-11-14."
+}

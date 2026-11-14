@@ -1,0 +1,168 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `websecure`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 443 ssl",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "HTTP/2 is on for TLS listeners by default",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http2 on",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name grpc.example.com",
+        "kind": "directive",
+        "line": 6
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `certificates.grpc` (the files are named, never read)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_certificate /etc/ssl/grpc/fullchain.pem",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ `certificates.grpc.key_file` (never read)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "ssl_certificate_key /etc/ssl/grpc/privkey.pem",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /helloworld.Greeter/",
+        "kind": "directive",
+        "line": 9
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is; gRPC to the backend",
+      "source": {
+        "file": "nginx.conf",
+        "item": "grpc_pass grpc://greeter:50051",
+        "kind": "directive",
+        "line": 10
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /api/",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); `/api/` is replaced by `/v2/` (a `rewrite`; the query is kept)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://unix:/run/app/app.sock:/v2/",
+        "kind": "directive",
+        "line": 13
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 0,
+    "dropped": 0,
+    "exact": 11,
+    "items": 11,
+    "manual": 0,
+    "result": 5
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

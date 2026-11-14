@@ -1,0 +1,8 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "php_fastcgi expansion: file matchers and the fastcgi transport (manual)",
+    "routes after an untranslatable matcher written disabled"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/php_fastcgi_matcher.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

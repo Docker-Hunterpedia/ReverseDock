@@ -1,0 +1,10 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "weak protocols refused (nginx.tls.weak)",
+    "ssl_ciphers",
+    "ssl_verify_client on \u2192 client_auth required"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_ssl_module) read 2026-11-14.",
+  "full": true
+}

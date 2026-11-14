@@ -1,0 +1,312 @@
+{
+  "findings": [
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "process settings: no equivalent needed",
+      "source": {
+        "file": "nginx.conf",
+        "item": "user nginx",
+        "kind": "directive",
+        "line": 2
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "process settings: no equivalent needed",
+      "source": {
+        "file": "nginx.conf",
+        "item": "worker_processes auto",
+        "kind": "directive",
+        "line": 3
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "ReverseDock writes its own log to standard error (`rdock run --log <level>`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "error_log /var/log/nginx/error.log warn",
+        "kind": "directive",
+        "line": 4
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "process settings: no equivalent needed",
+      "source": {
+        "file": "nginx.conf",
+        "item": "pid /run/nginx.pid",
+        "kind": "directive",
+        "line": 5
+      }
+    },
+    {
+      "code": "nginx.directive.unsupported",
+      "level": "dropped",
+      "message": "connection processing settings have no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "events",
+        "kind": "directive",
+        "line": 7
+      }
+    },
+    {
+      "code": "nginx.directive.unsupported",
+      "level": "dropped",
+      "message": "connection processing settings have no equivalent",
+      "source": {
+        "file": "nginx.conf",
+        "item": "worker_connections 1024",
+        "kind": "directive",
+        "line": 8
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "hint": "write `tcp_routes`/`tcp_services` (or `udp_*`) by hand; `HostSNI` and `tls.passthrough` replace `ssl_preread`",
+      "level": "manual",
+      "message": "the `stream` block (TCP/UDP or mail proxying) is not migrated in this version",
+      "source": {
+        "file": "nginx.conf",
+        "item": "stream",
+        "kind": "directive",
+        "line": 11
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside the `stream` block, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 12
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside the `stream` block, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 5432",
+        "kind": "directive",
+        "line": 13
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside the `stream` block, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass db:5432",
+        "kind": "directive",
+        "line": 14
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "the `mail` block (TCP/UDP or mail proxying) is not migrated in this version",
+      "source": {
+        "file": "nginx.conf",
+        "item": "mail",
+        "kind": "directive",
+        "line": 18
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside the `mail` block, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 19
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside the `mail` block, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 25",
+        "kind": "directive",
+        "line": 20
+      }
+    },
+    {
+      "code": "nginx.refused",
+      "level": "manual",
+      "message": "inside the `mail` block, which is not migrated",
+      "source": {
+        "file": "nginx.conf",
+        "item": "protocol smtp",
+        "kind": "directive",
+        "line": 21
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "the `http` block: its settings are inherited by the servers below",
+      "source": {
+        "file": "nginx.conf",
+        "item": "http",
+        "kind": "directive",
+        "line": 25
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "access logging is on: `observability.access_log.enabled: true` (with `--full`); the file and the format are ReverseDock's (JSON to standard output)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "access_log /var/log/nginx/access.log",
+        "kind": "directive",
+        "line": 26
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "I/O tuning: no equivalent needed",
+      "source": {
+        "file": "nginx.conf",
+        "item": "sendfile on",
+        "kind": "directive",
+        "line": 27
+      }
+    },
+    {
+      "code": "nginx.directive.approximate",
+      "level": "approximate",
+      "message": "client-side timeouts are per listener here (`listeners.<name>.timeouts`); written on the listeners with `--full`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "keepalive_timeout 65",
+        "kind": "directive",
+        "line": 28
+      }
+    },
+    {
+      "code": "nginx.directive.unknown",
+      "level": "dropped",
+      "message": "`unknown_module_directive` is not a directive this tool knows",
+      "source": {
+        "file": "nginx.conf",
+        "item": "unknown_module_directive on",
+        "kind": "directive",
+        "line": 29
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "a virtual server → routes for its names on its listeners",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server",
+        "kind": "directive",
+        "line": 30
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ listener `web`",
+      "source": {
+        "file": "nginx.conf",
+        "item": "listen 80",
+        "kind": "directive",
+        "line": 31
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "→ the routes' host matchers (exact names; wildcards of any depth as `HostRegexp`)",
+      "source": {
+        "file": "nginx.conf",
+        "item": "server_name top.example.com",
+        "kind": "directive",
+        "line": 32
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "prefix → `PathPrefix`, the longest first, below the regular expressions",
+      "source": {
+        "file": "nginx.conf",
+        "item": "location /",
+        "kind": "directive",
+        "line": 33
+      }
+    },
+    {
+      "code": "nginx.directive.exact",
+      "level": "exact",
+      "message": "`Host` is the backend's address (NGINX's default `$proxy_host`); the request URI is passed as it is",
+      "source": {
+        "file": "nginx.conf",
+        "item": "proxy_pass http://top:80",
+        "kind": "directive",
+        "line": 33
+      }
+    },
+    {
+      "code": "nginx.default.body_limit",
+      "level": "exact",
+      "message": "NGINX's default request body limit (`client_max_body_size 1m`) is written as `max_body: 1MiB` on each route (ReverseDock has no limit by default)"
+    },
+    {
+      "code": "nginx.default.buffering",
+      "level": "approximate",
+      "message": "NGINX buffers requests and responses by default (`proxy_buffering on`, `proxy_request_buffering on`), which protects backends from slow clients; ReverseDock streams both"
+    },
+    {
+      "code": "nginx.default.connect_timeout",
+      "level": "exact",
+      "message": "NGINX's default connect timeout (`proxy_connect_timeout 60s`) is written as `timeouts.connect: 1m` on each proxied route (ReverseDock's default is 5s)"
+    },
+    {
+      "code": "nginx.default.proxy_redirect",
+      "level": "approximate",
+      "message": "NGINX rewrites `Location` and `Refresh` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged, so a backend that redirects to its own address must use relative or public URLs"
+    },
+    {
+      "code": "nginx.default.unmatched_host",
+      "level": "approximate",
+      "message": "requests for hosts no `server_name` lists go to the default server of their listener in NGINX; the migrated routes keep the default server's names, so ReverseDock answers such requests with 404 (add a catch-all route if they mattered)"
+    }
+  ],
+  "rdock_version": "<version>",
+  "source": {
+    "checked_against": "NGINX 1.30",
+    "files": [
+      "nginx.conf"
+    ],
+    "kind": "nginx"
+  },
+  "summary": {
+    "approximate": 3,
+    "dropped": 3,
+    "exact": 10,
+    "items": 24,
+    "manual": 8,
+    "result": 5
+  },
+  "tool": "rdock migrate nginx",
+  "version": 1
+}

@@ -1,0 +1,87 @@
+---
+title: Migrate from Caddy
+description: Move a Caddy v2 configuration to rdock.yaml with rdock migrate caddy (from the JSON caddy adapt writes), with a concept map, what moves automatically, the traps and the defaults that change.
+sidebar:
+  order: 3
+---
+
+import Status from '../../../../components/Status.astro';
+
+This page moves a Caddy v2 setup: sites with `reverse_proxy`, `file_server`, redirects, headers, authentication and automatic HTTPS. `rdock migrate caddy` translates Caddy's JSON configuration and reports everything it cannot carry over.
+
+The Caddy facts below are those of Caddy v2.11.9, the latest release on 2026-11-14, from its [JSON reference](https://caddyserver.com/docs/json/), the [Caddyfile reference](https://caddyserver.com/docs/caddyfile) and the Caddyfile adapter's source and tests at the [`v2.11.9` tag](https://github.com/caddyserver/caddy/tree/v2.11.9) (all read 2026-11-14).
+
+## `rdock migrate caddy`
+
+<Status planned="v1.0" /> `rdock migrate caddy` reads **Caddy's JSON**, not the Caddyfile ([ADR-0033](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0033-v1-0-stable.md)): what a Caddyfile means lives in Caddy's adapter (directive order, snippets, `import`, what a site address implies), so the tool reads the adapter's output. Caddy users have the `caddy` binary:
+
+```sh
+# A Caddyfile: adapt it with Caddy, then migrate the JSON.
+caddy adapt --config Caddyfile | rdock migrate caddy - -o conf.d/site.yaml
+# The configuration of a running Caddy (admin API on localhost:2019), as a complete rdock.yaml:
+curl -s localhost:2019/config/ | rdock migrate caddy - --full -o rdock.yaml --report report.json
+rdock validate rdock.yaml
+```
+
+A Caddyfile given directly is refused (exit 1) with that command. Every handler, matcher and setting gets one finding in the [report](/docs/reference/migrate-report/): exact, approximate (with the difference), manual (with what to do) or dropped (with why); findings point at the JSON pointer of the item (`/apps/http/servers/srv0/routes/0/handle/0`). Nothing is written to disk without `-o` or `--report`, and `--strict` exits 2 when anything needs a decision.
+
+### How routes are translated
+
+Caddy runs **every** matching route of a server in order and chains their handlers until one answers ([routes](https://caddyserver.com/docs/json/apps/http/servers/routes/): matcher sets are OR-ed, matchers in a set AND-ed; a route in a `group` is skipped once another route of the group matched; `terminal` stops the list). ReverseDock picks **one** route per request. The migration follows every path through the route list: each path that ends in a handler that answers (`reverse_proxy`, `file_server`, `static_response`, a redirect) becomes one route, whose rule is the conjunction of the matchers on the path, whose middlewares are the handlers before it in Caddy's order, and whose priority keeps Caddy's order. A conditional middleware (say `basic_auth /admin/*` before `reverse_proxy`) splits the route in two: one with the matcher and the middleware, one without.
+
+**Never widened:** a route whose path crosses a matcher or handler that cannot be translated is written `enabled: false`, and so is every later route that would otherwise catch requests the untranslated matcher kept away from it. A matcher that comes after a rewrite is also refused: Caddy matches the rewritten URI, ReverseDock the request's own.
+
+### Concept map
+
+| Caddy (JSON) | ReverseDock | Level |
+|---|---|---|
+| a server's `listen` | `listeners` (`:80` → `web`, `:443` → `websecure`, others by port); TLS where automatic HTTPS applies or connection policies exist | exact |
+| `host` matcher | `Host` (one-label `*` in both) | exact |
+| `path` matcher (case-insensitive in Caddy: "MatchPath case-insensitively matches requests by the URI's path") | a case-insensitive `PathRegexp`, or `Path`/`PathPrefix` when the pattern has no letters | exact |
+| `path_regexp`, `method`, `header` (`*` wildcards, null = absent), `header_regexp`, `query`, `client_ip`, `not` | `PathRegexp`, `Method`, `Header`/`HeaderRegexp`, `Query`/`QueryRegexp`, `ClientIP`, `!(…)` | exact |
+| `remote_ip` | `ClientIP` | approximate: the connection's address in Caddy, the address resolved through `security.trusted_proxies` here |
+| `expression`, `file`, `vars`, `vars_regexp`, `protocol`, `tls`, plugin matchers | — | manual |
+| `subroute`, `handle`, `handle_path`, `route`, `invoke` (named routes) | flattened into routes in order | exact |
+| `reverse_proxy` | a service: `upstreams` → `backends`, selection policy, health checks, transport TLS and timeouts | exact, approximate where noted below |
+| `header_up`, `header_down` | a `headers` middleware; `X-Real-IP {remote_host}` and the other forwarding headers are built in | exact; other placeholders manual |
+| the expanded `forward_auth` directive | `forward_auth` (address and `copy_headers`) | approximate: the auth service gets `Host` set to its own address |
+| `file_server` with `root` (`vars`) | `static` (`root`, `index`, `listing` for `browse`, `precompressed`, `pass_through` for `pass_thru`) | exact; hidden-file rules approximate |
+| the SPA `try_files {path} /index.html` | `static.fallback` | approximate: only for GET and HEAD whose last segment has no `.` |
+| `static_response` with a status, `error` | a fixed-status service (`respond`) | exact; a body is manual |
+| `redir` (a `static_response` with `Location`) | `redirect` (`scheme`/`hostname` for `…{uri}`, a fixed target otherwise) | exact; other placeholders manual |
+| `headers` (`set`, `add`, `delete`, `deferred`) | `headers` | exact; `replace` and `require` manual |
+| `rewrite` (`uri`, `strip_path_prefix`, `strip_path_suffix`, `path_regexp`) | `replace_path`, `add_prefix`, `rewrite` (case-insensitive prefix strip, as Caddy) | exact; `query`, `method`, `uri_substring` manual |
+| `encode` | `compress` (gzip, zstd, br; `minimum_length`, content types) | approximate |
+| `authentication` with `http_basic` | `basic_auth` (bcrypt and argon2id hashes kept, never plaintext) | exact |
+| `request_body.max_size` | the route's `max_body` | exact |
+| `tls` app: `load_files` with a connection policy | `certificates` and the routes' `tls.certificate` | exact |
+| `tls` app: ACME issuer (email, CA, EAB, challenges, DNS provider) | `acme` (with `--full`); DNS providers with an adapter (Cloudflare, DigitalOcean, Hetzner, deSEC, Route 53, Google Cloud DNS) with their credentials as `${env:…}` references | exact; credentials never copied |
+| `tls` app: `internal` issuer | the local CA for private names (`.localhost`, `.internal`, `.test`, private addresses) | exact for those; manual for public names |
+| `automatic_https` (`disable`, `disable_redirects`, `skip`) | `tls.auto: false` on the routes; `redirect_http_to_https: false` under `defaults` | approximate (the redirect setting is global here) |
+| `php_fastcgi` (FastCGI transport and `file` matchers), `templates`, `map`, `intercept`, `acme_server`, `metrics` routes, plugins, `layer4`, `pki`, on-demand TLS, storage modules | — | manual or dropped, each reported |
+
+### Defaults that change
+
+Each is a finding in the report (`caddy.default.*`).
+
+| Caddy default (2.11.9) | ReverseDock default | What the migration does |
+|---|---|---|
+| `reverse_proxy` selection policy `random` ([reverse_proxy](https://caddyserver.com/docs/json/apps/http/servers/routes/handle/reverse_proxy/): "The default policy is random selection") | `round_robin` | writes `load_balancer.policy: random` |
+| `dial_timeout` 3 s ([HTTP transport](https://caddyserver.com/docs/json/apps/http/servers/routes/handle/reverse_proxy/transport/http/)) | `connect` 5 s | writes `timeouts.connect: 3s` |
+| no response timeout (`response_header_timeout`, `read_timeout`: "Default: No timeout") | `read` 60 s between two reads | reported; raise `timeouts.read` on slow services |
+| for HTTPS upstreams, `Host` is the upstream's address since 2.11 (`RequestHeaderOps` of the HTTP transport, `httptransport.go` in Caddy's reverse-proxy module) | the client's `Host` | writes `pass_host_header: false` on those services, unless `header_up Host {host}` |
+| backend certificates verified | verified | nothing (the same) |
+| a request no handler answers gets an empty `200` | `404` | reported |
+| automatic HTTPS for site names, HTTP redirected | the same (`tls: auto` and `redirect_http_to_https` under `defaults`) | nothing |
+| `encode` minimum length 512 bytes | 1 KiB | writes `min_size: 512B` |
+| `file_server` serves no precompressed sidecars unless asked | serves them | writes `precompressed: []` |
+| `basic_auth` realm `restricted` | none | writes `realm: restricted` |
+
+### What does not move
+
+- **Response handling:** `handle_response`, `intercept`, `copy_response` and `handle_errors` (use the `errors` middleware for error pages).
+- **Placeholders** in header values, redirect targets and paths, other than the forwarding headers and `{uri}` at the end of a redirect: ReverseDock does not evaluate them.
+- **FastCGI** (`php_fastcgi`): run PHP behind an HTTP server (PHP-FPM with a small web server, or FrankenPHP's HTTP mode) and proxy to it.
+- **Logging:** access logs are global (`observability.access_log`), the process log level is `rdock run --log`.
+- **The admin API:** ReverseDock's is a different API (`admin`); nothing carries over.
+- **Storage:** certificates are requested again into ReverseDock's data directory; mind the CA's rate limits when many names move at once.

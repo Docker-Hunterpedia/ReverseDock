@@ -552,6 +552,80 @@ fn migrate_traefik_reports_and_exits_as_documented() {
     );
 }
 
+/// `rdock migrate caddy` (ADR-0033): adapted JSON in, a Caddyfile refused with exit 1 and how to
+/// adapt it, `--strict` exits 2 when something is manual, `--full` writes listeners.
+#[test]
+fn migrate_caddy_reports_and_exits_as_documented() {
+    let dir = tempfile::tempdir().unwrap();
+    let json = dir.path().join("caddy.json");
+    std::fs::write(
+        &json,
+        r#"{"apps":{"http":{"servers":{"srv0":{"listen":[":443"],"routes":[{"match":[{"host":["app.example.com"]}],"handle":[{"handler":"subroute","routes":[{"handle":[{"handler":"reverse_proxy","upstreams":[{"dial":"app:8080"}]}]}]}],"terminal":true}]}}}}}"#,
+    )
+    .unwrap();
+    let path = json.to_str().unwrap();
+    let report = dir.path().join("report.json");
+    let out = rdock(&[
+        "migrate",
+        "caddy",
+        path,
+        "--full",
+        "--strict",
+        "--report",
+        report.to_str().unwrap(),
+    ]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(stdout(&out).contains("Host(`app.example.com`)"));
+    assert!(stdout(&out).contains("websecure"));
+    let parsed: serde_json::Value =
+        serde_json::from_str(&std::fs::read_to_string(&report).unwrap()).unwrap();
+    assert_eq!(parsed["source"]["kind"], "caddy");
+    let caddyfile = dir.path().join("Caddyfile");
+    std::fs::write(
+        &caddyfile,
+        "app.example.com {\n\treverse_proxy app:8080\n}\n",
+    )
+    .unwrap();
+    let out = rdock(&["migrate", "caddy", caddyfile.to_str().unwrap()]);
+    assert_eq!(out.status.code(), Some(1), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("caddy adapt"));
+    std::fs::write(
+        &json,
+        r#"{"apps":{"http":{"servers":{"srv0":{"listen":[":80"],"routes":[{"handle":[{"handler":"templates"},{"handler":"static_response","status_code":200}]}]}}}}}"#,
+    )
+    .unwrap();
+    assert_eq!(
+        rdock(&["migrate", "caddy", path, "--strict"]).status.code(),
+        Some(2)
+    );
+}
+
+/// `rdock migrate nginx` (ADR-0033, beta): includes resolved against the file's directory,
+/// exit 1 for something that is not an NGINX configuration, 2 with `--strict` when a construct
+/// is refused.
+#[test]
+fn migrate_nginx_reports_and_exits_as_documented() {
+    let dir = tempfile::tempdir().unwrap();
+    std::fs::create_dir(dir.path().join("conf.d")).unwrap();
+    std::fs::write(
+        dir.path().join("conf.d/site.conf"),
+        "server { listen 80; server_name app.example.com; location / { proxy_pass http://app:8080; } }\n",
+    )
+    .unwrap();
+    let conf = dir.path().join("nginx.conf");
+    std::fs::write(&conf, "http { include conf.d/*.conf; }\n").unwrap();
+    let path = conf.to_str().unwrap();
+    let out = rdock(&["migrate", "nginx", path, "--strict"]);
+    assert_eq!(out.status.code(), Some(0), "{out:?}");
+    assert!(stdout(&out).contains("Host(`app.example.com`)"));
+    std::fs::write(&conf, "http { server { listen 80; location / { if ($x) { return 403; } proxy_pass http://a:80; } } }\n").unwrap();
+    let out = rdock(&["migrate", "nginx", path, "--strict"]);
+    assert_eq!(out.status.code(), Some(2), "{out:?}");
+    assert!(String::from_utf8_lossy(&out.stderr).contains("nginx.refused"));
+    std::fs::write(&conf, "{\"apps\": {}}\n").unwrap();
+    assert_eq!(rdock(&["migrate", "nginx", path]).status.code(), Some(1));
+}
+
 /// `rdock schema --migrate-report` prints the committed report schema.
 #[test]
 fn the_migrate_report_schema_is_printed() {

@@ -1,0 +1,11 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "auth_basic + auth_basic_user_file \u2192 basic_auth users_file",
+    "allow \u2026; deny all \u2192 ip_allow",
+    "deny \u2026 \u2192 ip_deny",
+    "mixed rules (manual, route disabled)",
+    "auth_basic off"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_auth_basic_module, ngx_http_access_module) read 2026-11-14."
+}

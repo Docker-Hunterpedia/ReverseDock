@@ -60,7 +60,8 @@ A setting that is not listed below belongs to the feature that lists its nearest
 | Tenants of the admin API (`tenants`) | v0.9 | `tenants` |
 | Listener socket and HTTP/2 options, the TLS handshake bound, shared TLS session resumption and runtime threads (`tuning`) | v0.9 | `runtime`, `listeners.<name>.socket`, `listeners.<name>.http2`, `listeners.<name>.tls.max_handshakes`, `listeners.<name>.tls.tickets`, `listeners.<name>.tls.session_cache` |
 | The Go client of the admin API (`clients/go`, generated; not tagged yet) (`go-client`) | v0.5 | outside the configuration file |
-| The JSON report of `rdock migrate traefik --report` (`schema/migrate-report.v1.json`) and its finding codes (`migrate-report`) | v1.0 | outside the configuration file |
+| The JSON report of `rdock migrate traefik\|caddy\|nginx --report` (`schema/migrate-report.v1.json`) and its finding codes (`migrate-report`) | v1.0 | outside the configuration file |
+| `rdock migrate nginx`: an NGINX configuration to rdock.yaml (the faithful directive subset; ADR-0033) (`migrate-nginx`) | v1.0 | outside the configuration file |
 | The Terraform and OpenTofu provider (`clients/terraform`; not published yet) (`terraform-provider`) | v0.8 | outside the configuration file |
 
 ## Stable

@@ -55,9 +55,13 @@ compat:
     RDOCK_UPDATE_GOLDEN=1 cargo test --quiet --locked -p rdock-provider-docker --test conformance label_snapshot_is_current
     python3 -I scripts/compat.py snapshot image > schema/compat/image.json
 
-# Rewrite the golden files of the Traefik migration corpus (tests/conformance/traefik-compose); review the diff
+# Rewrite the golden files of the migration corpora (tests/conformance/traefik-compose, caddy-json, nginx); review the diff
 migrate-golden:
-    RDOCK_UPDATE_GOLDEN=1 cargo test --quiet --locked -p rdock-migrate --test corpus
+    RDOCK_UPDATE_GOLDEN=1 cargo test --quiet --locked -p rdock-migrate --test corpus --test corpus_caddy --test corpus_nginx
+
+# Regenerate tests/conformance/caddy-json/*/caddy.json from each case's Caddyfile with the pinned Caddy image (needs Docker); review the diff, then run `just migrate-golden`
+caddy-corpus:
+    tests/conformance/caddy-json/adapt.sh
 
 # The compatibility gate against the last release tag (needs `git fetch --tags`; report mode before 1.0.0-rc.1, RDOCK_COMPAT_MODE forces one)
 compat-check:

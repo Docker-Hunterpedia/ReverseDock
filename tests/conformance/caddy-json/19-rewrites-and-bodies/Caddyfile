@@ -1,0 +1,12 @@
+# Exercises: request_body, rewrite, uri strip_prefix and path_regexp, error, respond with a body (manual), matchers after a rewrite (disabled).
+rewrites.example.com {
+	request_body {
+		max_size 10MB
+	}
+	rewrite /about /about.html
+	uri strip_prefix /app
+	uri path_regexp ^/v([0-9]+)/ /api/v$1/
+	error /forbidden/* 403
+	respond /hello "Hello" 200
+	reverse_proxy app:8080
+}

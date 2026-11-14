@@ -72,6 +72,163 @@ const fn code(id: &'static str, level: Level, summary: &'static str, help: &'sta
 
 /// Every finding code. Codes are stable: one is never reused for another meaning.
 pub static CODES: &[Code] = &[
+    // --- Caddy (adapted JSON) ---------------------------------------------------------------
+    code(
+        "caddy.config.exact",
+        Level::Exact,
+        "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) translated with the same behaviour.",
+        "None.",
+    ),
+    code(
+        "caddy.config.approximate",
+        Level::Approximate,
+        "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) translated with a stated difference (the message says which).",
+        "Read the difference.",
+    ),
+    code(
+        "caddy.config.manual",
+        Level::Manual,
+        "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) that needs a decision: left out, or its routes written disabled (the message says why).",
+        "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+    ),
+    code(
+        "caddy.config.unsupported",
+        Level::Dropped,
+        "A top-level key of Caddy's JSON (`admin`, `logging`, `storage`, an app) without an equivalent, left out (the message says why).",
+        "None, or the alternative the message names.",
+    ),
+    code(
+        "caddy.default.dial_timeout",
+        Level::Exact,
+        "Caddy's default dial timeout (3s) written explicitly as `timeouts.connect: 3s` (ReverseDock's default is 5s).",
+        "Remove it to use ReverseDock's default.",
+    ),
+    code(
+        "caddy.default.host_header",
+        Level::Exact,
+        "Since 2.11 Caddy sends the upstream's address as `Host` to HTTPS backends: written as `pass_host_header: false`.",
+        "None.",
+    ),
+    code(
+        "caddy.default.lb_policy",
+        Level::Exact,
+        "Caddy's default selection policy `random` written explicitly (ReverseDock's default is `round_robin`).",
+        "Remove it to use ReverseDock's default.",
+    ),
+    code(
+        "caddy.default.response_timeout",
+        Level::Approximate,
+        "Caddy waits for a backend's answer without a time limit by default; ReverseDock's `timeouts.read` is 60s between two reads.",
+        "Raise `timeouts.read` on services with slow answers.",
+    ),
+    code(
+        "caddy.handler.exact",
+        Level::Exact,
+        "A handler of a route translated with the same behaviour.",
+        "None.",
+    ),
+    code(
+        "caddy.handler.approximate",
+        Level::Approximate,
+        "A handler of a route translated with a stated difference (the message says which).",
+        "Read the difference.",
+    ),
+    code(
+        "caddy.handler.manual",
+        Level::Manual,
+        "A handler of a route that needs a decision: left out, or its routes written disabled (the message says why).",
+        "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+    ),
+    code(
+        "caddy.handler.unsupported",
+        Level::Dropped,
+        "A handler of a route without an equivalent, left out (the message says why).",
+        "None, or the alternative the message names.",
+    ),
+    code(
+        "caddy.matcher.exact",
+        Level::Exact,
+        "A matcher of a route translated with the same behaviour.",
+        "None.",
+    ),
+    code(
+        "caddy.matcher.approximate",
+        Level::Approximate,
+        "A matcher of a route translated with a stated difference (the message says which).",
+        "Read the difference.",
+    ),
+    code(
+        "caddy.matcher.manual",
+        Level::Manual,
+        "A matcher of a route that needs a decision: left out, or its routes written disabled (the message says why).",
+        "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+    ),
+    code(
+        "caddy.route.disabled",
+        Level::Manual,
+        "A route written disabled (`enabled: false`) because a handler or matcher on its path was not migrated, so it never goes live without, say, its authentication.",
+        "Replace what was not migrated, then remove `enabled: false`.",
+    ),
+    code(
+        "caddy.route.unanswered",
+        Level::Approximate,
+        "Requests that no handler answers get an empty `200` from Caddy; ReverseDock answers `404`.",
+        "Add a catch-all route if the empty answer mattered.",
+    ),
+    code(
+        "caddy.server.exact",
+        Level::Exact,
+        "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) translated with the same behaviour.",
+        "None.",
+    ),
+    code(
+        "caddy.server.approximate",
+        Level::Approximate,
+        "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) translated with a stated difference (the message says which).",
+        "Read the difference.",
+    ),
+    code(
+        "caddy.server.manual",
+        Level::Manual,
+        "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) that needs a decision: left out, or its routes written disabled (the message says why).",
+        "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+    ),
+    code(
+        "caddy.server.unsupported",
+        Level::Dropped,
+        "A setting of an HTTP server (listen addresses, timeouts, automatic HTTPS, connection policies) without an equivalent, left out (the message says why).",
+        "None, or the alternative the message names.",
+    ),
+    code(
+        "caddy.tls.credentials",
+        Level::Manual,
+        "A credential (a DNS provider token, an EAB key, an API key, an inline private key): never copied; the output refers to an environment variable.",
+        "Set the variables the message names in ReverseDock's environment (or use `${file:…}` references).",
+    ),
+    code(
+        "caddy.tls.exact",
+        Level::Exact,
+        "A setting of the TLS app (certificates, automation policies, issuers) translated with the same behaviour.",
+        "None.",
+    ),
+    code(
+        "caddy.tls.approximate",
+        Level::Approximate,
+        "A setting of the TLS app (certificates, automation policies, issuers) translated with a stated difference (the message says which).",
+        "Read the difference.",
+    ),
+    code(
+        "caddy.tls.manual",
+        Level::Manual,
+        "A setting of the TLS app (certificates, automation policies, issuers) that needs a decision: left out, or its routes written disabled (the message says why).",
+        "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+    ),
+    code(
+        "caddy.tls.unsupported",
+        Level::Dropped,
+        "A setting of the TLS app (certificates, automation policies, issuers) without an equivalent, left out (the message says why).",
+        "None, or the alternative the message names.",
+    ),
     // --- Compose -------------------------------------------------------------------------
     code(
         "compose.deploy_labels",
@@ -292,6 +449,121 @@ pub static CODES: &[Code] = &[
         "A static setting without an equivalent (the message says why).",
         "None, or the alternative the message names.",
     ),
+    // --- NGINX -----------------------------------------------------------------------------
+    code(
+        "nginx.default.body_limit",
+        Level::Exact,
+        "NGINX's default request body limit (`client_max_body_size 1m`) written explicitly as `max_body: 1MiB` (ReverseDock has no limit by default).",
+        "Remove `max_body` where you want no limit.",
+    ),
+    code(
+        "nginx.default.buffering",
+        Level::Approximate,
+        "NGINX buffers requests and responses by default (`proxy_buffering`, `proxy_request_buffering`); ReverseDock streams both.",
+        "Add the `hold_body` middleware where a backend needs the whole request body first.",
+    ),
+    code(
+        "nginx.default.connect_timeout",
+        Level::Exact,
+        "NGINX's default connect timeout (`proxy_connect_timeout 60s`) written explicitly as `timeouts.connect: 60s` (ReverseDock's default is 5s).",
+        "Remove it to use ReverseDock's default.",
+    ),
+    code(
+        "nginx.default.next_upstream",
+        Level::Approximate,
+        "NGINX passes a request to the next server of an upstream after a connection error or timeout (`proxy_next_upstream error timeout`); written as `retries` on connection failures.",
+        "Check `retries` on the services with several backends.",
+    ),
+    code(
+        "nginx.default.passive_health",
+        Level::Approximate,
+        "NGINX marks a server unavailable after one failure for 10s (`max_fails=1 fail_timeout=10s`); written as `health.passive`, whose ejection doubles on repeated failures.",
+        "Check `health.passive` on the services with several backends.",
+    ),
+    code(
+        "nginx.default.proxy_redirect",
+        Level::Approximate,
+        "NGINX rewrites `Location` headers of backend redirects that point at the `proxy_pass` address (`proxy_redirect default`); ReverseDock passes them unchanged.",
+        "Make the backend redirect to relative or public URLs.",
+    ),
+    code(
+        "nginx.default.unmatched_host",
+        Level::Approximate,
+        "Requests for hosts no `server_name` lists go to the default server in NGINX; the migrated routes keep the default server's names, so ReverseDock answers them with `404`.",
+        "Add a catch-all route if such requests mattered.",
+    ),
+    code(
+        "nginx.default.upstream_tls",
+        Level::Approximate,
+        "NGINX does not verify backend certificates by default (`proxy_ssl_verify off`); ReverseDock does, and the migration keeps that.",
+        "Name the backend's CA (`tls.ca_file`) or, for a backend with a self-signed certificate you accept, set `tls.verify: false` on its service.",
+    ),
+    code(
+        "nginx.directive.exact",
+        Level::Exact,
+        "A directive translated with the same behaviour.",
+        "None.",
+    ),
+    code(
+        "nginx.directive.approximate",
+        Level::Approximate,
+        "A directive translated with a stated difference (the message says which).",
+        "Read the difference.",
+    ),
+    code(
+        "nginx.directive.manual",
+        Level::Manual,
+        "A directive that needs a decision: left out, or its routes written disabled (the message says why).",
+        "Replace it by hand as the message and hint say, then remove `enabled: false` from the routes it disabled.",
+    ),
+    code(
+        "nginx.directive.unsupported",
+        Level::Dropped,
+        "A directive without an equivalent, left out (the message says why).",
+        "None, or the alternative the message names.",
+    ),
+    code(
+        "nginx.directive.unknown",
+        Level::Dropped,
+        "A directive this tool does not know (a module outside the translated subset).",
+        "Check what it does and configure the equivalent by hand.",
+    ),
+    code(
+        "nginx.include",
+        Level::Exact,
+        "An `include`: the files it names were read in its place.",
+        "None.",
+    ),
+    code(
+        "nginx.include.manual",
+        Level::Manual,
+        "An `include` that was not read (outside the main file's directory, missing, too deep or too many files).",
+        "Pass `--include-outside` to read files outside the directory tree, or migrate the file on its own.",
+    ),
+    code(
+        "nginx.refused",
+        Level::Manual,
+        "A construct without a faithful translation (`if`, `map`, `set`, `rewrite … last`, named or nested locations, variables, scripting modules, `stream`, `mail`, caching, FastCGI): refused, and the routes it affects are written disabled.",
+        "Translate the construct by hand as the hint says, then remove `enabled: false` from the affected routes.",
+    ),
+    code(
+        "nginx.route.disabled",
+        Level::Manual,
+        "A route written disabled (`enabled: false`) because a directive of its location was not migrated, so it never goes live without, say, its authentication.",
+        "Replace what was not migrated, then remove `enabled: false`.",
+    ),
+    code(
+        "nginx.server.https_redirect",
+        Level::Approximate,
+        "A server that only redirects HTTP to HTTPS (`return 301 https://$host$request_uri`): ReverseDock does this by default (`defaults.redirect_http_to_https`), with 308 instead of 301 for methods other than GET.",
+        "None.",
+    ),
+    code(
+        "nginx.tls.weak",
+        Level::Manual,
+        "A TLS setting weaker than ReverseDock's floor (TLS 1.0 or 1.1): not written; the listener keeps `intermediate`.",
+        "Keep TLS 1.2 and later; clients that need older versions cannot connect.",
+    ),
     // --- The result ------------------------------------------------------------------------
     code(
         "output.invalid",
@@ -327,6 +599,8 @@ pub enum ItemKind {
     Env,
     /// A whole file, or a Compose service as a whole.
     Object,
+    /// A configuration directive (NGINX), named as written.
+    Directive,
 }
 
 /// Where a source item is.
@@ -433,7 +707,7 @@ pub struct Summary {
 /// What was read.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, JsonSchema)]
 pub struct SourceInfo {
-    /// The other proxy: `traefik` (later `caddy`, `nginx`).
+    /// The other proxy: `traefik`, `caddy` or `nginx`.
     pub kind: String,
     /// The version the translation was checked against, e.g. `Traefik v3.7`.
     pub checked_against: String,
@@ -551,6 +825,7 @@ impl Source {
             ItemKind::Flag => "flag ",
             ItemKind::Env => "variable ",
             ItemKind::Object => "",
+            ItemKind::Directive => "directive ",
         };
         let mut text = self.file.clone();
         if let Some(line) = self.line {

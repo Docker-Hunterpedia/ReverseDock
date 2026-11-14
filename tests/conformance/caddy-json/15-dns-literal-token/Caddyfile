@@ -1,0 +1,12 @@
+# Exercises: DNS-01 tokens written literally (never copied: referenced from the environment), a per-site DNS provider, file_server browse.
+{
+	acme_dns digitalocean not-copied-example-value
+}
+
+files.example.com {
+	root * /srv/files
+	tls {
+		dns cloudflare not-copied-example-value
+	}
+	file_server browse
+}

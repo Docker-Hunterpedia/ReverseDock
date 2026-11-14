@@ -1,0 +1,15 @@
+# Exercises: named matchers (method, not remote_ip, header, path_regexp) and a CEL expression (manual).
+api.example.org {
+	@write {
+		method POST PUT DELETE
+		not remote_ip 10.0.0.0/8
+	}
+	respond @write 403
+	@legacy path_regexp legacy ^/v0/(.*)$
+	respond @legacy 410
+	@beta header X-Beta true
+	reverse_proxy @beta beta:8080
+	@debug `{query.debug} == "1"`
+	reverse_proxy @debug debug:8080
+	reverse_proxy stable:8080
+}

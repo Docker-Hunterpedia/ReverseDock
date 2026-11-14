@@ -1,0 +1,57 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"docs.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "vars",
+													"root": "/srv/docs"
+												},
+												{
+													"encodings": {
+														"gzip": {},
+														"zstd": {}
+													},
+													"handler": "encode",
+													"prefer": [
+														"zstd",
+														"gzip"
+													]
+												},
+												{
+													"handler": "file_server",
+													"hide": [
+														"./Caddyfile"
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		}
+	}
+}

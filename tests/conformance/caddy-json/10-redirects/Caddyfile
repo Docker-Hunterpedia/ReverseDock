@@ -1,0 +1,9 @@
+# Exercises: www to apex with the URI kept (permanent), a fixed redirect of one path (302).
+www.example.com {
+	redir https://example.com{uri} permanent
+}
+
+example.com {
+	redir /old-blog https://blog.example.com/ 302
+	reverse_proxy site:8080
+}

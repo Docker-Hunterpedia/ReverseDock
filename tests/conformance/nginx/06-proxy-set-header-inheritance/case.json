@@ -1,0 +1,10 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "inherited proxy_set_header",
+    "a location level discards the outer levels (Host back to $proxy_host)",
+    "an empty value removes a header",
+    "an http-level header not used"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_proxy_module, proxy_set_header) read 2026-11-14."
+}

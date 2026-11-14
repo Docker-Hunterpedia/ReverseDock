@@ -96,7 +96,7 @@ writeFileSync(
   join(SITE, 'src/content/docs/docs/reference/migrate-report.mdx'),
   `---
 title: Migration report
-description: The report of rdock migrate traefik, its four levels, the JSON format (schema/migrate-report.v1.json) and every finding code, generated from the code list.
+description: The report of rdock migrate traefik, caddy and nginx, its four levels, the JSON format (schema/migrate-report.v1.json) and every finding code, generated from the code list.
 sidebar:
   order: 9
 ---
@@ -105,7 +105,7 @@ import Status from '../../../../components/Status.astro';
 
 ${generated('schema/migrate-report.v1.json')}
 
-<Status maturity="beta" /> \`rdock migrate traefik\` accounts for **every source item** (a label, a key of a configuration file, a flag, an environment variable) **exactly once**, at one of four levels. Each finding has a stable code, the source location, the generated object's path in rdock.yaml when there is one, a message and a hint. A test fails when an item has no finding or two. Findings about the written result as a whole (a validation error of a fragment, labels left to the Docker provider) have no source item and are counted apart.
+<Status maturity="beta" /> \`rdock migrate traefik\`, \`rdock migrate caddy\` and \`rdock migrate nginx\` account for **every source item** (a label, a key of a configuration file or a JSON pointer, a flag, an environment variable, an NGINX directive) **exactly once**, at one of four levels. Each finding has a stable code, the source location, the generated object's path in rdock.yaml when there is one, a message and a hint. A test fails when an item has no finding or two. Findings about the written result as a whole (a validation error of a fragment, labels left to the Docker provider, a route written disabled, a default of the other proxy written explicitly or changed) have no source item and are counted apart.
 
 | Level | Meaning | In the output |
 |---|---|---|
@@ -120,7 +120,7 @@ Output:
 - **\`--report FILE\`**: the report as JSON, described by [\`schema/migrate-report.v1.json\`](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/schema/migrate-report.v1.json) (\`rdock schema --migrate-report\` prints it). \`--report -\` writes it to standard error instead of the text.
 - **\`--strict\`**: exit \`2\` when any finding is \`manual\` or \`dropped\`.
 
-Exit codes: \`0\` migrated (findings may exist), \`1\` the input is not a Compose file or a Traefik configuration, \`2\` an error (an unreadable file) or, with \`--strict\`, something to review. The same codes as \`rdock migrate config\` (where \`2\` is an I/O error).
+Exit codes: \`0\` migrated (findings may exist), \`1\` the input is not one the command reads (a Compose file or a Traefik configuration; Caddy's JSON, so a Caddyfile is refused with how to adapt it; an NGINX configuration), \`2\` an error (an unreadable file) or, with \`--strict\`, something to review. The same codes as \`rdock migrate config\` (where \`2\` is an I/O error).
 
 The JSON format and the codes are beta: fields and codes may be added in a minor release, and a change to an existing one comes with a migration note.
 

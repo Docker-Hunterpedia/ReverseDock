@@ -1,0 +1,11 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "a server on the HTTP port \u2192 tls off",
+    "a server without hosts on another port",
+    "automatic_https disable_redirects",
+    "unanswered requests"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/http_only_on_domain.caddyfiletest and auto_https_disable_redirects.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README).",
+  "full": true
+}

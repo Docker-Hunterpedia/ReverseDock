@@ -1,0 +1,11 @@
+# Exercises: the single-page-app try_files idiom with file_server, and an API under /api/*.
+app.example.dev {
+	root * /srv/app
+	handle /api/* {
+		reverse_proxy api:4000
+	}
+	handle {
+		try_files {path} /index.html
+		file_server
+	}
+}

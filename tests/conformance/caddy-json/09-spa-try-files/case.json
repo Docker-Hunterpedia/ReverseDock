@@ -1,0 +1,8 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "try_files idiom \u2192 static fallback",
+    "handle groups"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/the try_files parser in modules/caddyhttp/fileserver/caddyfile.go and php_fastcgi_expanded_form.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README)."
+}

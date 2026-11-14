@@ -1,0 +1,9 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "include with a mask",
+    "a missing mime.types",
+    "an include outside the tree (manual)"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_core_module, include) read 2026-11-14."
+}

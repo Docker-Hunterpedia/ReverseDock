@@ -1,0 +1,117 @@
+{
+	"admin": {
+		"disabled": true
+	},
+	"logging": {
+		"logs": {
+			"default": {
+				"level": "DEBUG"
+			}
+		}
+	},
+	"storage": {
+		"module": "file_system",
+		"root": "/data"
+	},
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"plugins.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"handle": [
+												{
+													"handler": "rate_limit",
+													"rate_limits": {
+														"dynamic": {
+															"key": "{http.request.remote.host}",
+															"max_events": 10,
+															"window": "1m"
+														}
+													}
+												},
+												{
+													"handler": "push"
+												},
+												{
+													"handler": "templates"
+												}
+											]
+										},
+										{
+											"match": [
+												{
+													"path": [
+														"/metrics"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "metrics"
+												}
+											]
+										},
+										{
+											"handle": [
+												{
+													"handler": "reverse_proxy",
+													"upstreams": [
+														{
+															"dial": "app:8080"
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		},
+		"layer4": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":2222"
+					],
+					"routes": [
+						{
+							"handle": [
+								{
+									"handler": "proxy",
+									"upstreams": [
+										{
+											"dial": [
+												"ssh-host:22"
+											]
+										}
+									]
+								}
+							]
+						}
+					]
+				}
+			}
+		}
+	}
+}

@@ -1,0 +1,11 @@
+{
+  "input": "caddy.json",
+  "exercises": [
+    "acme issuer: email, CA, EAB (credential referenced)",
+    "DNS-01 provider with an environment placeholder",
+    "a wildcard site with a host matcher inside",
+    "unanswered hosts (empty 200 in Caddy)"
+  ],
+  "source": "Hand-written in the shapes of Caddy v2.11.9's Caddyfile adapter: caddytest/integration/caddyfile_adapt/global_options_acme.caddyfiletest and acme_dns_configured.caddyfiletest at github.com/caddyserver/caddy tag v2.11.9, and the JSON reference https://caddyserver.com/docs/json/ (both read 2026-11-14). Not produced by running Caddy (see README).",
+  "full": true
+}

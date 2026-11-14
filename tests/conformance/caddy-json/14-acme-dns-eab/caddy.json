@@ -1,0 +1,88 @@
+{
+	"apps": {
+		"http": {
+			"servers": {
+				"srv0": {
+					"listen": [
+						":443"
+					],
+					"routes": [
+						{
+							"match": [
+								{
+									"host": [
+										"*.example.com"
+									]
+								}
+							],
+							"handle": [
+								{
+									"handler": "subroute",
+									"routes": [
+										{
+											"group": "group1",
+											"match": [
+												{
+													"host": [
+														"app.example.com"
+													]
+												}
+											],
+											"handle": [
+												{
+													"handler": "subroute",
+													"routes": [
+														{
+															"handle": [
+																{
+																	"handler": "reverse_proxy",
+																	"upstreams": [
+																		{
+																			"dial": "app:8080"
+																		}
+																	]
+																}
+															]
+														}
+													]
+												}
+											]
+										}
+									]
+								}
+							],
+							"terminal": true
+						}
+					]
+				}
+			}
+		},
+		"tls": {
+			"automation": {
+				"policies": [
+					{
+						"issuers": [
+							{
+								"ca": "https://acme.zerossl.com/v2/DV90",
+								"challenges": {
+									"dns": {
+										"provider": {
+											"api_token": "{env.CF_API_TOKEN}",
+											"name": "cloudflare"
+										}
+									}
+								},
+								"email": "ops@example.com",
+								"external_account": {
+									"key_id": "example-key-id",
+									"mac_key": "not-copied-example-value"
+								},
+								"module": "acme"
+							}
+						]
+					}
+				]
+			}
+		}
+	}
+}

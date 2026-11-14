@@ -18,7 +18,7 @@ export const pillars: { eyebrow: string; badge: string; kind: Kind; title: strin
 export const guides: { title: string; badge: string; kind: Kind; body: string; href: string }[] = [
   { title: 'From Traefik', badge: 'guide', kind: 'shipped', body: 'Rules carry over; routers and services map one to one.', href: '/docs/migrate/from-traefik/' },
   { title: 'From NGINX', badge: 'guide', kind: 'shipped', body: 'server and location blocks to hosts, paths and middlewares.', href: '/docs/migrate/from-nginx/' },
-  { title: 'From Caddy', badge: 'planned', kind: 'planned', body: 'Caddyfile sites to routes, automatic HTTPS included.', href: '/docs/project/roadmap/' },
+  { title: 'From Caddy', badge: 'planned', kind: 'planned', body: 'The JSON of caddy adapt to routes, automatic HTTPS included.', href: '/docs/migrate/from-caddy/' },
   { title: 'From Nginx Proxy Manager', badge: 'planned', kind: 'planned', body: 'Proxy hosts from the UI to one versioned YAML file.', href: '/docs/project/roadmap/' },
 ];
 

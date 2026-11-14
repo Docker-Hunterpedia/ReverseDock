@@ -1,0 +1,10 @@
+{
+  "input": "nginx.conf",
+  "exercises": [
+    "if, set, map, Lua, FastCGI, auth_request (refused, routes disabled)",
+    "error_page, proxy_cache, limit_req, sub_filter (manual, not blocking)",
+    "a nested location excluded from its parent",
+    "an unused named location"
+  ],
+  "source": "Hand-written for ReverseDock; semantics from the NGINX 1.30 reference at https://nginx.org/en/docs/ (ngx_http_rewrite_module, ngx_http_map_module, ngx_http_core_module) read 2026-11-14."
+}
