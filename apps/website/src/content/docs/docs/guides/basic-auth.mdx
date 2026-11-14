@@ -134,9 +134,12 @@ the bounds of `admin.passwords.argon2`.
   **503** (problem type [`overloaded`](/docs/reference/problems/#overloaded)) with
   `Retry-After: 1`. Failed checks are not remembered, so a flood of wrong passwords is held to
   that pace instead of piling up threads.
-- One client (an IPv4 address, or an IPv6 /64) has one check running at a time; its other
-  requests wait for their turn up to one second, then get **429** with `Retry-After: 1`. A
-  single client flooding wrong passwords therefore cannot take every check from other users.
+- One client (an IPv4 address, or an IPv6 /64) has at most two checks running at a time, so
+  a few people behind one NAT can log in at the same moment; its other requests wait for a
+  turn up to one second, then get **429** with `Retry-After: 1`. A single client flooding
+  wrong passwords therefore cannot take every check from other users, and guesses at most
+  two passwords per check's duration. A **429** for waiting is not a failed login: it does
+  not count towards an [`abuse`](/docs/guides/abuse-protection/) ban `on: auth_failure`.
 - A user name that does not exist is checked against a configured hash and refused, so the
   answer takes as long as a wrong password for a real user and does not tell which names
   exist. Put a [`rate_limit`](/docs/guides/rate-limiting/) or an

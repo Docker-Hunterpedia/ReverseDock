@@ -651,6 +651,112 @@ fn labels_cannot_reach_the_proxys_own_machine_unless_allowed() {
 }
 
 #[test]
+fn middleware_urls_from_labels_are_judged_by_the_host_the_url_parser_sees() {
+    let refused = [
+        // `\` is `/` in special URLs, so the host is 127.0.0.1, not x.test.
+        "http://127.0.0.1\\@x.test/",
+        // Percent-encoded and fullwidth digits decode to 127.0.0.1.
+        "http://127.0.0.%31/",
+        "http://\u{ff11}\u{ff12}\u{ff17}.\u{ff10}.\u{ff10}.\u{ff11}/",
+        "http://0x7f.1/",
+        "http://[::ffff:127.0.0.1]/",
+        "http://[fe80::1]/",
+        "http://100.100.100.200/",
+        "http://LOCALHOST./",
+    ];
+    for url in refused {
+        let c = container(
+            "evil",
+            2,
+            &[80],
+            &[
+                ("traefik.enable", "true"),
+                ("traefik.http.routers.r.rule", "Host(`evil.test`)"),
+                ("traefik.http.routers.r.middlewares", "fa"),
+                ("traefik.http.middlewares.fa.forwardauth.address", url),
+            ],
+        );
+        let t = run(&[c]);
+        assert!(!t.fragment.middlewares.contains_key("fa"), "{url}: {t:?}");
+        assert!(
+            messages(&t)
+                .iter()
+                .any(|m| m.contains("allow_local_backends")),
+            "{url}: {:?}",
+            messages(&t)
+        );
+    }
+    // Values that are never fetched may name the machine (a development identity provider).
+    let c = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.routes.app.middlewares", "j"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.middlewares.j.type", "jwt"),
+            (
+                "rdock.middlewares.j.issuer",
+                "http://localhost:8080/realms/dev",
+            ),
+            ("rdock.middlewares.j.audiences", "[app]"),
+            ("rdock.middlewares.j.jwks_url", "https://idp.example/certs"),
+        ],
+    );
+    let t = run(&[c]);
+    assert!(
+        t.fragment.middlewares.contains_key("j"),
+        "{:?}",
+        messages(&t)
+    );
+    // A fetched key URL on the machine is not.
+    let c = container(
+        "dev",
+        3,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.middlewares.j.type", "jwt"),
+            ("rdock.middlewares.j.issuer", "any"),
+            ("rdock.middlewares.j.audiences", "[app]"),
+            (
+                "rdock.middlewares.j.jwks_url",
+                "http://127.0.0.%31:8080/certs",
+            ),
+        ],
+    );
+    let t = run(&[c]);
+    assert!(!t.fragment.middlewares.contains_key("j"), "{t:?}");
+    // A module file on the proxy's machine is never named from labels.
+    let c = container(
+        "evil",
+        2,
+        &[80],
+        &[
+            ("rdock.enable", "true"),
+            ("rdock.routes.app.match", "Host(`app.test`)"),
+            ("rdock.routes.app.service", "app"),
+            ("rdock.services.app.port", "80"),
+            ("rdock.middlewares.w.type", "wasm"),
+            ("rdock.middlewares.w.path", "/var/lib/rdock/x.wasm"),
+        ],
+    );
+    let t = run(&[c]);
+    assert!(!t.fragment.middlewares.contains_key("w"), "{t:?}");
+    assert!(
+        messages(&t).iter().any(|m| m.contains("`type: wasm`")),
+        "{:?}",
+        messages(&t)
+    );
+}
+
+#[test]
 fn labels_cannot_name_files_on_the_proxys_host() {
     let c = container(
         "app",

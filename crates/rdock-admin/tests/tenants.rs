@@ -798,3 +798,37 @@ async fn scoped_sessions_mint_only_their_tenants_tokens_and_removed_tenants_reti
     assert_eq!(user["tenant"], "acme");
     admin.stop().await;
 }
+
+/// Review 10: a tenant's administrator is not the proxy's. Objects that read a file on the
+/// proxy's machine are refused for every tenant-scoped caller, also where the tenant rules
+/// have no entry for the field (an `oidc` session key file).
+#[tokio::test(flavor = "multi_thread")]
+async fn a_tenant_administrator_cannot_name_a_file_on_the_proxys_machine() {
+    let admin = Admin::start();
+    let acme = admin.token("admin", Some("acme"));
+    let reply = admin
+        .call(&acme, "GET", "/api/v1/config/api", &[], "")
+        .await;
+    let tag = reply.header("etag").unwrap().to_owned();
+    let mut own: Value = reply.json();
+    own["middlewares"]["acme-sso"] = json!({
+        "type": "oidc", "issuer": "https://idp.example", "client_id": "a",
+        "session": { "key_file": "/etc/rdock/session.key" }
+    });
+    let reply = admin
+        .call(
+            &acme,
+            "PUT",
+            "/api/v1/config/api",
+            &[("if-match", &tag)],
+            &own.to_string(),
+        )
+        .await;
+    assert_eq!(reply.status, 422, "{}", reply.text());
+    assert!(
+        reply.text().contains("session.key_file"),
+        "{}",
+        reply.text()
+    );
+    admin.stop().await;
+}

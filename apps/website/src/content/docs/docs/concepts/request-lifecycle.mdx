@@ -73,7 +73,7 @@ The service's balancer picks a backend: smooth weighted round-robin, or weighted
 ## 10. Errors (`fail_to_connect`, `error_while_proxy`, `fail_to_proxy`)
 
 - A connection that cannot be opened is counted in `rdock_upstream_errors_total` with `kind` `connect` or `timeout`.
-- A request that fails on a reused pooled connection (closed or reset by the backend, a read or write error such as `EPIPE`) is sent again on another connection when it is idempotent, its body can be replayed and nothing was sent to the client yet, even with retries off; it does not count against the backend. Configurable [retries](/docs/guides/backends/#retries) add connect failures, resets, timeouts and 502/503/504 answers.
+- A request that fails on a reused pooled connection (closed or reset by the backend, a read or write error such as `EPIPE`) is sent again on another connection when it is idempotent, its body can be replayed and nothing was sent to the client yet, even with retries off; it does not count against the backend. This happens once per request (a second such failure follows `retries`), and the replayed body is counted against `max_body` afresh. Configurable [retries](/docs/guides/backends/#retries) add connect failures, resets, timeouts and 502/503/504 answers.
 - Timeouts towards the backend become 504, other backend failures 502. If nothing was written to the client yet, the error page is sent: an `errors` page when a middleware of the route covers the status, otherwise ReverseDock's page with the request ID, as HTML or JSON depending on `Accept`. 503 and 429 pages carry `Retry-After`.
 
 ## 11. Access log and metrics (`logging`)

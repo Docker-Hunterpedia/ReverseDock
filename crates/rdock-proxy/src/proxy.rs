@@ -413,6 +413,12 @@ pub struct RequestCtx {
     retries: u32,
     tried: Vec<String>,
     retry_permit: Option<RetryPermit>,
+    /// Upstream attempts started for this request (`upstream_peer` calls), whatever made
+    /// Pingora try again: every one after the first replays the body into fresh counts.
+    attempts: u32,
+    /// The request was already tried again on another connection after a pooled one failed
+    /// (at most once, outside `retries`).
+    pooled_retried: bool,
     /// `upstream_response_filter` turned a status into a retry already counted.
     status_retry: bool,
     /// `peak_ewma` with `measure: last_byte`: the attempt answered and its sample is taken
@@ -962,6 +968,8 @@ impl ProxyHttp for RdockProxy {
             retries: 0,
             tried: Vec::new(),
             retry_permit: None,
+            attempts: 0,
+            pooled_retried: false,
             status_retry: false,
             sample_at_end: false,
             set_cookie: None,
@@ -1317,9 +1325,11 @@ impl ProxyHttp for RdockProxy {
         {
             return Err(status_error(503, "the service is at max_requests"));
         }
-        if ctx.retry_permit.is_some() {
-            // A retry replays the body read so far from Pingora's buffer (it is retried only
-            // while that buffer holds all of it), so the counts start again.
+        ctx.attempts = ctx.attempts.saturating_add(1);
+        if ctx.attempts > 1 {
+            // Any further attempt (a `retries` retry or one after a failed pooled connection)
+            // replays the body read so far from Pingora's buffer (it is retried only while that
+            // buffer holds all of it), so the counts start again.
             ctx.body_bytes = 0;
             if let Some(copy) = ctx.mirror.as_mut() {
                 *copy = MirrorCopy::default();
@@ -1327,6 +1337,8 @@ impl ProxyHttp for RdockProxy {
             if let Some(Hold::Collecting(holder)) = ctx.hold.as_mut() {
                 holder.reset();
             }
+        }
+        if ctx.retry_permit.is_some() {
             tokio::time::sleep(backoff(ctx.retries)).await;
         }
         let key = upstream::RequestKey {
@@ -1678,18 +1690,20 @@ impl ProxyHttp for RdockProxy {
             return e;
         }
         // Never retry once the client saw a response, or when the body cannot be replayed.
-        // A reused pooled connection that closed under us is retried once for idempotent
-        // requests, as Pingora does; everything else follows `retries`.
+        // A reused pooled connection that closed under us is retried once per request for
+        // idempotent requests, as Pingora does; everything else follows `retries`.
         if session.response_written().is_some() || session.as_ref().retry_buffer_truncated() {
             e.set_retry(false);
             return e;
         }
         if client_reused
+            && !ctx.pooled_retried
             && session.req_header().method.is_idempotent()
             && pooled_connection_failed(&e)
         {
-            // Bounded by Pingora's `max_retries` (set in `listener.rs`): each attempt takes
-            // another pooled connection or opens a new one.
+            // Once: the next attempt may take another pooled connection or open a new one; a
+            // second failure follows `retries` like any other.
+            ctx.pooled_retried = true;
             e.set_retry(true);
             return e;
         }
@@ -2367,8 +2381,11 @@ fn strip_connection_nominations(req: &mut RequestHeader) {
 
 /// Whether `authority` is `host [":" port]` (RFC 9112 §3.2, RFC 3986 §3.2.2): an IPv6
 /// literal in brackets, or a name of letters, digits, `-`, `.` and `_` (container and service
-/// names use `_`), with an optional numeric port. An empty value is left to the `Host` checks
-/// above. Percent-encoded names, userinfo, paths and everything else are refused.
+/// names use `_`) with no empty label (one trailing dot is allowed), with an optional port in
+/// its one canonical spelling: 1 to 65535, no leading zero, not empty. Other spellings name
+/// the same route and would each be a cache key of their own. An empty value is left to the
+/// `Host` checks above. Percent-encoded names, userinfo, paths and everything else are
+/// refused.
 fn valid_authority(authority: &str) -> bool {
     if authority.is_empty() {
         return true;
@@ -2383,21 +2400,29 @@ fn valid_authority(authority: &str) -> bool {
         match after {
             "" => return true,
             _ => match after.strip_prefix(':') {
-                Some(port) => ("", port),
+                Some(port) => return canonical_port(port),
                 None => return false,
             },
         }
     } else {
         match authority.split_once(':') {
-            Some((host, port)) => (host, port),
-            None => (authority, ""),
+            Some((host, port)) => (host, Some(port)),
+            None => (authority, None),
         }
     };
     let host_ok = host
         .bytes()
         .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'-' | b'.' | b'_'));
-    let port_ok = port.len() <= 5 && port.bytes().all(|b| b.is_ascii_digit());
-    host_ok && port_ok && (!host.is_empty() || authority.starts_with('['))
+    let labels = host.strip_suffix('.').unwrap_or(host);
+    let labels_ok = !labels.is_empty() && labels.split('.').all(|label| !label.is_empty());
+    host_ok && labels_ok && port.is_none_or(canonical_port)
+}
+
+/// Whether `port` is a port number written as one is: `1` to `65535`, no sign, no leading zero.
+fn canonical_port(port: &str) -> bool {
+    !port.starts_with('0')
+        && port.bytes().all(|b| b.is_ascii_digit())
+        && port.parse::<u16>().is_ok_and(|p| p != 0)
 }
 
 /// Whether a request declares a body (a `Content-Length` above zero, or any
@@ -2664,7 +2689,6 @@ mod tests {
             "192.0.2.1:80",
             "[2001:db8::1]",
             "[::1]:443",
-            "a.test:",
         ] {
             assert_eq!(checked(&[("host", good)]), None, "{good}");
         }
@@ -2682,6 +2706,9 @@ mod tests {
             "[zz::1]",
             "[::1]x",
             "::1",
+            // An empty or non-canonical port would be one more cache key (review 10, M4).
+            "a.test:",
+            "a.test:0080",
         ] {
             assert_eq!(checked(&[("host", bad)]), Some(400), "{bad}");
         }
@@ -2740,6 +2767,44 @@ mod tests {
         let mut one = head("GET", &[("cookie", "a=1; b=2")]);
         join_cookies(&mut one);
         assert_eq!(one.headers["cookie"], "a=1; b=2");
+    }
+
+    #[test]
+    fn authorities_are_accepted_only_in_their_canonical_spelling() {
+        for good in [
+            "",
+            "app.test",
+            "app.test.",
+            "APP.test:8080",
+            "app_1.svc:1",
+            "app.test:65535",
+            "[::1]",
+            "[::1]:443",
+            "10.0.0.1:80",
+        ] {
+            assert!(valid_authority(good), "{good}");
+        }
+        for bad in [
+            "app.test:00080",
+            "app.test:080",
+            "app.test:99999",
+            "app.test:65536",
+            "app.test:0",
+            "app.test:",
+            "app.test:+80",
+            "app.test..",
+            "app..test",
+            ".app.test",
+            ".",
+            ":80",
+            "[::1]:",
+            "[::1]:0443",
+            "[::1]:70000",
+            "a%2etest",
+            "user@app.test",
+        ] {
+            assert!(!valid_authority(bad), "{bad}");
+        }
     }
 
     #[test]

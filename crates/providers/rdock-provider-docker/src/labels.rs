@@ -124,18 +124,11 @@ pub struct Settings<'a> {
     pub allow_local_backends: bool,
 }
 
-/// Loopback, unspecified and link-local addresses (IPv4-mapped IPv6 as IPv4).
+/// Loopback, unspecified, link-local and cloud metadata addresses (IPv4-mapped IPv6 as
+/// IPv4): the rule the data plane applies again to every address a name from labels resolves
+/// to ([`rdock_model::addresses::local`]).
 fn is_local(ip: IpAddr) -> bool {
-    let ip = match ip {
-        IpAddr::V6(v6) => v6.to_ipv4_mapped().map_or(ip, IpAddr::V4),
-        IpAddr::V4(_) => ip,
-    };
-    match ip {
-        IpAddr::V4(v4) => v4.is_loopback() || v4.is_unspecified() || v4.is_link_local(),
-        IpAddr::V6(v6) => {
-            v6.is_loopback() || v6.is_unspecified() || (v6.segments()[0] & 0xffc0) == 0xfe80
-        }
-    }
+    rdock_model::addresses::local(ip).is_some()
 }
 
 impl<'a> Settings<'a> {
@@ -604,7 +597,7 @@ impl<'a> Scope<'a> {
         }
         for (name, tree) in std::mem::take(&mut draft.middlewares) {
             let value = tree.into_value();
-            if let Some(refusal) = self.local_url_refusal(&value, "") {
+            if let Some(refusal) = self.local_url_refusal(&value) {
                 self.warn_object("middleware", &name, &refusal);
                 continue;
             }
@@ -654,30 +647,41 @@ impl<'a> Scope<'a> {
         })
     }
 
-    /// The first URL or address in a middleware from labels that points at the proxy's own
-    /// machine or a link-local address (`forward_auth.address`, `jwt.jwks_url`, …).
-    fn local_url_refusal(&self, value: &serde_json::Value, key: &str) -> Option<String> {
-        match value {
-            serde_json::Value::Object(map) => map
-                .iter()
-                .find_map(|(k, child)| self.local_url_refusal(child, k)),
-            serde_json::Value::Array(items) => items
-                .iter()
-                .find_map(|child| self.local_url_refusal(child, key)),
-            serde_json::Value::String(text)
-                if key == "address" || key == "url" || key == "issuer" || key.ends_with("_url") =>
-            {
-                let (_, rest) = text.split_once("://")?;
-                let authority = rest.split(['/', '?', '#']).next().unwrap_or_default();
-                let authority = authority.rsplit_once('@').map_or(authority, |(_, a)| a);
-                let host = match authority.strip_prefix('[') {
-                    Some(rest) => rest.split_once(']').map_or(rest, |(h, _)| h),
-                    None => authority.rsplit_once(':').map_or(authority, |(h, _)| h),
-                };
-                self.local_host_refusal(host)
-            }
-            _ => None,
+    /// Why a middleware from labels may not be used: `type: wasm` loads a module from the
+    /// proxy's file system, and a URL it fetches (`forward_auth.address`, `agent.address`,
+    /// `jwt.jwks_url`, `cloudflare_access.certs_url`, `oidc.issuer`) names the proxy's own
+    /// machine or a link-local address. URLs are parsed as the configuration parses them
+    /// (WHATWG, `url::Url`), so a spelling cannot hide the host; names are checked again at
+    /// every connection, after they resolve. Values that are never fetched (`jwt.issuer`,
+    /// `oidc.redirect_url`) are not checked.
+    fn local_url_refusal(&self, value: &serde_json::Value) -> Option<String> {
+        let kind = value["type"].as_str().unwrap_or_default();
+        if kind == "wasm" {
+            return Some(
+                "`type: wasm` loads a module from the proxy's file system, which labels cannot name; define it in the configuration file".to_owned(),
+            );
         }
+        let fetched: &[&str] = match kind {
+            "oidc" => &["issuer"],
+            _ => &["address", "jwks_url", "certs_url"],
+        };
+        fetched.iter().find_map(|key| {
+            let text = value.get(*key)?.as_str()?;
+            self.local_fetch_refusal(key, text)
+        })
+    }
+
+    /// [`Self::local_host_refusal`] for the host of a URL a middleware fetches. A value that
+    /// is not an `http://` or `https://` URL is left to the model, which refuses it.
+    fn local_fetch_refusal(&self, key: &str, text: &str) -> Option<String> {
+        let url = text.parse::<rdock_model::values::HttpUrl>().ok()?;
+        let host = match url.as_url().host()? {
+            url::Host::Ipv4(ip) => IpAddr::V4(ip).to_string(),
+            url::Host::Ipv6(ip) => IpAddr::V6(ip).to_string(),
+            url::Host::Domain(name) => name.to_owned(),
+        };
+        self.local_host_refusal(&host)
+            .map(|why| format!("`{key}`: {why}"))
     }
 
     pub(crate) fn warn_object(&mut self, kind: &str, name: &str, error: &str) {

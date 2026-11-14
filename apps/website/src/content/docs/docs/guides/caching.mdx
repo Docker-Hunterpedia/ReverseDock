@@ -163,7 +163,8 @@ answers from the store or with `504 Gateway Timeout`, and never contacts the ori
 
 A stored response is selected by the store, the **route**, the scheme, the authority as the
 client sent it (lower case, with its port and any trailing dot: the backend sees it and may
-build links from it), the `X-Forwarded-Proto`, `-Host` and `-Port` values the backend gets,
+build links from it; a port in any spelling but its own, such as `:080`, `:99999` or an empty
+one, gets `400` instead of a key of its own), the `X-Forwarded-Proto`, `-Host` and `-Port` values the backend gets,
 the path as it is forwarded (after normalisation and the route's rewrites), the query string
 and the method (`HEAD` shares `GET`'s). The components are length-framed, so
 no two different requests can produce the same key. Two routes that share a store never see

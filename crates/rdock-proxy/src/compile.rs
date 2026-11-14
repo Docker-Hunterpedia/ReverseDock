@@ -563,19 +563,62 @@ fn compile_service(
     })
 }
 
-/// The address policy of `name` when a tenant owns it (an API object under its prefix):
-/// compiled once here, so the data plane checks resolved addresses without knowing tenants.
+/// The address policy of `name`: a tenant's (an API object under its prefix), or, for an
+/// object from Docker or Swarm labels, [`label_policy`]. Compiled once here, so the data
+/// plane checks resolved addresses without knowing tenants or providers.
 fn address_guard(name: &str, config: &Config, env: &CompileEnv<'_>) -> Option<AddressGuard> {
+    if let Some(guard) = label_guard(name, config, env) {
+        return Some(guard);
+    }
     let bare = name.strip_suffix("@api")?;
     let (_, tenant) = rdock_model::tenant::owner(&config.tenants, bare)?;
     Some(AddressGuard {
         policy: Arc::new(rdock_model::addresses::BackendPolicy::of(
             &tenant.backend_networks,
         )),
+        names_only: false,
         refused: env
             .metrics
             .map(|m| m.backend_addresses_refused.with_label_values(&[name])),
     })
+}
+
+/// The guard of a service (HTTP, TCP or UDP) from labels: [`label_policy`] on the addresses
+/// its names resolve to.
+pub(crate) fn label_guard(
+    name: &str,
+    config: &Config,
+    env: &CompileEnv<'_>,
+) -> Option<AddressGuard> {
+    Some(AddressGuard {
+        policy: label_policy(name, config)?,
+        names_only: true,
+        refused: env
+            .metrics
+            .map(|m| m.backend_addresses_refused.with_label_values(&[name])),
+    })
+}
+
+/// For an object from Docker or Swarm labels (`name@docker`, `name@swarm`): no loopback,
+/// link-local, unspecified or cloud metadata address, wherever a name resolves (the labels
+/// already refused such literals and names like `localhost`); `None` when the provider's
+/// `allow_local_backends` is set, and for every other object.
+fn label_policy(name: &str, config: &Config) -> Option<Arc<rdock_model::addresses::BackendPolicy>> {
+    let providers = &config.providers;
+    let allowed = if name.ends_with("@docker") {
+        providers
+            .docker
+            .as_ref()
+            .is_some_and(|d| d.allow_local_backends)
+    } else if name.ends_with("@swarm") {
+        providers
+            .swarm
+            .as_ref()
+            .is_some_and(|s| s.allow_local_backends)
+    } else {
+        return None;
+    };
+    (!allowed).then(|| Arc::new(rdock_model::addresses::BackendPolicy::NotLocal))
 }
 
 fn peak_decay(service: &Service) -> std::time::Duration {
@@ -825,13 +868,35 @@ fn build_middlewares(
             })
             .collect(),
     };
+    // Middlewares from labels fetch through a client that never connects to the proxy's own
+    // machine or a link-local address (`forward_auth`, `jwt` keys, agents, `oidc`).
+    let label_env = BuildEnv {
+        service: build_env.service,
+        client: Arc::new(
+            env.client
+                .guarded(Arc::new(rdock_model::addresses::BackendPolicy::NotLocal)),
+        ),
+        plugins: build_env.plugins,
+        metrics: build_env.metrics,
+        consumers: build_env.consumers.clone(),
+        quotas: build_env.quotas,
+        route_hosts: build_env.route_hosts.clone(),
+        abuse: build_env.abuse,
+        shared_limits: build_env.shared_limits,
+        trusted_proxies: build_env.trusted_proxies.clone(),
+    };
     let mut built = HashMap::new();
     for (name, middleware) in &config.middlewares {
         if let Err(message) = check_label_root(config, name, middleware) {
             out.push(Diagnostic::error(path_key("middlewares", name), message));
             continue;
         }
-        match rdock_middleware::build(name, middleware, &build_env) {
+        let env = if label_policy(name, config).is_some() {
+            &label_env
+        } else {
+            &build_env
+        };
+        match rdock_middleware::build(name, middleware, env) {
             Ok(m) => {
                 built.insert(name.clone(), m);
             }

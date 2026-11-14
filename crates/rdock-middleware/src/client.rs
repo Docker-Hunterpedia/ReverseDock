@@ -86,6 +86,9 @@ pub enum FetchError {
     /// The response body was too large.
     #[error("the response body is larger than {0} bytes")]
     TooLarge(usize),
+    /// The address is one this client may not connect to.
+    #[error("refused: {0}")]
+    Refused(String),
 }
 
 /// Resolved addresses by host and port, with the time of the lookup.
@@ -93,8 +96,11 @@ type DnsCache = HashMap<(String, u16), (Vec<SocketAddr>, Instant)>;
 
 /// The HTTP client.
 pub struct HttpClient {
-    connector: Connector,
-    dns: Mutex<DnsCache>,
+    connector: Arc<Connector>,
+    dns: Arc<Mutex<DnsCache>>,
+    /// Addresses this client may connect to, checked on the address it would connect to,
+    /// after a name resolves ([`HttpClient::guarded`]); `None`: any address.
+    guard: Option<Arc<rdock_model::addresses::BackendPolicy>>,
 }
 
 impl std::fmt::Debug for HttpClient {
@@ -106,13 +112,36 @@ impl std::fmt::Debug for HttpClient {
 impl Default for HttpClient {
     fn default() -> Self {
         Self {
-            connector: Connector::new(None),
-            dns: Mutex::new(HashMap::new()),
+            connector: Arc::new(Connector::new(None)),
+            dns: Arc::new(Mutex::new(HashMap::new())),
+            guard: None,
         }
     }
 }
 
 impl HttpClient {
+    /// The same client (its connection pool and name cache), connecting only to addresses
+    /// `policy` allows: middlewares from Docker and Swarm labels use one that never reaches the
+    /// proxy's own machine or a link-local address, however their names resolve (H-SEC-07,
+    /// ADR-0033). A name with several addresses uses the first allowed one.
+    #[must_use]
+    pub fn guarded(&self, policy: Arc<rdock_model::addresses::BackendPolicy>) -> Self {
+        Self {
+            connector: Arc::clone(&self.connector),
+            dns: Arc::clone(&self.dns),
+            guard: Some(policy),
+        }
+    }
+
+    /// Why the guard refuses `addr` for `host`, if it does.
+    fn refused(&self, host: &str, addr: SocketAddr) -> Option<FetchError> {
+        let reason = self.guard.as_ref()?.refusal(addr.ip())?;
+        tracing::warn!(host, %addr, %reason, "subrequest address refused");
+        Some(FetchError::Refused(format!(
+            "`{host}` resolves to {addr}: {reason}"
+        )))
+    }
+
     /// Sends `req` to `peer` and reads the response, all within `timeout`.
     pub async fn send(
         &self,
@@ -249,6 +278,9 @@ impl HttpClient {
             Host::Ipv6(ip) => (SocketAddr::from((ip, port)), ip.to_string()),
             Host::Domain(name) => (self.resolve(name, port).await?, name.to_owned()),
         };
+        if let Some(refused) = self.refused(&sni, address) {
+            return Err(refused);
+        }
         let sni = server_name.map_or(sni, str::to_owned);
         let mut peer = HttpPeer::new(address, tls, sni);
         peer.options.connection_timeout = Some(timeout);
@@ -263,23 +295,38 @@ impl HttpClient {
             let dns = self.dns.lock().unwrap_or_else(PoisonError::into_inner);
             dns.get(&key)
                 .filter(|(_, at)| at.elapsed() < DNS_TTL)
-                .and_then(|(addrs, _)| addrs.first().copied())
+                .map(|(addrs, _)| addrs.clone())
         };
-        if let Some(addr) = cached {
-            return Ok(addr);
-        }
-        let addrs: Vec<SocketAddr> = tokio::net::lookup_host((name, port))
-            .await
-            .map_err(|_| FetchError::Resolve(name.to_owned()))?
-            .collect();
+        let addrs = if let Some(addrs) = cached {
+            addrs
+        } else {
+            let addrs: Vec<SocketAddr> = tokio::net::lookup_host((name, port))
+                .await
+                .map_err(|_| FetchError::Resolve(name.to_owned()))?
+                .collect();
+            self.dns
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .insert(key, (addrs.clone(), Instant::now()));
+            addrs
+        };
+        self.pick(name, &addrs)
+    }
+
+    /// The address to connect to among those `name` resolved to: the first one, or with a
+    /// guard the first one it allows (the caller checks it again).
+    fn pick(&self, name: &str, addrs: &[SocketAddr]) -> Result<SocketAddr, FetchError> {
         let first = *addrs
             .first()
             .ok_or_else(|| FetchError::Resolve(name.to_owned()))?;
-        self.dns
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .insert(key, (addrs, Instant::now()));
-        Ok(first)
+        Ok(match &self.guard {
+            Some(policy) => addrs
+                .iter()
+                .copied()
+                .find(|a| policy.allows(a.ip()))
+                .unwrap_or(first),
+            None => first,
+        })
     }
 }
 
@@ -362,4 +409,71 @@ pub fn load_ca(file: &std::path::Path) -> Result<Arc<[pingora::utils::tls::Wrapp
         return Err(format!("`{}` contains no certificate", file.display()));
     }
     Ok(certs.into())
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used)]
+
+    use super::*;
+    use rdock_model::addresses::BackendPolicy;
+
+    /// A client whose cache says `name` resolves to `addrs` (the cache is the resolver's
+    /// test hook: a fresh entry is used without a lookup).
+    fn resolving(client: &HttpClient, name: &str, addrs: &[&str]) {
+        let addrs = addrs.iter().map(|a| a.parse().unwrap()).collect();
+        client
+            .dns
+            .lock()
+            .unwrap()
+            .insert((name.to_owned(), 80), (addrs, Instant::now()));
+    }
+
+    #[tokio::test]
+    async fn a_guarded_client_never_connects_to_the_machine_however_a_name_resolves() {
+        let plain = HttpClient::default();
+        let guarded = plain.guarded(Arc::new(BackendPolicy::NotLocal));
+        let url = |text: &str| Url::parse(text).unwrap();
+        let timeout = Duration::from_secs(1);
+
+        resolving(&plain, "rebind.test", &["127.0.0.1:80", "[::1]:80"]);
+        let err = guarded
+            .peer_for(&url("http://rebind.test/check"), timeout)
+            .await
+            .unwrap_err();
+        assert!(matches!(err, FetchError::Refused(_)), "{err}");
+        assert!(err.to_string().contains("loopback"), "{err}");
+        // The unguarded client shares the cache and still may (configuration-file objects).
+        assert!(
+            plain
+                .peer_for(&url("http://rebind.test/check"), timeout)
+                .await
+                .is_ok()
+        );
+        // A private address is fine, and is preferred over a local one in the same answer.
+        resolving(
+            &plain,
+            "auth.internal",
+            &["169.254.169.254:80", "10.0.0.9:80"],
+        );
+        let peer = guarded
+            .peer_for(&url("http://auth.internal/"), timeout)
+            .await
+            .unwrap();
+        assert_eq!(peer._address.to_string(), "10.0.0.9:80");
+        // Literals are checked too.
+        for literal in [
+            "http://169.254.169.254/",
+            "http://[fe80::1]/",
+            "http://0.0.0.0/",
+        ] {
+            assert!(
+                matches!(
+                    guarded.peer_for(&url(literal), timeout).await,
+                    Err(FetchError::Refused(_))
+                ),
+                "{literal}"
+            );
+        }
+    }
 }

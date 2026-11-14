@@ -1380,5 +1380,22 @@ async fn the_authority_the_backend_sees_is_part_of_the_key() {
     // Host names are case-insensitive (RFC 9110 §4.2.3): the case is not part of the key.
     let upper = client::http1(addr(port), request("GET", "APP.test", "/page", &[])).await;
     assert!(is_hit(&upper), "{}", status(&upper));
+    // One trailing dot is a spelling the backend sees (in `Host` and `X-Forwarded-Host`): its
+    // own key, the only other one a host and port can have.
+    let dot = client::http1(addr(port), request("GET", "app.test.", "/page", &[])).await;
+    assert!(!is_hit(&dot), "{}", status(&dot));
+    // Ports in other spellings than their own, and empty ones, are refused rather than keyed
+    // apart (review 10, M4): `:00001` would otherwise be a fresh key for every spelling.
+    for odd in [
+        "app.test:00001",
+        "app.test:01",
+        "app.test:99999",
+        "app.test:",
+        "app.test..",
+    ] {
+        let reply = client::http1(addr(port), request("GET", odd, "/page", &[])).await;
+        assert_eq!(reply.status, 400, "{odd}");
+    }
+    assert_eq!(origin.count("/page"), 3, "nothing more reached the origin");
     drop(rdock);
 }

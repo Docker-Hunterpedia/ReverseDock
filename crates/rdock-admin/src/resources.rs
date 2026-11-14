@@ -15,7 +15,7 @@ use crate::State;
 use crate::audit::Event;
 use crate::caller::{Access, Caller, need};
 use crate::config_api::{
-    api_config, if_match, masked, owners, write, write_scoped, writes_allowed,
+    api_config, editable, if_match, masked, owners, write, write_scoped, writes_allowed,
 };
 use crate::routes::error;
 
@@ -211,12 +211,11 @@ async fn change(
             "this object belongs to the configuration file; change it there",
         );
     }
-    let Some((mut fragment, _)) = api_config(state).await else {
+    let Some((fragment, _)) = api_config(state).await else {
         return gone();
     };
-    if let Some(scope) = caller.scope() {
-        fragment = scope.view(&fragment);
-    }
+    // The caller's own view, secrets masked; the write restores and checks them.
+    let mut fragment = editable(&fragment, caller);
     if !fragment[kind].is_object() {
         fragment[kind] = json!({});
     }

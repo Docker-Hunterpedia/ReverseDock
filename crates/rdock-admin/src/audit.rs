@@ -74,8 +74,9 @@ pub struct Event {
     /// The tenant of a tenant-scoped caller (H-SEC-07); such callers read only their tenant's
     /// records.
     pub tenant: Option<String>,
-    /// How many records like this one (same action, reason, actor and client) were not
-    /// written in the window before it ([`Audit::record`] coalesces refusals).
+    /// How many refusals like this one (same action and client) were not written in the
+    /// window before it ([`Audit::record`] coalesces refusals); in a summary record (its
+    /// reason starts with `summary:`), how many it stands for.
     pub repeated: u64,
 }
 
@@ -130,25 +131,51 @@ pub struct Audit {
     alerts: std::sync::OnceLock<rdock_observability::alerts::AlertSink>,
     /// Refusals written in the current window, by what and from where, with how many more
     /// came since (see [`Audit::coalesce`]).
-    repeats: Mutex<HashMap<String, Repeat>>,
+    repeats: Mutex<Repeats>,
 }
 
 /// How long refusals of one kind from one client are written as one record.
 const REPEAT_WINDOW: Duration = Duration::from_secs(60);
-/// Refusal kinds tracked at once; past it, refusals share one entry.
+/// Refusal kinds tracked at once. One client holds at most one per action (a handful), so it
+/// takes thousands of clients to fill; past it, each new client gets one entry for all its
+/// refusals ([`OVERFLOW_KEYS`] of them), and past those they share one.
 const REPEAT_KEYS: usize = 4096;
+/// Per-client entries past [`REPEAT_KEYS`].
+const OVERFLOW_KEYS: usize = 1024;
 
-/// A refusal kind in its window: when the window started and how many records were not
-/// written since.
+/// The refusals being coalesced and when entries past their window were last cleared.
+struct Repeats {
+    map: HashMap<String, Repeat>,
+    pruned: std::time::Instant,
+}
+
+/// A refusal kind in its window: when the window started, how many records were not written
+/// since, and the first one, which a summary is written from when the window ends unseen.
 struct Repeat {
     since: std::time::Instant,
     skipped: u64,
+    first: Event,
 }
 
-/// The key a refusal is coalesced under: what was refused, why, for whom, and the client
-/// (an IPv4 address, or the /64 of an IPv6 one, which one subscriber usually holds).
-fn repeat_key(event: &Event) -> String {
-    let client = match event.client {
+impl Repeat {
+    /// The record written for refusals counted but not written when their entry is dropped:
+    /// the first one's fields, `repeated` set, and the reason marked as a summary.
+    fn summary(self) -> Option<Event> {
+        (self.skipped > 0).then(|| Event {
+            repeated: self.skipped,
+            reason: Some(format!(
+                "summary: {} more refusals like this one in the window were not written",
+                self.skipped
+            )),
+            ..self.first
+        })
+    }
+}
+
+/// The client a refusal is coalesced by: an IPv4 address, or the /64 of an IPv6 one, which
+/// one subscriber usually holds.
+fn client_key(client: Option<IpAddr>) -> String {
+    match client {
         Some(IpAddr::V6(v6)) if v6.to_ipv4_mapped().is_none() => {
             let prefix = u128::from(v6) & !((1u128 << 64) - 1);
             format!("{}/64", std::net::Ipv6Addr::from(prefix))
@@ -159,17 +186,25 @@ fn repeat_key(event: &Event) -> String {
             .unwrap_or_default(),
         Some(ip) => ip.to_string(),
         None => "-".to_owned(),
-    };
-    format!(
-        "{}\u{0}{}\u{0}{}\u{0}{client}",
-        event.action,
-        event.reason.as_deref().unwrap_or_default(),
-        event.actor
-    )
+    }
+}
+
+/// The key a refusal is coalesced under: what was refused and the client. Not the name the
+/// caller typed or the reason, which the caller chooses: one client gets one entry per action
+/// however many names it tries.
+fn repeat_key(event: &Event) -> String {
+    format!("{}\u{0}{}", event.action, client_key(event.client))
 }
 
 fn sha256_hex(bytes: &[u8]) -> String {
     crate::hex(digest(&SHA256, bytes).as_ref())
+}
+
+impl Drop for Audit {
+    /// Refusals counted but not written yet are summarised before the log closes.
+    fn drop(&mut self) {
+        self.flush_repeats();
+    }
 }
 
 /// The log files, oldest first (`audit-<first sequence number>.jsonl`).
@@ -298,7 +333,10 @@ impl Audit {
             refusals: std::sync::atomic::AtomicU64::new(0),
             events: std::sync::OnceLock::new(),
             alerts: std::sync::OnceLock::new(),
-            repeats: Mutex::new(HashMap::new()),
+            repeats: Mutex::new(Repeats {
+                map: HashMap::new(),
+                pruned: std::time::Instant::now(),
+            }),
         })
     }
 
@@ -403,9 +441,13 @@ impl Audit {
     /// [`Audit::prepare`] records the gap; it never fails the request, so a call that
     /// [`Audit::prepare`] admitted, a login or a refusal is answered either way.
     pub fn record(&self, event: Event) {
-        let Some(event) = self.coalesce(event) else {
-            return;
-        };
+        let (event, summaries) = self.coalesce(event);
+        for summary in summaries.into_iter().chain(event) {
+            self.write(summary);
+        }
+    }
+
+    fn write(&self, event: Event) {
         let action = event.action;
         let actor = event.actor.clone();
         let mut writer = self.writer.lock().unwrap_or_else(PoisonError::into_inner);
@@ -425,13 +467,26 @@ impl Audit {
         }
     }
 
+    /// Writes a summary of every refusal counted but not written yet (at shutdown).
+    pub fn flush_repeats(&self) {
+        let pending: Vec<Repeat> = {
+            let mut repeats = self.repeats.lock().unwrap_or_else(PoisonError::into_inner);
+            repeats.map.drain().map(|(_, r)| r).collect()
+        };
+        for summary in pending.into_iter().filter_map(Repeat::summary) {
+            self.write(summary);
+        }
+    }
+
     /// Refusals (`denied`) of unidentified callers of one kind from one client are written once per
     /// [`REPEAT_WINDOW`]: the first is written, the others are counted, and the first one of
-    /// the next window says how many were not written (`repeated`). Anyone who can reach the
-    /// admin listener can cause refusals, so without this each would cost a synchronous write
-    /// and disk space, and a flood could fill the disk the log shares. `None` when the event
-    /// is only counted.
-    fn coalesce(&self, mut event: Event) -> Option<Event> {
+    /// the next window says how many were not written (`repeated`); when no next one comes, a
+    /// summary record says it once the entry is cleared (at most a window later, or at
+    /// shutdown). Anyone who can reach the admin listener can cause refusals, so without this
+    /// each would cost a synchronous write and disk space, and a flood could fill the disk the
+    /// log shares. Returns the event when it is to be written, and the summaries to write
+    /// before it.
+    fn coalesce(&self, mut event: Event) -> (Option<Event>, Vec<Event>) {
         // Refusals of callers who are not known: unknown tokens, logins and setup attempts
         // (whatever name they type), and rate-limited ones. A known caller's refusals are
         // each written: the caller can be told apart and revoked.
@@ -439,18 +494,33 @@ impl Audit {
             || matches!(event.action, "login" | "setup")
             || event.reason.as_deref() == Some("rate limited");
         if event.outcome != Outcome::Denied || !unidentified {
-            return Some(event);
+            return (Some(event), Vec::new());
         }
         let now = std::time::Instant::now();
         let mut repeats = self.repeats.lock().unwrap_or_else(PoisonError::into_inner);
-        if repeats.len() >= REPEAT_KEYS {
-            repeats.retain(|_, r| now.duration_since(r.since) < REPEAT_WINDOW);
+        let mut summaries = Vec::new();
+        if repeats.map.len() >= REPEAT_KEYS || now.duration_since(repeats.pruned) >= REPEAT_WINDOW {
+            repeats.pruned = now;
+            let expired: Vec<String> = repeats
+                .map
+                .iter()
+                .filter(|(_, r)| now.duration_since(r.since) >= REPEAT_WINDOW)
+                .map(|(k, _)| k.clone())
+                .collect();
+            for key in expired {
+                if let Some(summary) = repeats.map.remove(&key).and_then(Repeat::summary) {
+                    summaries.push(summary);
+                }
+            }
         }
         let mut key = repeat_key(&event);
-        if repeats.len() >= REPEAT_KEYS && !repeats.contains_key(&key) {
-            "\u{0}overflow".clone_into(&mut key);
+        if repeats.map.len() >= REPEAT_KEYS && !repeats.map.contains_key(&key) {
+            key = format!("\u{0}overflow\u{0}{}", client_key(event.client));
+            if repeats.map.len() >= REPEAT_KEYS + OVERFLOW_KEYS && !repeats.map.contains_key(&key) {
+                "\u{0}overflow".clone_into(&mut key);
+            }
         }
-        match repeats.get_mut(&key) {
+        let written = match repeats.map.get_mut(&key) {
             Some(repeat) if now.duration_since(repeat.since) < REPEAT_WINDOW => {
                 repeat.skipped += 1;
                 None
@@ -458,19 +528,22 @@ impl Audit {
             Some(repeat) => {
                 event.repeated = std::mem::take(&mut repeat.skipped);
                 repeat.since = now;
+                repeat.first = event.clone();
                 Some(event)
             }
             None => {
-                repeats.insert(
+                repeats.map.insert(
                     key,
                     Repeat {
                         since: now,
                         skipped: 0,
+                        first: event.clone(),
                     },
                 );
                 Some(event)
             }
-        }
+        };
+        (written, summaries)
     }
 
     /// Whether records were lost since the last one written.
@@ -633,17 +706,15 @@ impl Audit {
 }
 
 /// The alert line for audit records that an operator should hear about at once.
-/// The alert key of a security record. Refusals are keyed by what was refused, for whom and
-/// from where, so `min_interval` holds back repeats (anyone can cause them); other records
-/// (an admin created, an MFA removed) are each their own alert.
+/// The alert key of a security record. Refusals are keyed by what was refused and from where
+/// (the client as [`client_key`] groups it; not the name typed, which the caller chooses), so
+/// `min_interval` holds back repeats (anyone can cause them); other records (an admin
+/// created, an MFA removed) are each their own alert.
 fn alert_key(record: &Value) -> String {
     let action = record["action"].as_str().unwrap_or_default();
     if record["result"] == "denied" {
-        format!(
-            "security:{action}:{}:{}",
-            record["actor"].as_str().unwrap_or("-"),
-            record["client"].as_str().unwrap_or("-")
-        )
+        let client = record["client"].as_str().and_then(|c| c.parse().ok());
+        format!("security:{action}:{}", client_key(client))
     } else {
         format!("security:{action}:{}", record["seq"])
     }
@@ -1071,7 +1142,7 @@ mod tests {
         // The next window's first record carries the count of those not written.
         {
             let mut repeats = log.repeats.lock().unwrap();
-            for repeat in repeats.values_mut() {
+            for repeat in repeats.map.values_mut() {
                 repeat.since -= REPEAT_WINDOW;
             }
         }
@@ -1081,12 +1152,111 @@ mod tests {
     }
 
     #[test]
+    fn one_client_cannot_crowd_out_other_clients_refusals() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(dir.path(), 1 << 22);
+        let login = |name: String, client: &str| Event {
+            client: Some(client.parse().unwrap()),
+            outcome: Outcome::Denied,
+            reason: Some("rate limited".into()),
+            ..Event::new(name, "password", "login")
+        };
+        // 5,000 names from one address: one entry, one record.
+        for i in 0..5_000 {
+            log.record(login(format!("a{i:04}"), "203.0.113.7"));
+        }
+        assert_eq!(log.repeats.lock().unwrap().map.len(), 1);
+        // Another client's refusal is still written.
+        log.record(login("admin".into(), "198.51.100.1"));
+        assert_eq!(log.recent(10, None).unwrap().len(), 2);
+        // Past the table, each new client still gets its own entry.
+        {
+            let mut repeats = log.repeats.lock().unwrap();
+            for i in 0..REPEAT_KEYS {
+                let first = login("x".into(), "192.0.2.1");
+                repeats.map.insert(
+                    format!("filler{i}"),
+                    Repeat {
+                        since: std::time::Instant::now(),
+                        skipped: 0,
+                        first,
+                    },
+                );
+            }
+        }
+        log.record(login("b".into(), "192.0.2.10"));
+        log.record(login("c".into(), "192.0.2.11"));
+        log.record(login("c".into(), "192.0.2.11"));
+        assert_eq!(log.recent(10, None).unwrap().len(), 4);
+    }
+
+    #[test]
+    fn counts_of_refusals_not_written_are_summarised_when_their_entry_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = audit(dir.path(), 1 << 20);
+        let refusal = Event {
+            client: Some("203.0.113.7".parse().unwrap()),
+            outcome: Outcome::Denied,
+            reason: Some("unknown, expired or revoked token".into()),
+            ..Event::new("-", "token", "auth")
+        };
+        for _ in 0..50 {
+            log.record(refusal.clone());
+        }
+        // The window ends with no refusal from that client; the next refusal from anyone
+        // clears the entry and writes its count.
+        {
+            let mut repeats = log.repeats.lock().unwrap();
+            repeats.pruned -= REPEAT_WINDOW;
+            for repeat in repeats.map.values_mut() {
+                repeat.since -= REPEAT_WINDOW;
+            }
+        }
+        log.record(Event {
+            client: Some("198.51.100.1".parse().unwrap()),
+            ..refusal.clone()
+        });
+        let records = log.recent(10, None).unwrap();
+        assert_eq!(records.len(), 3, "{records:?}");
+        let summary = records
+            .iter()
+            .find(|r| {
+                r["reason"]
+                    .as_str()
+                    .is_some_and(|t| t.starts_with("summary:"))
+            })
+            .unwrap();
+        assert_eq!(summary["repeated"], 49);
+        // At shutdown, what is still counted is written too.
+        for _ in 0..5 {
+            log.record(refusal.clone());
+        }
+        drop(log);
+        let log = audit(dir.path(), 1 << 20);
+        let newest = &log.recent(1, None).unwrap()[0];
+        assert_eq!(newest["repeated"], 4, "{newest}");
+    }
+
+    #[test]
     fn repeated_refusals_share_an_alert_key() {
         let denied = |seq: u64| {
             json!({ "seq": seq, "action": "login", "result": "denied", "actor": "admin",
                     "client": "203.0.113.7", "reason": "rate limited" })
         };
         assert_eq!(alert_key(&denied(1)), alert_key(&denied(2)));
+        // The name typed does not make a new key; the /64 of an IPv6 client is one client.
+        let mut other_name = denied(3);
+        other_name["actor"] = json!("a0001");
+        assert_eq!(alert_key(&denied(1)), alert_key(&other_name));
+        let v6 = |c: &str| json!({ "action": "login", "result": "denied", "client": c });
+        assert_eq!(
+            alert_key(&v6("2001:db8:1:2::1")),
+            alert_key(&v6("2001:db8:1:2::9"))
+        );
+        assert_ne!(
+            alert_key(&v6("2001:db8:1:2::1")),
+            alert_key(&v6("2001:db8:1:3::1"))
+        );
         let created = |seq: u64| json!({ "seq": seq, "action": "user.create", "result": "ok" });
         assert_ne!(alert_key(&created(1)), alert_key(&created(2)));
     }

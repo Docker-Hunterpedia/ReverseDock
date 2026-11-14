@@ -157,8 +157,16 @@ fn decide(
                 if active.len() >= MAX_ACTIVE {
                     active.retain(|_, entry| now.duration_since(entry.sent_at) < min_interval);
                 }
-                if active.len() >= MAX_ACTIVE {
-                    return false;
+                // Still full: the oldest entry makes room, so a new alert (a backend down, an
+                // administrator created) is never dropped because others fill the table; the
+                // evicted key may then be sent again before its interval ends.
+                if active.len() >= MAX_ACTIVE
+                    && let Some(oldest) = active
+                        .iter()
+                        .min_by_key(|(_, entry)| entry.sent_at)
+                        .map(|(key, _)| key.clone())
+                {
+                    active.remove(&oldest);
                 }
                 active.insert(alert.key.clone(), Active { sent_at: now });
                 true
@@ -290,6 +298,17 @@ mod tests {
             decide(&mut active, &alert, interval, start);
         }
         assert_eq!(active.len(), MAX_ACTIVE);
+        // A full table still takes a new alert, in place of the oldest one.
+        let mut down = backend(State::Firing);
+        down.key = "backend:app/10.0.0.9".into();
+        assert!(decide(
+            &mut active,
+            &down,
+            interval,
+            start + Duration::from_secs(1)
+        ));
+        assert_eq!(active.len(), MAX_ACTIVE);
+        assert!(active.contains_key("backend:app/10.0.0.9"));
         // Once the interval passed, old keys make room for new ones.
         let mut late = backend(State::Firing);
         late.key = "security:late".into();

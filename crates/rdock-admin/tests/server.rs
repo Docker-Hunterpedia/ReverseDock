@@ -1448,6 +1448,139 @@ async fn configuration_writes_are_conditional_dry_run_and_audited() {
     gitops.stop().await;
 }
 
+fn patch_request(
+    token: &str,
+    kind: &str,
+    etag: &str,
+    body: &serde_json::Value,
+) -> http::Request<http_body_util::Full<bytes::Bytes>> {
+    with(
+        request("PATCH", "127.0.0.1", "/api/v1/config/api", body.to_string()),
+        &[
+            ("authorization", &format!("Bearer {token}")),
+            ("content-type", kind),
+            ("if-match", etag),
+        ],
+    )
+}
+
+#[tokio::test(flavor = "multi_thread")]
+async fn patches_can_neither_read_nor_redirect_a_kept_secret() {
+    const MERGE: &str = "application/merge-patch+json";
+    const JSON_PATCH: &str = "application/json-patch+json";
+    let admin = Admin::start(None, Vec::new());
+    let administrator = api_token(&admin, "admin");
+    let operator = api_token(&admin, "operator");
+    let document = serde_json::json!({ "middlewares": {
+        "sso": { "type": "oidc", "issuer": "https://idp.example", "client_id": "app",
+                 "client_secret": "s3cret" },
+        "leak": { "type": "headers", "request": { "set": { "x-copy": "plain" } } }
+    } });
+    let reply = client::http1(
+        admin.address,
+        bearer_json(
+            "PUT",
+            "/api/v1/config/api",
+            &administrator,
+            &document,
+            &[("if-match", &Fake::etag(0))],
+        ),
+    )
+    .await;
+    assert_eq!(reply.status, 200);
+    let etag = reply.header("etag").unwrap().to_owned();
+
+    // A merge patch that points the identity provider elsewhere, keeping the secret: refused,
+    // asking for the secret again.
+    let moved =
+        serde_json::json!({ "middlewares": { "sso": { "issuer": "https://attacker.example" } } });
+    let reply = client::http1(
+        admin.address,
+        patch_request(&operator, MERGE, &etag, &moved),
+    )
+    .await;
+    assert_eq!(reply.status, 422);
+    let message = json_body(&reply)["error"]
+        .as_str()
+        .unwrap_or_default()
+        .to_owned();
+    assert!(
+        message.contains("middlewares.sso.client_secret"),
+        "{message}"
+    );
+    assert!(message.contains("write the secret again"), "{message}");
+
+    // JSON Patch cannot copy, move or test a secret, or an object that holds one.
+    for operations in [
+        serde_json::json!([{ "op": "copy", "from": "/middlewares/sso/client_secret",
+                             "path": "/middlewares/leak/request/set/x-copy" }]),
+        serde_json::json!([{ "op": "move", "from": "/middlewares/sso/client_secret",
+                             "path": "/middlewares/leak/request/set/x-copy" }]),
+        serde_json::json!([{ "op": "copy", "from": "/middlewares/sso", "path": "/middlewares/evil" },
+                           { "op": "replace", "path": "/middlewares/evil/issuer",
+                             "value": "https://attacker.example" }]),
+        serde_json::json!([{ "op": "test", "path": "/middlewares/sso/client_secret", "value": "s3cret" }]),
+        serde_json::json!([{ "op": "test", "path": "/middlewares/sso/client_secret", "value": "wrong" }]),
+        serde_json::json!([{ "op": "test", "path": "/middlewares/sso", "value": {} }]),
+    ] {
+        let reply = client::http1(
+            admin.address,
+            patch_request(&operator, JSON_PATCH, &etag, &operations),
+        )
+        .await;
+        assert_eq!(reply.status, 422, "{operations}");
+        let message = json_body(&reply)["error"]
+            .as_str()
+            .unwrap_or_default()
+            .to_owned();
+        // The same answer whatever the guessed value: `test` is no oracle.
+        assert!(
+            message.contains("neither copy, move nor test"),
+            "{operations}: {message}"
+        );
+    }
+    // Nothing was written: the version is the same and the secret is where it was.
+    let reply = client::http1(admin.address, bearer_get("/api/v1/config/api", &operator)).await;
+    assert_eq!(reply.header("etag"), Some(etag.as_str()));
+    let body = json_body(&reply);
+    assert_eq!(
+        body["middlewares"]["leak"]["request"]["set"]["x-copy"],
+        "plain"
+    );
+    assert_eq!(body["middlewares"]["sso"]["client_secret"], "***");
+    assert!(!body.to_string().contains("s3cret"));
+
+    // A patch that leaves the object alone still works, for an administrator and an
+    // operator, and the secret stays as the administrator wrote it.
+    let route = serde_json::json!({ "routes": { "b": { "match": "Host(`b`)", "service": "b" } } });
+    let reply = client::http1(
+        admin.address,
+        patch_request(&administrator, MERGE, &etag, &route),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let etag = reply.header("etag").unwrap().to_owned();
+    let header = serde_json::json!([{ "op": "replace",
+        "path": "/middlewares/leak/request/set/x-copy", "value": "changed" }]);
+    let reply = client::http1(
+        admin.address,
+        patch_request(&operator, JSON_PATCH, &etag, &header),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    let etag = reply.header("etag").unwrap().to_owned();
+    // The issuer may change with the secret written again.
+    let rewritten = serde_json::json!({ "middlewares": { "sso": {
+        "issuer": "https://idp2.example", "client_secret": "n3w" } } });
+    let reply = client::http1(
+        admin.address,
+        patch_request(&operator, MERGE, &etag, &rewritten),
+    )
+    .await;
+    assert_eq!(reply.status, 200, "{}", reply.text());
+    admin.stop().await;
+}
+
 #[tokio::test(flavor = "multi_thread")]
 async fn resources_show_owners_and_only_api_objects_change() {
     let admin = Admin::start(None, Vec::new());

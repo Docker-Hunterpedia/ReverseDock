@@ -186,7 +186,10 @@ written to the [audit log](/docs/guides/config-api/) with the tenant.
 | Everything else | Refused: users, listeners, certificates, providers, status, reload, upgrade, consumers and keys, caches, the cluster, configuration history, rollback, export and import, `/routes/explain`, the log and event streams, `/metrics`. |
 
 Roles still apply on top: a scoped `viewer` reads its objects, a scoped `operator` also writes
-them. A token never leaves its creator's tenant.
+them. Whatever its role, a scoped caller cannot write objects that act with the proxy's own
+authority (a field that names a file, a `${…}` reference, a `unix://` backend, `static`,
+`wasm` or `plugin` middlewares), as an [operator](/docs/guides/config-api/) cannot. A token
+never leaves its creator's tenant.
 
 Diagnostics a scoped caller sees never name another tenant's or the administrator's objects,
 nor tell whether one exists: a reference outside the tenant is refused the same way whether

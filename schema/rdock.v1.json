@@ -3158,7 +3158,7 @@
       "type": "object",
       "properties": {
         "allow_local_backends": {
-          "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`) or a link-local address (cloud metadata services). Off by default: a\ncontainer could otherwise publish ReverseDock's admin listener or other local services.",
+          "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`, unspecified) or a link-local or cloud metadata address. Off by default: a\ncontainer could otherwise publish ReverseDock's admin listener or other local services.\nNames from labels are checked again whenever they resolve; private networks are\nalways allowed.",
           "type": "boolean",
           "default": false
         },
@@ -9713,7 +9713,7 @@
       "type": "object",
       "properties": {
         "allow_local_backends": {
-          "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`) or a link-local address (cloud metadata services). Off by default: a\nservice could otherwise publish ReverseDock's admin listener or other local services.",
+          "description": "Let labels name a backend or a middleware URL on the proxy's own machine (loopback,\n`localhost`, unspecified) or a link-local or cloud metadata address. Off by default: a\nservice could otherwise publish ReverseDock's admin listener or other local services.\nNames from labels are checked again whenever they resolve; private networks are\nalways allowed.",
           "type": "boolean",
           "default": false
         },

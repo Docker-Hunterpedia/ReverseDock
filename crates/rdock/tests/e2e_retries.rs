@@ -431,3 +431,33 @@ async fn an_idempotent_request_on_a_dropped_pooled_connection_gets_another_conne
     assert_eq!(put.status, 200, "{}", put.text());
     assert_eq!(answered.load(std::sync::atomic::Ordering::SeqCst), 2);
 }
+
+/// Review 10, M1: the attempt after a failed pooled connection replays the body into fresh
+/// counts, so a body over half of `max_body` is not counted twice and refused with 413.
+#[tokio::test]
+async fn a_replayed_body_on_another_connection_is_counted_once() {
+    let (backend, answered) = resetting_backend().await;
+    let port = free_port();
+    let _rdock = Rdock::start(
+        RDOCK,
+        &format!(
+            r#"
+listeners:
+  web: {{ address: "127.0.0.1:{port}" }}
+defaults: {{ listeners: [web], tls: off }}
+routes:
+  app: {{ match: "PathPrefix(`/`)", service: app, max_body: 60KiB }}
+services:
+  app:
+    backends: [{{ address: "{backend}" }}]
+    retries: {{ attempts: 0 }}
+"#
+        ),
+    );
+    assert_eq!(client::http1(addr(port), get("a", "/")).await.status, 200);
+    // 40 KiB: over half of the limit, inside Pingora's 64 KiB replay buffer.
+    let body = "x".repeat(40 * 1024);
+    let put = client::http1(addr(port), request("PUT", "a", "/config/x", body)).await;
+    assert_eq!(put.status, 200, "{}", put.text());
+    assert_eq!(answered.load(std::sync::atomic::Ordering::SeqCst), 2);
+}

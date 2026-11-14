@@ -212,7 +212,8 @@ pub(crate) fn cache_key(
     // The backend sees the client's spelling of the authority and the forwarding headers
     // (routing ignores port, case and a trailing dot; a trusted proxy's values are kept), and
     // may build URLs from them, so they are keyed as the backend gets them, in lower case
-    // (host names and schemes are case-insensitive).
+    // (host names and schemes are case-insensitive) and with the authority in its canonical
+    // spelling (`key_authority`), so spellings that differ only in form are one key.
     let forwarded: Vec<(&str, Option<Vec<u8>>)> = FORWARDED_KEYED
         .iter()
         .map(|name| {
@@ -246,16 +247,32 @@ pub(crate) fn cache_key(
 /// Forwarding headers that are part of every cache key, with the values the backend gets.
 const FORWARDED_KEYED: [&str; 3] = ["x-forwarded-proto", "x-forwarded-host", "x-forwarded-port"];
 
-/// The authority as the client sent it (lower case, port and trailing dot kept), or the
-/// routing host when the request has none.
+/// The authority as the client sent it, in one spelling per form the backend can tell apart:
+/// lower case and an IPv6 literal in its canonical text form. The port and one trailing dot
+/// are kept: the backend sees both, in `Host` and `X-Forwarded-Host`, and may build URLs from
+/// them. Non-canonical ports, empty ones and more than one trailing dot are refused before a
+/// request gets here, so a host and port have at most two keys (with and without the dot).
+/// The routing host when the request has none.
 fn key_authority(req: &RequestHeader, host: &str) -> String {
-    req.headers
+    let authority = req
+        .headers
         .get(http::header::HOST)
         .and_then(|v| v.to_str().ok())
         .or_else(|| req.uri.authority().map(http::uri::Authority::as_str))
         .filter(|a| !a.is_empty())
-        .unwrap_or(host)
-        .to_ascii_lowercase()
+        .unwrap_or(host);
+    canonical_authority(authority)
+}
+
+/// See [`key_authority`].
+fn canonical_authority(authority: &str) -> String {
+    if let Some(rest) = authority.strip_prefix('[')
+        && let Some((literal, after)) = rest.split_once(']')
+        && let Ok(ip) = literal.parse::<std::net::Ipv6Addr>()
+    {
+        return format!("[{ip}]{after}");
+    }
+    authority.to_ascii_lowercase()
 }
 
 /// Marks a miss: no stored response, or none for this request's `Vary` fields.
@@ -566,4 +583,26 @@ pub(crate) fn observe(session: &Session, cc: &mut CacheCtx, route: &str) {
 /// route's rewrites) and the query as the client sent it.
 pub(crate) fn public_url(tls: bool, host: &str, path: &str, query: Option<&str>) -> String {
     invalidate::public_url(if tls { "https" } else { "http" }, host, path, query)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::canonical_authority;
+
+    #[test]
+    fn spellings_of_one_authority_are_one_key() {
+        for (spelling, key) in [
+            ("App.Test", "app.test"),
+            ("APP.TEST.:8080", "app.test.:8080"),
+            ("[0:0::1]:443", "[::1]:443"),
+            ("[::FFFF:1.2.3.4]", "[::ffff:1.2.3.4]"),
+        ] {
+            assert_eq!(canonical_authority(spelling), key, "{spelling}");
+        }
+        // The port stays: the backend sees it.
+        assert_ne!(
+            canonical_authority("app.test:1"),
+            canonical_authority("app.test")
+        );
+    }
 }

@@ -111,7 +111,7 @@ fn compile_service(
         timeouts: rdock_model::service::Timeouts::default(),
         tls: UpstreamTls::default(),
         pass_host_header: false,
-        allowed: None,
+        allowed: crate::compile::label_guard(name, config, env),
         selection: crate::runtime::Selection {
             zone: crate::compile::preferred_zone(config, None),
             ..crate::runtime::Selection::default()

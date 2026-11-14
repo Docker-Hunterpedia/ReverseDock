@@ -17,26 +17,28 @@ const ARI_MAX_RECHECK: Duration = Duration::from_secs(24 * 3600);
 /// When fetching renewal information fails, try again after this long.
 const ARI_RETRY_AFTER_ERROR: Duration = Duration::from_secs(3600);
 
-/// The failure back-off of certificates no longer asked for, so a name that leaves the plan
-/// and comes back (a crash-looping container's route) does not start over at once with a new
-/// order: each return would otherwise place one, and the CA's limits on failed validations
-/// and new orders would soon refuse every certificate of the account. Bounded by
-/// [`Backoffs::MAX`] entries and [`Backoffs::KEEP`] each.
+/// The failure back-off of certificates no longer asked for, kept per name, so a name that
+/// leaves the plan and comes back (a crash-looping container's route), alone or with other
+/// names than before, does not start over at once with a new order: each return would
+/// otherwise place one, and the CA's limits on failed validations and new orders would soon
+/// refuse every certificate of the account. A certificate that comes back gets the longest
+/// back-off any of its names had. Bounded by [`Backoffs::MAX`] names and [`Backoffs::KEEP`]
+/// each.
 #[derive(Debug, Default)]
 pub(crate) struct Backoffs {
-    entries: std::collections::BTreeMap<Vec<String>, Kept>,
+    entries: std::collections::BTreeMap<String, Kept>,
 }
 
 /// A kept back-off: failures, when to try again, the last error, and when it was kept.
 type Kept = (u32, Option<Instant>, Option<String>, Instant);
 
 impl Backoffs {
-    /// Entries kept at most.
+    /// Names kept at most.
     pub const MAX: usize = 4096;
     /// How long an entry is kept.
     pub const KEEP: Duration = Duration::from_secs(24 * 3600);
 
-    /// Remembers the back-off of `state` when it has failures.
+    /// Remembers the back-off of `state`, under each of `names`, when it has failures.
     pub fn keep(&mut self, names: Vec<String>, state: &CertState) {
         if state.failures == 0 {
             return;
@@ -44,35 +46,49 @@ impl Backoffs {
         let now = Instant::now();
         self.entries
             .retain(|_, (_, _, _, at)| now.duration_since(*at) < Self::KEEP);
-        if self.entries.len() >= Self::MAX
-            && let Some(oldest) = self
-                .entries
-                .iter()
-                .min_by_key(|(_, (_, _, _, at))| *at)
-                .map(|(k, _)| k.clone())
-        {
-            self.entries.remove(&oldest);
-        }
-        self.entries.insert(
-            names,
-            (
+        for name in names {
+            if self.entries.len() >= Self::MAX
+                && !self.entries.contains_key(&name)
+                && let Some(oldest) = self
+                    .entries
+                    .iter()
+                    .min_by_key(|(_, (_, _, _, at))| *at)
+                    .map(|(k, _)| k.clone())
+            {
+                self.entries.remove(&oldest);
+            }
+            let kept = (
                 state.failures,
                 state.retry_at,
                 state.last_error.clone(),
                 now,
-            ),
-        );
+            );
+            // A name kept twice keeps the longer back-off.
+            match self.entries.get(&name) {
+                Some(old) if old.0 > kept.0 => {}
+                _ => {
+                    self.entries.insert(name, kept);
+                }
+            }
+        }
     }
 
-    /// A new state for `names`, with the back-off it had when it left the plan.
+    /// A new state for `names`, with the longest back-off any of them had when it left the
+    /// plan: the most failures, and the latest time to try again.
     pub fn restore(&mut self, names: &[String]) -> CertState {
         let mut state = CertState::default();
-        if let Some((failures, retry_at, last_error, at)) = self.entries.remove(names)
-            && at.elapsed() < Self::KEEP
-        {
-            state.failures = failures;
-            state.retry_at = retry_at;
-            state.last_error = last_error;
+        for name in names {
+            let Some((failures, retry_at, last_error, at)) = self.entries.remove(name) else {
+                continue;
+            };
+            if at.elapsed() >= Self::KEEP {
+                continue;
+            }
+            if failures > state.failures {
+                state.failures = failures;
+                state.last_error = last_error;
+            }
+            state.retry_at = state.retry_at.max(retry_at);
         }
         state
     }
@@ -373,6 +389,24 @@ mod tests {
         assert_eq!(backoffs.restore(&names).failures, 0);
         backoffs.keep(names.clone(), &CertState::default());
         assert_eq!(backoffs.restore(&names).failures, 0);
+    }
+
+    #[test]
+    fn a_name_that_returns_with_other_names_keeps_its_back_off() {
+        let mut state = CertState::default();
+        for _ in 0..3 {
+            state.fail("validation failed".into());
+        }
+        let retry_at = state.retry_at.unwrap();
+        let mut backoffs = Backoffs::default();
+        backoffs.keep(vec!["app.example".into(), "x1.example".into()], &state);
+        // Back with a new name next to it, and in another order: the back-off holds.
+        let back = backoffs.restore(&["x2.example".to_owned(), "app.example".to_owned()]);
+        assert_eq!(back.failures, 3);
+        assert_eq!(back.retry_at, Some(retry_at));
+        assert!(!back.due(0));
+        // The other name of the old set is still remembered on its own.
+        assert_eq!(backoffs.restore(&["x1.example".to_owned()]).failures, 3);
     }
 
     #[test]

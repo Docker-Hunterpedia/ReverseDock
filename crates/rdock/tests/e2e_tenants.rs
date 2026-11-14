@@ -344,8 +344,13 @@ async fn tenants_stay_inside_their_prefix_and_claims() {
             .filter(|r| r["tenant"] == "acme" && r["result"] == result)
             .count()
     };
+    // The writes are refused by the tenant's rules (`failed`) or, for objects that act with
+    // the process's authority, before them (`denied`, ADR-0033 review 10 fixes).
     assert!(refused("denied") >= 12, "{records}");
-    assert!(refused("failed") >= refusals.len(), "{records}");
+    assert!(
+        refused("denied") + refused("failed") >= 12 + refusals.len(),
+        "{records}"
+    );
     let own = api
         .call(
             &acme_admin,
