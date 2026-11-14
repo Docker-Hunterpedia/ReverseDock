@@ -29,4 +29,4 @@ Every member of the store reads every key in it (the ACME account key and each c
 private key); writes are limited per key class, and a revoked instance is shut out from then
 on without anything it read being taken back (ADR-0031, "As implemented (review fixes)"). One
 control plane is active at a time; a highly available one is planned. Implemented in v0.9 and
-unreleased.
+released in 0.9.0-alpha.1.

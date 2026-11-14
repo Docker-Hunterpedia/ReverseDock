@@ -10,7 +10,7 @@ import Status from '../../../../components/Status.astro';
 ReverseDock can translate `networking.k8s.io/v1` Ingress objects <Status since="v0.7" />. It is a landing pad for clusters that still run Ingress, in particular those leaving ingress-nginx, and not a second product: the Gateway API is the way to go for new work ([Kubernetes Gateway API](/docs/guides/kubernetes-gateway-api/)). Ingress is **off by default**.
 
 :::caution[Status]
-The Ingress translation is part of 0.8.0-alpha.1, a pre-release. It is tested on fixtures and has not been proven in a cluster by CI.
+The Ingress translation is part of 0.9.0-alpha.1, a pre-release (it was first released in 0.8.0-alpha.1). It is tested on fixtures and has not been proven in a cluster by CI.
 :::
 
 The Kubernetes project has frozen the Ingress API; it recommends Gateway, and has no plans to remove Ingress ([Ingress concept](https://kubernetes.io/docs/concepts/services-networking/ingress/), checked 2026-11-11). ingress-nginx, the most used Ingress controller, was retired: the project announced on 2025-11-11 that it would keep best-effort maintenance until March 2026 and then publish no releases, bug fixes or security updates, that existing deployments keep working, and that users should move to Gateway API or another controller ([kubernetes.io, 2025-11-11](https://kubernetes.io/blog/2025/11/11/ingress-nginx-retirement/), checked 2026-11-11). See [Migrate from ingress-nginx](/docs/migrate/from-ingress-nginx/).

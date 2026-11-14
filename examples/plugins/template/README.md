@@ -5,8 +5,8 @@ A minimal native plugin (`src/lib.rs`: adds `X-Greeting` from its configuration)
 1. Copy it out of the repository and rename the package, the library and the binary in `Cargo.toml`.
 2. Replace the two path dependencies with git dependencies pinned to one tag (the crates are not published on crates.io):
    ```toml
-   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
-   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
+   rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.9.0-alpha.1" }
+   rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.9.0-alpha.1" }
    ```
 3. Copy the repository's `rust-toolchain.toml` (and, if you like, `deny.toml` for `cargo deny check`).
 4. `cargo test`, then `cargo build --release`. Building needs a C compiler and CMake.

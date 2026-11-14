@@ -6,7 +6,7 @@ const image = `${release.image}:${release.version}`;
 const archive = `rdock-${release.version}-x86_64-unknown-linux-musl`;
 
 /** The line next to the version in the hero. */
-export const announce = 'Kubernetes, the HTTP cache and plugins are here.';
+export const announce = 'Clusters, in-place upgrades and edge security are here.';
 
 export const pillars: { eyebrow: string; badge: string; kind: Kind; title: string; body: string }[] = [
   { eyebrow: 'Engine', badge: 'shipped', kind: 'shipped', title: 'Rust on Pingora', body: 'The HTTP engine Cloudflare runs at its edge, with our own listeners on top. HTTP/1.1, HTTP/2, h2c, WebSocket, SSE and gRPC.' },
@@ -37,6 +37,8 @@ export const features: { title: string; status: string; kind: Kind; body: string
   { title: 'Dashboard', status: 'v0.5', kind: 'shipped', body: 'Built into the binary: routes, certificates, live logs and metrics.' },
   { title: 'Kubernetes Gateway API', status: 'v0.7', kind: 'shipped', body: 'A Gateway API controller, Ingress translation and a Helm chart; passes the upstream conformance suite in CI on kind.' },
   { title: 'HTTP cache and plugins', status: 'v0.8', kind: 'shipped', body: 'An RFC 9111 cache in memory or on disk, native Rust plugins, agents, API keys, quotas and OIDC login.' },
+  { title: 'Cluster and in-place upgrades', status: 'v0.9', kind: 'shipped', body: 'A control plane with staged rollout, certificates ordered once, shared limits, and a binary upgrade that keeps connections.' },
+  { title: 'Edge security', status: 'v0.9', kind: 'shipped', body: 'JA4 fingerprints, GeoIP rules, abuse bans and identity rules on client certificates.' },
 ];
 
 export const compare = [

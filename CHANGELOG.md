@@ -4,7 +4,9 @@ All notable changes to ReverseDock are documented here. The format follows [Keep
 
 ## [Unreleased]
 
-v0.9 "Scale" ([ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md) and [ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)): implemented and not released; the version stays `0.8.0-alpha.1` until the release pull request. HTTP/3 is experimental and only in builds made with the cargo feature `http3`. The 24-hour soak, 8-CPU and dedicated-hardware measurements were not run; a weekly 5 h 20 min hosted soak stands in for the soak and had not completed a full run when this was written. What is refused as planned, and what is open, is in `docs/07-roadmap.md`. Everything under Added is new in this release, including the fixes made to it during review; those fixes are part of each feature's description, not listed separately.
+## [0.9.0-alpha.1] — v0.9 "Scale"
+
+Released 2026-11-14 ([ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md) and [ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)). HTTP/3 is experimental and only in builds made with the cargo feature `http3`, which the release binaries and images leave off. The 24-hour soak, 8-CPU and dedicated-hardware measurements were not run; a weekly 5 h 20 min hosted soak stands in for the soak and had not completed a full run when this was written. What is refused as planned, and what is open, is in `docs/07-roadmap.md`. Everything under Added is new in this release, including the fixes made to it during review; those fixes are part of each feature's description, not listed separately.
 
 ### Added
 

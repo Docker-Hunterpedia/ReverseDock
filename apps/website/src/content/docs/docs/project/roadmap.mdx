@@ -20,7 +20,7 @@ ReverseDock is planned in milestones, not dates. Each milestone ships a usable b
 | v0.6 | Swarm, L4, static | multi-node Docker, TCP and SNI passthrough, static sites | <Status since="v0.6" />  0.6.0-alpha.1 |
 | v0.7 | Kubernetes | run it as a Gateway API controller | <Status since="v0.7" />  0.8.0-alpha.1 |
 | v0.8 | Cache and extensibility | cache like NGINX, extend it with plugins and agents, run an API gateway | <Status since="v0.8" />  0.8.0-alpha.1 |
-| v0.9 | Scale | several instances with a control plane, distributed limits, zero-downtime upgrades, HTTP/3 (experimental) | <Status planned="v0.9" /> |
+| v0.9 | Scale | several instances with a control plane, distributed limits, zero-downtime upgrades, HTTP/3 (experimental, not in release builds) | <Status since="v0.9" />  0.9.0-alpha.1 |
 | v1.0 | Stable | stability guarantees, a security audit, conformance, the full docs site | <Status planned="v1.0" /> |
 
 ## v0.1: Hello proxy <Status since="v0.1" />
@@ -62,9 +62,9 @@ Released in 0.8.0-alpha.1, together with v0.7 ([ADR-0030](https://github.com/Doc
 
 **Left open after v0.8:** full request pre-buffering (and so the request head reaches the backend before an agent or `validate` verdict on the body, a Pingora 0.9.1 limitation); background refresh for `stale-while-revalidate`; gRPC and SPOP agents; publishing the Terraform provider to the registries (it needs its own repository and a signing key); the `Date` rewrite; a dashboard page for consumers, keys and quotas; OIDC back-channel logout and early session revocation. The CI jobs `http-cache`, `openbao`, `oidc-dex`, `wasm`, `waf-example` and `terraform-provider` are not yet required checks, and the 2-CPU benchmark that ADR-0030 asks for has not been run. No soak, no benchmark and no multi-node lab were run for 0.8.0-alpha.1; the evidence is the CI described above.
 
-## v0.9: Scale <Status planned="v0.9" />
+## v0.9: Scale <Status since="v0.9" />
 
-Implemented and not released yet ([ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md), [ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)); the badges in these docs say "planned for v0.9" until the release:
+Released in 0.9.0-alpha.1 ([ADR-0031](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0031-v0-9-scale.md), [ADR-0032](https://github.com/Docker-Hunterpedia/ReverseDock/blob/main/docs/decisions/0032-http3-on-quinn-and-h3.md)):
 
 - **Upgrades and sockets:** [replace the binary in place](/docs/guides/upgrades/) without refusing a connection (Linux), [socket, runtime and HTTP/2 settings](/docs/guides/sockets-and-threads/), TLS session tickets shared between listeners, a host index for routing.
 - **Balancing:** `peak_ewma`, [outlier detection](/docs/guides/backends/), slow start, priority tiers, zones, a per-try timeout.

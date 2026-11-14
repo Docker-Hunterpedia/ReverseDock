@@ -16,8 +16,8 @@ The first four are members of this repository's Cargo workspace, so `cargo test 
 
 ```toml
 [dependencies]
-rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
-rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.8.0-alpha.1" }
+rdock = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.9.0-alpha.1" }
+rdock-plugin-api = { git = "https://github.com/Docker-Hunterpedia/ReverseDock", tag = "v0.9.0-alpha.1" }
 ```
 
 Guide: [Plugins](../../apps/website/src/content/docs/guides/plugins.mdx).

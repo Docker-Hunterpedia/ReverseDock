@@ -31,7 +31,7 @@ released in 0.8.0-alpha.1; no report has been submitted upstream yet.
 
 ## Install
 
-> **Image.** The chart's default image tag is its `appVersion`, `0.8.0-alpha.1`: the signed
+> **Image.** The chart's default image tag is its `appVersion`, `0.9.0-alpha.1`: the signed
 > release image, which contains the Kubernetes provider. To run a commit that is not released,
 > build the image from a checkout, make it available to the cluster, and pass it with
 > `image.repository` and `image.tag`:
@@ -59,7 +59,7 @@ released in 0.8.0-alpha.1; no report has been submitted upstream yet.
    registry; the release workflow publishes binaries and images only):
 
    ```sh
-   git clone --branch v0.8.0-alpha.1 https://github.com/Docker-Hunterpedia/ReverseDock.git
+   git clone --branch v0.9.0-alpha.1 https://github.com/Docker-Hunterpedia/ReverseDock.git
    cd ReverseDock
    helm install reversedock deploy/helm/reversedock \
      --namespace reversedock-system --create-namespace

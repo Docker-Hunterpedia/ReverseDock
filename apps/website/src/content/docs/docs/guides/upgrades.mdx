@@ -7,7 +7,7 @@ sidebar:
 
 import Status from '../../../../components/Status.astro';
 
-ReverseDock <Status planned="v0.9" /> can replace its own binary while it serves: the running
+ReverseDock <Status since="v0.9" /> can replace its own binary while it serves: the running
 process starts the new binary, hands it the listening sockets, and drains its own open
 connections. No connection attempt is refused or reset, because both processes share the same
 sockets and their queues. The design is

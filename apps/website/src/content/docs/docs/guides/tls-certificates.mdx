@@ -179,7 +179,7 @@ Let's Encrypt or any ACME CA, with HTTP-01, TLS-ALPN-01 or DNS-01, renewed throu
 
 `localhost`, names under `.internal`, `.home.arpa` and the other reserved suffixes, and private addresses get their certificates from ReverseDock's local CA instead of ACME <Status since="v0.3" />. See [HTTPS for localhost and private names](/docs/guides/local-development/).
 
-## Session resumption <Status planned="v0.9" />
+## Session resumption <Status since="v0.9" />
 
 A returning client can skip the full handshake with a session ticket. ReverseDock issues
 tickets on every TLS listener by default and keeps one set of ticket keys per **security
